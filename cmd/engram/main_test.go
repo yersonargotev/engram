@@ -23,7 +23,10 @@ import (
 
 func testConfig(t *testing.T) store.Config {
 	t.Helper()
-	cfg := store.DefaultConfig()
+	cfg, err := store.DefaultConfig()
+	if err != nil {
+		t.Fatalf("DefaultConfig: %v", err)
+	}
 	cfg.DataDir = t.TempDir()
 	return cfg
 }

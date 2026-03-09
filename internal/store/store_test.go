@@ -13,9 +13,18 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func mustDefaultConfig(t *testing.T) Config {
+	t.Helper()
+	cfg, err := DefaultConfig()
+	if err != nil {
+		t.Fatalf("DefaultConfig: %v", err)
+	}
+	return cfg
+}
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	cfg := DefaultConfig()
+	cfg := mustDefaultConfig(t)
 	cfg.DataDir = t.TempDir()
 	cfg.DedupeWindow = time.Hour
 
@@ -390,7 +399,7 @@ func TestNewMigratesLegacyObservationIDSchema(t *testing.T) {
 		t.Fatalf("close legacy db: %v", err)
 	}
 
-	cfg := DefaultConfig()
+	cfg := mustDefaultConfig(t)
 	cfg.DataDir = dataDir
 
 	s, err := New(cfg)
@@ -479,7 +488,7 @@ func TestNewMigratesLegacyUserPromptsSyncIDSchema(t *testing.T) {
 		t.Fatalf("close legacy db: %v", err)
 	}
 
-	cfg := DefaultConfig()
+	cfg := mustDefaultConfig(t)
 	cfg.DataDir = dataDir
 
 	s, err := New(cfg)
@@ -1042,7 +1051,7 @@ func TestSessionObservationsAddPromptImportAndSyncChunks(t *testing.T) {
 		t.Fatalf("export: %v", err)
 	}
 
-	cfg := DefaultConfig()
+	cfg := mustDefaultConfig(t)
 	cfg.DataDir = t.TempDir()
 	dst, err := New(cfg)
 	if err != nil {
@@ -1851,7 +1860,7 @@ func TestNewErrorBranches(t *testing.T) {
 			t.Fatalf("write file: %v", err)
 		}
 
-		cfg := DefaultConfig()
+		cfg := mustDefaultConfig(t)
 		cfg.DataDir = badPath
 
 		_, err := New(cfg)
@@ -1867,7 +1876,7 @@ func TestNewErrorBranches(t *testing.T) {
 			t.Fatalf("mkdir db path: %v", err)
 		}
 
-		cfg := DefaultConfig()
+		cfg := mustDefaultConfig(t)
 		cfg.DataDir = dataDir
 
 		_, err := New(cfg)
@@ -1908,7 +1917,7 @@ func TestNewErrorBranches(t *testing.T) {
 			t.Fatalf("close db: %v", err)
 		}
 
-		cfg := DefaultConfig()
+		cfg := mustDefaultConfig(t)
 		cfg.DataDir = dataDir
 
 		_, err = New(cfg)
@@ -2328,7 +2337,7 @@ func TestStoreUncoveredBranchesPushToHundred(t *testing.T) {
 			return nil, errors.New("forced open error")
 		}
 
-		cfg := DefaultConfig()
+		cfg := mustDefaultConfig(t)
 		cfg.DataDir = t.TempDir()
 		if _, err := New(cfg); err == nil || !strings.Contains(err.Error(), "open database") {
 			t.Fatalf("expected open database error, got %v", err)
@@ -3266,7 +3275,7 @@ func TestNewRepairsAlreadyEnrolledProjectsMissingHistoricalSyncMutations(t *test
 		t.Fatalf("close legacy db: %v", err)
 	}
 
-	cfg := DefaultConfig()
+	cfg := mustDefaultConfig(t)
 	cfg.DataDir = dataDir
 
 	s, err := New(cfg)

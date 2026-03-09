@@ -495,7 +495,10 @@ func TestMainDispatchRemainingCommands(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("ENGRAM_DATA_DIR", dataDir)
 
-	seedCfg := store.DefaultConfig()
+	seedCfg, scErr := store.DefaultConfig()
+	if scErr != nil {
+		t.Fatalf("DefaultConfig: %v", scErr)
+	}
 	seedCfg.DataDir = dataDir
 	focusID := mustSeedObservation(t, seedCfg, "s-main", "main-proj", "note", "focus", "focus content", "project")
 

@@ -53,7 +53,10 @@ func TestStartUsesInjectedServe(t *testing.T) {
 
 func newServerTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	cfg := store.DefaultConfig()
+	cfg, err := store.DefaultConfig()
+	if err != nil {
+		t.Fatalf("DefaultConfig: %v", err)
+	}
 	cfg.DataDir = t.TempDir()
 
 	s, err := store.New(cfg)

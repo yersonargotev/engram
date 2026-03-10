@@ -760,12 +760,13 @@ func TestCloudConfigLoadSave(t *testing.T) {
 		UserID:       "u-123",
 		Username:     "alice",
 	}
-	if err := saveCloudConfig(cc); err != nil {
+	dataDir := filepath.Join(tmpHome, ".engram")
+	if err := saveCloudConfig(dataDir, cc); err != nil {
 		t.Fatalf("saveCloudConfig: %v", err)
 	}
 
 	// Verify file permissions
-	path := filepath.Join(tmpHome, ".engram", "cloud.json")
+	path := filepath.Join(dataDir, "cloud.json")
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat config file: %v", err)
@@ -776,7 +777,7 @@ func TestCloudConfigLoadSave(t *testing.T) {
 	}
 
 	// Test load
-	loaded, err := loadCloudConfig()
+	loaded, err := loadCloudConfig(dataDir)
 	if err != nil {
 		t.Fatalf("loadCloudConfig: %v", err)
 	}
@@ -786,8 +787,8 @@ func TestCloudConfigLoadSave(t *testing.T) {
 	}
 
 	// Test load with missing file
-	userHomeDir = func() (string, error) { return t.TempDir(), nil }
-	_, err = loadCloudConfig()
+	emptyDir := filepath.Join(t.TempDir(), ".engram")
+	_, err = loadCloudConfig(emptyDir)
 	if err == nil {
 		t.Fatalf("expected error loading from nonexistent path")
 	}
@@ -977,7 +978,7 @@ func TestCmdCloudRegisterServerRequired(t *testing.T) {
 	exitFunc = func(code int) { exitCalled = true }
 
 	withArgs(t, "engram", "cloud", "register")
-	_, stderr := captureOutput(t, func() { cmdCloudRegister() })
+	_, stderr := captureOutput(t, func() { cmdCloudRegister(t.TempDir()) })
 
 	if !exitCalled {
 		t.Fatalf("expected exit for missing --server")
@@ -994,7 +995,7 @@ func TestCmdCloudLoginServerRequired(t *testing.T) {
 	exitFunc = func(code int) { exitCalled = true }
 
 	withArgs(t, "engram", "cloud", "login")
-	_, stderr := captureOutput(t, func() { cmdCloudLogin() })
+	_, stderr := captureOutput(t, func() { cmdCloudLogin(t.TempDir()) })
 
 	if !exitCalled {
 		t.Fatalf("expected exit for missing --server")
@@ -1044,12 +1045,10 @@ func TestCmdCloudRegisterIntegration(t *testing.T) {
 
 	// Override home dir for config save
 	tmpHome := t.TempDir()
-	oldHome := userHomeDir
-	t.Cleanup(func() { userHomeDir = oldHome })
-	userHomeDir = func() (string, error) { return tmpHome, nil }
+	dataDir := filepath.Join(tmpHome, ".engram")
 
 	withArgs(t, "engram", "cloud", "register", "--server", srv.URL)
-	stdout, stderr := captureOutput(t, func() { cmdCloudRegister() })
+	stdout, stderr := captureOutput(t, func() { cmdCloudRegister(dataDir) })
 	if stderr != "" {
 		t.Fatalf("expected no stderr, got: %q", stderr)
 	}
@@ -1058,7 +1057,7 @@ func TestCmdCloudRegisterIntegration(t *testing.T) {
 	}
 
 	// Verify config was saved
-	cc, err := loadCloudConfig()
+	cc, err := loadCloudConfig(dataDir)
 	if err != nil {
 		t.Fatalf("loadCloudConfig after register: %v", err)
 	}
@@ -1104,12 +1103,10 @@ func TestCmdCloudLoginIntegration(t *testing.T) {
 	cloudHTTPClient = func() *http.Client { return srv.Client() }
 
 	tmpHome := t.TempDir()
-	oldHome := userHomeDir
-	t.Cleanup(func() { userHomeDir = oldHome })
-	userHomeDir = func() (string, error) { return tmpHome, nil }
+	dataDir := filepath.Join(tmpHome, ".engram")
 
 	withArgs(t, "engram", "cloud", "login", "--server", srv.URL)
-	stdout, stderr := captureOutput(t, func() { cmdCloudLogin() })
+	stdout, stderr := captureOutput(t, func() { cmdCloudLogin(dataDir) })
 	if stderr != "" {
 		t.Fatalf("expected no stderr, got: %q", stderr)
 	}
@@ -1117,7 +1114,7 @@ func TestCmdCloudLoginIntegration(t *testing.T) {
 		t.Fatalf("expected login success, got: %q", stdout)
 	}
 
-	cc, err := loadCloudConfig()
+	cc, err := loadCloudConfig(dataDir)
 	if err != nil {
 		t.Fatalf("loadCloudConfig after login: %v", err)
 	}
@@ -1153,11 +1150,9 @@ func TestCmdCloudAPIKey(t *testing.T) {
 
 	// Set up config with saved token
 	tmpHome := t.TempDir()
-	oldHome := userHomeDir
-	t.Cleanup(func() { userHomeDir = oldHome })
-	userHomeDir = func() (string, error) { return tmpHome, nil }
+	dataDir := filepath.Join(tmpHome, ".engram")
 
-	saveCloudConfig(&CloudConfig{
+	saveCloudConfig(dataDir, &CloudConfig{
 		ServerURL: srv.URL,
 		Token:     "my-cloud-token",
 		UserID:    "u-api",
@@ -1169,7 +1164,7 @@ func TestCmdCloudAPIKey(t *testing.T) {
 	cloudHTTPClient = func() *http.Client { return srv.Client() }
 
 	withArgs(t, "engram", "cloud", "api-key")
-	stdout, stderr := captureOutput(t, func() { cmdCloudAPIKey() })
+	stdout, stderr := captureOutput(t, func() { cmdCloudAPIKey(dataDir) })
 	if stderr != "" {
 		t.Fatalf("expected no stderr, got: %q", stderr)
 	}
@@ -1213,10 +1208,8 @@ func TestCmdCloudSyncFlagOverridesEnvAndConfigNoOp(t *testing.T) {
 	t.Setenv("ENGRAM_TOKEN", "env-token")
 
 	tmpHome := t.TempDir()
-	oldHome := userHomeDir
-	t.Cleanup(func() { userHomeDir = oldHome })
-	userHomeDir = func() (string, error) { return tmpHome, nil }
-	if err := saveCloudConfig(&CloudConfig{ServerURL: "http://config.invalid", Token: "config-token"}); err != nil {
+	syncDataDir := filepath.Join(tmpHome, ".engram")
+	if err := saveCloudConfig(syncDataDir, &CloudConfig{ServerURL: "http://config.invalid", Token: "config-token"}); err != nil {
 		t.Fatalf("saveCloudConfig: %v", err)
 	}
 
@@ -1224,8 +1217,10 @@ func TestCmdCloudSyncFlagOverridesEnvAndConfigNoOp(t *testing.T) {
 	t.Cleanup(func() { cloudHTTPClient = oldClient })
 	cloudHTTPClient = func() *http.Client { return srv.Client() }
 
+	syncCfg := testConfig(t)
+	syncCfg.DataDir = syncDataDir
 	withArgs(t, "engram", "cloud", "sync", "--server", srv.URL, "--token", "cli-token", "--legacy")
-	stdout, stderr := captureOutput(t, func() { cmdCloudSync(testConfig(t)) })
+	stdout, stderr := captureOutput(t, func() { cmdCloudSync(syncCfg) })
 	if stderr != "" {
 		t.Fatalf("expected no stderr, got %q", stderr)
 	}
@@ -1272,10 +1267,8 @@ func TestCmdCloudStatusEnvOverridesConfig(t *testing.T) {
 	t.Setenv("ENGRAM_TOKEN", "env-token")
 
 	tmpHome := t.TempDir()
-	oldHome := userHomeDir
-	t.Cleanup(func() { userHomeDir = oldHome })
-	userHomeDir = func() (string, error) { return tmpHome, nil }
-	if err := saveCloudConfig(&CloudConfig{ServerURL: "http://config.invalid", Token: "config-token", Username: "config-user"}); err != nil {
+	statusDataDir := filepath.Join(tmpHome, ".engram")
+	if err := saveCloudConfig(statusDataDir, &CloudConfig{ServerURL: "http://config.invalid", Token: "config-token", Username: "config-user"}); err != nil {
 		t.Fatalf("saveCloudConfig: %v", err)
 	}
 
@@ -1283,7 +1276,9 @@ func TestCmdCloudStatusEnvOverridesConfig(t *testing.T) {
 	t.Cleanup(func() { cloudHTTPClient = oldClient })
 	cloudHTTPClient = func() *http.Client { return srv.Client() }
 
-	stdout, stderr := captureOutput(t, func() { cmdCloudStatus(testConfig(t)) })
+	statusCfg := testConfig(t)
+	statusCfg.DataDir = statusDataDir
+	stdout, stderr := captureOutput(t, func() { cmdCloudStatus(statusCfg) })
 	if stderr != "" {
 		t.Fatalf("expected no stderr, got %q", stderr)
 	}

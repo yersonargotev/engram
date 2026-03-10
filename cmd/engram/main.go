@@ -195,8 +195,8 @@ func (a *syncStatusAdapter) Status() server.SyncStatus {
 
 // tryStartAutosync attempts to create and start a background sync manager.
 // Returns (manager, cancel) on success, or (nil, nil) if cloud is not configured.
-func tryStartAutosync(s *store.Store) (*autosync.Manager, context.CancelFunc) {
-	serverURL, token, err := resolveCloudClientConfig("", "", true)
+func tryStartAutosync(s *store.Store, dataDir string) (*autosync.Manager, context.CancelFunc) {
+	serverURL, token, err := resolveCloudClientConfig(dataDir, "", "", true)
 	if err != nil || serverURL == "" || token == "" {
 		return nil, nil
 	}
@@ -208,10 +208,10 @@ func tryStartAutosync(s *store.Store) (*autosync.Manager, context.CancelFunc) {
 	}
 
 	// Configure token refresh if available.
-	if cc, err := loadCloudConfig(); err == nil && cc != nil && cc.ServerURL == serverURL && cc.RefreshToken != "" {
+	if cc, err := loadCloudConfig(dataDir); err == nil && cc != nil && cc.ServerURL == serverURL && cc.RefreshToken != "" {
 		rt.SetTokenRefresher(cc.RefreshToken, func(newToken string) error {
 			cc.Token = newToken
-			return saveCloudConfig(cc)
+			return saveCloudConfig(dataDir, cc)
 		})
 	}
 
@@ -250,7 +250,7 @@ func cmdServe(cfg store.Config) {
 	srv := newHTTPServer(s, port)
 
 	// Start background autosync if cloud is configured.
-	if mgr, cancel := tryStartAutosync(s); mgr != nil {
+	if mgr, cancel := tryStartAutosync(s, cfg.DataDir); mgr != nil {
 		defer cancel()
 		srv.SetOnWrite(mgr.NotifyDirty)
 		srv.SetSyncStatus(&syncStatusAdapter{mgr: mgr})
@@ -290,7 +290,7 @@ func cmdMCP(cfg store.Config) {
 
 	// Start background autosync if cloud is configured.
 	// MCP is a long-lived stdio process — same lifecycle as serve.
-	if _, cancel := tryStartAutosync(s); cancel != nil {
+	if _, cancel := tryStartAutosync(s, cfg.DataDir); cancel != nil {
 		defer cancel()
 	}
 
@@ -378,7 +378,7 @@ func cmdSearch(cfg store.Config) {
 		exitFunc(1)
 	}
 
-	resolvedRemoteURL, resolvedToken, err := resolveCloudClientConfig(remoteURL, token, false)
+	resolvedRemoteURL, resolvedToken, err := resolveCloudClientConfig(cfg.DataDir, remoteURL, token, false)
 	if err != nil {
 		fatal(err)
 		return
@@ -592,7 +592,7 @@ func cmdContext(cfg store.Config) {
 		}
 	}
 
-	resolvedRemoteURL, resolvedToken, err := resolveCloudClientConfig(remoteURL, token, false)
+	resolvedRemoteURL, resolvedToken, err := resolveCloudClientConfig(cfg.DataDir, remoteURL, token, false)
 	if err != nil {
 		fatal(err)
 		return
@@ -765,7 +765,7 @@ func cmdSync(cfg store.Config) {
 	}
 	defer s.Close()
 
-	resolvedRemoteURL, resolvedToken, err := resolveCloudClientConfig(remoteURL, token, false)
+	resolvedRemoteURL, resolvedToken, err := resolveCloudClientConfig(cfg.DataDir, remoteURL, token, false)
 	if err != nil {
 		fatal(err)
 	}
@@ -1012,7 +1012,10 @@ type CloudConfig struct {
 	Username     string `json:"username"`
 }
 
-func cloudConfigPath() string {
+func cloudConfigPath(dataDir string) string {
+	if dataDir != "" {
+		return filepath.Join(dataDir, "cloud.json")
+	}
 	home, err := userHomeDir()
 	if err != nil {
 		return ""
@@ -1020,8 +1023,8 @@ func cloudConfigPath() string {
 	return filepath.Join(home, ".engram", "cloud.json")
 }
 
-func loadCloudConfig() (*CloudConfig, error) {
-	path := cloudConfigPath()
+func loadCloudConfig(dataDir string) (*CloudConfig, error) {
+	path := cloudConfigPath(dataDir)
 	if path == "" {
 		return nil, fmt.Errorf("could not determine home directory")
 	}
@@ -1036,7 +1039,7 @@ func loadCloudConfig() (*CloudConfig, error) {
 	return &cc, nil
 }
 
-func resolveCloudClientConfig(cliServerURL, cliToken string, useConfigServer bool) (string, string, error) {
+func resolveCloudClientConfig(dataDir, cliServerURL, cliToken string, useConfigServer bool) (string, string, error) {
 	serverURL := cliServerURL
 	token := cliToken
 
@@ -1048,7 +1051,7 @@ func resolveCloudClientConfig(cliServerURL, cliToken string, useConfigServer boo
 	}
 
 	var cc *CloudConfig
-	if loaded, err := loadCloudConfig(); err == nil {
+	if loaded, err := loadCloudConfig(dataDir); err == nil {
 		cc = loaded
 	}
 	if useConfigServer && serverURL == "" && cc != nil {
@@ -1067,8 +1070,8 @@ func resolveCloudClientConfig(cliServerURL, cliToken string, useConfigServer boo
 	return serverURL, token, nil
 }
 
-func saveCloudConfig(cc *CloudConfig) error {
-	path := cloudConfigPath()
+func saveCloudConfig(dataDir string, cc *CloudConfig) error {
+	path := cloudConfigPath(dataDir)
 	if path == "" {
 		return fmt.Errorf("could not determine home directory")
 	}
@@ -1094,9 +1097,9 @@ func cmdCloud(cfg store.Config) {
 	case "serve":
 		cmdCloudServe()
 	case "register":
-		cmdCloudRegister()
+		cmdCloudRegister(cfg.DataDir)
 	case "login":
-		cmdCloudLogin()
+		cmdCloudLogin(cfg.DataDir)
 	case "sync":
 		cmdCloudSync(cfg)
 	case "sync-status":
@@ -1104,7 +1107,7 @@ func cmdCloud(cfg store.Config) {
 	case "status":
 		cmdCloudStatus(cfg)
 	case "api-key":
-		cmdCloudAPIKey()
+		cmdCloudAPIKey(cfg.DataDir)
 	case "enroll":
 		cmdCloudEnroll(cfg)
 	case "unenroll":
@@ -1176,7 +1179,7 @@ func cmdCloudServe() {
 	}
 }
 
-func cmdCloudRegister() {
+func cmdCloudRegister(dataDir string) {
 	serverURL := ""
 	for i := 3; i < len(os.Args); i++ {
 		switch os.Args[i] {
@@ -1255,15 +1258,15 @@ func cmdCloudRegister() {
 		UserID:       result.UserID,
 		Username:     result.Username,
 	}
-	if err := saveCloudConfig(cc); err != nil {
+	if err := saveCloudConfig(dataDir, cc); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not save config: %v\n", err)
 	}
 
 	fmt.Printf("Registered as %s (user_id: %s)\n", result.Username, result.UserID)
-	fmt.Printf("Credentials saved to %s\n", cloudConfigPath())
+	fmt.Printf("Credentials saved to %s\n", cloudConfigPath(dataDir))
 }
 
-func cmdCloudLogin() {
+func cmdCloudLogin(dataDir string) {
 	serverURL := ""
 	for i := 3; i < len(os.Args); i++ {
 		switch os.Args[i] {
@@ -1336,12 +1339,12 @@ func cmdCloudLogin() {
 		UserID:       result.UserID,
 		Username:     result.Username,
 	}
-	if err := saveCloudConfig(cc); err != nil {
+	if err := saveCloudConfig(dataDir, cc); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not save config: %v\n", err)
 	}
 
 	fmt.Printf("Logged in as %s\n", result.Username)
-	fmt.Printf("Credentials saved to %s\n", cloudConfigPath())
+	fmt.Printf("Credentials saved to %s\n", cloudConfigPath(dataDir))
 }
 
 func cmdCloudSync(cfg store.Config) {
@@ -1365,7 +1368,7 @@ func cmdCloudSync(cfg store.Config) {
 		}
 	}
 
-	serverURL, token, err := resolveCloudClientConfig(serverURL, token, true)
+	serverURL, token, err := resolveCloudClientConfig(cfg.DataDir, serverURL, token, true)
 	if err != nil {
 		fatal(err)
 	}
@@ -1383,10 +1386,10 @@ func cmdCloudSync(cfg store.Config) {
 	if err != nil {
 		fatal(err)
 	}
-	if cc, err := loadCloudConfig(); err == nil && cc != nil && cc.ServerURL == serverURL && cc.RefreshToken != "" {
+	if cc, err := loadCloudConfig(cfg.DataDir); err == nil && cc != nil && cc.ServerURL == serverURL && cc.RefreshToken != "" {
 		rt.SetTokenRefresher(cc.RefreshToken, func(newToken string) error {
 			cc.Token = newToken
-			return saveCloudConfig(cc)
+			return saveCloudConfig(cfg.DataDir, cc)
 		})
 	}
 
@@ -1502,7 +1505,7 @@ func cmdCloudStatus(cfg store.Config) {
 		}
 	}
 
-	serverURL, token, err := resolveCloudClientConfig(serverURL, token, true)
+	serverURL, token, err := resolveCloudClientConfig(cfg.DataDir, serverURL, token, true)
 	if err != nil {
 		fatal(err)
 	}
@@ -1534,8 +1537,8 @@ func cmdCloudStatus(cfg store.Config) {
 	fmt.Printf("  Pending import:  %d\n", pending)
 }
 
-func cmdCloudAPIKey() {
-	cc, err := loadCloudConfig()
+func cmdCloudAPIKey(dataDir string) {
+	cc, err := loadCloudConfig(dataDir)
 	if err != nil {
 		fatal(fmt.Errorf("load cloud config: %w (run 'engram cloud login' first)", err))
 	}

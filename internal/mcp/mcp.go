@@ -612,7 +612,7 @@ func handleSearch(s *store.Store) server.ToolHandlerFunc {
 			preview := truncate(r.Content, 300)
 			if len(r.Content) > 300 {
 				anyTruncated = true
-				preview += " [truncated — use mem_get_observation(id) for full content]"
+				preview += " [preview]"
 			}
 			fmt.Fprintf(&b, "[%d] #%d (%s) — %s\n    %s\n    %s%s | scope: %s\n\n",
 				i+1, r.ID, r.Type, r.Title,
@@ -620,7 +620,7 @@ func handleSearch(s *store.Store) server.ToolHandlerFunc {
 				r.CreatedAt, project, r.Scope)
 		}
 		if anyTruncated {
-			fmt.Fprintf(&b, "---\n⚠ Content previews above are truncated to 300 chars. Call mem_get_observation(id: <ID>) to retrieve full content.\n")
+			fmt.Fprintf(&b, "---\nResults above are previews (300 chars). To read the full content of a specific memory, call mem_get_observation(id: <ID>).\n")
 		}
 
 		return mcp.NewToolResultText(b.String()), nil

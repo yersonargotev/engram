@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	cloudauth "github.com/Gentleman-Programming/engram/internal/cloud/auth"
-	"github.com/Gentleman-Programming/engram/internal/cloud/cloudstore"
+	cloudauth "github.com/yersonargotev/engram/internal/cloud/auth"
+	"github.com/yersonargotev/engram/internal/cloud/cloudstore"
 )
 
 type managedDashboardPrincipalStore struct {

@@ -102,25 +102,25 @@ None. All blockers cleared.
 Command: `go test ./...`
 
 ```
-ok  	github.com/Gentleman-Programming/engram/cmd/engram	2.430s
-ok  	github.com/Gentleman-Programming/engram/internal/cloud	(cached)
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/auth	0.020s
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/autosync	0.729s
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/chunkcodec	0.011s
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/cloudserver	0.055s
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/cloudstore	0.019s
-?   	github.com/Gentleman-Programming/engram/internal/cloud/constants	[no test files]
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/dashboard	0.036s
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/remote	0.036s
-ok  	github.com/Gentleman-Programming/engram/internal/mcp	2.443s
-ok  	github.com/Gentleman-Programming/engram/internal/obsidian	0.211s
-ok  	github.com/Gentleman-Programming/engram/internal/project	(cached)
-ok  	github.com/Gentleman-Programming/engram/internal/server	0.366s
-ok  	github.com/Gentleman-Programming/engram/internal/setup	(cached)
-ok  	github.com/Gentleman-Programming/engram/internal/store	1.501s
-ok  	github.com/Gentleman-Programming/engram/internal/sync	0.404s
-ok  	github.com/Gentleman-Programming/engram/internal/tui	0.138s
-ok  	github.com/Gentleman-Programming/engram/internal/version	(cached)
+ok  	github.com/yersonargotev/engram/cmd/engram	2.430s
+ok  	github.com/yersonargotev/engram/internal/cloud	(cached)
+ok  	github.com/yersonargotev/engram/internal/cloud/auth	0.020s
+ok  	github.com/yersonargotev/engram/internal/cloud/autosync	0.729s
+ok  	github.com/yersonargotev/engram/internal/cloud/chunkcodec	0.011s
+ok  	github.com/yersonargotev/engram/internal/cloud/cloudserver	0.055s
+ok  	github.com/yersonargotev/engram/internal/cloud/cloudstore	0.019s
+?   	github.com/yersonargotev/engram/internal/cloud/constants	[no test files]
+ok  	github.com/yersonargotev/engram/internal/cloud/dashboard	0.036s
+ok  	github.com/yersonargotev/engram/internal/cloud/remote	0.036s
+ok  	github.com/yersonargotev/engram/internal/mcp	2.443s
+ok  	github.com/yersonargotev/engram/internal/obsidian	0.211s
+ok  	github.com/yersonargotev/engram/internal/project	(cached)
+ok  	github.com/yersonargotev/engram/internal/server	0.366s
+ok  	github.com/yersonargotev/engram/internal/setup	(cached)
+ok  	github.com/yersonargotev/engram/internal/store	1.501s
+ok  	github.com/yersonargotev/engram/internal/sync	0.404s
+ok  	github.com/yersonargotev/engram/internal/tui	0.138s
+ok  	github.com/yersonargotev/engram/internal/version	(cached)
 ```
 
 All 19 packages GREEN. `[no test files]` on `internal/cloud/constants` is expected (constants-only package).

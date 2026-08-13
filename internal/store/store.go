@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Gentleman-Programming/engram/internal/timeutil"
+	"github.com/yersonargotev/engram/internal/timeutil"
 	sqlite "modernc.org/sqlite"
 )
 

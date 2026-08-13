@@ -36,7 +36,7 @@ Reset anytime with the cleanup section at the end.
 ## 1. Clone the branch
 
 ```bash
-git clone https://github.com/Gentleman-Programming/engram.git engram-beta-repo
+git clone https://github.com/yersonargotev/engram.git engram-beta-repo
 cd engram-beta-repo
 git checkout feat/memory-conflict-surfacing-cloud-sync
 ```
@@ -260,7 +260,7 @@ The agent will see `mem_compare(memory_id_a, memory_id_b, relation, confidence, 
 - **Phase 4**: did your CLI invocation work? Did you get $0 cost (sub) or unexpected charges (API)? Did the LLM verdict make sense for the pair?
 - **General**: any latency, hangs, weird logs, missing features.
 
-Report at: https://github.com/Gentleman-Programming/engram/issues (tag `beta-phase-2-3-4`).
+Report at: https://github.com/yersonargotev/engram/issues (tag `beta-phase-2-3-4`).
 
 ---
 

@@ -12,9 +12,9 @@ package tui
 import (
 	"errors"
 
-	"github.com/Gentleman-Programming/engram/internal/setup"
-	"github.com/Gentleman-Programming/engram/internal/store"
-	"github.com/Gentleman-Programming/engram/internal/version"
+	"github.com/yersonargotev/engram/internal/setup"
+	"github.com/yersonargotev/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/version"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"

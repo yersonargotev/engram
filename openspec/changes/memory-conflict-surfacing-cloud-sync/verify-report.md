@@ -74,30 +74,30 @@ $ go test ./internal/store/... -run "TestJudgeRelation_MissingSource_EmitsWarnin
 === RUN   TestJudgeRelation_MissingSource_EmitsWarningLog
 --- PASS: TestJudgeRelation_MissingSource_EmitsWarningLog (0.01s)
 PASS
-ok  	github.com/Gentleman-Programming/engram/internal/store	0.015s
+ok  	github.com/yersonargotev/engram/internal/store	0.015s
 ```
 
 ```
 $ go test ./... -count=1
-ok  	github.com/Gentleman-Programming/engram/cmd/engram                    2.342s
-ok  	github.com/Gentleman-Programming/engram/internal/cloud                0.008s
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/auth           0.016s
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/autosync       0.730s
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/chunkcodec     0.021s
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/cloudserver    0.068s
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/cloudstore     0.019s
-?   	github.com/Gentleman-Programming/engram/internal/cloud/constants      [no test files]
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/dashboard      0.038s
-ok  	github.com/Gentleman-Programming/engram/internal/cloud/remote         0.033s
-ok  	github.com/Gentleman-Programming/engram/internal/mcp                  2.688s
-ok  	github.com/Gentleman-Programming/engram/internal/obsidian             0.221s
-ok  	github.com/Gentleman-Programming/engram/internal/project              0.746s
-ok  	github.com/Gentleman-Programming/engram/internal/server               0.240s
-ok  	github.com/Gentleman-Programming/engram/internal/setup                0.193s
-ok  	github.com/Gentleman-Programming/engram/internal/store                1.447s
-ok  	github.com/Gentleman-Programming/engram/internal/sync                 0.448s
-ok  	github.com/Gentleman-Programming/engram/internal/tui                  0.158s
-ok  	github.com/Gentleman-Programming/engram/internal/version              0.063s
+ok  	github.com/yersonargotev/engram/cmd/engram                    2.342s
+ok  	github.com/yersonargotev/engram/internal/cloud                0.008s
+ok  	github.com/yersonargotev/engram/internal/cloud/auth           0.016s
+ok  	github.com/yersonargotev/engram/internal/cloud/autosync       0.730s
+ok  	github.com/yersonargotev/engram/internal/cloud/chunkcodec     0.021s
+ok  	github.com/yersonargotev/engram/internal/cloud/cloudserver    0.068s
+ok  	github.com/yersonargotev/engram/internal/cloud/cloudstore     0.019s
+?   	github.com/yersonargotev/engram/internal/cloud/constants      [no test files]
+ok  	github.com/yersonargotev/engram/internal/cloud/dashboard      0.038s
+ok  	github.com/yersonargotev/engram/internal/cloud/remote         0.033s
+ok  	github.com/yersonargotev/engram/internal/mcp                  2.688s
+ok  	github.com/yersonargotev/engram/internal/obsidian             0.221s
+ok  	github.com/yersonargotev/engram/internal/project              0.746s
+ok  	github.com/yersonargotev/engram/internal/server               0.240s
+ok  	github.com/yersonargotev/engram/internal/setup                0.193s
+ok  	github.com/yersonargotev/engram/internal/store                1.447s
+ok  	github.com/yersonargotev/engram/internal/sync                 0.448s
+ok  	github.com/yersonargotev/engram/internal/tui                  0.158s
+ok  	github.com/yersonargotev/engram/internal/version              0.063s
 ```
 
 All 19 packages PASS. 0 regressions.

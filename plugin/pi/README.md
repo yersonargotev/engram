@@ -1,15 +1,15 @@
 # Engram for Pi
 
 <p align="center">
-  <img width="960" alt="Engram — One Brain. Local or Cloud." src="https://raw.githubusercontent.com/Gentleman-Programming/engram/main/assets/branding/engram-banner.png" />
+  <img width="960" alt="Engram — One Brain. Local or Cloud." src="https://raw.githubusercontent.com/yersonargotev/engram/main/assets/branding/engram-banner.png" />
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/gentle-engram"><img alt="npm" src="https://img.shields.io/npm/v/gentle-engram?color=blue" /></a>
-  <a href="https://github.com/Gentleman-Programming/engram"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Gentleman-Programming/engram?style=flat&color=yellow" /></a>
-  <a href="https://github.com/Gentleman-Programming/engram/graphs/contributors"><img alt="Contributors" src="https://img.shields.io/github/contributors/Gentleman-Programming/engram?color=brightgreen" /></a>
-  <a href="https://github.com/Gentleman-Programming/engram/actions"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Gentleman-Programming/engram/ci.yml?label=CI" /></a>
-  <a href="https://github.com/Gentleman-Programming/engram/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/Gentleman-Programming/engram" /></a>
+  <a href="https://github.com/yersonargotev/engram"><img alt="GitHub stars" src="https://img.shields.io/github/stars/yersonargotev/engram?style=flat&color=yellow" /></a>
+  <a href="https://github.com/yersonargotev/engram/graphs/contributors"><img alt="Contributors" src="https://img.shields.io/github/contributors/yersonargotev/engram?color=brightgreen" /></a>
+  <a href="https://github.com/yersonargotev/engram/actions"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/yersonargotev/engram/ci.yml?label=CI" /></a>
+  <a href="https://github.com/yersonargotev/engram/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/yersonargotev/engram" /></a>
   <a href="https://www.youtube.com/c/GentlemanProgramming"><img alt="YouTube" src="https://img.shields.io/badge/YouTube-Gentleman%20Programming-red?logo=youtube&logoColor=white" /></a>
 </p>
 
@@ -39,17 +39,17 @@ Install it once. Keep coding. Pi remembers.
 - **Token-efficient by design** — Engram stores curated summaries, decisions, prompts, and session handoffs instead of a noisy firehose of raw tool calls. Agents search first, then fetch only the relevant memory.
 - **Compaction survival** — before context resets, the Memory Protocol pushes summaries into Engram so the next session can recover what matters.
 - **Simple Pi setup** — install the Pi package, install the MCP adapter, run `pi-engram init`, restart Pi.
-- **Built by Gentleman Programming** — Engram comes from the Gentleman Programming ecosystem: an open-source engineering community, YouTube channel, and hands-on agentic-coding workflow around real tools instead of toy demos.
+- **Built in public** — Engram is developed as an open-source, hands-on agentic-coding tool rather than a toy demo.
 - **Real open-source project** — Engram ships docs, releases, beta programs, contributor guidelines, issue templates, CI, and a growing contributor/community workflow around the main repository.
 
 ## Built with the community
 
-Engram is not an abandoned side script or a black-box SaaS. It is built in public by **Gentleman Programming** for developers who are already using coding agents seriously.
+Engram is not an abandoned side script or a black-box SaaS. It is built in public for developers who are already using coding agents seriously.
 
 - **YouTube channel**: tutorials, demos, and product thinking around AI coding workflows — <https://www.youtube.com/c/GentlemanProgramming>
 - **Engram + SDD + Skills demo**: <https://www.youtube.com/watch?v=UoS_LP-PCG8>
 - **Engram Cloud demo**: <https://www.youtube.com/watch?v=JPZkbGgJNUQ>
-- **GitHub community**: issues, discussions, beta feedback, contributors, and transparent roadmap work — <https://github.com/Gentleman-Programming/engram>
+- **GitHub community**: issues, discussions, beta feedback, contributors, and transparent roadmap work — <https://github.com/yersonargotev/engram>
 
 The goal is simple: make agentic development feel like a real engineering system — memory, specs, skills, cloud sync, review discipline, and community learning all connected.
 
@@ -69,8 +69,8 @@ Engram does not try to make the model read everything. It gives the model a disc
 ## See the memory
 
 <p align="center">
-  <img width="380" alt="Engram TUI dashboard" src="https://raw.githubusercontent.com/Gentleman-Programming/engram/main/assets/tui-dashboard.png" />
-  <img width="380" alt="Engram search results" src="https://raw.githubusercontent.com/Gentleman-Programming/engram/main/assets/tui-search.png" />
+  <img width="380" alt="Engram TUI dashboard" src="https://raw.githubusercontent.com/yersonargotev/engram/main/assets/tui-dashboard.png" />
+  <img width="380" alt="Engram search results" src="https://raw.githubusercontent.com/yersonargotev/engram/main/assets/tui-search.png" />
 </p>
 
 Engram includes a terminal UI for browsing sessions, observations, prompts, projects, timelines, and search results. Engram Cloud adds browser visibility for shared project memory.
@@ -256,7 +256,6 @@ MCP tool calls still use Engram core's canonical project resolver at call time. 
 
 - Run `engram tui` to inspect stored memories.
 - Use `mem_current_project` to confirm project detection before writing memories.
-- Read the main Engram setup guide: <https://github.com/Gentleman-Programming/engram/blob/main/docs/AGENT-SETUP.md>
-- Explore Engram Cloud: <https://github.com/Gentleman-Programming/engram/blob/main/docs/engram-cloud/README.md>
-- Watch Gentleman Programming on YouTube: <https://www.youtube.com/c/GentlemanProgramming>
-- Join the project through issues, discussions, and beta feedback: <https://github.com/Gentleman-Programming/engram>
+- Read the main Engram setup guide: <https://github.com/yersonargotev/engram/blob/main/docs/AGENT-SETUP.md>
+- Explore Engram Cloud: <https://github.com/yersonargotev/engram/blob/main/docs/engram-cloud/README.md>
+- Join the project through issues, discussions, and beta feedback: <https://github.com/yersonargotev/engram>

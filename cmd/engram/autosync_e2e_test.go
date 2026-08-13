@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Gentleman-Programming/engram/internal/cloud/autosync"
-	"github.com/Gentleman-Programming/engram/internal/cloud/remote"
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/cloud/autosync"
+	"github.com/yersonargotev/engram/internal/cloud/remote"
+	"github.com/yersonargotev/engram/internal/store"
 	_ "modernc.org/sqlite"
 )
 

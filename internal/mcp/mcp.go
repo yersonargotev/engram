@@ -23,11 +23,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Gentleman-Programming/engram/internal/diagnostic"
-	"github.com/Gentleman-Programming/engram/internal/memoryops"
-	projectpkg "github.com/Gentleman-Programming/engram/internal/project"
-	"github.com/Gentleman-Programming/engram/internal/store"
-	"github.com/Gentleman-Programming/engram/internal/timeutil"
+	"github.com/yersonargotev/engram/internal/diagnostic"
+	"github.com/yersonargotev/engram/internal/memoryops"
+	projectpkg "github.com/yersonargotev/engram/internal/project"
+	"github.com/yersonargotev/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/timeutil"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Gentleman-Programming/engram/internal/timeutil"
-	"github.com/Gentleman-Programming/engram/internal/version"
+	"github.com/yersonargotev/engram/internal/timeutil"
+	"github.com/yersonargotev/engram/internal/version"
 	"github.com/charmbracelet/lipgloss"
 )
 

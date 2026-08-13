@@ -20,9 +20,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Gentleman-Programming/engram/internal/diagnostic"
-	projectpkg "github.com/Gentleman-Programming/engram/internal/project"
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/diagnostic"
+	projectpkg "github.com/yersonargotev/engram/internal/project"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 var loadServerStats = func(s *store.Store) (*store.Stats, error) {
@@ -939,7 +939,7 @@ func (s *Server) handleMigrateProject(w http.ResponseWriter, r *http.Request) {
 	// Normalize both names using the same rules the store applies so that
 	// case-only differences (e.g. "repo_name" vs "Repo_Name") are treated as
 	// identical and do not trigger a migration that would create duplicates.
-	// See: https://github.com/Gentleman-Programming/engram/issues/438
+	// See: https://github.com/yersonargotev/engram/issues/438
 	normalizedOld, _ := store.NormalizeProject(body.OldProject)
 	normalizedNew, _ := store.NormalizeProject(body.NewProject)
 	if normalizedOld == normalizedNew {

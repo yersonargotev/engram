@@ -15,7 +15,7 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     reviewers:
-      - "Gentleman-Programming"
+      - "yersonargotev"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
@@ -31,4 +31,4 @@ updates:
     commit-message:
       prefix: "chore(ci)"
     reviewers:
-      - "Gentleman-Programming"
+      - "yersonargotev"

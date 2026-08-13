@@ -5,10 +5,10 @@
   "description": "Persistent memory for AI coding agents. Survives across sessions and compactions.",
   "shortDescription": "Persistent memory with session tracking, compaction recovery, and Memory Protocol.",
   "author": {
-    "name": "Gentleman Programming"
+    "name": "yersonargotev"
   },
-  "homepage": "https://github.com/Gentleman-Programming/engram",
-  "repository": "https://github.com/Gentleman-Programming/engram",
+  "homepage": "https://github.com/yersonargotev/engram",
+  "repository": "https://github.com/yersonargotev/engram",
   "license": "MIT",
   "category": "Productivity",
   "keywords": ["memory", "persistence", "sessions", "context"],

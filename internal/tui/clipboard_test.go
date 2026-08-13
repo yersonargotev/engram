@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 // ─── OSC 52 sequence generation ──────────────────────────────────────────────

@@ -32,8 +32,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Gentleman-Programming/engram/internal/cloud/chunkcodec"
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/cloud/chunkcodec"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 var (

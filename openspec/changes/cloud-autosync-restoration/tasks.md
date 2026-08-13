@@ -93,7 +93,7 @@
 
 ### 2.2 GREEN — Replace `internal/cloud/autosync/manager.go` stub
 - [x] 2.2 Copy `engram-cloud` manager (451 LOC) and adapt:
-  - Update import paths to `github.com/Gentleman-Programming/engram/...`
+  - Update import paths to `github.com/yersonargotev/engram/...`
   - Extend `Status` struct with `ReasonCode`, `ReasonMessage` (already present in stub, verify)
   - Add `StopForUpgrade(ctx) error` — sets PhaseDisabled, drains pending, retains lease
   - Add `ResumeAfterUpgrade(ctx) error` — sets PhaseIdle, re-arms cycle

@@ -12,8 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Gentleman-Programming/engram/internal/cloud/cloudstore"
-	"github.com/Gentleman-Programming/engram/internal/timeutil"
+	"github.com/yersonargotev/engram/internal/cloud/cloudstore"
+	"github.com/yersonargotev/engram/internal/timeutil"
 )
 
 // ─── Pagination ─────────────────────────────────────────────────────────────

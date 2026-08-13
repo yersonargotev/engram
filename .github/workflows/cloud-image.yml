@@ -51,7 +51,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/gentleman-programming/engram
+          images: ghcr.io/yersonargotev/engram
           tags: |
             type=raw,value=latest,enable=${{ steps.refcheck.outputs.is_default_branch_tag == 'true' }}
             type=ref,event=tag
@@ -62,7 +62,7 @@ jobs:
           labels: |
             org.opencontainers.image.title=Engram Cloud
             org.opencontainers.image.description=Project-scoped sync and dashboard runtime for Engram Cloud.
-            org.opencontainers.image.source=https://github.com/gentleman-programming/engram
+            org.opencontainers.image.source=https://github.com/yersonargotev/engram
             org.opencontainers.image.licenses=MIT
 
       - name: Build and push multi-arch image

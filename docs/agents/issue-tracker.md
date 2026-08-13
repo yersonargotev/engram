@@ -15,7 +15,7 @@ Infer the repo from `git remote -v` — `gh` does this automatically when run in
 
 ## Pull requests as a triage surface
 
-**PRs as a request surface: no.** Human-authored PRs require `maintain` or `admin` permission; other PRs are closed automatically and redirected to issue forms.
+**PRs as a request surface: no.** GitHub's native pull request creation policy is `collaborators_only`; non-collaborators cannot open PRs and must use the public issue forms.
 
 If this policy is ever changed to `yes`, PRs would run through the same labels and states as issues, using the `gh pr` equivalents:
 

@@ -20,7 +20,7 @@ Use this skill when:
 
 ## Critical Rules
 
-1. **Only users with `maintain` or `admin` permission may open human-authored PRs**
+1. **GitHub's native policy permits PR creation only for invited repository collaborators**
 2. **Every PR MUST link an approved issue** — no exceptions
 3. **Every PR MUST have exactly one `type:*` label**, set by a maintainer or trusted automation
 4. **5 automated checks must pass** before merge is possible

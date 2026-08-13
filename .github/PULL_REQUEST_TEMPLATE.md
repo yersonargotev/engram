@@ -1,9 +1,9 @@
 <!-- 
   ⚠️ READ BEFORE SUBMITTING
   
-  Every PR must:
+  Only maintainers may open PRs. Every PR must:
   1. Link an approved issue (with status:approved label)
-  2. Have exactly one type:* label
+  2. Have exactly one type:* label, applied by a maintainer or trusted automation
   3. Pass all 5 automated checks
   
   See CONTRIBUTING.md for the full workflow.
@@ -21,7 +21,7 @@ Closes #
 
 ## 🏷️ PR Type
 
-<!-- REQUIRED: Check exactly ONE type below, then add the matching label to the PR. -->
+<!-- REQUIRED: Check exactly ONE type below. A maintainer or trusted automation adds the matching label. -->
 <!-- Automated check: "Check PR Has type:* Label" verifies the label exists. -->
 
 - [ ] `type:bug` — Bug fix
@@ -73,10 +73,10 @@ These run automatically and **all must pass** before merge:
 
 ---
 
-## ✅ Contributor Checklist
+## ✅ Maintainer Checklist
 
 - [ ] I linked an approved issue above (`Closes #N`)
-- [ ] I added exactly **one** `type:*` label to this PR
+- [ ] I added exactly **one** `type:*` label to this PR, or verified trusted automation added it
 - [ ] I ran unit tests locally: `go test ./...`
 - [ ] I ran e2e tests locally: `go test -tags e2e ./internal/server/...`
 - [ ] Docs updated (if behavior changed)

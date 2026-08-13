@@ -109,7 +109,7 @@ jobs:
               core.setFailed(
                 '❌ PR must have exactly one type:* label.\n' +
                 'Valid types: type:bug, type:feature, type:docs, type:refactor, type:chore, type:breaking-change\n' +
-                'Add the label to the PR after opening it.'
+                'A maintainer or trusted repository automation must add the label.'
               );
             } else if (typeLabels.length > 1) {
               core.setFailed(

@@ -181,11 +181,11 @@ Output a structured triage report:
 #### PR #N — REQUEST CHANGES
 > Thanks for this! A few items before this can merge:
 > - [ ] Link an approved issue (`Closes #N`) — no PR can merge without one
-> - [ ] Add exactly one `type:*` label
+> - [ ] A maintainer must add or verify exactly one `type:*` label
 > - [ ] Rebase on `main` to resolve the failing CI check
 
 #### Issue #N — APPROVE ISSUE
-> This is clear, reproducible, and in scope. Adding `status:approved` — feel free to open a PR linking this issue.
+> This is clear, reproducible, and in scope. Adding `status:approved` — a maintainer can now open a PR linking this issue.
 
 #### Issue #N — REJECT ISSUE
 > Thanks for the report! This looks more like a question/discussion topic than a bug or feature request.
@@ -202,6 +202,8 @@ Output a structured triage report:
 
 ## Quick-Action Commands
 
+Label commands in this section require `maintain` or `admin` permission.
+
 ```bash
 # Approve an issue (add status:approved)
 gh issue edit <number> --repo <owner/repo> --add-label "status:approved"
@@ -215,7 +217,7 @@ gh issue close <number> --repo <owner/repo> \
 
 # Request changes on a PR
 gh pr review <number> --repo <owner/repo> --request-changes \
-  --body "Please link an approved issue (Closes #N) and add exactly one type:* label."
+  --body "Please link an approved issue (Closes #N); a maintainer will add or verify the type:* label."
 
 # Approve a PR
 gh pr review <number> --repo <owner/repo> --approve \

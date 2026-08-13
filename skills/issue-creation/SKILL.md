@@ -22,8 +22,9 @@ Use this skill when:
 
 1. **Blank issues are disabled** — MUST use a template (bug report or feature request)
 2. **Every issue gets `status:needs-review` automatically** on creation
-3. **A maintainer MUST add `status:approved`** before any PR can be opened
+3. **A maintainer MUST add `status:approved`** before a maintainer opens a PR
 4. **Questions go to [Discussions](https://github.com/Gentleman-Programming/engram/discussions)**, not issues
+5. **Only maintainers open PRs or apply labels manually**; issue creation remains public
 
 ---
 
@@ -35,8 +36,8 @@ Use this skill when:
 3. Fill in ALL required fields
 4. Check pre-flight checkboxes
 5. Submit → issue gets status:needs-review automatically
-6. Wait for maintainer to add status:approved
-7. Only then open a PR linking this issue
+6. Wait for a maintainer to triage the issue
+7. If approved, a maintainer owns the implementation PR and links the issue
 ```
 
 ---
@@ -76,7 +77,7 @@ gh issue create --template "bug_report.yml" \
   --body "
 ### Pre-flight Checks
 - [x] I have searched existing issues and this is not a duplicate
-- [x] I understand this issue needs status:approved before a PR can be opened
+- [x] I understand that only maintainers open PRs and this issue must be approved first
 
 ### Bug Description
 When two agents save observations concurrently, duplicates are created.
@@ -139,7 +140,7 @@ gh issue create --template "feature_request.yml" \
   --body "
 ### Pre-flight Checks
 - [x] I have searched existing issues and this is not a duplicate
-- [x] I understand this issue needs status:approved before a PR can be opened
+- [x] I understand that only maintainers open PRs and this issue must be approved first
 
 ### Problem Description
 When scripting with engram, parsing the human-readable output of mem search is fragile. There's no machine-readable output format.
@@ -180,7 +181,7 @@ Using \`jq\` to parse the current output, but it's unreliable since the format i
 
 | Label | When to apply |
 |-------|--------------|
-| `status:approved` | Issue accepted for implementation — PRs can now be opened |
+| `status:approved` | Issue accepted for implementation — a maintainer may now open a PR |
 | `priority:high` | Critical bug or urgent feature |
 | `priority:medium` | Important but not blocking |
 | `priority:low` | Nice to have |
@@ -194,7 +195,7 @@ Using \`jq\` to parse the current output, but it's unreliable since the format i
 2. Review the issue — is it valid, clear, and in scope?
 3. If YES → add status:approved label
 4. If NO → comment with reason, close if needed
-5. Contributor can now open a PR linking this issue
+5. A maintainer can now open a PR linking this issue
 ```
 
 ---

@@ -1,7 +1,7 @@
 <!-- 
   ⚠️ READ BEFORE SUBMITTING
   
-  Only maintainers may open PRs. Every PR must:
+  Only invited repository collaborators may open PRs. Every PR must:
   1. Link an approved issue (with status:approved label)
   2. Have exactly one type:* label, applied by a maintainer or trusted automation
   3. Pass all 5 automated checks

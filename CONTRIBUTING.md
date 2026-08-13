@@ -30,7 +30,7 @@ Approval does not grant permission to open a PR. Continue sharing reproduction d
 
 ### Step 3: Open a Pull Request
 
-Only users with GitHub repository permission `maintain` or `admin` may open pull requests. Pull requests from other human authors are closed automatically and redirected to the issue workflow. Trusted repository automation, currently Dependabot, may also open pull requests.
+GitHub's native pull request creation policy is set to **Collaborators only**. In this personal repository, only invited repository collaborators may open pull requests; everyone else uses the public issue forms.
 
 Once the issue is approved, a maintainer:
 
@@ -106,7 +106,7 @@ The required check contexts are the five job names listed above.
 
 ## PR Rules
 
-- Human PR authors must have repository permission `maintain` or `admin`
+- PR authors must be invited repository collaborators
 - Keep PR scope focused — one logical change per PR
 - Use [conventional commits](https://www.conventionalcommits.org/) format
 - Ensure all tests pass locally before pushing:
@@ -227,7 +227,6 @@ If you haven't received a response within 7 days on a PR or issue, a single ping
 ## What Gets Closed Without Merging
 
 - PRs opened without an approved issue
-- PRs opened by human authors without `maintain` or `admin` permission
 - PRs that fail CI and aren't updated within 30 days
 - Issues that are vague, a duplicate, or belong in [Discussions](https://github.com/Gentleman-Programming/engram/discussions)
 - Issues with no response to a maintainer question after 14 days

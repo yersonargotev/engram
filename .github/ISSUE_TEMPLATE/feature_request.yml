@@ -12,7 +12,7 @@ body:
         > **How this works:**
         > 1. You submit this issue → it gets `status:needs-review` automatically
         > 2. A maintainer reviews it → adds `status:approved` if accepted
-        > 3. Only then can a PR be opened to implement it
+        > 3. If approved, a maintainer may open a PR to implement it
         >
         > See [CONTRIBUTING.md](https://github.com/Gentleman-Programming/engram/blob/main/CONTRIBUTING.md) for the full workflow.
 
@@ -24,7 +24,7 @@ body:
       options:
         - label: I have searched [existing issues](https://github.com/Gentleman-Programming/engram/issues) and this is not a duplicate
           required: true
-        - label: I understand this issue needs `status:approved` before a PR can be opened
+        - label: I understand that only maintainers open PRs and this issue must be approved first
           required: true
 
   - type: textarea

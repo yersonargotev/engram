@@ -445,7 +445,7 @@ This is a beta feature. **We want to hear how it works for you, especially**:
 - Did the daemon mode crash, leak memory, or behave unexpectedly?
 - Did the graph config bootstrap clobber something you cared about?
 
-File issues at [github.com/Gentleman-Programming/engram/issues](https://github.com/Gentleman-Programming/engram/issues) with the `beta:obsidian` label.
+File issues at [github.com/Gentleman-Programming/engram/issues](https://github.com/Gentleman-Programming/engram/issues) and mention `beta:obsidian` in the description. A maintainer will apply the label during triage.
 
 ---
 

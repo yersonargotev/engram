@@ -1,13 +1,13 @@
 # Contributing to Engram
 
-Thanks for contributing. Engram enforces a strict **issue-first workflow** — every change starts with an approved issue.
+Thanks for contributing. Engram keeps issue creation public and uses a strict **maintainer-led, issue-first workflow**. Anyone may report a bug or request a feature; only maintainers may apply labels or open pull requests.
 
 ---
 
 ## Contribution Workflow
 
 ```
-Open Issue → Get status:approved → Open PR → Add type:* label → Review & Merge
+Open Issue → Maintainer Triage → Maintainer PR → Automated Checks → Merge
 ```
 
 ### Step 1: Open an Issue
@@ -20,20 +20,24 @@ Use the correct template:
 
 Fill in all required fields. Your issue will automatically receive the `status:needs-review` label.
 
+Issue authors do not need repository permissions and must not apply labels themselves. Labels from issue templates and trusted repository automation are applied automatically; all other label changes are maintainer-owned.
+
 ### Step 2: Wait for Approval
 
 A maintainer will review the issue and add the `status:approved` label if it's accepted for implementation.
 
-**Do not open a PR until the issue is approved.** Automated checks will block PRs that reference unapproved issues.
+Approval does not grant permission to open a PR. Continue sharing reproduction details, design input, or a proposed patch in the issue; a maintainer owns the implementation branch and pull request.
 
 ### Step 3: Open a Pull Request
 
-Once the issue is approved:
+Only users with GitHub repository permission `maintain` or `admin` may open pull requests. Pull requests from other human authors are closed automatically and redirected to the issue workflow. Trusted repository automation, currently Dependabot, may also open pull requests.
 
-1. Fork the repo and create a branch from `main`
-2. Implement your change
-3. Open a PR using the PR template — **link the approved issue** with `Closes #N`
-4. Add exactly **one `type:*` label** to the PR (see label system below)
+Once the issue is approved, a maintainer:
+
+1. Creates a branch from `main`
+2. Implements the change
+3. Opens a PR using the PR template and links the approved issue with `Closes #N`
+4. Adds exactly **one `type:*` label** to the PR (see label system below)
 
 ### Step 4: Automated PR Checks
 
@@ -54,15 +58,15 @@ Five checks run automatically on every PR:
 | **Unit Tests** | `go test ./...` — all tests except those tagged with `//go:build e2e` |
 | **E2E Tests** | `go test -tags e2e ./internal/server/...` — end-to-end integration tests |
 
-All five checks must pass before a PR can be merged.
+All five checks must pass before a PR can be merged. Branch protection on `main` also requires a pull request, an up-to-date branch, and resolved review conversations; force-pushes and branch deletion are disabled.
 
-> **Repo admin note:** Set these as required status checks in branch protection rules for `main`: `Unit Tests`, `E2E Tests`, and `PR Validation`.
+The required check contexts are the five job names listed above.
 
 ---
 
 ## Label System
 
-### Type Labels (required on every PR — pick exactly one)
+### Type Labels (required on every PR; set by maintainers or trusted automation)
 
 | Label | Color | Use for |
 |-------|-------|---------|
@@ -73,12 +77,12 @@ All five checks must pass before a PR can be merged.
 | `type:chore` | ⚪ | Maintenance, tooling, dependencies |
 | `type:breaking-change` | 🔴 | Breaking changes (requires major version bump) |
 
-### Status Labels (set by maintainers)
+### Status Labels (set by maintainers or trusted automation)
 
 | Label | Meaning |
 |-------|---------|
 | `status:needs-review` | Awaiting maintainer review (auto-applied to new issues) |
-| `status:approved` | Approved for implementation — PRs can now be opened |
+| `status:approved` | Approved for implementation — a maintainer may now open a PR |
 | `status:in-progress` | Actively being worked on — auto-exempt from stale bot |
 | `status:blocked` | Blocked by another issue or external dependency |
 | `status:stale` | No activity for 30 days — auto-applied by stale bot |
@@ -102,6 +106,7 @@ All five checks must pass before a PR can be merged.
 
 ## PR Rules
 
+- Human PR authors must have repository permission `maintain` or `admin`
 - Keep PR scope focused — one logical change per PR
 - Use [conventional commits](https://www.conventionalcommits.org/) format
 - Ensure all tests pass locally before pushing:
@@ -222,6 +227,7 @@ If you haven't received a response within 7 days on a PR or issue, a single ping
 ## What Gets Closed Without Merging
 
 - PRs opened without an approved issue
+- PRs opened by human authors without `maintain` or `admin` permission
 - PRs that fail CI and aren't updated within 30 days
 - Issues that are vague, a duplicate, or belong in [Discussions](https://github.com/Gentleman-Programming/engram/discussions)
 - Issues with no response to a maintainer question after 14 days

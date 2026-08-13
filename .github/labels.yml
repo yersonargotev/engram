@@ -1,14 +1,14 @@
-# Label definitions for Gentleman-Programming/engram
+# Canonical label definitions for this repository
 #
-# This file documents the canonical label set for this repo.
-# Apply labels via gh CLI (run from repo root, requires write access):
+# Only maintainers or trusted repository automation may apply labels.
+# Sync labels via gh CLI (run from repo root with maintain/admin access):
 #
-#   gh label create "<name>" --color "<hex>" --description "<desc>" --repo Gentleman-Programming/engram
+#   gh label create "<name>" --color "<hex>" --description "<desc>" --repo <owner/repo>
 #
 # Or use a tool like github-label-sync:
-#   npx github-label-sync --labels .github/labels.yml Gentleman-Programming/engram
+#   npx github-label-sync --labels .github/labels.yml <owner/repo>
 
-# --- Type labels (required on every PR — pick exactly one) ---
+# --- Type labels (required on every PR; set by maintainers or trusted automation) ---
 - name: "type:bug"
   color: "d73a4a"
   description: "Bug fix"

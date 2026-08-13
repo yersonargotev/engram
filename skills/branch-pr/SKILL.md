@@ -14,16 +14,17 @@ metadata:
 Use this skill when:
 - Creating a pull request for any change
 - Preparing a branch for submission
-- Helping a contributor open a PR
+- Helping a maintainer open a PR
 
 ---
 
 ## Critical Rules
 
-1. **Every PR MUST link an approved issue** — no exceptions
-2. **Every PR MUST have exactly one `type:*` label**
-3. **5 automated checks must pass** before merge is possible
-4. **Blank PRs without issue linkage will be blocked** by GitHub Actions
+1. **Only users with `maintain` or `admin` permission may open human-authored PRs**
+2. **Every PR MUST link an approved issue** — no exceptions
+3. **Every PR MUST have exactly one `type:*` label**, set by a maintainer or trusted automation
+4. **5 automated checks must pass** before merge is possible
+5. **Blank PRs without issue linkage will be blocked** by GitHub Actions
 
 ---
 
@@ -35,7 +36,7 @@ Use this skill when:
 3. Implement changes
 4. Run tests locally (unit + e2e)
 5. Open PR using the template
-6. Add exactly one type:* label
+6. As a maintainer, add exactly one type:* label
 7. Wait for 5 automated checks to pass
 ```
 
@@ -83,7 +84,7 @@ The linked issue MUST have the `status:approved` label.
 
 ### 2. PR Type (REQUIRED)
 
-Check exactly ONE in the template and add the matching label:
+Check exactly ONE in the template. A maintainer or trusted automation adds the matching label:
 
 | Checkbox | Label to add |
 |----------|-------------|
@@ -118,7 +119,7 @@ Check exactly ONE in the template and add the matching label:
 
 All boxes must be checked:
 - Linked an approved issue
-- Added exactly one `type:*` label
+- Added exactly one `type:*` label as a maintainer, or verified trusted automation added it
 - Ran unit tests locally
 - Ran e2e tests locally
 - Docs updated if behavior changed

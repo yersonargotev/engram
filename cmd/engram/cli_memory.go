@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Gentleman-Programming/engram/internal/memoryops"
-	"github.com/Gentleman-Programming/engram/internal/project"
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/memoryops"
+	"github.com/yersonargotev/engram/internal/project"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 func cmdGet(cfg store.Config) {

@@ -5,7 +5,7 @@ description: >
   Trigger: Adding or changing dashboard UI components or connected browsing flows.
 license: Apache-2.0
 metadata:
-  author: gentleman-programming
+  author: yersonargotev
   version: "1.0"
 ---
 

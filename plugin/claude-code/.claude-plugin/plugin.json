@@ -3,9 +3,9 @@
   "description": "Persistent memory for AI coding agents. Survives across sessions and compactions.",
   "version": "0.1.1",
   "author": {
-    "name": "Gentleman Programming"
+    "name": "yersonargotev"
   },
-  "homepage": "https://github.com/Gentleman-Programming/engram",
-  "repository": "https://github.com/Gentleman-Programming/engram",
+  "homepage": "https://github.com/yersonargotev/engram",
+  "repository": "https://github.com/yersonargotev/engram",
   "license": "MIT"
 }

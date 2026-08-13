@@ -5,7 +5,7 @@ description: >
   Trigger: Any code or workflow change that affects user or contributor behavior.
 license: Apache-2.0
 metadata:
-  author: gentleman-programming
+  author: yersonargotev
   version: "1.0"
 ---
 

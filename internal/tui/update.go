@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Gentleman-Programming/engram/internal/setup"
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/setup"
+	"github.com/yersonargotev/engram/internal/store"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 )

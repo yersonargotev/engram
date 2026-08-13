@@ -36,7 +36,7 @@ Continue with full verification and expected outputs in [Quickstart](./quickstar
 
 Engram Cloud publishes an official image at:
 
-- `ghcr.io/gentleman-programming/engram`
+- `ghcr.io/yersonargotev/engram`
 
 Supported platforms:
 - `linux/amd64`

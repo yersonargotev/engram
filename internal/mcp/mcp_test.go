@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Gentleman-Programming/engram/internal/project"
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/project"
+	"github.com/yersonargotev/engram/internal/store"
 	mcppkg "github.com/mark3labs/mcp-go/mcp"
 )
 

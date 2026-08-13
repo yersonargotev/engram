@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
-	projectpkg "github.com/Gentleman-Programming/engram/internal/project"
-	"github.com/Gentleman-Programming/engram/internal/store"
+	projectpkg "github.com/yersonargotev/engram/internal/project"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 const (

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Gentleman-Programming/engram/internal/cloud/autosync"
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/cloud/autosync"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 // TestResolveCloudRuntimeConfigFallsBackToFileToken asserts that

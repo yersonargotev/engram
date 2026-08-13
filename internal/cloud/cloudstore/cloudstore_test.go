@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Gentleman-Programming/engram/internal/cloud"
-	"github.com/Gentleman-Programming/engram/internal/cloud/chunkcodec"
-	"github.com/Gentleman-Programming/engram/internal/store"
-	engramsync "github.com/Gentleman-Programming/engram/internal/sync"
+	"github.com/yersonargotev/engram/internal/cloud"
+	"github.com/yersonargotev/engram/internal/cloud/chunkcodec"
+	"github.com/yersonargotev/engram/internal/store"
+	engramsync "github.com/yersonargotev/engram/internal/sync"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 

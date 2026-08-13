@@ -69,7 +69,7 @@ engram cloud upgrade status --project smoke-project
 
 Do not build from source for production deploys. Use the published image:
 
-- `ghcr.io/gentleman-programming/engram:latest`
+- `ghcr.io/yersonargotev/engram:latest`
 
 Reference compose file:
 - [docker-compose.ghcr.yml](./docker-compose.ghcr.yml)
@@ -89,7 +89,7 @@ Optional runtime env vars:
 
 Dokploy guidance:
 1. Create a managed Postgres service.
-2. Create an app from image `ghcr.io/gentleman-programming/engram:latest`.
+2. Create an app from image `ghcr.io/yersonargotev/engram:latest`.
 3. Configure the env vars above (with strong secrets).
 4. Expose container port `18080`.
 5. Avoid build-from-source mode unless you are actively developing Engram itself.
@@ -167,7 +167,7 @@ services:
       - engram-cloud-pg:/var/lib/postgresql/data
 
   cloud:
-    image: ghcr.io/gentleman-programming/engram:latest
+    image: ghcr.io/yersonargotev/engram:latest
     restart: unless-stopped
     depends_on:
       postgres:

@@ -8,9 +8,9 @@ import (
 
 	"github.com/a-h/templ"
 
-	cloudauth "github.com/Gentleman-Programming/engram/internal/cloud/auth"
-	"github.com/Gentleman-Programming/engram/internal/cloud/cloudstore"
-	"github.com/Gentleman-Programming/engram/internal/cloud/dashboard"
+	cloudauth "github.com/yersonargotev/engram/internal/cloud/auth"
+	"github.com/yersonargotev/engram/internal/cloud/cloudstore"
+	"github.com/yersonargotev/engram/internal/cloud/dashboard"
 )
 
 // This file implements the dashboard-rendered Managed Users surface

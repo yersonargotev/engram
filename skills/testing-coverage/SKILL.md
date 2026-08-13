@@ -5,7 +5,7 @@ description: >
   Trigger: When implementing behavior changes in any package.
 license: Apache-2.0
 metadata:
-  author: gentleman-programming
+  author: yersonargotev
   version: "1.0"
 ---
 

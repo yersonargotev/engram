@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Gentleman-Programming/engram/internal/cloud/auth"
-	"github.com/Gentleman-Programming/engram/internal/cloud/cloudstore"
+	"github.com/yersonargotev/engram/internal/cloud/auth"
+	"github.com/yersonargotev/engram/internal/cloud/cloudstore"
 )
 
 // cloudRuntimeAuthenticator is the single Authenticator wired into

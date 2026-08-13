@@ -24,7 +24,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Gentleman-Programming/engram/internal/mcp"
+	"github.com/yersonargotev/engram/internal/mcp"
 )
 
 var (
@@ -78,8 +78,8 @@ type Result struct {
 	TUIPluginEnabled bool
 }
 
-const claudeCodeMarketplace = "Gentleman-Programming/engram"
-const codexMarketplace = "Gentleman-Programming/engram"
+const claudeCodeMarketplace = "yersonargotev/engram"
+const codexMarketplace = "yersonargotev/engram"
 
 const openCodeSubagentStatuslinePlugin = "opencode-subagent-statusline"
 

@@ -1303,8 +1303,8 @@ This is the recommended setup for Homebrew users on macOS. With `KeepAlive=true`
 
 1. Find your binary path: `which engram` (typically `/opt/homebrew/bin/engram` on Apple Silicon or `/usr/local/bin/engram` on Intel)
 2. Create the data dir if missing: `mkdir -p ~/.engram`
-3. Create `~/Library/LaunchAgents/com.gentleman-programming.engram.plist` with the contents below — replace `<HOME>` with the absolute path of your home directory (`echo $HOME`) and adjust the binary path if `which engram` returned something different
-4. Load it: `launchctl load ~/Library/LaunchAgents/com.gentleman-programming.engram.plist`
+3. Create `~/Library/LaunchAgents/com.yersonargotev.engram.plist` with the contents below — replace `<HOME>` with the absolute path of your home directory (`echo $HOME`) and adjust the binary path if `which engram` returned something different
+4. Load it: `launchctl load ~/Library/LaunchAgents/com.yersonargotev.engram.plist`
 5. Verify: `launchctl list | grep engram` and `engram cloud status` (the `Local daemon:` line should report `running on port 7437`)
 
 ```xml
@@ -1313,7 +1313,7 @@ This is the recommended setup for Homebrew users on macOS. With `KeepAlive=true`
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.gentleman-programming.engram</string>
+    <string>com.yersonargotev.engram</string>
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/engram</string>
@@ -1346,7 +1346,7 @@ This is the recommended setup for Homebrew users on macOS. With `KeepAlive=true`
 </plist>
 ```
 
-To unload (stop and disable): `launchctl unload ~/Library/LaunchAgents/com.gentleman-programming.engram.plist`. To reload after editing the plist: unload, then load again.
+To unload (stop and disable): `launchctl unload ~/Library/LaunchAgents/com.yersonargotev.engram.plist`. To reload after editing the plist: unload, then load again.
 
 > **Note on `brew upgrade`:** launchd does not expand `$HOME` or `~` inside plist values, which is why the template uses literal absolute paths.
 

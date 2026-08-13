@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Gentleman-Programming/engram/internal/cloud/cloudstore"
+	"github.com/yersonargotev/engram/internal/cloud/cloudstore"
 )
 
 func TestNewServiceSecretValidation(t *testing.T) {

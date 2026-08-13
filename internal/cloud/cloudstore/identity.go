@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 const (

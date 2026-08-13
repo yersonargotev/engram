@@ -4,6 +4,7 @@
 - testing-coverage: strict TDD and coverage discipline.
 - sdd-flow: mandatory Spec-Driven Development phases.
 - memory-protocol: persistent memory discipline.
+- engram-memory-cli: durable project-memory workflows through the Engram CLI.
 - commit-hygiene: clean conventional commits.
 - server-api: API contract + E2E guardrails.
 - tui-quality: tested and consistent TUI UX.

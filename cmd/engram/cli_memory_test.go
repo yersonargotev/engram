@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 func decodeCLIJSON(t *testing.T, output string) map[string]any {

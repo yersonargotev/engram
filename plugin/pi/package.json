@@ -4,11 +4,11 @@
   "description": "Persistent memory for Pi agents — one local-or-cloud brain shared across sessions, compactions, and MCP agents",
   "type": "module",
   "license": "MIT",
-  "author": "Gentleman Programming",
-  "homepage": "https://github.com/Gentleman-Programming/engram",
+  "author": "yersonargotev",
+  "homepage": "https://github.com/yersonargotev/engram",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Gentleman-Programming/engram.git",
+    "url": "git+https://github.com/yersonargotev/engram.git",
     "directory": "plugin/pi"
   },
   "bin": {
@@ -34,7 +34,7 @@
     "extension"
   ],
   "pi": {
-    "image": "https://raw.githubusercontent.com/Gentleman-Programming/engram/main/plugin/pi/assets/engram-logo-only.png",
+    "image": "https://raw.githubusercontent.com/yersonargotev/engram/main/plugin/pi/assets/engram-logo-only.png",
     "extensions": [
       "./index.ts"
     ]

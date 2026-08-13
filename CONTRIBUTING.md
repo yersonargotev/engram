@@ -147,6 +147,27 @@ Types map to labels: `feat` → `type:feature`, `fix` → `type:bug`, `docs` →
 
 ---
 
+## Release Environment
+
+Stable releases are published from tags matching `v*`. The `Release` workflow uses the GitHub environment named `release` and requires an environment secret named `HOMEBREW_TAP_TOKEN`.
+
+To configure publishing:
+
+1. Verify the public repository `yersonargotev/homebrew-tap` still uses `main` as its default branch.
+2. Open the existing `release` environment in this repository under **Settings → Environments**.
+3. Verify `HOMEBREW_TAP_TOKEN` exists in that environment. It must be a fine-grained token with read/write access to repository contents for `yersonargotev/homebrew-tap`.
+4. Rotate the token before it expires and update the environment secret with the replacement value.
+
+When a `v*` tag is pushed, GoReleaser creates the GitHub release and updates `Casks/engram.rb` in the tap. Users install it with:
+
+```bash
+brew install yersonargotev/tap/engram
+```
+
+Never commit or print the tap token. Rotate it if a release log exposes it.
+
+---
+
 ## npm Dependency Hygiene
 
 When adding npm dependencies to `plugin/pi` or `plugin/obsidian`:
@@ -228,7 +249,7 @@ If you haven't received a response within 7 days on a PR or issue, a single ping
 
 - PRs opened without an approved issue
 - PRs that fail CI and aren't updated within 30 days
-- Issues that are vague, a duplicate, or belong in [Discussions](https://github.com/Gentleman-Programming/engram/discussions)
+- Issues that are vague, a duplicate, or belong in [Discussions](https://github.com/yersonargotev/engram/discussions)
 - Issues with no response to a maintainer question after 14 days
 
 ---

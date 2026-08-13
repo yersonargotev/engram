@@ -5,7 +5,7 @@ description: >
   Trigger: Decisions, bugfixes, discoveries, preferences, or session closure.
 license: Apache-2.0
 metadata:
-  author: gentleman-programming
+  author: yersonargotev
   version: "1.0"
 ---
 

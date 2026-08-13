@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 func TestCanonicalizeForProjectPreservesMutationMetadataPayloadFields(t *testing.T) {

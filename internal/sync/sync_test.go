@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Gentleman-Programming/engram/internal/cloud/chunkcodec"
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/cloud/chunkcodec"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 func newTestStore(t *testing.T) *store.Store {

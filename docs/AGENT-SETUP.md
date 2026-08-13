@@ -16,7 +16,7 @@ Engram works with **any MCP-compatible agent**. Pick your agent below.
 
 | Agent         | One-liner                                                                                    | Manual Config                                      |
 | ------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| Claude Code   | `claude plugin marketplace add Gentleman-Programming/engram && claude plugin install engram` | [Details](#claude-code)                            |
+| Claude Code   | `claude plugin marketplace add yersonargotev/engram && claude plugin install engram` | [Details](#claude-code)                            |
 | Pi            | `engram setup pi`                                                                            | [Details](#pi)                                     |
 | OpenCode      | `engram setup opencode`                                                                      | [Details](#opencode)                               |
 | Gemini CLI    | `engram setup gemini-cli`                                                                    | [Details](#gemini-cli)                             |
@@ -254,7 +254,7 @@ See [Plugins → OpenCode Plugin](PLUGINS.md#opencode-plugin) for details on wha
 **Option A: Plugin via marketplace (recommended)** — full session management, auto-import, compaction recovery, and Memory Protocol skill:
 
 ```bash
-claude plugin marketplace add Gentleman-Programming/engram
+claude plugin marketplace add yersonargotev/engram
 claude plugin install engram
 ```
 
@@ -405,7 +405,7 @@ engram setup codex
 - Registers `[mcp_servers.engram]` in `~/.codex/config.toml` (Windows: `%APPDATA%\codex\config.toml`)
 - Writes `~/.codex/engram-instructions.md` with the Engram Memory Protocol
 - Writes `~/.codex/engram-compact-prompt.md` and points `experimental_compact_prompt_file` to it, so compaction output includes a required memory-save instruction
-- Best-effort installs the Codex plugin with `codex plugin marketplace add Gentleman-Programming/engram --ref main` and `codex plugin add engram@engram`
+- Best-effort installs the Codex plugin with `codex plugin marketplace add yersonargotev/engram --ref main` and `codex plugin add engram@engram`
 
 > `engram setup codex` automatically writes the full Memory Protocol to `~/.codex/engram-instructions.md` and a compaction recovery prompt to `~/.codex/engram-compact-prompt.md`. No additional configuration needed.
 

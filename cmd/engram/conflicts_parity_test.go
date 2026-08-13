@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 // These tests keep the CLI contracts aligned with mem_judge and mem_compare:

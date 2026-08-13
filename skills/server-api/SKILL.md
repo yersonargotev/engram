@@ -5,7 +5,7 @@ description: >
   Trigger: Any route, handler, payload, or status code modification.
 license: Apache-2.0
 metadata:
-  author: gentleman-programming
+  author: yersonargotev
   version: "1.0"
 ---
 

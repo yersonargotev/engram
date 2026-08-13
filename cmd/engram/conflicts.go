@@ -10,9 +10,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/Gentleman-Programming/engram/internal/llm"
-	"github.com/Gentleman-Programming/engram/internal/memoryops"
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/llm"
+	"github.com/yersonargotev/engram/internal/memoryops"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 // cmdConflicts is the top-level dispatcher for `engram conflicts <subcommand>`.

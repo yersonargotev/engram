@@ -5,7 +5,7 @@ description: >
   Trigger: Starting substantial work, reviewing changes, or defining team conventions.
 license: Apache-2.0
 metadata:
-  author: gentleman-programming
+  author: yersonargotev
   version: "1.0"
 ---
 

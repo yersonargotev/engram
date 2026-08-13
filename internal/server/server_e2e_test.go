@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Gentleman-Programming/engram/internal/store"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 func newE2EServer(t *testing.T) (*store.Store, *httptest.Server) {

@@ -15,7 +15,7 @@
 ## Homebrew (macOS / Linux)
 
 ```bash
-brew install gentleman-programming/tap/engram
+brew install yersonargotev/tap/engram
 ```
 
 Upgrade to latest:
@@ -24,9 +24,9 @@ Upgrade to latest:
 brew update && brew upgrade engram
 ```
 
-> **Migrating from Cask?** If you installed engram before v1.0.1, it was distributed as a Cask. Uninstall first, then reinstall:
+> **Migrating from another installation?** Uninstall the existing Homebrew package first, then install it from this tap:
 > ```bash
-> brew uninstall --cask engram 2>/dev/null; brew install gentleman-programming/tap/engram
+> brew uninstall engram 2>/dev/null; brew install yersonargotev/tap/engram
 > ```
 
 > **Keep `engram serve` running across `brew upgrade`?** On macOS, `brew upgrade engram` replaces the binary and kills any running `engram serve` process — autosync stops silently until you relaunch it. To make autosync survive upgrades and reboots, use the launchd template in [Running as a Service → Using launchd (macOS)](../DOCS.md#using-launchd-macos). Run `engram cloud status` afterwards: the `Local daemon:` line should report `running`.
@@ -40,7 +40,7 @@ brew update && brew upgrade engram
 If you have Go installed, this is the cleanest and most trustworthy path — the binary is compiled on your machine from source, so no antivirus will flag it:
 
 ```powershell
-go install github.com/Gentleman-Programming/engram/cmd/engram@latest
+go install github.com/yersonargotev/engram/cmd/engram@latest
 # Binary goes to %GOPATH%\bin\engram.exe (typically %USERPROFILE%\go\bin\)
 ```
 
@@ -49,7 +49,7 @@ Ensure `%GOPATH%\bin` (or `%USERPROFILE%\go\bin`) is on your `PATH`.
 **Option B: Build from source**
 
 ```powershell
-git clone https://github.com/Gentleman-Programming/engram.git
+git clone https://github.com/yersonargotev/engram.git
 cd engram
 go install ./cmd/engram
 # Binary goes to %GOPATH%\bin\engram.exe (typically %USERPROFILE%\go\bin\)
@@ -78,7 +78,7 @@ go install ./cmd/engram
 
 **Option C: Download the prebuilt binary**
 
-1. Go to [GitHub Releases](https://github.com/Gentleman-Programming/engram/releases)
+1. Go to [GitHub Releases](https://github.com/yersonargotev/engram/releases)
 2. Download `engram_<version>_windows_amd64.zip` (or `arm64` for ARM devices)
 3. Extract `engram.exe` to a folder in your `PATH` (e.g. `C:\Users\<you>\bin\`)
 
@@ -120,7 +120,7 @@ Expand-Archive engram_*_windows_amd64.zip -DestinationPath "$env:USERPROFILE\bin
 ## Install from source (macOS / Linux)
 
 ```bash
-git clone https://github.com/Gentleman-Programming/engram.git
+git clone https://github.com/yersonargotev/engram.git
 cd engram
 go install ./cmd/engram
 # Binary goes to $GOPATH/bin (typically ~/go/bin/)
@@ -149,7 +149,7 @@ go install ./cmd/engram
 
 ## Download binary (all platforms)
 
-Grab the latest release for your platform from [GitHub Releases](https://github.com/Gentleman-Programming/engram/releases).
+Grab the latest release for your platform from [GitHub Releases](https://github.com/yersonargotev/engram/releases).
 
 | Platform | File |
 |----------|------|

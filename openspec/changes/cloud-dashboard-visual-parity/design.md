@@ -300,7 +300,7 @@ The ten decisions below resolve the spec-phase open questions in order.
 
   **Batch 2 — Templ sources port + generated files + structural test (RED first)**
   - [R] Write `TestDashboardLayoutHTMLStructure`, `TestStatusRibbonAndFooterPresent`, `TestNavTabsRenderedCorrectly`, `TestLoginPageTokenFormAndCopy`, `TestCopyParityStrings` (all fail).
-  - Copy `components.templ` (1134 L) from legacy, adapt imports (`github.com/yersonargotev/engram/internal/cloud/cloudstore`) and type references (flat `DashboardXxxRow` instead of legacy rich types; see Batch 3).
+  - Copy `components.templ` (1134 L) from legacy, adapt imports (`github.com/Gentleman-Programming/engram/internal/cloud/cloudstore`) and type references (flat `DashboardXxxRow` instead of legacy rich types; see Batch 3).
   - Copy `layout.templ` (52 L) from legacy — ONE adaptation: swap `username string` parameter for accepting the pre-rendered display name from `Principal.DisplayName()` call site.
   - Copy `login.templ` (63 L) from legacy — adaptation: accept `next string` second parameter; handler renders `LoginPage(errorMsg, next)`.
   - Run `go tool templ generate ./internal/cloud/dashboard/...` and commit the generated `*_templ.go`.

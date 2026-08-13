@@ -153,10 +153,10 @@ Stable releases are published from tags matching `v*`. The `Release` workflow us
 
 To configure publishing:
 
-1. Create the public repository `yersonargotev/homebrew-tap` with `main` as its default branch.
-2. Create the `release` environment in this repository under **Settings → Environments**.
-3. Add `HOMEBREW_TAP_TOKEN` to that environment. Use a fine-grained token with read/write access to repository contents for `yersonargotev/homebrew-tap`.
-4. Optionally add required reviewers or deployment-branch restrictions to the environment.
+1. Verify the public repository `yersonargotev/homebrew-tap` still uses `main` as its default branch.
+2. Open the existing `release` environment in this repository under **Settings → Environments**.
+3. Verify `HOMEBREW_TAP_TOKEN` exists in that environment. It must be a fine-grained token with read/write access to repository contents for `yersonargotev/homebrew-tap`.
+4. Rotate the token before it expires and update the environment secret with the replacement value.
 
 When a `v*` tag is pushed, GoReleaser creates the GitHub release and updates `Casks/engram.rb` in the tap. Users install it with:
 

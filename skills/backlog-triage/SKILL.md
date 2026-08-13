@@ -7,7 +7,7 @@ description: >
   submissions as a maintainer, or applying triage to any GitHub repo.
 license: Apache-2.0
 metadata:
-  author: gentleman-programming
+  author: yersonargotev
   version: "1.0"
 ---
 

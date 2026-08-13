@@ -30,10 +30,10 @@ All 19 tasks across 5 batches are marked `[x]` complete in both `tasks.md` and `
 **Tests (no cache)**: PASS — all 19 packages green.
 
 ```
-ok  github.com/yersonargotev/engram/cmd/engram           2.132s
-ok  github.com/yersonargotev/engram/internal/cloud/autosync   0.646s
-ok  github.com/yersonargotev/engram/internal/cloud/cloudserver  0.059s
-ok  github.com/yersonargotev/engram/internal/cloud/remote  0.037s
+ok  github.com/Gentleman-Programming/engram/cmd/engram           2.132s
+ok  github.com/Gentleman-Programming/engram/internal/cloud/autosync   0.646s
+ok  github.com/Gentleman-Programming/engram/internal/cloud/cloudserver  0.059s
+ok  github.com/Gentleman-Programming/engram/internal/cloud/remote  0.037s
 [all 18 other packages: ok]
 ```
 

@@ -111,26 +111,26 @@ None.
 ### Full `go test ./...` (clean, no cache)
 
 ```
-ok  	github.com/yersonargotev/engram/cmd/engram	2.604s
-ok  	github.com/yersonargotev/engram/internal/cloud	0.006s
-ok  	github.com/yersonargotev/engram/internal/cloud/auth	0.014s
-ok  	github.com/yersonargotev/engram/internal/cloud/autosync	0.740s
-ok  	github.com/yersonargotev/engram/internal/cloud/chunkcodec	0.011s
-ok  	github.com/yersonargotev/engram/internal/cloud/cloudserver	0.054s
-ok  	github.com/yersonargotev/engram/internal/cloud/cloudstore	0.017s
-?   	github.com/yersonargotev/engram/internal/cloud/constants	[no test files]
-ok  	github.com/yersonargotev/engram/internal/cloud/dashboard	0.041s
-ok  	github.com/yersonargotev/engram/internal/cloud/remote	0.039s
-ok  	github.com/yersonargotev/engram/internal/llm	0.010s
-ok  	github.com/yersonargotev/engram/internal/mcp	2.857s
-ok  	github.com/yersonargotev/engram/internal/obsidian	0.230s
-ok  	github.com/yersonargotev/engram/internal/project	0.814s
-ok  	github.com/yersonargotev/engram/internal/server	0.503s
-ok  	github.com/yersonargotev/engram/internal/setup	0.189s
-ok  	github.com/yersonargotev/engram/internal/store	1.902s
-ok  	github.com/yersonargotev/engram/internal/sync	0.509s
-ok  	github.com/yersonargotev/engram/internal/tui	0.186s
-ok  	github.com/yersonargotev/engram/internal/version	0.062s
+ok  	github.com/Gentleman-Programming/engram/cmd/engram	2.604s
+ok  	github.com/Gentleman-Programming/engram/internal/cloud	0.006s
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/auth	0.014s
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/autosync	0.740s
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/chunkcodec	0.011s
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/cloudserver	0.054s
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/cloudstore	0.017s
+?   	github.com/Gentleman-Programming/engram/internal/cloud/constants	[no test files]
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/dashboard	0.041s
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/remote	0.039s
+ok  	github.com/Gentleman-Programming/engram/internal/llm	0.010s
+ok  	github.com/Gentleman-Programming/engram/internal/mcp	2.857s
+ok  	github.com/Gentleman-Programming/engram/internal/obsidian	0.230s
+ok  	github.com/Gentleman-Programming/engram/internal/project	0.814s
+ok  	github.com/Gentleman-Programming/engram/internal/server	0.503s
+ok  	github.com/Gentleman-Programming/engram/internal/setup	0.189s
+ok  	github.com/Gentleman-Programming/engram/internal/store	1.902s
+ok  	github.com/Gentleman-Programming/engram/internal/sync	0.509s
+ok  	github.com/Gentleman-Programming/engram/internal/tui	0.186s
+ok  	github.com/Gentleman-Programming/engram/internal/version	0.062s
 ```
 
 Exit code: 0. All 20 packages GREEN. `internal/cloud/constants` has no test files (pre-existing).

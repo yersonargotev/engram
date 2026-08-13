@@ -5,7 +5,7 @@ description: >
   Trigger: Any commit creation, review, or branch cleanup.
 license: Apache-2.0
 metadata:
-  author: gentleman-programming
+  author: yersonargotev
   version: "2.0"
 ---
 

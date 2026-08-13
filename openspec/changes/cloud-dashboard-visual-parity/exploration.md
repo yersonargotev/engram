@@ -27,11 +27,11 @@ The integrated file has 23 lines and defines only `StatusBadge`, `EmptyState`, a
 ```go
 import (
     "fmt"
-    "github.com/yersonargotev/engram-cloud/internal/cloud/cloudstore"
+    "github.com/Gentleman-Programming/engram-cloud/internal/cloud/cloudstore"
 )
 ```
 
-**Adaptation required**: change import path to `github.com/yersonargotev/engram/internal/cloud/cloudstore`. All type references must use the integrated `cloudstore` types. The integrated `cloudstore` exposes `DashboardProjectRow`, `DashboardContributorRow`, `DashboardSessionRow`, `DashboardObservationRow`, `DashboardPromptRow`, `DashboardProjectDetail`, and `DashboardAdminOverview` (all defined in `dashboard_queries.go`).
+**Adaptation required**: change import path to `github.com/Gentleman-Programming/engram/internal/cloud/cloudstore`. All type references must use the integrated `cloudstore` types. The integrated `cloudstore` exposes `DashboardProjectRow`, `DashboardContributorRow`, `DashboardSessionRow`, `DashboardObservationRow`, `DashboardPromptRow`, `DashboardProjectDetail`, and `DashboardAdminOverview` (all defined in `dashboard_queries.go`).
 
 Legacy `components.templ` references 12 cloudstore types:
 - `cloudstore.ProjectStat` — NOT in integrated cloudstore (it's a legacy type from the old SQL-backed cloudstore). Used by `DashboardStatsPartial`, `DashboardActivityPartial`, `ProjectsListPartial`. **Must be replaced** with `DashboardProjectRow` or a new `ProjectStat` adapter.

@@ -70,9 +70,9 @@
 
 ```
 go test ./internal/project/... ./internal/store/... ./internal/mcp/...
-ok  github.com/yersonargotev/engram/internal/project
-ok  github.com/yersonargotev/engram/internal/store
-ok  github.com/yersonargotev/engram/internal/mcp
+ok  github.com/Gentleman-Programming/engram/internal/project
+ok  github.com/Gentleman-Programming/engram/internal/store
+ok  github.com/Gentleman-Programming/engram/internal/mcp
 
 go test -race ./internal/... ./cmd/engram/...
 All packages: ok

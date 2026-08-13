@@ -10,10 +10,10 @@ The existing enforcement points are centralized enough to evolve toward database
 
 | Issue | State | Relevance |
 | --- | --- | --- |
-| [#348](https://github.com/yersonargotev/engram/issues/348) `feat(cloud): replace global cloud tokens with managed users and per-user sync tokens` | Closed, `status:needs-review` | Exact match for managed users + per-user sync tokens. Closed as design-gated, not rejected. |
-| [#404](https://github.com/yersonargotev/engram/issues/404) `feat(cloud): add standalone DB-backed admin policy for tokens and projects` | Open, `status:stale` | Related foundation for DB-backed token/project policy without full managed users. |
-| [#274](https://github.com/yersonargotev/engram/issues/274) `feat(cloud): support project-scoped bearer tokens for multi-project teams` | Open, `status:needs-review` | Narrower scoped-token proposal; overlaps project grants and server-side enforcement. |
-| [#349](https://github.com/yersonargotev/engram/issues/349) `feat(cloud): pluggable external URL-based authentication with configurable response contract` | Open, `status:stale` | Adjacent external-auth direction; should remain out of MVP unless explicitly chosen. |
+| [#348](https://github.com/Gentleman-Programming/engram/issues/348) `feat(cloud): replace global cloud tokens with managed users and per-user sync tokens` | Closed, `status:needs-review` | Exact match for managed users + per-user sync tokens. Closed as design-gated, not rejected. |
+| [#404](https://github.com/Gentleman-Programming/engram/issues/404) `feat(cloud): add standalone DB-backed admin policy for tokens and projects` | Open, `status:stale` | Related foundation for DB-backed token/project policy without full managed users. |
+| [#274](https://github.com/Gentleman-Programming/engram/issues/274) `feat(cloud): support project-scoped bearer tokens for multi-project teams` | Open, `status:needs-review` | Narrower scoped-token proposal; overlaps project grants and server-side enforcement. |
+| [#349](https://github.com/Gentleman-Programming/engram/issues/349) `feat(cloud): pluggable external URL-based authentication with configurable response contract` | Open, `status:stale` | Adjacent external-auth direction; should remain out of MVP unless explicitly chosen. |
 
 The planning should treat #348 as the closest product intent, while borrowing #404's DB-backed policy foundation and #274's project-scope concerns. The prior maintainer comments explicitly asked for a consolidated design covering identity, token rotation/revocation, audit, migration from global tokens, and server-side enforcement.
 

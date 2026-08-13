@@ -79,25 +79,25 @@ No blockers. The change is ready for `sdd-archive`.
 
 ```
 $ go test ./...
-ok  	github.com/yersonargotev/engram/cmd/engram	2.226s
-ok  	github.com/yersonargotev/engram/internal/cloud	(cached)
-ok  	github.com/yersonargotev/engram/internal/cloud/auth	(cached)
-ok  	github.com/yersonargotev/engram/internal/cloud/autosync	(cached)
-ok  	github.com/yersonargotev/engram/internal/cloud/chunkcodec	(cached)
-ok  	github.com/yersonargotev/engram/internal/cloud/cloudserver	(cached)
-ok  	github.com/yersonargotev/engram/internal/cloud/cloudstore	(cached)
-?   	github.com/yersonargotev/engram/internal/cloud/constants	[no test files]
-ok  	github.com/yersonargotev/engram/internal/cloud/dashboard	(cached)
-ok  	github.com/yersonargotev/engram/internal/cloud/remote	(cached)
-ok  	github.com/yersonargotev/engram/internal/mcp	2.502s
-ok  	github.com/yersonargotev/engram/internal/obsidian	(cached)
-ok  	github.com/yersonargotev/engram/internal/project	(cached)
-ok  	github.com/yersonargotev/engram/internal/server	(cached)
-ok  	github.com/yersonargotev/engram/internal/setup	(cached)
-ok  	github.com/yersonargotev/engram/internal/store	1.131s
-ok  	github.com/yersonargotev/engram/internal/sync	(cached)
-ok  	github.com/yersonargotev/engram/internal/tui	(cached)
-ok  	github.com/yersonargotev/engram/internal/version	(cached)
+ok  	github.com/Gentleman-Programming/engram/cmd/engram	2.226s
+ok  	github.com/Gentleman-Programming/engram/internal/cloud	(cached)
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/auth	(cached)
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/autosync	(cached)
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/chunkcodec	(cached)
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/cloudserver	(cached)
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/cloudstore	(cached)
+?   	github.com/Gentleman-Programming/engram/internal/cloud/constants	[no test files]
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/dashboard	(cached)
+ok  	github.com/Gentleman-Programming/engram/internal/cloud/remote	(cached)
+ok  	github.com/Gentleman-Programming/engram/internal/mcp	2.502s
+ok  	github.com/Gentleman-Programming/engram/internal/obsidian	(cached)
+ok  	github.com/Gentleman-Programming/engram/internal/project	(cached)
+ok  	github.com/Gentleman-Programming/engram/internal/server	(cached)
+ok  	github.com/Gentleman-Programming/engram/internal/setup	(cached)
+ok  	github.com/Gentleman-Programming/engram/internal/store	1.131s
+ok  	github.com/Gentleman-Programming/engram/internal/sync	(cached)
+ok  	github.com/Gentleman-Programming/engram/internal/tui	(cached)
+ok  	github.com/Gentleman-Programming/engram/internal/version	(cached)
 ```
 
 Targeted execution of the two new addendum tests:
@@ -107,13 +107,13 @@ $ go test -run TestFindCandidates_ExplicitZeroFloor ./internal/store/... -v
 === RUN   TestFindCandidates_ExplicitZeroFloor
 --- PASS: TestFindCandidates_ExplicitZeroFloor (0.01s)
 PASS
-ok  	github.com/yersonargotev/engram/internal/store	0.015s
+ok  	github.com/Gentleman-Programming/engram/internal/store	0.015s
 
 $ go test -run TestHandleSave_MCPConfig_OverridesDefaults ./internal/mcp/... -v
 === RUN   TestHandleSave_MCPConfig_OverridesDefaults
 --- PASS: TestHandleSave_MCPConfig_OverridesDefaults (0.03s)
 PASS
-ok  	github.com/yersonargotev/engram/internal/mcp	0.039s
+ok  	github.com/Gentleman-Programming/engram/internal/mcp	0.039s
 ```
 
 Coverage spot-check (unchanged from prior verify run, since fixes added tests + small wiring code): `internal/store` ≈78.5%, `internal/mcp` ≈94.9%.

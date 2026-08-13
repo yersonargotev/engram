@@ -5,7 +5,7 @@ description: >
   Trigger: When editing Go files in installer/internal/tui/, working on TUI screens, or adding new UI features.
 license: Apache-2.0
 metadata:
-  author: gentleman-programming
+  author: yersonargotev
   version: "1.0"
 ---
 

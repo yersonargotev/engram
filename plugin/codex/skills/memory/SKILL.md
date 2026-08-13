@@ -24,6 +24,11 @@ permissions allowlist for the `mcp__engram__...` server ids.
 Admin tools (deferred — use ToolSearch only if needed):
 - `mem_stats`, `mem_delete`, `mem_timeline`, `mem_capture_passive`
 
+Local context curation (deferred — use ToolSearch only if needed):
+- `mem_pin` puts an observation before recent memories in context.
+- `mem_unpin` returns it to normal recency order.
+- Pins are local to this device and never sync.
+
 ## PROACTIVE SAVE TRIGGERS (mandatory — do NOT wait for user to ask)
 
 Call `mem_save` IMMEDIATELY and WITHOUT BEING ASKED after any of these:

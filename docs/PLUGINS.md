@@ -94,12 +94,14 @@ claude --plugin-dir ./plugin/claude-code
 
 | Feature | Bare MCP | Plugin |
 |---------|----------|--------|
-| MCP tools available | 19 default (`engram mcp`) | 15 agent-profile tools (`engram mcp --tools=agent`) |
+| MCP tools available | 22 default (`engram mcp`) | 18 agent-profile tools (`engram mcp --tools=agent`) |
 | Session tracking (auto-start) | ✗ | ✓ |
 | Auto-import git-synced memories | ✗ | ✓ |
 | Compaction recovery | ✗ | ✓ |
 | Memory Protocol skill | ✗ | ✓ |
 | Previous session context injection | ✗ | ✓ |
+
+The agent profile includes deferred `mem_pin` and `mem_unpin` tools for local context curation. Pins affect only the current device and are not synchronized.
 
 ### Plugin Structure
 

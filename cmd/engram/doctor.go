@@ -16,7 +16,7 @@ func cmdDoctor(cfg store.Config) {
 		cmdDoctorRepair(cfg)
 		return
 	}
-	jsonOut := false
+	jsonOut := hasArg("--json")
 	project := ""
 	check := ""
 	for i := 2; i < len(os.Args); i++ {
@@ -24,17 +24,15 @@ func cmdDoctor(cfg store.Config) {
 		case "--json":
 			jsonOut = true
 		case "--project":
-			if i+1 >= len(os.Args) {
-				fmt.Fprintln(os.Stderr, "error: --project requires a value")
-				exitFunc(1)
+			if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
+				failCLI(jsonOut, "missing_flag_value", "--project requires a value", nil)
 				return
 			}
 			project = os.Args[i+1]
 			i++
 		case "--check":
-			if i+1 >= len(os.Args) {
-				fmt.Fprintln(os.Stderr, "error: --check requires a value")
-				exitFunc(1)
+			if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
+				failCLI(jsonOut, "missing_flag_value", "--check requires a value", nil)
 				return
 			}
 			check = os.Args[i+1]
@@ -43,9 +41,7 @@ func cmdDoctor(cfg store.Config) {
 			printDoctorUsage()
 			return
 		default:
-			fmt.Fprintf(os.Stderr, "error: unknown doctor argument %q\n", os.Args[i])
-			printDoctorUsage()
-			exitFunc(1)
+			failCLI(jsonOut, "unknown_flag", fmt.Sprintf("unknown doctor argument %q", os.Args[i]), nil)
 			return
 		}
 	}
@@ -53,7 +49,7 @@ func cmdDoctor(cfg store.Config) {
 	project, _ = store.NormalizeProject(project)
 	s, err := storeNew(cfg)
 	if err != nil {
-		fatal(err)
+		failCLI(jsonOut, "store_error", err.Error(), nil)
 		return
 	}
 	defer s.Close()
@@ -62,7 +58,8 @@ func cmdDoctor(cfg store.Config) {
 	if err != nil {
 		report = diagnostic.ErrorReport(project, err)
 		if jsonOut {
-			writeDoctorJSON(report)
+			failCLI(true, "diagnostic_failed", err.Error(), map[string]any{"report": report})
+			return
 		} else {
 			fmt.Fprintf(os.Stderr, "engram doctor failed: %s\n", err)
 		}

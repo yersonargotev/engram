@@ -4653,6 +4653,54 @@ type MergeResult struct {
 	PromptsUpdated      int64    `json:"prompts_updated"`
 }
 
+// PreviewMergeProjects reports the rows that MergeProjects would update without
+// mutating the store. It intentionally uses the same source-variant expansion
+// as MergeProjects so previews cannot disagree with applied merges.
+func (s *Store) PreviewMergeProjects(sources []string, canonical string) (*MergeResult, error) {
+	canonical, _ = NormalizeProject(canonical)
+	if canonical == "" {
+		return nil, fmt.Errorf("canonical project name must not be empty")
+	}
+	result := &MergeResult{Canonical: canonical}
+	seen := map[string]struct{}{}
+	for _, input := range sources {
+		normalized, _ := NormalizeProject(input)
+		if normalized == "" || normalized == canonical {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		variants := projectMergeSourceVariants(input, normalized, canonical)
+		if len(variants) == 0 {
+			continue
+		}
+		placeholders := sqlPlaceholders(len(variants))
+		args := make([]any, len(variants))
+		for i, v := range variants {
+			args[i] = v
+		}
+		var observations, sessions, prompts int64
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM observations WHERE project IN (`+placeholders+`)`, args...).Scan(&observations); err != nil {
+			return nil, err
+		}
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE project IN (`+placeholders+`)`, args...).Scan(&sessions); err != nil {
+			return nil, err
+		}
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE project IN (`+placeholders+`)`, args...).Scan(&prompts); err != nil {
+			return nil, err
+		}
+		if observations+sessions+prompts > 0 {
+			result.SourcesMerged = append(result.SourcesMerged, normalized)
+		}
+		result.ObservationsUpdated += observations
+		result.SessionsUpdated += sessions
+		result.PromptsUpdated += prompts
+	}
+	return result, nil
+}
+
 // MergeProjects migrates all records from each source project name into the
 // canonical name. Sources that equal the canonical (after normalization) or
 // have no records are silently skipped — the operation is idempotent.

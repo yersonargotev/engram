@@ -740,6 +740,9 @@ func TestMainPrintsUpdateFailuresAndUpdates(t *testing.T) {
 }
 
 func TestMainExitPaths(t *testing.T) {
+	if testing.CoverMode() != "" {
+		t.Skip("expected non-zero helper subprocess exits corrupt Go coverage output")
+	}
 	tests := []struct {
 		name            string
 		helperCase      string

@@ -132,7 +132,7 @@ Full details on session lifecycle, topic keys, and memory hygiene → [docs/ARCH
 
 With `any`, a memory can match one or more query tokens instead of requiring all of them. This is useful when you remember related keywords but not the exact wording stored in Engram.
 
-## MCP Tools (20)
+## MCP Tools (22)
 
 | Category               | Tools                                                                                                            |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -141,9 +141,10 @@ With `any`, a memory can match one or more query tokens instead of requiring all
 | **Session Lifecycle**  | `mem_session_start`, `mem_session_end`, `mem_session_summary`                                                    |
 | **Conflict Surfacing** | `mem_judge`, `mem_compare`                                                                                       |
 | **Lifecycle Review**   | `mem_review`                                                                                                      |
+| **Context Priority**   | `mem_pin`, `mem_unpin` (local-only; not synced)                                                                  |
 | **Utilities**          | `mem_save_prompt`, `mem_stats`, `mem_capture_passive`, `mem_merge_projects`, `mem_current_project`, `mem_doctor` |
 
-Full tool reference with parameters → [DOCS.md#mcp-tools-20-tools](DOCS.md#mcp-tools-20-tools)
+Full tool reference with parameters → [DOCS.md#mcp-tools-22-tools](DOCS.md#mcp-tools-22-tools)
 
 ## Terminal UI
 
@@ -359,8 +360,14 @@ Your production engram is fully untouched throughout.
 | `engram serve [port]`                      | Start HTTP API (default: 7437)                                  |
 | `engram mcp [--tools=PROFILE] [--project NAME]` | Start MCP server (stdio transport)                         |
 | `engram tui`                               | Launch terminal UI                                              |
-| `engram search <query>`                    | Search memories                                                 |
-| `engram save <title> <msg>`                | Save a memory                                                   |
+| `engram search <query> [--json]`           | Search full memories; supports project scope and `all|any` matching |
+| `engram save <title> <msg> [--json]`       | Save a memory and surface pending conflict candidates           |
+| `engram get <obs_id> [--json]`             | Retrieve one complete memory and its relations                  |
+| `engram update <obs_id> [fields]`          | Partially update a memory                                       |
+| `engram review list\|mark`                 | Review due memories and reset their local review cycle          |
+| `engram pin\|unpin <obs_id>`               | Change local-only context priority                              |
+| `engram current-project [--json]`          | Inspect project detection, including ambiguity                  |
+| `engram suggest-topic-key [inputs]`        | Suggest a stable topic key without writing                      |
 | `engram delete <obs_id>`                   | Delete an observation (soft by default; `--hard` removes permanently) |
 | `engram delete session <id>`               | Delete a session by ID (must have no observations)                    |
 | `engram delete prompt <id>`                | Delete a prompt by ID (permanent)                                     |
@@ -371,10 +378,10 @@ Your production engram is fully untouched throughout.
 | `engram export [file]`                     | Export to JSON                                                  |
 | `engram import <file>`                     | Import from JSON                                                |
 | `engram sync`                              | Git sync export/import                                          |
-| `engram conflicts <sub>`                   | Inspect and manage memory conflict relations                    |
+| `engram conflicts <sub>`                   | Inspect, scan, judge, and compare memory relations              |
 | `engram doctor`                            | Run read-only operational diagnostics                           |
 | `engram cloud <subcommand>`                | Opt-in cloud config/status/enrollment + cloud runtime (`serve`) |
-| `engram projects list\|consolidate\|prune` | Manage project names                                            |
+| `engram projects list\|consolidate\|merge\|prune` | Manage and deterministically merge project names        |
 | `engram obsidian-export`                   | Export to Obsidian vault (beta)                                 |
 | `engram version`                           | Show version                                                    |
 

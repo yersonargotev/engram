@@ -71,6 +71,8 @@ Next session starts → Previous session context is injected automatically
 | `mem_current_project` | Detect project from cwd — never errors, recommended first call |
 | `mem_doctor` | Run read-only operational diagnostics for project detection and store health |
 | `mem_review` | List observations whose `review_after` lifecycle is stale; `mark_reviewed` resets the local review cycle |
+| `mem_pin` | Pin a memory locally so it appears before recent observations in context; pins are not synced |
+| `mem_unpin` | Remove a local context pin; unpins are not synced |
 | `mem_judge` | Record a verdict for a pending memory conflict surfaced by `mem_save` |
 | `mem_compare` | Persist a semantic relation verdict between two existing observations |
 
@@ -95,6 +97,7 @@ Token-efficient memory retrieval — don't dump everything, drill in:
 - `mem_save` supports `capture_prompt` (`true` by default). When the same MCP process lifecycle has current prompt context for the same project and session, it best-effort records that prompt alongside the observation. The prompt context must be fed before the later `mem_save` (typically via `mem_save_prompt`); `mem_save` still succeeds if context is unavailable or prompt capture fails. Automated saves such as SDD artifacts should pass `capture_prompt=false`.
 - `mem_save` and `mem_search` expose lifecycle metadata: computed `state` (`active` or `needs_review`) and `review_after` when a review cycle applies.
 - `mem_review` supports `action="list"` (`project`, `limit`) and `action="mark_reviewed"` (`observation_id`). Marking reviewed is local-only for now because `review_after` is intentionally not part of sync payloads in this phase.
+- `mem_pin` and `mem_unpin` change only local context priority. Pins are intentionally excluded from sync payloads.
 - Exact dedupe prevents repeated inserts in a rolling window (hash + project + scope + type + title)
 - Duplicates update metadata (`duplicate_count`, `last_seen_at`, `updated_at`) instead of creating new rows
 - Topic upserts increment `revision_count` so evolving decisions stay in one memory
@@ -211,7 +214,7 @@ engram/
 ├── internal/
 │   ├── store/store.go              # Core: SQLite + FTS5 + all data ops
 │   ├── server/server.go            # HTTP REST API (port 7437)
-│   ├── mcp/mcp.go                  # MCP stdio server (20 tools)
+│   ├── mcp/mcp.go                  # MCP stdio server (22 tools)
 │   ├── setup/setup.go              # Agent plugin installer (go:embed)
 │   ├── cloud/                       # Optional cloud runtime (Postgres + dashboard)
 │   │   ├── cloudserver/             # /sync API + dashboard mount + auth/session bridge
@@ -254,6 +257,12 @@ engram mcp                Start MCP server (stdio transport)
 engram tui                Launch interactive terminal UI
 engram search <query>     Search memories
 engram save <title> <msg> Save a memory
+engram get <obs_id>       Retrieve complete memory content, metadata, and relations [--json]
+engram update <obs_id>    Partially update title/content/type/scope/topic key [--json]
+engram review list|mark   List due memories or mark one reviewed (local-only) [--json]
+engram pin|unpin <obs_id> Change local-only context priority [--json]
+engram current-project    Inspect project resolution and ambiguity [--json]
+engram suggest-topic-key  Suggest a stable topic key without writing [--json]
 engram delete <obs_id>    Delete an observation [--hard] (soft-delete by default; --hard removes permanently)
 engram delete session <id>
                           Delete a session by ID (session must have no observations)
@@ -272,8 +281,9 @@ engram sync --all         Export ALL projects (ignore directory-based filter)
 engram sync --cloud --project <name>
                           Sync against configured cloud endpoint (project-scoped)
 engram conflicts <sub>    Inspect and manage memory conflict relations
-                            list, show, stats, scan, deferred
+                            list, show, stats, scan, deferred, judge, compare
 engram doctor             Run read-only operational diagnostics [--json] [--project P] [--check CODE]
+engram projects merge     Deterministic multi-source merge [--dry-run] [--yes] [--json]
 engram cloud status       Show cloud runtime/config status
 engram cloud config --server <url>
                           Configure cloud server URL

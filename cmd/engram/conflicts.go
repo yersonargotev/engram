@@ -1,13 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Gentleman-Programming/engram/internal/llm"
+	"github.com/Gentleman-Programming/engram/internal/memoryops"
 	"github.com/Gentleman-Programming/engram/internal/store"
 )
 
@@ -30,6 +34,10 @@ func cmdConflicts(cfg store.Config) {
 		cmdConflictsScan(cfg)
 	case "deferred":
 		cmdConflictsDeferred(cfg)
+	case "judge":
+		cmdConflictsJudge(cfg)
+	case "compare":
+		cmdConflictsCompare(cfg)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown conflicts subcommand: %s\n", os.Args[2])
 		printConflictsUsage()
@@ -39,7 +47,7 @@ func cmdConflicts(cfg store.Config) {
 
 func printConflictsUsage() {
 	fmt.Fprintln(os.Stderr, "usage: engram conflicts <subcommand> [options]")
-	fmt.Fprintln(os.Stderr, "subcommands: list, show, stats, scan, deferred")
+	fmt.Fprintln(os.Stderr, "subcommands: list, show, stats, scan, deferred, judge, compare")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "  list       [--project P]  [--status S]  [--since RFC3339]  [--limit N]")
 	fmt.Fprintln(os.Stderr, "  show       <relation_id>")
@@ -48,6 +56,8 @@ func printConflictsUsage() {
 	fmt.Fprintln(os.Stderr, "             [--semantic]  [--concurrency N]  [--timeout-per-call SECONDS]")
 	fmt.Fprintln(os.Stderr, "             [--max-semantic N]  [--yes]")
 	fmt.Fprintln(os.Stderr, "  deferred   [--status S]  [--limit N]  [--inspect SYNC_ID]  [--replay]")
+	fmt.Fprintln(os.Stderr, "  judge      <judgment-id> --relation R [--reason TEXT] [--evidence TEXT] [--confidence N] [--session-id ID] [--json]")
+	fmt.Fprintln(os.Stderr, "  compare    <id-a> <id-b> --relation R --confidence N --reasoning TEXT [--model ID] [--json]")
 }
 
 // resolveConflictsProject returns the explicit project if non-empty, otherwise falls
@@ -70,6 +80,238 @@ func resolveConflictsProject(explicit string) string {
 		exitFunc(1)
 	}
 	return detected
+}
+
+// ─── judge ───────────────────────────────────────────────────────────────────
+
+// cmdConflictsJudge records a human verdict for a pending relation. It is the
+// CLI counterpart of mem_judge, with explicit human provenance.
+func cmdConflictsJudge(cfg store.Config) {
+	args := os.Args[3:]
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") || strings.TrimSpace(args[0]) == "" {
+		conflictsCommandError("usage: engram conflicts judge <judgment-id> --relation R [options]")
+		return
+	}
+
+	judgmentID := strings.TrimSpace(args[0])
+	var relation, reason, evidence, sessionID string
+	confidence := 1.0
+	jsonOutput := false
+	relationSet := false
+
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--relation":
+			value, ok := conflictsFlagValue(args, &i, "--relation")
+			if !ok {
+				return
+			}
+			relation = strings.TrimSpace(value)
+			relationSet = true
+		case "--reason":
+			value, ok := conflictsFlagValue(args, &i, "--reason")
+			if !ok {
+				return
+			}
+			reason = value
+		case "--evidence":
+			value, ok := conflictsFlagValue(args, &i, "--evidence")
+			if !ok {
+				return
+			}
+			evidence = value
+		case "--confidence":
+			value, ok := conflictsFlagValue(args, &i, "--confidence")
+			if !ok {
+				return
+			}
+			parsed, err := strconv.ParseFloat(value, 64)
+			if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed < 0 || parsed > 1 {
+				conflictsCommandError("error: --confidence must be a number between 0.0 and 1.0")
+				return
+			}
+			confidence = parsed
+		case "--session-id":
+			value, ok := conflictsFlagValue(args, &i, "--session-id")
+			if !ok {
+				return
+			}
+			sessionID = strings.TrimSpace(value)
+		case "--json":
+			jsonOutput = true
+		default:
+			conflictsCommandError(fmt.Sprintf("error: unknown flag or argument for conflicts judge: %s", args[i]))
+			return
+		}
+	}
+
+	if !relationSet || relation == "" {
+		conflictsCommandError("error: --relation is required")
+		return
+	}
+
+	s, err := storeNew(cfg)
+	if err != nil {
+		fatal(err)
+		return
+	}
+	defer s.Close()
+
+	result, err := memoryops.New(s).Judge(memoryops.JudgeInput{
+		JudgmentID: judgmentID,
+		Relation:   relation,
+		Reason:     optionalString(reason),
+		Evidence:   optionalString(evidence),
+		Confidence: &confidence,
+		Provenance: memoryops.Provenance{Actor: "cli", Kind: "human", SessionID: sessionID},
+	})
+	if err != nil {
+		failCLI(jsonOutput, "judgment_failed", err.Error(), nil)
+		return
+	}
+
+	if jsonOutput {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"relation": result})
+		return
+	}
+	fmt.Printf("Judged relation %s as %s\n", result.SyncID, result.Relation)
+}
+
+// ─── compare ─────────────────────────────────────────────────────────────────
+
+// cmdConflictsCompare persists a verdict that the caller has already reached.
+// It deliberately does not invoke an LLM; semantic discovery belongs to scan.
+func cmdConflictsCompare(cfg store.Config) {
+	args := os.Args[3:]
+	if len(args) < 2 || strings.HasPrefix(args[0], "-") || strings.HasPrefix(args[1], "-") {
+		conflictsCommandError("usage: engram conflicts compare <id-a> <id-b> --relation R --confidence N --reasoning TEXT [options]")
+		return
+	}
+
+	idA, err := parseConflictObservationID(args[0], "id-a")
+	if err != nil {
+		conflictsCommandError(err.Error())
+		return
+	}
+	idB, err := parseConflictObservationID(args[1], "id-b")
+	if err != nil {
+		conflictsCommandError(err.Error())
+		return
+	}
+
+	var relation, reasoning, model string
+	var confidence float64
+	relationSet, reasoningSet, confidenceSet, jsonOutput := false, false, false, false
+	for i := 2; i < len(args); i++ {
+		switch args[i] {
+		case "--relation":
+			value, ok := conflictsFlagValue(args, &i, "--relation")
+			if !ok {
+				return
+			}
+			relation = strings.TrimSpace(value)
+			relationSet = true
+		case "--confidence":
+			value, ok := conflictsFlagValue(args, &i, "--confidence")
+			if !ok {
+				return
+			}
+			parsed, parseErr := strconv.ParseFloat(value, 64)
+			if parseErr != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) || parsed < 0 || parsed > 1 {
+				conflictsCommandError("error: --confidence must be a number between 0.0 and 1.0")
+				return
+			}
+			confidence = parsed
+			confidenceSet = true
+		case "--reasoning":
+			value, ok := conflictsFlagValue(args, &i, "--reasoning")
+			if !ok {
+				return
+			}
+			reasoning = strings.TrimSpace(value)
+			reasoningSet = true
+		case "--model":
+			value, ok := conflictsFlagValue(args, &i, "--model")
+			if !ok {
+				return
+			}
+			model = strings.TrimSpace(value)
+		case "--json":
+			jsonOutput = true
+		default:
+			conflictsCommandError(fmt.Sprintf("error: unknown flag or argument for conflicts compare: %s", args[i]))
+			return
+		}
+	}
+	if !relationSet || relation == "" {
+		conflictsCommandError("error: --relation is required")
+		return
+	}
+	if !confidenceSet {
+		conflictsCommandError("error: --confidence is required")
+		return
+	}
+	if !reasoningSet || reasoning == "" {
+		conflictsCommandError("error: --reasoning is required")
+		return
+	}
+	if utf8.RuneCountInString(reasoning) > 200 {
+		conflictsCommandError("error: --reasoning cannot exceed 200 characters")
+		return
+	}
+
+	s, err := storeNew(cfg)
+	if err != nil {
+		fatal(err)
+		return
+	}
+	defer s.Close()
+	result, err := memoryops.New(s).Compare(memoryops.CompareInput{
+		MemoryIDA: idA, MemoryIDB: idB, Relation: relation,
+		Confidence: confidence, Reasoning: reasoning, Model: model,
+	})
+	if err != nil {
+		failCLI(jsonOutput, "comparison_failed", err.Error(), nil)
+		return
+	}
+	if jsonOutput {
+		_ = json.NewEncoder(os.Stdout).Encode(result)
+		return
+	}
+	if result.SyncID == "" {
+		fmt.Println("No relation persisted (not_conflict).")
+		return
+	}
+	fmt.Printf("Persisted relation %s\n", result.SyncID)
+}
+
+func optionalString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func conflictsFlagValue(args []string, index *int, flag string) (string, bool) {
+	if *index+1 >= len(args) || strings.HasPrefix(args[*index+1], "--") {
+		conflictsCommandError(fmt.Sprintf("error: %s requires a value", flag))
+		return "", false
+	}
+	*index = *index + 1
+	return args[*index], true
+}
+
+func parseConflictObservationID(value, name string) (int64, error) {
+	id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("error: %s must be a positive integer observation id", name)
+	}
+	return id, nil
+}
+
+func conflictsCommandError(message string) {
+	clean := strings.TrimPrefix(message, "error: ")
+	failCLI(hasArg("--json"), "invalid_arguments", clean, nil)
 }
 
 // ─── list ─────────────────────────────────────────────────────────────────────

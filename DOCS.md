@@ -14,7 +14,7 @@ This is the complete technical reference for Engram. For getting started, see th
 | --------------------------------------------------------- | ------------------------------------------------------------ |
 | [Database Schema](#database-schema)                       | Tables, FTS5, SQLite config                                  |
 | [HTTP API](#http-api-endpoints)                           | All REST endpoints with request/response details             |
-| [MCP Tools](#mcp-tools-20-tools)                          | Detailed reference for all 20 memory tools                   |
+| [MCP Tools](#mcp-tools-22-tools)                          | Detailed reference for all 22 memory tools                   |
 | [MCP Project Resolution](#mcp-project-resolution)         | Auto-detection algorithm, response envelope, tool categories |
 | [Memory Protocol](#memory-protocol)                       | When/how agents should use the tools                         |
 | [Project Name Normalization](#project-name-normalization) | Auto-detection, normalization, similar-project warnings      |
@@ -59,6 +59,37 @@ For other docs:
 - Foreign keys ON
 
 ---
+
+## CLI memory contract
+
+The CLI is a supported interface for humans, skills, and scripts. Memory
+commands keep human-readable output by default and expose `--json` for clean
+automation output. Successful JSON is written to stdout; structured errors use
+`{"code","message","details?"}` on stderr with a non-zero exit code.
+
+Core curated-memory operations:
+
+```text
+engram search <query> [--project P|--all-projects] [--match-mode all|any] [--json]
+engram save <title> <content> [--project P] [--topic-key K] [--json]
+engram get <id> [--json]
+engram update <id> [--title V] [--content V] [--type V] [--scope V]
+                   [--topic-key V|--clear-topic-key] [--json]
+engram review list [--project P|--all-projects] [--limit N] [--json]
+engram review mark <id> [--json]
+engram pin|unpin <id> [--json]
+engram current-project [--json]
+engram suggest-topic-key [--type V] [--title V|--content V] [--json]
+engram conflicts judge <judgment-id> --relation R [--confidence N] [--json]
+engram conflicts compare <id-a> <id-b> --relation R --confidence N --reasoning TEXT [--json]
+engram projects merge --from SOURCE [--from SOURCE...] --to TARGET [--dry-run] [--yes] [--json]
+```
+
+`save` exits successfully after the memory is persisted even when its response
+contains `judgment_required: true`; callers can resolve each returned candidate
+with `conflicts judge`. Review timestamps and pins are local-only. `conflicts
+compare` persists a verdict supplied by the caller and never invokes an LLM;
+automatic semantic discovery remains under `conflicts scan --semantic`.
 
 ## HTTP API Endpoints
 
@@ -809,7 +840,7 @@ Returns success even when cwd is ambiguous — empty `project` + non-empty `avai
 
 ---
 
-## MCP Tools (20 tools)
+## MCP Tools (22 tools)
 
 ### mem_search
 
@@ -864,6 +895,18 @@ Actions:
 - `action: "mark_reviewed"` — requires `observation_id`; resets that observation's local review cycle using its type decay policy. The legacy `id` alias is accepted for compatibility.
 
 `mark_reviewed` is local-only for now: `review_after` is intentionally not part of sync payloads in this phase, so resetting the review cycle does not enqueue a sync mutation or propagate to other machines.
+
+### mem_pin
+
+Pin an observation by ID so it appears before recent observations in `mem_context`. The tool is available in the `agent` profile and is deferred, so load it with ToolSearch when needed.
+
+Pins are local to the current device. They are not included in sync payloads and do not propagate to other machines.
+
+### mem_unpin
+
+Remove a local pin by observation ID so the memory returns to normal recency order in `mem_context`. The tool is available in the `agent` profile and is deferred, so load it with ToolSearch when needed.
+
+Like `mem_pin`, unpinning is local-only and is not synced.
 
 ### mem_suggest_topic_key
 

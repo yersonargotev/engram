@@ -33,8 +33,9 @@ import (
 	"github.com/Gentleman-Programming/engram/internal/cloud/syncguidance"
 	"github.com/Gentleman-Programming/engram/internal/diagnostic"
 	"github.com/Gentleman-Programming/engram/internal/mcp"
+	"github.com/Gentleman-Programming/engram/internal/memoryops"
 	"github.com/Gentleman-Programming/engram/internal/obsidian"
-	"github.com/Gentleman-Programming/engram/internal/project"
+	projectpkg "github.com/Gentleman-Programming/engram/internal/project"
 	"github.com/Gentleman-Programming/engram/internal/server"
 	"github.com/Gentleman-Programming/engram/internal/setup"
 	"github.com/Gentleman-Programming/engram/internal/store"
@@ -72,7 +73,7 @@ var (
 	serveMCP               = mcpserver.ServeStdio
 
 	// detectProject is injectable for testing; wraps project.DetectProject.
-	detectProject = project.DetectProject
+	detectProject = projectpkg.DetectProject
 
 	newTUIModel   = func(s *store.Store) tui.Model { return tui.New(s, version) }
 	newTeaProgram = tea.NewProgram
@@ -85,10 +86,6 @@ var (
 	setupAddClaudeCodeAllowlist = setup.AddClaudeCodeAllowlist
 	scanInputLine               = fmt.Scanln
 
-	storeSearch = func(s *store.Store, query string, opts store.SearchOptions) ([]store.SearchResult, error) {
-		return s.Search(query, opts)
-	}
-	storeAddObservation    = func(s *store.Store, p store.AddObservationParams) (int64, error) { return s.AddObservation(p) }
 	storeDeleteObservation = func(s *store.Store, id int64, hard bool) error { return s.DeleteObservation(id, hard) }
 	storeDeleteSession     = func(s *store.Store, id string) error { return s.DeleteSession(id) }
 	storeDeletePrompt      = func(s *store.Store, id int64) error { return s.DeletePrompt(id) }
@@ -634,6 +631,20 @@ func main() {
 		cmdSearch(cfg)
 	case "save":
 		cmdSave(cfg)
+	case "get":
+		cmdGet(cfg)
+	case "update":
+		cmdUpdate(cfg)
+	case "review":
+		cmdReview(cfg)
+	case "pin":
+		cmdPin(cfg, true)
+	case "unpin":
+		cmdPin(cfg, false)
+	case "current-project":
+		cmdCurrentProject()
+	case "suggest-topic-key":
+		cmdSuggestTopicKey()
 	case "delete":
 		cmdDelete(cfg)
 	case "timeline":
@@ -676,6 +687,11 @@ func main() {
 func shouldCheckForUpdates(args []string) bool {
 	if len(args) == 0 {
 		return false
+	}
+	for _, arg := range args {
+		if arg == "--json" {
+			return false
+		}
 	}
 	command := strings.ToLower(strings.TrimSpace(args[0]))
 	switch command {
@@ -859,7 +875,7 @@ func cmdMCP(cfg store.Config) {
 				fatal(fmt.Errorf("--project requires a value"))
 			}
 		} else if os.Args[i] == "--project" {
-			if i+1 >= len(os.Args) {
+			if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
 				fatal(fmt.Errorf("--project requires a value"))
 			}
 			projectOverride = strings.TrimSpace(os.Args[i+1])
@@ -919,60 +935,120 @@ func cmdTUI(cfg store.Config) {
 }
 
 func cmdSearch(cfg store.Config) {
+	jsonMode := hasArg("--json")
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: engram search <query> [--type TYPE] [--project PROJECT] [--scope SCOPE] [--limit N]")
-		exitFunc(1)
+		failCLI(jsonMode, "invalid_arguments", "usage: engram search <query> [--type TYPE] [--project PROJECT] [--all-projects] [--match-mode all|any] [--scope SCOPE] [--limit N] [--json]", nil)
+		return
 	}
 
-	// Collect the query (everything that's not a flag)
 	var queryParts []string
 	opts := store.SearchOptions{Limit: 10}
+	allProjects := false
 
 	for i := 2; i < len(os.Args); i++ {
-		switch os.Args[i] {
-		case "--type":
-			if i+1 < len(os.Args) {
-				opts.Type = os.Args[i+1]
-				i++
+		arg := os.Args[i]
+		switch arg {
+		case "--json":
+		case "--all-projects":
+			allProjects = true
+		case "--type", "--project", "--limit", "--scope", "--match-mode":
+			if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
+				failCLI(jsonMode, "missing_flag_value", fmt.Sprintf("%s requires a value", arg), nil)
+				return
 			}
-		case "--project":
-			if i+1 < len(os.Args) {
-				opts.Project = os.Args[i+1]
-				i++
-			}
-		case "--limit":
-			if i+1 < len(os.Args) {
-				if n, err := strconv.Atoi(os.Args[i+1]); err == nil {
-					opts.Limit = n
+			value := os.Args[i+1]
+			i++
+			switch arg {
+			case "--type":
+				opts.Type = value
+			case "--project":
+				opts.Project = value
+			case "--scope":
+				opts.Scope = value
+			case "--match-mode":
+				opts.MatchMode = value
+			case "--limit":
+				n, err := strconv.Atoi(value)
+				if err != nil || n < 1 || n > 20 {
+					failCLI(jsonMode, "invalid_limit", "limit must be between 1 and 20", nil)
+					return
 				}
-				i++
-			}
-		case "--scope":
-			if i+1 < len(os.Args) {
-				opts.Scope = os.Args[i+1]
-				i++
+				opts.Limit = n
 			}
 		default:
-			queryParts = append(queryParts, os.Args[i])
+			if strings.HasPrefix(arg, "--") {
+				failCLI(jsonMode, "unknown_flag", fmt.Sprintf("unknown flag %s", arg), nil)
+				return
+			}
+			queryParts = append(queryParts, arg)
 		}
 	}
 
 	query := strings.Join(queryParts, " ")
-	if query == "" {
-		fmt.Fprintln(os.Stderr, "error: search query is required")
-		exitFunc(1)
+	if strings.TrimSpace(query) == "" {
+		failCLI(jsonMode, "invalid_arguments", "search query is required", nil)
+		return
+	}
+	if opts.MatchMode != "" && opts.MatchMode != "all" && opts.MatchMode != "any" {
+		failCLI(jsonMode, "invalid_match_mode", "match mode must be all or any", nil)
+		return
+	}
+	if allProjects && opts.Project != "" {
+		failCLI(jsonMode, "incompatible_flags", "--all-projects cannot be combined with --project", nil)
+		return
+	}
+	projectSource := "explicit"
+	projectPath := ""
+	if allProjects {
+		opts.Project = ""
+		projectSource = "all_projects"
+	} else if opts.Project != "" {
+		opts.Project, _ = store.NormalizeProject(opts.Project)
+		if opts.Project == "" {
+			failCLI(jsonMode, "invalid_project", "project must not be empty", nil)
+			return
+		}
+	} else if opts.Scope == "personal" {
+		projectSource = "personal_scope"
+	} else {
+		res := projectpkg.DetectProjectFull(currentCWD())
+		if res.Error != nil || res.Project == "" {
+			failCLI(jsonMode, "ambiguous_project", "could not resolve current project", map[string]any{"available_projects": res.AvailableProjects})
+			return
+		}
+		opts.Project, _ = store.NormalizeProject(res.Project)
+		projectSource, projectPath = res.Source, res.Path
 	}
 
 	s, err := storeNew(cfg)
 	if err != nil {
-		fatal(err)
+		failCLI(jsonMode, "store_error", err.Error(), nil)
 		return
 	}
 	defer s.Close()
 
-	results, err := storeSearch(s, query, opts)
+	searchResult, err := memoryops.New(s).Search(memoryops.SearchInput{Query: query, Type: opts.Type, Project: opts.Project, Scope: opts.Scope, Limit: opts.Limit, MatchMode: opts.MatchMode, AllProjects: allProjects || (opts.Scope == "personal" && opts.Project == "")})
 	if err != nil {
-		fatal(err)
+		failCLI(jsonMode, "search_failed", err.Error(), nil)
+		return
+	}
+	results := make([]store.SearchResult, 0, len(searchResult.Observations))
+	relations := map[string]store.ObservationRelations{}
+	for _, item := range searchResult.Observations {
+		results = append(results, item.Observation)
+		relations[item.Observation.SyncID] = item.Relations
+	}
+	if jsonMode {
+		structured := make([]map[string]any, 0, len(results))
+		for _, result := range results {
+			structured = append(structured, map[string]any{
+				"observation": result,
+				"state":       result.State(),
+				"pinned":      result.Pinned,
+				"relations":   relations[result.SyncID],
+			})
+		}
+		_ = writeCLIJSON(map[string]any{"query": query, "project": opts.Project, "project_source": projectSource, "project_path": projectPath, "all_projects": allProjects, "results": structured})
 		return
 	}
 
@@ -991,66 +1067,89 @@ func cmdSearch(cfg store.Config) {
 			i+1, r.ID, r.Type, r.Title,
 			truncate(r.Content, 300),
 			timeutil.FormatLocal(r.CreatedAt), project, r.Scope)
+		if rels, ok := relations[r.SyncID]; ok && (len(rels.AsSource) > 0 || len(rels.AsTarget) > 0) {
+			fmt.Printf("    relations: %d\n\n", len(rels.AsSource)+len(rels.AsTarget))
+		}
 	}
 }
 
 func cmdSave(cfg store.Config) {
+	jsonMode := hasArg("--json")
 	if len(os.Args) < 4 {
-		fmt.Fprintln(os.Stderr, "usage: engram save <title> <content> [--type TYPE] [--project PROJECT] [--scope SCOPE] [--topic TOPIC_KEY]")
-		exitFunc(1)
+		failCLI(jsonMode, "invalid_arguments", "usage: engram save <title> <content> [--type TYPE] [--project PROJECT] [--scope SCOPE] [--topic-key TOPIC_KEY] [--json]", nil)
+		return
 	}
 
 	title := os.Args[2]
 	content := os.Args[3]
+	if strings.TrimSpace(content) == "" {
+		failCLI(jsonMode, "invalid_arguments", "content is required", nil)
+		return
+	}
 	typ := "manual"
 	project := ""
 	scope := "project"
 	topicKey := ""
 
 	for i := 4; i < len(os.Args); i++ {
-		switch os.Args[i] {
-		case "--type":
-			if i+1 < len(os.Args) {
-				typ = os.Args[i+1]
-				i++
-			}
-		case "--project":
-			if i+1 < len(os.Args) {
-				project = os.Args[i+1]
-				i++
-			}
-		case "--scope":
-			if i+1 < len(os.Args) {
-				scope = os.Args[i+1]
-				i++
-			}
-		case "--topic":
-			if i+1 < len(os.Args) {
-				topicKey = os.Args[i+1]
-				i++
-			}
+		arg := os.Args[i]
+		if arg == "--json" {
+			continue
 		}
+		if arg != "--type" && arg != "--project" && arg != "--scope" && arg != "--topic" && arg != "--topic-key" {
+			failCLI(jsonMode, "unknown_flag", fmt.Sprintf("unknown flag %s", arg), nil)
+			return
+		}
+		if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
+			failCLI(jsonMode, "missing_flag_value", fmt.Sprintf("%s requires a value", arg), nil)
+			return
+		}
+		value := os.Args[i+1]
+		i++
+		switch arg {
+		case "--type":
+			typ = value
+		case "--project":
+			project = value
+		case "--scope":
+			scope = value
+		case "--topic", "--topic-key":
+			topicKey = value
+		}
+	}
+	projectSource, projectPath := "explicit", ""
+	if project != "" {
+		project, _ = store.NormalizeProject(project)
+		if project == "" {
+			failCLI(jsonMode, "invalid_project", "project must not be empty", nil)
+			return
+		}
+	} else {
+		res := projectpkg.DetectProjectFull(currentCWD())
+		if res.Error != nil || res.Project == "" {
+			failCLI(jsonMode, "ambiguous_project", "could not resolve current project", map[string]any{"available_projects": res.AvailableProjects})
+			return
+		}
+		project, _ = store.NormalizeProject(res.Project)
+		projectSource, projectPath = res.Source, res.Path
 	}
 
 	s, err := storeNew(cfg)
 	if err != nil {
-		fatal(err)
+		failCLI(jsonMode, "store_error", err.Error(), nil)
+		return
 	}
 	defer s.Close()
 
-	sessionID := "manual-save"
-	if project != "" {
-		sessionID = "manual-save-" + project
-	}
+	sessionID := "manual-save-" + project
 	cwd, err := os.Getwd()
 	if err != nil {
-		fatal(err)
+		failCLI(jsonMode, "cwd_error", err.Error(), nil)
+		return
 	}
-	if err := s.CreateSession(sessionID, project, cwd); err != nil {
-		fatal(err)
-	}
-	id, err := storeAddObservation(s, store.AddObservationParams{
+	result, err := memoryops.New(s).Save(memoryops.SaveInput{
 		SessionID: sessionID,
+		CWD:       cwd,
 		Type:      typ,
 		Title:     title,
 		Content:   content,
@@ -1059,14 +1158,42 @@ func cmdSave(cfg store.Config) {
 		TopicKey:  topicKey,
 	})
 	if err != nil {
-		fatal(err)
+		failCLI(jsonMode, "save_failed", err.Error(), nil)
+		return
 	}
-
-	fmt.Printf("Memory saved: #%d %q (%s)\n", id, title, typ)
+	obs, candidates := result.Observation, result.Candidates
+	if result.CandidateDetectionError != nil && !jsonMode {
+		fmt.Fprintf(os.Stderr, "engram: conflict candidate detection failed (non-fatal): %v\n", result.CandidateDetectionError)
+	}
+	if jsonMode {
+		candidatePayload := make([]map[string]any, 0, len(candidates))
+		for _, c := range candidates {
+			candidatePayload = append(candidatePayload, map[string]any{"id": c.ID, "sync_id": c.SyncID, "title": c.Title, "type": c.Type, "topic_key": c.TopicKey, "score": c.Score, "judgment_id": c.JudgmentID})
+		}
+		payload := map[string]any{"observation": obs, "state": obs.State(), "project": project, "project_source": projectSource, "project_path": projectPath, "suggested_topic_key": result.SuggestedTopicKey, "judgment_required": len(candidates) > 0, "candidates": candidatePayload}
+		if result.CandidateDetectionError != nil {
+			payload["warning"] = "conflict candidate detection failed"
+		}
+		_ = writeCLIJSON(payload)
+		return
+	}
+	fmt.Printf("Memory saved: #%d %q (%s)\n", obs.ID, title, typ)
+	if topicKey == "" {
+		if suggestion := result.SuggestedTopicKey; suggestion != "" {
+			fmt.Printf("Suggested topic_key: %s\n", suggestion)
+		}
+	}
+	if len(candidates) > 0 {
+		fmt.Printf("CONFLICT REVIEW PENDING — %d candidate(s); use engram conflicts judge.\n", len(candidates))
+	}
 }
 
 func cmdDelete(cfg store.Config) {
 	if len(os.Args) < 3 {
+		if hasArg("--json") {
+			failCLI(true, "invalid_arguments", "usage: engram delete <observation_id> [--hard] [--json]", nil)
+			return
+		}
 		fmt.Fprintln(os.Stderr, "usage: engram delete <observation_id> [--hard]")
 		fmt.Fprintln(os.Stderr, "       engram delete session  <id>")
 		fmt.Fprintln(os.Stderr, "       engram delete prompt   <id>")
@@ -1090,6 +1217,7 @@ func cmdDelete(cfg store.Config) {
 }
 
 func cmdDeleteObservation(cfg store.Config) {
+	jsonMode := hasArg("--json")
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "usage: engram delete <observation_id> [--hard]")
 		exitFunc(1)
@@ -1098,33 +1226,41 @@ func cmdDeleteObservation(cfg store.Config) {
 
 	id, err := strconv.ParseInt(os.Args[2], 10, 64)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: invalid observation id %q\n", os.Args[2])
-		exitFunc(1)
+		failCLI(jsonMode, "invalid_observation_id", fmt.Sprintf("invalid observation id %q", os.Args[2]), nil)
 		return
 	}
 
 	hard := false
 	for i := 3; i < len(os.Args); i++ {
-		if os.Args[i] == "--hard" {
+		switch os.Args[i] {
+		case "--hard":
 			hard = true
+		case "--json":
+		default:
+			failCLI(jsonMode, "unknown_flag", fmt.Sprintf("unknown flag %s", os.Args[i]), nil)
+			return
 		}
 	}
 
 	s, err := storeNew(cfg)
 	if err != nil {
-		fatal(err)
+		failCLI(jsonMode, "store_error", err.Error(), nil)
 		return
 	}
 	defer s.Close()
 
 	if err := storeDeleteObservation(s, id, hard); err != nil {
-		fatal(err)
+		failCLI(jsonMode, "delete_failed", err.Error(), nil)
 		return
 	}
 
 	kind := "soft-deleted"
 	if hard {
 		kind = "hard-deleted"
+	}
+	if jsonMode {
+		_ = writeCLIJSON(map[string]any{"id": id, "deleted": true, "hard_delete": hard})
+		return
 	}
 	fmt.Printf("Observation #%d %s\n", id, kind)
 }
@@ -1217,20 +1353,22 @@ func cmdDeleteProject(cfg store.Config) {
 }
 
 func cmdTimeline(cfg store.Config) {
+	jsonMode := hasArg("--json")
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: engram timeline <observation_id> [--before N] [--after N]")
-		exitFunc(1)
+		failCLI(jsonMode, "invalid_arguments", "usage: engram timeline <observation_id> [--before N] [--after N] [--json]", nil)
+		return
 	}
 
 	obsID, err := strconv.ParseInt(os.Args[2], 10, 64)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: invalid observation id %q\n", os.Args[2])
-		exitFunc(1)
+		failCLI(jsonMode, "invalid_observation_id", fmt.Sprintf("invalid observation id %q", os.Args[2]), nil)
+		return
 	}
 
 	before, after := 5, 5
 	for i := 3; i < len(os.Args); i++ {
 		switch os.Args[i] {
+		case "--json":
 		case "--before":
 			if i+1 < len(os.Args) {
 				if n, err := strconv.Atoi(os.Args[i+1]); err == nil {
@@ -1245,18 +1383,27 @@ func cmdTimeline(cfg store.Config) {
 				}
 				i++
 			}
+		default:
+			failCLI(jsonMode, "unknown_flag", fmt.Sprintf("unknown flag %s", os.Args[i]), nil)
+			return
 		}
 	}
 
 	s, err := storeNew(cfg)
 	if err != nil {
-		fatal(err)
+		failCLI(jsonMode, "store_error", err.Error(), nil)
+		return
 	}
 	defer s.Close()
 
 	result, err := storeTimeline(s, obsID, before, after)
 	if err != nil {
-		fatal(err)
+		failCLI(jsonMode, "timeline_failed", err.Error(), nil)
+		return
+	}
+	if jsonMode {
+		_ = writeCLIJSON(result)
+		return
 	}
 
 	// Session header
@@ -1295,30 +1442,45 @@ func cmdTimeline(cfg store.Config) {
 func cmdContext(cfg store.Config) {
 	project := ""
 	scope := ""
+	jsonMode := hasArg("--json")
 
 	for i := 2; i < len(os.Args); i++ {
 		switch os.Args[i] {
+		case "--json":
 		case "--scope":
 			if i+1 < len(os.Args) {
 				scope = os.Args[i+1]
 				i++
 			}
 		default:
+			if strings.HasPrefix(os.Args[i], "--") {
+				failCLI(jsonMode, "unknown_flag", fmt.Sprintf("unknown flag %s", os.Args[i]), nil)
+				return
+			}
 			if project == "" {
 				project = os.Args[i]
+			} else {
+				failCLI(jsonMode, "invalid_arguments", "context accepts only one project", nil)
+				return
 			}
 		}
 	}
 
 	s, err := storeNew(cfg)
 	if err != nil {
-		fatal(err)
+		failCLI(jsonMode, "store_error", err.Error(), nil)
+		return
 	}
 	defer s.Close()
 
 	ctx, err := storeFormatContext(s, project, scope)
 	if err != nil {
-		fatal(err)
+		failCLI(jsonMode, "context_failed", err.Error(), nil)
+		return
+	}
+	if jsonMode {
+		_ = writeCLIJSON(map[string]any{"project": project, "scope": scope, "context": ctx})
+		return
 	}
 
 	if ctx == "" {
@@ -1330,15 +1492,28 @@ func cmdContext(cfg store.Config) {
 }
 
 func cmdStats(cfg store.Config) {
+	jsonMode := hasArg("--json")
+	for _, arg := range os.Args[2:] {
+		if arg != "--json" {
+			failCLI(jsonMode, "unknown_flag", fmt.Sprintf("unknown flag %s", arg), nil)
+			return
+		}
+	}
 	s, err := storeNew(cfg)
 	if err != nil {
-		fatal(err)
+		failCLI(jsonMode, "store_error", err.Error(), nil)
+		return
 	}
 	defer s.Close()
 
 	stats, err := storeStats(s)
 	if err != nil {
-		fatal(err)
+		failCLI(jsonMode, "stats_failed", err.Error(), nil)
+		return
+	}
+	if jsonMode {
+		_ = writeCLIJSON(stats)
+		return
 	}
 
 	projects := "none yet"
@@ -1833,6 +2008,8 @@ func cmdProjects(cfg store.Config) {
 	switch subCmd {
 	case "consolidate":
 		cmdProjectsConsolidate(cfg)
+	case "merge":
+		cmdProjectsMerge(cfg)
 	case "prune":
 		cmdProjectsPrune(cfg)
 	case "list", "":
@@ -1841,9 +2018,107 @@ func cmdProjects(cfg store.Config) {
 		fmt.Fprintf(os.Stderr, "unknown projects subcommand: %s\n", subCmd)
 		fmt.Fprintln(os.Stderr, "usage: engram projects list")
 		fmt.Fprintln(os.Stderr, "       engram projects consolidate [--all] [--dry-run]")
+		fmt.Fprintln(os.Stderr, "       engram projects merge --from SOURCE [--from SOURCE...] --to TARGET [--dry-run] [--yes] [--json]")
 		fmt.Fprintln(os.Stderr, "       engram projects prune [--dry-run]")
 		exitFunc(1)
 	}
+}
+
+func cmdProjectsMerge(cfg store.Config) {
+	jsonMode := hasArg("--json")
+	var sources []string
+	target := ""
+	dryRun, yes := false, false
+	for i := 3; i < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "--json":
+		case "--dry-run":
+			dryRun = true
+		case "--yes":
+			yes = true
+		case "--from":
+			if i+1 >= len(os.Args) {
+				failCLI(jsonMode, "missing_flag_value", "--from requires a value", nil)
+				return
+			}
+			sources = append(sources, os.Args[i+1])
+			i++
+		case "--to":
+			if i+1 >= len(os.Args) {
+				failCLI(jsonMode, "missing_flag_value", "--to requires a value", nil)
+				return
+			}
+			target = os.Args[i+1]
+			i++
+		default:
+			failCLI(jsonMode, "unknown_flag", fmt.Sprintf("unknown flag %s", os.Args[i]), nil)
+			return
+		}
+	}
+	if len(sources) == 0 || strings.TrimSpace(target) == "" {
+		failCLI(jsonMode, "invalid_arguments", "at least one --from and --to are required", nil)
+		return
+	}
+	target, _ = store.NormalizeProject(target)
+	if target == "" {
+		failCLI(jsonMode, "invalid_project", "target project must not be empty", nil)
+		return
+	}
+	normalized := make([]string, 0, len(sources))
+	seen := map[string]bool{}
+	for _, src := range sources {
+		n, _ := store.NormalizeProject(src)
+		if n != "" && n != target && !seen[n] {
+			normalized = append(normalized, n)
+			seen[n] = true
+		}
+	}
+	if len(normalized) == 0 {
+		failCLI(jsonMode, "invalid_arguments", "sources must differ from target", nil)
+		return
+	}
+	s, err := storeNew(cfg)
+	if err != nil {
+		failCLI(jsonMode, "store_error", err.Error(), nil)
+		return
+	}
+	defer s.Close()
+	preview, err := memoryops.New(s).Merge(memoryops.MergeInput{Sources: normalized, Canonical: target, DryRun: true})
+	if err != nil {
+		failCLI(jsonMode, "merge_failed", err.Error(), nil)
+		return
+	}
+	if dryRun {
+		if jsonMode {
+			_ = writeCLIJSON(preview)
+			return
+		}
+		fmt.Printf("Would merge %v into %q: %d observations, %d sessions, %d prompts\n", preview.SourcesMerged, target, preview.ObservationsUpdated, preview.SessionsUpdated, preview.PromptsUpdated)
+		return
+	}
+	if !yes {
+		if jsonMode {
+			failCLI(true, "confirmation_required", "project merge requires --yes in JSON mode", map[string]any{"preview": preview})
+			return
+		}
+		fmt.Printf("Merge %v into %q? [y/N] ", normalized, target)
+		var answer string
+		_, _ = fmt.Scanln(&answer)
+		if strings.ToLower(strings.TrimSpace(answer)) != "y" && strings.ToLower(strings.TrimSpace(answer)) != "yes" {
+			fmt.Println("Aborted.")
+			return
+		}
+	}
+	result, err := memoryops.New(s).Merge(memoryops.MergeInput{Sources: normalized, Canonical: target})
+	if err != nil {
+		failCLI(jsonMode, "merge_failed", err.Error(), nil)
+		return
+	}
+	if jsonMode {
+		_ = writeCLIJSON(result)
+		return
+	}
+	fmt.Printf("Merged %v into %q: %d observations, %d sessions, %d prompts\n", result.SourcesMerged, result.Canonical, result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated)
 }
 
 func cmdProjectsList(cfg store.Config) {
@@ -1926,7 +2201,7 @@ func groupSimilarProjects(projects []store.ProjectStats) []projectGroup {
 
 	// Group by name similarity
 	for i := 0; i < n; i++ {
-		similar := project.FindSimilar(projects[i].Name, names, 3)
+		similar := projectpkg.FindSimilar(projects[i].Name, names, 3)
 		for _, sm := range similar {
 			if j, ok := nameToIndex[sm.Name]; ok {
 				union(i, j)
@@ -2030,7 +2305,7 @@ func cmdProjectsConsolidate(cfg store.Config) {
 		}
 
 		// Find candidates by name similarity
-		similar := project.FindSimilar(canonical, allNames, 3)
+		similar := projectpkg.FindSimilar(canonical, allNames, 3)
 
 		// Also find candidates by shared directory (catches renames like sdd-agent-team → agent-teams-lite)
 		allStats, _ := s.ListProjectsWithStats()
@@ -2058,7 +2333,7 @@ func cmdProjectsConsolidate(cfg store.Config) {
 			for _, d := range ps.Directories {
 				for _, cd := range cwdDirs {
 					if d == cd {
-						similar = append(similar, project.ProjectMatch{
+						similar = append(similar, projectpkg.ProjectMatch{
 							Name:      ps.Name,
 							MatchType: "shared directory",
 						})
@@ -2651,7 +2926,17 @@ Commands:
                                        Also accepted as ENGRAM_PROJECT=NAME env var.
   tui                Launch interactive terminal UI
   search <query>     Search memories [--type TYPE] [--project PROJECT] [--scope SCOPE] [--limit N]
-  save <title> <msg> Save a memory  [--type TYPE] [--project PROJECT] [--scope SCOPE]
+                       [--all-projects] [--match-mode all|any] [--json]
+  save <title> <msg> Save a memory [--type TYPE] [--project PROJECT] [--scope SCOPE]
+                       [--topic-key KEY] [--json]
+  get <obs_id>       Get one complete memory [--json]
+  update <obs_id>    Partially update a memory [--title V] [--content V] [--type V]
+                       [--scope V] [--topic-key V|--clear-topic-key] [--json]
+  review list        List due memories [--project P|--all-projects] [--limit N] [--json]
+  review mark <id>   Mark one memory reviewed (local only) [--json]
+  pin|unpin <id>     Change local context priority [--json]
+  current-project    Inspect project detection without failing on ambiguity [--json]
+  suggest-topic-key  Suggest a key [--type V] [--title V|--content V] [--json]
   delete <obs_id>    Delete an observation [--hard] (soft-delete by default; --hard removes permanently)
   delete session <id>
                      Delete a session by ID (session must have no observations)
@@ -2669,6 +2954,8 @@ Commands:
                                 [--semantic]  [--concurrency N]  [--timeout-per-call SECONDS]
                                 [--max-semantic N]  [--yes]
                        deferred [--status S]  [--limit N]  [--inspect SYNC_ID]  [--replay]
+                       judge    <judgment-id> --relation R [--confidence N] [--json]
+                       compare  <id-a> <id-b> --relation R --confidence N --reasoning TEXT [--json]
   doctor             Run read-only operational diagnostics [--json] [--project P] [--check CODE]
   context [project]  Show recent context from previous sessions
   stats              Show memory system statistics
@@ -2679,6 +2966,8 @@ Commands:
                      Merge similar project names into one canonical name
                        --all      Scan ALL projects for similar name groups
                        --dry-run  Preview what would be merged (no changes)
+  projects merge --from SOURCE [--from SOURCE...] --to TARGET [--dry-run] [--yes] [--json]
+                     Deterministically merge named projects
   setup [agent]      Install/setup agent integration (opencode, pi, claude-code,
                      gemini-cli, codex, antigravity-cli, windsurf, qwen, kiro,
                      cursor, vscode-copilot, kilocode)

@@ -6,8 +6,8 @@
 //
 // Tool profiles allow agents to load only the tools they need:
 //
-//	engram mcp                    → all 19 tools (default)
-//	engram mcp --tools=agent      → 15 tools agents actually use (per skill files)
+//	engram mcp                    → all 22 tools (default)
+//	engram mcp --tools=agent      → 18 agent-facing tools (per skill files)
 //	engram mcp --tools=admin      → 4 tools for TUI/CLI (delete, stats, timeline, merge)
 //	engram mcp --tools=agent,admin → combine profiles
 //	engram mcp --tools=mem_save,mem_search → individual tool names
@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/Gentleman-Programming/engram/internal/diagnostic"
+	"github.com/Gentleman-Programming/engram/internal/memoryops"
 	projectpkg "github.com/Gentleman-Programming/engram/internal/project"
 	"github.com/Gentleman-Programming/engram/internal/store"
 	"github.com/Gentleman-Programming/engram/internal/timeutil"
@@ -85,7 +86,9 @@ func ensureImplicitSessionWithCWD(s *store.Store, sessionID, project string) err
 // "agent" — tools AI agents use during coding sessions:
 //   mem_save, mem_search, mem_context, mem_session_summary,
 //   mem_session_start, mem_session_end, mem_get_observation,
-//   mem_suggest_topic_key, mem_capture_passive, mem_save_prompt
+//   mem_suggest_topic_key, mem_capture_passive, mem_save_prompt,
+//   mem_update, mem_current_project, mem_judge, mem_compare, mem_doctor,
+//   mem_review, mem_pin, mem_unpin
 //
 // "admin" — tools for manual curation, TUI, and dashboards:
 //   mem_update, mem_delete, mem_stats, mem_timeline, mem_merge_projects
@@ -186,7 +189,8 @@ CORE TOOLS (always available — use without ToolSearch):
 
 DEFERRED TOOLS (use ToolSearch when needed):
   mem_update, mem_review, mem_pin, mem_unpin, mem_suggest_topic_key, mem_session_start, mem_session_end,
-  mem_stats, mem_delete, mem_timeline, mem_capture_passive, mem_merge_projects
+  mem_capture_passive, mem_judge, mem_compare, mem_doctor,
+  mem_stats, mem_delete, mem_timeline, mem_merge_projects
 
 PROACTIVE SAVE RULE: Call mem_save immediately after ANY decision, bug fix, discovery, or convention — not just when asked.
 
@@ -1018,35 +1022,29 @@ func handleSearch(s *store.Store, cfg MCPConfig, activity *SessionActivity) serv
 		sessionID := defaultSessionID(project)
 		activity.RecordToolCall(sessionID)
 
-		results, err := s.Search(query, store.SearchOptions{
-			Type:      typ,
-			Project:   searchProject,
-			Scope:     scope,
-			Limit:     limit,
-			MatchMode: matchMode,
+		searchResult, err := memoryops.New(s).Search(memoryops.SearchInput{
+			Type:        typ,
+			Query:       query,
+			Project:     searchProject,
+			Scope:       scope,
+			Limit:       limit,
+			MatchMode:   matchMode,
+			AllProjects: allProjects || searchProject == "",
 		})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Search error: %s. Try simpler keywords.", err)), nil
 		}
 
-		if len(results) == 0 {
+		if len(searchResult.Observations) == 0 {
 			// JW4: use respondWithProject even for empty results.
 			return respondWithProject(detRes, fmt.Sprintf("No memories found for: %q", query), nil), nil
 		}
 
-		// Batch-load relations for all results (REQ-002). Avoids N+1.
-		syncIDs := make([]string, 0, len(results))
-		for _, r := range results {
-			if r.SyncID != "" {
-				syncIDs = append(syncIDs, r.SyncID)
-			}
-		}
-		relationsMap := map[string]store.ObservationRelations{}
-		if len(syncIDs) > 0 {
-			if rm, relErr := s.GetRelationsForObservations(syncIDs); relErr == nil {
-				relationsMap = rm
-			}
-			// Errors from relation loading are swallowed — search must not fail.
+		results := make([]store.SearchResult, 0, len(searchResult.Observations))
+		relationsMap := make(map[string]store.ObservationRelations, len(searchResult.Observations))
+		for _, item := range searchResult.Observations {
+			results = append(results, item.Observation)
+			relationsMap[item.Observation.SyncID] = item.Relations
 		}
 
 		var b strings.Builder
@@ -1155,19 +1153,9 @@ func handlePin(s *store.Store, pinned bool) server.ToolHandlerFunc {
 			return mcp.NewToolResultError("id is required"), nil
 		}
 
-		var err error
-		if pinned {
-			err = s.PinObservation(id)
-		} else {
-			err = s.UnpinObservation(id)
-		}
+		obs, err := memoryops.New(s).SetPinned(id, pinned)
 		if err != nil {
 			return mcp.NewToolResultError("Failed to update pin state: " + err.Error()), nil
-		}
-
-		obs, err := s.GetObservation(id)
-		if err != nil {
-			return mcp.NewToolResultError("Updated pin state but failed to reload observation: " + err.Error()), nil
 		}
 		state := "unpinned"
 		if pinned {
@@ -1256,22 +1244,29 @@ func handleSave(s *store.Store, cfg MCPConfig, activity *SessionActivity) server
 			}
 		}
 
-		// Ensure the implicit MCP session exists with the current working directory.
-		_ = ensureImplicitSessionWithCWD(s, sessionID, project)
-
 		truncated := len(content) > s.MaxObservationLength()
-
-		savedID, err := s.AddObservation(store.AddObservationParams{
-			SessionID: sessionID,
-			Type:      typ,
-			Title:     title,
-			Content:   content,
-			Project:   project,
-			Scope:     scope,
-			TopicKey:  topicKey,
+		candOpts := store.CandidateOptions{BM25Floor: cfg.BM25Floor}
+		if cfg.Limit != nil {
+			candOpts.Limit = *cfg.Limit
+		}
+		saveResult, err := memoryops.New(s).Save(memoryops.SaveInput{
+			SessionID:        sessionID,
+			CWD:              currentWorkingDirectory(),
+			Type:             typ,
+			Title:            title,
+			Content:          content,
+			Project:          project,
+			Scope:            scope,
+			TopicKey:         topicKey,
+			CandidateOptions: candOpts,
 		})
 		if err != nil {
 			return mcp.NewToolResultError("Failed to save: " + err.Error()), nil
+		}
+		savedID := saveResult.Observation.ID
+		candidates := saveResult.Candidates
+		if saveResult.CandidateDetectionError != nil {
+			fmt.Fprintf(os.Stderr, "engram: FindCandidates error (non-fatal): %v\n", saveResult.CandidateDetectionError)
 		}
 
 		if capturePrompt && activity != nil {
@@ -1304,35 +1299,13 @@ func handleSave(s *store.Store, cfg MCPConfig, activity *SessionActivity) server
 			msg += "\n" + similarWarning
 		}
 
-		// Post-transaction conflict candidate detection (REQ-001).
-		// Errors are logged and swallowed — detection failure never fails the save.
 		extra := map[string]any{}
-		// Build CandidateOptions, forwarding any MCPConfig overrides.
-		// nil fields mean "use store defaults"; explicit pointer values override.
-		candOpts := store.CandidateOptions{
-			Project:   project,
-			Scope:     scope,
-			BM25Floor: cfg.BM25Floor, // nil → store default (-2.0); explicit value overrides
-		}
-		if cfg.Limit != nil {
-			candOpts.Limit = *cfg.Limit
-		}
-		candidates, candErr := s.FindCandidates(savedID, candOpts)
-		if candErr != nil {
-			// Log only — do not fail the save.
-			fmt.Fprintf(os.Stderr, "engram: FindCandidates error (non-fatal): %v\n", candErr)
-		}
-
-		// Fetch the saved observation's sync_id for the envelope (REQ-001).
-		var savedSyncID string
-		if obs, obsErr := s.GetObservation(savedID); obsErr == nil {
-			savedSyncID = obs.SyncID
-			extra["id"] = savedID
-			extra["sync_id"] = savedSyncID
-			extra["state"] = obs.State()
-			if obs.ReviewAfter != nil {
-				extra["review_after"] = *obs.ReviewAfter
-			}
+		obs := saveResult.Observation
+		extra["id"] = savedID
+		extra["sync_id"] = obs.SyncID
+		extra["state"] = obs.State()
+		if obs.ReviewAfter != nil {
+			extra["review_after"] = *obs.ReviewAfter
 		}
 
 		if len(candidates) > 0 {
@@ -1823,10 +1796,11 @@ func handleGetObservation(s *store.Store, cfg MCPConfig) server.ToolHandlerFunc 
 			return mcp.NewToolResultError("id is required"), nil
 		}
 
-		obs, err := s.GetObservation(id)
+		getResult, err := memoryops.New(s).Get(id)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Observation #%d not found", id)), nil
 		}
+		obs := getResult.Observation
 
 		// Resolve project from process override/cwd (REQ-310, REQ-314). No per-call
 		// override possible for get-by-ID. Tolerant: don't fail the fetch on
@@ -2096,16 +2070,13 @@ func handleJudge(s *store.Store, activity *SessionActivity) server.ToolHandlerFu
 		markedByKind := "agent"
 		markedByModel := "" // No model ID available at MCP layer without explicit param.
 
-		result, err := s.JudgeRelation(store.JudgeRelationParams{
-			JudgmentID:    judgmentID,
-			Relation:      relation,
-			Reason:        reason,
-			Evidence:      evidence,
-			Confidence:    confidence,
-			MarkedByActor: markedByActor,
-			MarkedByKind:  markedByKind,
-			MarkedByModel: markedByModel,
-			SessionID:     sessionID,
+		result, err := memoryops.New(s).Judge(memoryops.JudgeInput{
+			JudgmentID: judgmentID,
+			Relation:   relation,
+			Reason:     reason,
+			Evidence:   evidence,
+			Confidence: confidence,
+			Provenance: memoryops.Provenance{Actor: markedByActor, Kind: markedByKind, Model: markedByModel, SessionID: sessionID},
 		})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -2162,19 +2133,9 @@ func handleCompare(s *store.Store, _ *SessionActivity) server.ToolHandlerFunc {
 		// --- optional model ---
 		model, _ := req.GetArguments()["model"].(string)
 
-		// Resolve integer IDs to sync_ids.
-		obsA, err := s.GetObservation(idA)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("observation id=%d not found: %s", idA, err)), nil
-		}
-		obsB, err := s.GetObservation(idB)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("observation id=%d not found: %s", idB, err)), nil
-		}
-
-		syncID, err := s.JudgeBySemantic(store.JudgeBySemanticParams{
-			SourceID:   obsA.SyncID,
-			TargetID:   obsB.SyncID,
+		compareResult, err := memoryops.New(s).Compare(memoryops.CompareInput{
+			MemoryIDA:  idA,
+			MemoryIDB:  idB,
 			Relation:   relation,
 			Confidence: rawConf,
 			Reasoning:  reasoning,
@@ -2186,7 +2147,7 @@ func handleCompare(s *store.Store, _ *SessionActivity) server.ToolHandlerFunc {
 
 		// syncID is "" when relation == "not_conflict" (JudgeBySemantic no-op).
 		envelope := map[string]any{
-			"sync_id": syncID,
+			"sync_id": compareResult.SyncID,
 		}
 		out, _ := jsonMarshal(envelope)
 		return mcp.NewToolResultText(string(out)), nil

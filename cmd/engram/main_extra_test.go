@@ -143,8 +143,6 @@ func stubRuntimeHooks(t *testing.T) {
 	oldSetupSupportedAgents := setupSupportedAgents
 	oldSetupInstallAgent := setupInstallAgent
 	oldScanInputLine := scanInputLine
-	oldStoreSearch := storeSearch
-	oldStoreAddObservation := storeAddObservation
 	oldStoreTimeline := storeTimeline
 	oldStoreFormatContext := storeFormatContext
 	oldStoreStats := storeStats
@@ -173,12 +171,6 @@ func stubRuntimeHooks(t *testing.T) {
 	setupSupportedAgents = setup.SupportedAgents
 	setupInstallAgent = setup.Install
 	scanInputLine = fmt.Scanln
-	storeSearch = func(s *store.Store, query string, opts store.SearchOptions) ([]store.SearchResult, error) {
-		return s.Search(query, opts)
-	}
-	storeAddObservation = func(s *store.Store, p store.AddObservationParams) (int64, error) {
-		return s.AddObservation(p)
-	}
 	storeTimeline = func(s *store.Store, observationID int64, before, after int) (*store.TimelineResult, error) {
 		return s.Timeline(observationID, before, after)
 	}
@@ -216,8 +208,6 @@ func stubRuntimeHooks(t *testing.T) {
 		setupSupportedAgents = oldSetupSupportedAgents
 		setupInstallAgent = oldSetupInstallAgent
 		scanInputLine = oldScanInputLine
-		storeSearch = oldStoreSearch
-		storeAddObservation = oldStoreAddObservation
 		storeTimeline = oldStoreTimeline
 		storeFormatContext = oldStoreFormatContext
 		storeStats = oldStoreStats
@@ -3728,25 +3718,21 @@ func TestCmdImportStoreImportFailure(t *testing.T) {
 	}
 }
 
-func TestCmdSearchAndSaveDanglingFlags(t *testing.T) {
+func TestCmdSearchAndSaveRejectDanglingFlags(t *testing.T) {
+	stubRuntimeHooks(t)
+	stubExitWithPanic(t)
 	cfg := testConfig(t)
 
 	withArgs(t, "engram", "save", "dangling-title", "dangling-content", "--type")
-	stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdSave(cfg) })
-	if recovered != nil || stderr != "" {
-		t.Fatalf("save with dangling flag failed, panic=%v stderr=%q", recovered, stderr)
-	}
-	if !strings.Contains(stdout, "Memory saved:") {
-		t.Fatalf("unexpected save output: %q", stdout)
+	_, stderr, recovered := captureOutputAndRecover(t, func() { cmdSave(cfg) })
+	if _, ok := recovered.(exitCode); !ok || !strings.Contains(stderr, "requires a value") {
+		t.Fatalf("save should reject dangling flag, panic=%v stderr=%q", recovered, stderr)
 	}
 
 	withArgs(t, "engram", "search", "dangling-content", "--limit", "not-a-number", "--project")
-	stdout, stderr, recovered = captureOutputAndRecover(t, func() { cmdSearch(cfg) })
-	if recovered != nil || stderr != "" {
-		t.Fatalf("search with dangling flags failed, panic=%v stderr=%q", recovered, stderr)
-	}
-	if !strings.Contains(stdout, "Found") {
-		t.Fatalf("unexpected search output: %q", stdout)
+	_, stderr, recovered = captureOutputAndRecover(t, func() { cmdSearch(cfg) })
+	if _, ok := recovered.(exitCode); !ok || !strings.Contains(stderr, "limit must be between") {
+		t.Fatalf("search should reject invalid limit, panic=%v stderr=%q", recovered, stderr)
 	}
 }
 
@@ -3872,24 +3858,6 @@ func TestCommandErrorSeamsAndUncoveredBranches(t *testing.T) {
 			t.Fatalf("stderr missing %q: %q", want, stderr)
 		}
 	}
-
-	t.Run("search seam error", func(t *testing.T) {
-		withArgs(t, "engram", "search", "needle")
-		storeSearch = func(*store.Store, string, store.SearchOptions) ([]store.SearchResult, error) {
-			return nil, errors.New("forced search error")
-		}
-		_, stderr, recovered := captureOutputAndRecover(t, func() { cmdSearch(cfg) })
-		assertFatal(t, stderr, recovered, "forced search error")
-	})
-
-	t.Run("save seam error", func(t *testing.T) {
-		withArgs(t, "engram", "save", "title", "content")
-		storeAddObservation = func(*store.Store, store.AddObservationParams) (int64, error) {
-			return 0, errors.New("forced save error")
-		}
-		_, stderr, recovered := captureOutputAndRecover(t, func() { cmdSave(cfg) })
-		assertFatal(t, stderr, recovered, "forced save error")
-	})
 
 	t.Run("timeline seam error", func(t *testing.T) {
 		withArgs(t, "engram", "timeline", "1")

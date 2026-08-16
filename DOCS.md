@@ -1250,6 +1250,7 @@ Interactive Bubbletea-based terminal UI. Launch with `engram tui`.
 | **Search**              | FTS5 text search with text input                                  |
 | **Search Results**      | Browsable results list from search                                |
 | **Recent Observations** | Browse all observations, newest first                             |
+| **Review memories**     | Verify memories due for local review in the current project      |
 | **Observation Detail**  | Full content of a single observation, scrollable                  |
 | **Timeline**            | Chronological context around an observation (before/after)        |
 | **Sessions**            | Browse all sessions                                               |
@@ -1262,10 +1263,33 @@ Interactive Bubbletea-based terminal UI. Launch with `engram tui`.
 - `Enter` — Select / drill into detail
 - `c` — Copy observation content to clipboard (OSC 52; works in search results, recent list, detail, and session views)
 - `t` — View timeline for selected observation
+- `r` — Refresh the Review memories queue or supported status screens
+- `m` — From a review memory's detail, open the mark-reviewed confirmation
+- `p` — From a review memory's detail, pin or unpin it locally
 - `s` or `/` — Quick search from any screen
 - `Esc` — Go back or cancel an active text field
 - `q` — Go back / quit when a text field is not focused; inside search and URL fields it is typed normally
 - `Ctrl+C` — Force quit
+
+### Review memories
+
+From the Dashboard, select **Review memories** to inspect memories whose
+`review_after` date is due in the project detected from the current working
+directory. The queue is oldest-due first and shows each memory's lifecycle and
+pin state. It never falls back to an all-project view; if the project or local
+store cannot be resolved, the screen reports the error and allows `r` to retry.
+
+Select a memory with `Enter` to read its complete detail. Merely opening it does
+not change its lifecycle. Press `m` to open a confirmation prompt, then `y` (or
+`Enter`) to confirm that the memory remains current; `n` or `Esc` cancels. A
+successful confirmation resets the type-specific local review cycle, removes
+the memory from the due queue, and keeps the cursor near the next item.
+
+Press `p` in review detail to pin or unpin the memory. Pinning changes its local
+priority in agent context but does not certify the content or remove it from the
+review queue. Both review timestamps and pins are local to this device and are
+not synchronized. Use `Esc` from detail to defer the decision and return to the
+same queue position.
 
 ### Cloud control center
 

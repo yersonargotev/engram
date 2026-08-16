@@ -21,6 +21,7 @@ import (
 	"github.com/yersonargotev/engram/internal/cloud/constants"
 	"github.com/yersonargotev/engram/internal/cloud/remote"
 	"github.com/yersonargotev/engram/internal/mcp"
+	projectpkg "github.com/yersonargotev/engram/internal/project"
 	engramsrv "github.com/yersonargotev/engram/internal/server"
 	"github.com/yersonargotev/engram/internal/setup"
 	"github.com/yersonargotev/engram/internal/store"
@@ -536,6 +537,42 @@ func TestCmdMCPAndTUIBranches(t *testing.T) {
 	_, _, recovered = captureOutputAndRecover(t, func() { cmdTUI(cfg) })
 	if recovered != nil {
 		t.Fatalf("unexpected panic on successful tui: %v", recovered)
+	}
+}
+
+func TestTUIModelUsesDetectedProject(t *testing.T) {
+	oldDetectProjectFull := detectProjectFull
+	detectProjectFull = func(string) projectpkg.DetectionResult {
+		return projectpkg.DetectionResult{Project: "engram"}
+	}
+	t.Cleanup(func() { detectProjectFull = oldDetectProjectFull })
+
+	model := newTUIModel(nil, "")
+	project, err := model.CurrentProjectResolver()
+	if err != nil || project != "engram" {
+		t.Fatalf("TUI current project = %q error %v, want engram", project, err)
+	}
+}
+
+func TestTUIModelPreservesProjectDetectionError(t *testing.T) {
+	oldDetectProjectFull := detectProjectFull
+	detectProjectFull = func(string) projectpkg.DetectionResult {
+		return projectpkg.DetectionResult{
+			Error:             projectpkg.ErrAmbiguousProject,
+			AvailableProjects: []string{"api", "web"},
+		}
+	}
+	t.Cleanup(func() { detectProjectFull = oldDetectProjectFull })
+
+	model := newTUIModel(nil, "")
+	project, err := model.CurrentProjectResolver()
+	if project != "" || err == nil {
+		t.Fatalf("TUI project resolution = %q error %v, want empty project and error", project, err)
+	}
+	for _, want := range []string{"ambiguous project", "api", "web"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("TUI project error = %q, want %q", err, want)
+		}
 	}
 }
 

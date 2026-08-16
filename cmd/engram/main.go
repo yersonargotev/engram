@@ -74,9 +74,22 @@ var (
 	serveMCP               = mcpserver.ServeStdio
 
 	// detectProject is injectable for testing; wraps project.DetectProject.
-	detectProject = projectpkg.DetectProject
+	detectProject     = projectpkg.DetectProject
+	detectProjectFull = projectpkg.DetectProjectFull
 
-	newTUIModel   = func(s *store.Store, dataDir string) tui.Model { return tui.NewWithDataDir(s, version, dataDir) }
+	newTUIModel = func(s *store.Store, dataDir string) tui.Model {
+		return tui.NewWithProjectResolver(s, version, dataDir, func() (string, error) {
+			result := detectProjectFull(currentCWD())
+			if result.Error == nil {
+				return result.Project, nil
+			}
+			message := result.Error.Error()
+			if len(result.AvailableProjects) > 0 {
+				message += "; open one project directory: " + strings.Join(result.AvailableProjects, ", ")
+			}
+			return "", errors.New(message)
+		})
+	}
 	newTeaProgram = tea.NewProgram
 	runTeaProgram = (*tea.Program).Run
 

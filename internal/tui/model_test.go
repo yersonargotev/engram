@@ -87,6 +87,13 @@ func TestNewInitializesModelDefaults(t *testing.T) {
 	}
 }
 
+func TestNewWithProjectKeepsResolvedProject(t *testing.T) {
+	m := NewWithProject(nil, "", "", "  Engram  ")
+	if m.CurrentProject != "Engram" {
+		t.Fatalf("current project = %q, want trimmed project", m.CurrentProject)
+	}
+}
+
 func TestScreenCloudSettingsConstant(t *testing.T) {
 	if ScreenCloudSettings != ScreenSetup+1 {
 		t.Fatalf("ScreenCloudSettings = %d, want %d (ScreenSetup+1)", ScreenCloudSettings, ScreenSetup+1)
@@ -107,6 +114,7 @@ func TestScreenCloudSettingsConstant(t *testing.T) {
 		ScreenCloudConfigure,
 		ScreenCloudStatus,
 		ScreenCloudEnroll,
+		ScreenReview,
 	} {
 		if seen[s] {
 			t.Fatalf("screen constant %d is duplicated", s)

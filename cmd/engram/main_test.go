@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
+	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/yersonargotev/engram/internal/mcp"
 	"github.com/yersonargotev/engram/internal/obsidian"
 	"github.com/yersonargotev/engram/internal/setup"
 	"github.com/yersonargotev/engram/internal/store"
 	engramsync "github.com/yersonargotev/engram/internal/sync"
 	versioncheck "github.com/yersonargotev/engram/internal/version"
-	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
 func testConfig(t *testing.T) store.Config {
@@ -76,13 +76,22 @@ func captureOutput(t *testing.T, fn func()) (stdout string, stderr string) {
 
 	os.Stdout = outW
 	os.Stderr = errW
+	restored := false
+	restore := func() {
+		if restored {
+			return
+		}
+		_ = outW.Close()
+		_ = errW.Close()
+		os.Stdout = oldOut
+		os.Stderr = oldErr
+		restored = true
+	}
+	defer restore()
 
 	fn()
 
-	_ = outW.Close()
-	_ = errW.Close()
-	os.Stdout = oldOut
-	os.Stderr = oldErr
+	restore()
 
 	outBytes, err := io.ReadAll(outR)
 	if err != nil {
@@ -94,6 +103,20 @@ func captureOutput(t *testing.T, fn func()) (stdout string, stderr string) {
 	}
 
 	return string(outBytes), string(errBytes)
+}
+
+func TestCaptureOutputRestoresStreamsAfterPanic(t *testing.T) {
+	originalOut := os.Stdout
+	originalErr := os.Stderr
+
+	func() {
+		defer func() { _ = recover() }()
+		captureOutput(t, func() { panic("simulated exit") })
+	}()
+
+	if os.Stdout != originalOut || os.Stderr != originalErr {
+		t.Fatal("captureOutput must restore process streams after a panic")
+	}
 }
 
 func mustSeedObservation(t *testing.T, cfg store.Config, sessionID, project, typ, title, content, scope string) int64 {

@@ -397,28 +397,40 @@ func applySyncState(status *CloudStatus, state *store.SyncState) {
 	if status == nil || state == nil {
 		return
 	}
-	status.SyncLifecycle = state.Lifecycle
-	if state.ReasonCode != nil {
-		status.ReasonCode = strings.TrimSpace(*state.ReasonCode)
-	}
-	if state.ReasonMessage != nil {
-		status.ReasonMessage = strings.TrimSpace(*state.ReasonMessage)
-	}
+	details := cloudSyncStateDetailsFrom(state)
+	status.SyncLifecycle = details.lifecycle
+	status.ReasonCode = details.reasonCode
+	status.ReasonMessage = details.reasonMessage
 }
 
 func cloudProjectSyncStatus(project string, state *store.SyncState) CloudProjectSyncStatus {
-	result := CloudProjectSyncStatus{Project: project}
-	if state == nil {
-		return result
+	details := cloudSyncStateDetailsFrom(state)
+	return CloudProjectSyncStatus{
+		Project:       project,
+		Lifecycle:     details.lifecycle,
+		ReasonCode:    details.reasonCode,
+		ReasonMessage: details.reasonMessage,
 	}
-	result.Lifecycle = state.Lifecycle
+}
+
+type cloudSyncStateDetails struct {
+	lifecycle     string
+	reasonCode    string
+	reasonMessage string
+}
+
+func cloudSyncStateDetailsFrom(state *store.SyncState) cloudSyncStateDetails {
+	if state == nil {
+		return cloudSyncStateDetails{}
+	}
+	details := cloudSyncStateDetails{lifecycle: state.Lifecycle}
 	if state.ReasonCode != nil {
-		result.ReasonCode = strings.TrimSpace(*state.ReasonCode)
+		details.reasonCode = strings.TrimSpace(*state.ReasonCode)
 	}
 	if state.ReasonMessage != nil {
-		result.ReasonMessage = strings.TrimSpace(*state.ReasonMessage)
+		details.reasonMessage = strings.TrimSpace(*state.ReasonMessage)
 	}
-	return result
+	return details
 }
 
 func syncLifecyclePriority(lifecycle string) int {

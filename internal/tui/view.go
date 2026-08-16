@@ -264,14 +264,7 @@ func (m Model) viewCloudStatus() string {
 	b.WriteString(fmt.Sprintf("%s %s\n", detailLabelStyle.Render("Sync lifecycle:"), detailValueStyle.Render(lifecycle)))
 	b.WriteString(fmt.Sprintf("%s %d\n", detailLabelStyle.Render("Enrolled projects:"), len(m.CloudStatus.EnrolledProjects)))
 	visibleItems := cloudStatusVisibleItems(m.Height)
-	start := m.CloudScroll
-	if start > len(m.CloudStatus.ProjectStates) {
-		start = len(m.CloudStatus.ProjectStates)
-	}
-	end := start + visibleItems
-	if end > len(m.CloudStatus.ProjectStates) {
-		end = len(m.CloudStatus.ProjectStates)
-	}
+	start, end := cloudViewportBounds(m.CloudScroll, len(m.CloudStatus.ProjectStates), visibleItems)
 	for _, project := range m.CloudStatus.ProjectStates[start:end] {
 		lifecycle := project.Lifecycle
 		if lifecycle == "" {
@@ -315,14 +308,7 @@ func (m Model) viewCloudEnroll() string {
 		b.WriteString("\n\n")
 	} else {
 		visibleItems := cloudEnrollVisibleItems(m.Height)
-		start := m.CloudScroll
-		if start > len(m.CloudProjects) {
-			start = len(m.CloudProjects)
-		}
-		end := start + visibleItems
-		if end > len(m.CloudProjects) {
-			end = len(m.CloudProjects)
-		}
+		start, end := cloudViewportBounds(m.CloudScroll, len(m.CloudProjects), visibleItems)
 		for i := start; i < end; i++ {
 			project := m.CloudProjects[i]
 			marker := "  "
@@ -346,6 +332,18 @@ func (m Model) viewCloudEnroll() string {
 	}
 	b.WriteString(helpStyle.Render("  j/k navigate • enter enroll • r refresh • esc/q back"))
 	return b.String()
+}
+
+func cloudViewportBounds(scroll, total, visible int) (start, end int) {
+	start = scroll
+	if start > total {
+		start = total
+	}
+	end = start + visible
+	if end > total {
+		end = total
+	}
+	return start, end
 }
 
 // renderMenu renders a vertical list of selectable menu items with a cursor.

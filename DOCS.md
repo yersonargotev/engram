@@ -571,7 +571,10 @@ Inspect or replay the `sync_apply_deferred` queue.
 
 - `engram cloud status` — show current cloud config state plus auth/sync readiness without mutating local state. When cloud is configured, also probes the local `engram serve` daemon at `127.0.0.1:7437` (respects `ENGRAM_PORT`) and prints a `Local daemon:` line (`running` / `not running` / `unreachable`) so you can detect a silently dead autosync. Exit code is unaffected; the line is informational
 - `engram cloud enroll <project>` — enroll one project for cloud replication
-- `engram cloud config --server <url>` — persist cloud server URL to `~/.engram/cloud.json`
+- `engram cloud config --server <url>` — persist an absolute HTTP(S) cloud
+  server URL to `~/.engram/cloud.json`; URL userinfo, query delimiters, query
+  parameters, and fragments are rejected so credentials cannot be embedded in
+  the displayed endpoint
 - `engram cloud serve` — run cloud backend API + dashboard (`/dashboard`) using Postgres config from env
 - `engram cloud upgrade doctor --project <project>` — deterministic read-only readiness diagnosis (`ready|blocked`, class/reason)
 - `engram cloud upgrade repair --project <project> [--dry-run|--apply]` — deterministic local-safe repair planner/apply (no remote mutation)
@@ -1271,8 +1274,9 @@ working flows:
 
 - **Configure server** — Enter an absolute `http://` or `https://` URL and press
   `Enter`. The URL is validated and persisted in the local data directory's
-  `cloud.json`; an existing saved token is preserved. This screen does not ask
-  for a token. Client authentication is resolved from `ENGRAM_CLOUD_TOKEN`
+  `cloud.json`; URL userinfo, query delimiters, query parameters, and fragments
+  are rejected, and an existing saved token is preserved. This screen does not
+  ask for a token. Client authentication is resolved from `ENGRAM_CLOUD_TOKEN`
   first, or from the token already present in `cloud.json` when the environment
   variable is not set. The TUI only shows whether a token is configured; it
   never displays or echoes the secret.

@@ -54,7 +54,9 @@ func TestValidateServerURL(t *testing.T) {
 	}{
 		{"http", " https://cloud.example.test/path ", "https://cloud.example.test/path", true},
 		{"query", "https://cloud.example.test/path?x=1", "", false},
+		{"empty query", "https://cloud.example.test/path?", "", false},
 		{"fragment", "https://cloud.example.test/path#x", "", false},
+		{"userinfo", "https://review-user:review-password@cloud.example.test", "", false},
 		{"scheme", "ftp://cloud.example.test", "", false},
 		{"host", "https:///path", "", false},
 	}

@@ -96,22 +96,79 @@ func TestCloudSettingsActionsOpenWorkingScreens(t *testing.T) {
 	m.Cursor = 0
 	updatedModel, _ := m.handleCloudSettingsKeys("enter")
 	updated := updatedModel.(Model)
-	if updated.Screen != ScreenCloudConfigure || !updated.CloudServerInput.Focused() {
-		t.Fatalf("configure action = screen %v focused %t", updated.Screen, updated.CloudServerInput.Focused())
+	if updated.Screen != ScreenCloudConfigure || updated.PrevScreen != ScreenCloudSettings || !updated.CloudServerInput.Focused() {
+		t.Fatalf("configure action = screen %v previous %v focused %t", updated.Screen, updated.PrevScreen, updated.CloudServerInput.Focused())
 	}
 
 	m.Cursor = 1
 	updatedModel, cmd := m.handleCloudSettingsKeys("enter")
 	updated = updatedModel.(Model)
-	if updated.Screen != ScreenCloudStatus || cmd == nil || !updated.CloudLoading {
-		t.Fatalf("status action = screen %v loading %t cmd nil %t", updated.Screen, updated.CloudLoading, cmd == nil)
+	if updated.Screen != ScreenCloudStatus || updated.PrevScreen != ScreenCloudSettings || cmd == nil || !updated.CloudLoading {
+		t.Fatalf("status action = screen %v previous %v loading %t cmd nil %t", updated.Screen, updated.PrevScreen, updated.CloudLoading, cmd == nil)
 	}
 
 	m.Cursor = 2
 	updatedModel, cmd = m.handleCloudSettingsKeys("enter")
 	updated = updatedModel.(Model)
-	if updated.Screen != ScreenCloudEnroll || cmd == nil || !updated.CloudLoading {
-		t.Fatalf("enroll action = screen %v loading %t cmd nil %t", updated.Screen, updated.CloudLoading, cmd == nil)
+	if updated.Screen != ScreenCloudEnroll || updated.PrevScreen != ScreenCloudSettings || cmd == nil || !updated.CloudLoading {
+		t.Fatalf("enroll action = screen %v previous %v loading %t cmd nil %t", updated.Screen, updated.PrevScreen, updated.CloudLoading, cmd == nil)
+	}
+}
+
+func TestCloudNavigationPreservesParentContext(t *testing.T) {
+	m := NewWithDataDir(nil, "", t.TempDir())
+	m.Screen = ScreenDashboard
+	m.Cursor = 4
+
+	updatedModel, _ := m.Update(keyMsg("enter"))
+	updated := updatedModel.(Model)
+	if updated.Screen != ScreenCloudSettings || updated.PrevScreen != ScreenDashboard {
+		t.Fatalf("cloud settings navigation = screen %v previous %v", updated.Screen, updated.PrevScreen)
+	}
+
+	updated.Cursor = 1
+	updatedModel, _ = updated.Update(keyMsg("enter"))
+	updated = updatedModel.(Model)
+	if updated.Screen != ScreenCloudStatus || updated.PrevScreen != ScreenCloudSettings {
+		t.Fatalf("cloud status navigation = screen %v previous %v", updated.Screen, updated.PrevScreen)
+	}
+
+	updatedModel, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated = updatedModel.(Model)
+	if updated.Screen != ScreenCloudSettings || updated.PrevScreen != ScreenDashboard {
+		t.Fatalf("cloud status back = screen %v previous %v", updated.Screen, updated.PrevScreen)
+	}
+
+	updatedModel, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated = updatedModel.(Model)
+	if updated.Screen != ScreenDashboard {
+		t.Fatalf("cloud settings back = screen %v, want %v", updated.Screen, ScreenDashboard)
+	}
+}
+
+func TestCloudConfigureAndEnrollBackRestoreSettingsContext(t *testing.T) {
+	configure := NewWithDataDir(nil, "", t.TempDir())
+	configure.Screen = ScreenCloudSettings
+	configure.PrevScreen = ScreenDashboard
+	configure.Cursor = 0
+	updatedModel, _ := configure.Update(keyMsg("enter"))
+	configured := updatedModel.(Model)
+	updatedModel, _ = configured.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	configured = updatedModel.(Model)
+	if configured.Screen != ScreenCloudSettings || configured.PrevScreen != ScreenDashboard || configured.CloudServerInput.Focused() {
+		t.Fatalf("configure back = screen %v previous %v focused %t", configured.Screen, configured.PrevScreen, configured.CloudServerInput.Focused())
+	}
+
+	enroll := NewWithDataDir(nil, "", t.TempDir())
+	enroll.Screen = ScreenCloudSettings
+	enroll.PrevScreen = ScreenDashboard
+	enroll.Cursor = 2
+	updatedModel, _ = enroll.Update(keyMsg("enter"))
+	enrolled := updatedModel.(Model)
+	updatedModel, refresh := enrolled.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	enrolled = updatedModel.(Model)
+	if enrolled.Screen != ScreenCloudSettings || enrolled.PrevScreen != ScreenDashboard || refresh == nil {
+		t.Fatalf("enroll back = screen %v previous %v refresh nil %t", enrolled.Screen, enrolled.PrevScreen, refresh == nil)
 	}
 }
 
@@ -150,8 +207,8 @@ func TestCloudConfigureValidatesPersistsAndReturnsToControlCenter(t *testing.T) 
 	}
 	updatedModel, refresh := updated.Update(configured)
 	updated = updatedModel.(Model)
-	if updated.Screen != ScreenCloudSettings || updated.CloudNotice == "" || refresh == nil {
-		t.Fatalf("configured result = screen %v notice %q refresh nil %t", updated.Screen, updated.CloudNotice, refresh == nil)
+	if updated.Screen != ScreenCloudSettings || updated.PrevScreen != ScreenDashboard || updated.CloudNotice == "" || refresh == nil {
+		t.Fatalf("configured result = screen %v previous %v notice %q refresh nil %t", updated.Screen, updated.PrevScreen, updated.CloudNotice, refresh == nil)
 	}
 
 	resolved, err := cloud.LoadClientConfig(dataDir)

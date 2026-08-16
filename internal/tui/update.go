@@ -188,6 +188,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.CloudNotice = fmt.Sprintf("✓ Cloud server set to %s", msg.serverURL)
 		m.CloudServerInput.Blur()
 		m.Screen = ScreenCloudSettings
+		m.PrevScreen = ScreenDashboard
 		m.Cursor = 0
 		m.CloudLoading = true
 		return m, loadCloudStatus(m.store, m.CloudDataDir)
@@ -742,12 +743,14 @@ func (m Model) handleCloudSettingsKeys(key string) (tea.Model, tea.Cmd) {
 	case "enter", " ":
 		switch m.Cursor {
 		case 0:
+			m.PrevScreen = m.Screen
 			m.Screen = ScreenCloudConfigure
 			m.CloudServerInput.SetValue(m.CloudStatus.ServerURL)
 			m.CloudServerInput.Focus()
 			m.CloudNotice = ""
 			return m, nil
 		case 1:
+			m.PrevScreen = m.Screen
 			m.Screen = ScreenCloudStatus
 			m.Cursor = 0
 			m.CloudScroll = 0
@@ -755,6 +758,7 @@ func (m Model) handleCloudSettingsKeys(key string) (tea.Model, tea.Cmd) {
 			m.CloudNotice = ""
 			return m, loadCloudStatus(m.store, m.CloudDataDir)
 		case 2:
+			m.PrevScreen = m.Screen
 			m.Screen = ScreenCloudEnroll
 			m.Cursor = 0
 			m.CloudScroll = 0
@@ -762,12 +766,12 @@ func (m Model) handleCloudSettingsKeys(key string) (tea.Model, tea.Cmd) {
 			m.CloudNotice = ""
 			return m, loadCloudProjects(m.store)
 		default:
-			m.Screen = ScreenDashboard
+			m.Screen = m.PrevScreen
 			m.Cursor = 0
 			return m, loadStats(m.store)
 		}
 	case "esc", "q":
-		m.Screen = ScreenDashboard
+		m.Screen = m.PrevScreen
 		m.Cursor = 0
 		return m, loadStats(m.store)
 	}
@@ -782,7 +786,8 @@ func (m Model) handleCloudConfigureInputKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd
 		return m, configureCloudServer(m.CloudDataDir, m.CloudServerInput.Value())
 	case "esc":
 		m.CloudServerInput.Blur()
-		m.Screen = ScreenCloudSettings
+		m.Screen = m.PrevScreen
+		m.PrevScreen = ScreenDashboard
 		m.Cursor = 0
 		return m, nil
 	}
@@ -796,7 +801,8 @@ func (m Model) handleCloudConfigureKeys(key string) (tea.Model, tea.Cmd) {
 	case "i", "enter":
 		m.CloudServerInput.Focus()
 	case "esc", "q":
-		m.Screen = ScreenCloudSettings
+		m.Screen = m.PrevScreen
+		m.PrevScreen = ScreenDashboard
 		m.Cursor = 0
 	}
 	return m, nil
@@ -820,7 +826,8 @@ func (m Model) handleCloudStatusKeys(key string) (tea.Model, tea.Cmd) {
 		m.CloudLoading = true
 		return m, loadCloudStatus(m.store, m.CloudDataDir)
 	case "esc", "q", "enter", " ":
-		m.Screen = ScreenCloudSettings
+		m.Screen = m.PrevScreen
+		m.PrevScreen = ScreenDashboard
 		m.Cursor = 1
 	}
 	return m, nil
@@ -854,7 +861,8 @@ func (m Model) handleCloudEnrollKeys(key string) (tea.Model, tea.Cmd) {
 		m.CloudLoading = true
 		return m, loadCloudProjects(m.store)
 	case "esc", "q":
-		m.Screen = ScreenCloudSettings
+		m.Screen = m.PrevScreen
+		m.PrevScreen = ScreenDashboard
 		m.Cursor = 2
 		m.CloudLoading = true
 		return m, loadCloudStatus(m.store, m.CloudDataDir)

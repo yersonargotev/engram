@@ -2,11 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -201,10 +199,7 @@ var runUpgradeBootstrap = func(s *store.Store, project string, cc *cloudConfig) 
 	return engramsync.BootstrapProject(s, transport, engramsync.UpgradeBootstrapOptions{Project: project, CreatedBy: "engram-cloud-upgrade"})
 }
 
-type cloudConfig struct {
-	ServerURL string `json:"server_url"`
-	Token     string `json:"token"`
-}
+type cloudConfig = cloud.ClientConfig
 
 func cmdCloud(cfg store.Config) {
 	if len(os.Args) < 3 {
@@ -774,7 +769,7 @@ func cmdCloudConfig(cfg store.Config) {
 		exitFunc(1)
 	}
 	cc.ServerURL = validatedURL
-	if err := saveCloudConfig(cfg, cc); err != nil {
+	if _, err := cloud.SaveClientServer(cfg.DataDir, cc.ServerURL); err != nil {
 		fatal(err)
 		return
 	}
@@ -782,27 +777,7 @@ func cmdCloudConfig(cfg store.Config) {
 }
 
 func validateCloudServerURL(raw string) (string, error) {
-	trimmed := strings.TrimSpace(raw)
-	parsed, err := url.ParseRequestURI(trimmed)
-	if err != nil {
-		return "", err
-	}
-	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
-	if scheme != "http" && scheme != "https" {
-		return "", fmt.Errorf("scheme must be http or https")
-	}
-	if strings.TrimSpace(parsed.Host) == "" || strings.TrimSpace(parsed.Hostname()) == "" {
-		return "", fmt.Errorf("host is required")
-	}
-	if strings.TrimSpace(parsed.RawQuery) != "" {
-		return "", fmt.Errorf("query is not allowed")
-	}
-	if strings.TrimSpace(parsed.Fragment) != "" {
-		return "", fmt.Errorf("fragment is not allowed")
-	}
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return parsed.String(), nil
+	return cloud.ValidateServerURL(raw)
 }
 
 func cmdCloudServe() {
@@ -879,28 +854,12 @@ func cloudConfigPath(cfg store.Config) string {
 }
 
 func loadCloudConfig(cfg store.Config) (*cloudConfig, error) {
-	path := cloudConfigPath(cfg)
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var cc cloudConfig
-	if err := json.Unmarshal(b, &cc); err != nil {
-		return nil, err
-	}
-	return &cc, nil
+	return cloud.LoadClientConfig(cfg.DataDir)
 }
 
 func saveCloudConfig(cfg store.Config, cc *cloudConfig) error {
-	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
-		return err
+	if cc == nil {
+		return cloud.SaveClientConfig(cfg.DataDir, cloud.ClientConfig{})
 	}
-	b, err := json.MarshalIndent(cc, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(cloudConfigPath(cfg), b, 0o644)
+	return cloud.SaveClientConfig(cfg.DataDir, *cc)
 }

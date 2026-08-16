@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/yersonargotev/engram/internal/timeutil"
 	"github.com/yersonargotev/engram/internal/version"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // ─── Logo ────────────────────────────────────────────────────────────────────
@@ -82,6 +82,12 @@ func (m Model) View() string {
 		content = m.viewSetup()
 	case ScreenCloudSettings:
 		content = m.viewCloudSettings()
+	case ScreenCloudConfigure:
+		content = m.viewCloudConfigure()
+	case ScreenCloudStatus:
+		content = m.viewCloudStatus()
+	case ScreenCloudEnroll:
+		content = m.viewCloudEnroll()
 	default:
 		content = "Unknown screen"
 	}
@@ -172,12 +178,172 @@ func (m Model) viewDashboard() string {
 func (m Model) viewCloudSettings() string {
 	var b strings.Builder
 
-	b.WriteString(headerStyle.Render("  Cloud sync settings"))
+	b.WriteString(headerStyle.Render("  Cloud sync settings · control center"))
 	b.WriteString("\n\n")
+	if m.CloudLoading {
+		b.WriteString(statCardStyle.Render("Loading cloud status..."))
+		b.WriteString("\n\n")
+	} else {
+		configured := "Not configured"
+		server := "Run Configure server to connect this local brain."
+		if m.CloudStatus.Configured {
+			configured = "Configured"
+			server = m.CloudStatus.ServerURL
+		}
+		auth := "Token not configured"
+		if m.CloudStatus.AuthConfigured {
+			auth = "Auth ready"
+		}
+		syncLifecycle := m.CloudStatus.SyncLifecycle
+		if syncLifecycle == "" {
+			syncLifecycle = "not started"
+		}
+		summary := fmt.Sprintf(
+			"%s\n%s\n%s • %d enrolled project(s)\nSync: %s",
+			configured,
+			server,
+			auth,
+			len(m.CloudStatus.EnrolledProjects),
+			syncLifecycle,
+		)
+		if m.CloudStatus.ReasonCode != "" {
+			summary += " (" + m.CloudStatus.ReasonCode + ")"
+		}
+		b.WriteString(statCardStyle.Render(summary))
+		b.WriteString("\n\n")
+	}
+	if m.CloudNotice != "" {
+		b.WriteString(copyFeedbackStyle.Render(m.CloudNotice))
+		b.WriteString("\n\n")
+	}
 	b.WriteString(renderMenu(cloudSettingsMenuItems, m.Cursor))
 	b.WriteString(helpStyle.Render("\n  j/k navigate • enter select • esc/q back"))
 
 	return b.String()
+}
+
+func (m Model) viewCloudConfigure() string {
+	var b strings.Builder
+	b.WriteString(headerStyle.Render("  Configure cloud server"))
+	b.WriteString("\n\n")
+	b.WriteString("Engram will persist the server URL locally. Authentication continues to use ENGRAM_CLOUD_TOKEN or the existing saved token.\n\n")
+	b.WriteString(searchInputStyle.Render(m.CloudServerInput.View()))
+	b.WriteString("\n\n")
+	if m.CloudLoading {
+		b.WriteString(timestampStyle.Render("Saving configuration..."))
+		b.WriteString("\n\n")
+	}
+	b.WriteString(helpStyle.Render("  enter save • esc cancel"))
+	return b.String()
+}
+
+func (m Model) viewCloudStatus() string {
+	var b strings.Builder
+	b.WriteString(headerStyle.Render("  Cloud sync status"))
+	b.WriteString("\n\n")
+	if m.CloudLoading {
+		b.WriteString(noResultsStyle.Render("Loading cloud status..."))
+		b.WriteString("\n\n")
+		b.WriteString(helpStyle.Render("  r refresh • esc/q back"))
+		return b.String()
+	}
+	server := "Not configured"
+	if m.CloudStatus.Configured {
+		server = m.CloudStatus.ServerURL
+	}
+	auth := "Token not configured"
+	if m.CloudStatus.AuthConfigured {
+		auth = "Ready"
+	}
+	lifecycle := m.CloudStatus.SyncLifecycle
+	if lifecycle == "" {
+		lifecycle = "not started"
+	}
+	b.WriteString(fmt.Sprintf("%s %s\n", detailLabelStyle.Render("Server:"), detailValueStyle.Render(server)))
+	b.WriteString(fmt.Sprintf("%s %s\n", detailLabelStyle.Render("Authentication:"), detailValueStyle.Render(auth)))
+	b.WriteString(fmt.Sprintf("%s %s\n", detailLabelStyle.Render("Sync lifecycle:"), detailValueStyle.Render(lifecycle)))
+	b.WriteString(fmt.Sprintf("%s %d\n", detailLabelStyle.Render("Enrolled projects:"), len(m.CloudStatus.EnrolledProjects)))
+	visibleItems := cloudStatusVisibleItems(m.Height)
+	start, end := cloudViewportBounds(m.CloudScroll, len(m.CloudStatus.ProjectStates), visibleItems)
+	for _, project := range m.CloudStatus.ProjectStates[start:end] {
+		lifecycle := project.Lifecycle
+		if lifecycle == "" {
+			lifecycle = "not started"
+		}
+		line := fmt.Sprintf("  • %s — %s", project.Project, lifecycle)
+		if project.ReasonCode != "" {
+			line += " (" + project.ReasonCode + ")"
+		}
+		b.WriteString(listItemStyle.Render(line))
+		b.WriteString("\n")
+	}
+	if len(m.CloudStatus.ProjectStates) > visibleItems {
+		b.WriteString(timestampStyle.Render(fmt.Sprintf("  showing %d-%d of %d projects", start+1, end, len(m.CloudStatus.ProjectStates))))
+		b.WriteString("\n")
+	}
+	if m.CloudStatus.ReasonCode != "" {
+		b.WriteString(fmt.Sprintf("%s %s\n", detailLabelStyle.Render("Reason code:"), stateWarningBadgeStyle.Render(m.CloudStatus.ReasonCode)))
+	}
+	if m.CloudStatus.ReasonMessage != "" {
+		b.WriteString(fmt.Sprintf("%s %s\n", detailLabelStyle.Render("Diagnostic:"), detailValueStyle.Render(m.CloudStatus.ReasonMessage)))
+	}
+	b.WriteString(helpStyle.Render("\n  j/k scroll • r refresh • enter/esc/q back"))
+	return b.String()
+}
+
+func (m Model) viewCloudEnroll() string {
+	var b strings.Builder
+	b.WriteString(headerStyle.Render("  Enroll projects for cloud sync"))
+	b.WriteString("\n\n")
+	b.WriteString("Enrollment opts a local project into cloud replication and backfills its existing memory.\n\n")
+	if m.CloudNotice != "" {
+		b.WriteString(copyFeedbackStyle.Render(m.CloudNotice))
+		b.WriteString("\n\n")
+	}
+	if m.CloudLoading {
+		b.WriteString(noResultsStyle.Render("Loading local projects..."))
+		b.WriteString("\n\n")
+	} else if len(m.CloudProjects) == 0 {
+		b.WriteString(noResultsStyle.Render("No local projects found. Save a project memory first."))
+		b.WriteString("\n\n")
+	} else {
+		visibleItems := cloudEnrollVisibleItems(m.Height)
+		start, end := cloudViewportBounds(m.CloudScroll, len(m.CloudProjects), visibleItems)
+		for i := start; i < end; i++ {
+			project := m.CloudProjects[i]
+			marker := "  "
+			style := menuItemStyle
+			if i == m.Cursor {
+				marker = "▸ "
+				style = menuSelectedStyle
+			}
+			label := project.Name
+			if project.Enrolled {
+				label += "  ✓ enrolled"
+			}
+			b.WriteString(style.Render(marker + label))
+			b.WriteString("\n")
+		}
+		if len(m.CloudProjects) > visibleItems {
+			b.WriteString(timestampStyle.Render(fmt.Sprintf("  showing %d-%d of %d projects", start+1, end, len(m.CloudProjects))))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString(helpStyle.Render("  j/k navigate • enter enroll • r refresh • esc/q back"))
+	return b.String()
+}
+
+func cloudViewportBounds(scroll, total, visible int) (start, end int) {
+	start = scroll
+	if start > total {
+		start = total
+	}
+	end = start + visible
+	if end > total {
+		end = total
+	}
+	return start, end
 }
 
 // renderMenu renders a vertical list of selectable menu items with a cursor.

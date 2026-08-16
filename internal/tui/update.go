@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yersonargotev/engram/internal/setup"
-	"github.com/yersonargotev/engram/internal/store"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/yersonargotev/engram/internal/setup"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 // ─── Update ──────────────────────────────────────────────────────────────────
@@ -19,6 +19,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
+		if m.Screen == ScreenCloudStatus {
+			m.CloudScroll = clampCloudScroll(m.CloudScroll, len(m.CloudStatus.ProjectStates), cloudStatusVisibleItems(m.Height))
+		}
+		if m.Screen == ScreenCloudEnroll {
+			m.CloudScroll = cloudScrollForCursor(m.Cursor, m.CloudScroll, cloudEnrollVisibleItems(m.Height))
+			m.CloudScroll = clampCloudScroll(m.CloudScroll, len(m.CloudProjects), cloudEnrollVisibleItems(m.Height))
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -29,6 +36,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// If search input is focused, let it handle most keys
 		if m.Screen == ScreenSearch && m.SearchInput.Focused() {
 			return m.handleSearchInputKeys(msg)
+		}
+		if m.Screen == ScreenCloudConfigure && m.CloudServerInput.Focused() {
+			return m.handleCloudConfigureInputKeys(msg)
 		}
 		return m.handleKeyPress(msg.String())
 
@@ -142,6 +152,58 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.SetupDone = true
 		return m, nil
 
+	case cloudStatusMsg:
+		m.CloudLoading = false
+		if msg.err != nil {
+			m.ErrorMsg = msg.err.Error()
+			return m, nil
+		}
+		m.CloudStatus = msg.status
+		m.CloudScroll = clampCloudScroll(m.CloudScroll, len(m.CloudStatus.ProjectStates), cloudStatusVisibleItems(m.Height))
+		return m, nil
+
+	case cloudProjectsMsg:
+		m.CloudLoading = false
+		if msg.err != nil {
+			m.ErrorMsg = msg.err.Error()
+			return m, nil
+		}
+		m.CloudProjects = msg.projects
+		if len(m.CloudProjects) == 0 {
+			m.Cursor = 0
+			m.CloudScroll = 0
+		} else if m.Cursor >= len(m.CloudProjects) {
+			m.Cursor = len(m.CloudProjects) - 1
+		}
+		m.CloudScroll = cloudScrollForCursor(m.Cursor, m.CloudScroll, cloudEnrollVisibleItems(m.Height))
+		return m, nil
+
+	case cloudConfiguredMsg:
+		m.CloudLoading = false
+		if msg.err != nil {
+			m.ErrorMsg = msg.err.Error()
+			return m, nil
+		}
+		m.ErrorMsg = ""
+		m.CloudNotice = fmt.Sprintf("✓ Cloud server set to %s", msg.serverURL)
+		m.CloudServerInput.Blur()
+		m.Screen = ScreenCloudSettings
+		m.PrevScreen = ScreenDashboard
+		m.Cursor = 0
+		m.CloudLoading = true
+		return m, loadCloudStatus(m.store, m.CloudDataDir)
+
+	case cloudProjectEnrolledMsg:
+		m.CloudLoading = false
+		if msg.err != nil {
+			m.ErrorMsg = msg.err.Error()
+			return m, nil
+		}
+		m.ErrorMsg = ""
+		m.CloudNotice = fmt.Sprintf("✓ Project %q enrolled for cloud sync", msg.project)
+		m.CloudLoading = true
+		return m, loadCloudProjects(m.store)
+
 	case clipboardCopiedMsg:
 		// Emit the OSC 52 sequence to stdout so the terminal copies the content,
 		// set the feedback label, and schedule its removal after 2 seconds.
@@ -195,6 +257,12 @@ func (m Model) handleKeyPress(key string) (tea.Model, tea.Cmd) {
 		return m.handleSetupKeys(key)
 	case ScreenCloudSettings:
 		return m.handleCloudSettingsKeys(key)
+	case ScreenCloudConfigure:
+		return m.handleCloudConfigureKeys(key)
+	case ScreenCloudStatus:
+		return m.handleCloudStatusKeys(key)
+	case ScreenCloudEnroll:
+		return m.handleCloudEnrollKeys(key)
 	}
 	return m, nil
 }
@@ -278,7 +346,9 @@ func (m Model) handleDashboardSelection() (tea.Model, tea.Cmd) {
 		m.PrevScreen = ScreenDashboard
 		m.Screen = ScreenCloudSettings
 		m.Cursor = 0
-		return m, nil
+		m.CloudNotice = ""
+		m.CloudLoading = true
+		return m, loadCloudStatus(m.store, m.CloudDataDir)
 	case 5: // Quit
 		return m, tea.Quit
 	}
@@ -671,17 +741,173 @@ func (m Model) handleCloudSettingsKeys(key string) (tea.Model, tea.Cmd) {
 			m.Cursor++
 		}
 	case "enter", " ":
-		if m.Cursor == len(cloudSettingsMenuItems)-1 { // Back
-			m.Screen = ScreenDashboard
+		switch m.Cursor {
+		case 0:
+			m.PrevScreen = m.Screen
+			m.Screen = ScreenCloudConfigure
+			m.CloudServerInput.SetValue(m.CloudStatus.ServerURL)
+			m.CloudServerInput.Focus()
+			m.CloudNotice = ""
+			return m, nil
+		case 1:
+			m.PrevScreen = m.Screen
+			m.Screen = ScreenCloudStatus
+			m.Cursor = 0
+			m.CloudScroll = 0
+			m.CloudLoading = true
+			m.CloudNotice = ""
+			return m, loadCloudStatus(m.store, m.CloudDataDir)
+		case 2:
+			m.PrevScreen = m.Screen
+			m.Screen = ScreenCloudEnroll
+			m.Cursor = 0
+			m.CloudScroll = 0
+			m.CloudLoading = true
+			m.CloudNotice = ""
+			return m, loadCloudProjects(m.store)
+		default:
+			m.Screen = m.PrevScreen
 			m.Cursor = 0
 			return m, loadStats(m.store)
 		}
 	case "esc", "q":
-		m.Screen = ScreenDashboard
+		m.Screen = m.PrevScreen
 		m.Cursor = 0
 		return m, loadStats(m.store)
 	}
 	return m, nil
+}
+
+func (m Model) handleCloudConfigureInputKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		m.CloudLoading = true
+		m.ErrorMsg = ""
+		return m, configureCloudServer(m.CloudDataDir, m.CloudServerInput.Value())
+	case "esc":
+		m.CloudServerInput.Blur()
+		m.Screen = m.PrevScreen
+		m.PrevScreen = ScreenDashboard
+		m.Cursor = 0
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.CloudServerInput, cmd = m.CloudServerInput.Update(msg)
+	return m, cmd
+}
+
+func (m Model) handleCloudConfigureKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "i", "enter":
+		m.CloudServerInput.Focus()
+	case "esc", "q":
+		m.Screen = m.PrevScreen
+		m.PrevScreen = ScreenDashboard
+		m.Cursor = 0
+	}
+	return m, nil
+}
+
+func (m Model) handleCloudStatusKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up", "k":
+		if m.CloudScroll > 0 {
+			m.CloudScroll--
+		}
+	case "down", "j":
+		maxScroll := len(m.CloudStatus.ProjectStates) - cloudStatusVisibleItems(m.Height)
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		if m.CloudScroll < maxScroll {
+			m.CloudScroll++
+		}
+	case "r":
+		m.CloudLoading = true
+		return m, loadCloudStatus(m.store, m.CloudDataDir)
+	case "esc", "q", "enter", " ":
+		m.Screen = m.PrevScreen
+		m.PrevScreen = ScreenDashboard
+		m.Cursor = 1
+	}
+	return m, nil
+}
+
+func (m Model) handleCloudEnrollKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "up", "k":
+		if m.Cursor > 0 {
+			m.Cursor--
+			m.CloudScroll = cloudScrollForCursor(m.Cursor, m.CloudScroll, cloudEnrollVisibleItems(m.Height))
+		}
+	case "down", "j":
+		if m.Cursor < len(m.CloudProjects)-1 {
+			m.Cursor++
+			m.CloudScroll = cloudScrollForCursor(m.Cursor, m.CloudScroll, cloudEnrollVisibleItems(m.Height))
+		}
+	case "enter", " ":
+		if len(m.CloudProjects) == 0 || m.Cursor >= len(m.CloudProjects) {
+			return m, nil
+		}
+		project := m.CloudProjects[m.Cursor]
+		if project.Enrolled {
+			m.CloudNotice = fmt.Sprintf("Project %q is already enrolled", project.Name)
+			return m, nil
+		}
+		m.CloudLoading = true
+		m.CloudNotice = ""
+		return m, enrollCloudProject(m.store, project.Name)
+	case "r":
+		m.CloudLoading = true
+		return m, loadCloudProjects(m.store)
+	case "esc", "q":
+		m.Screen = m.PrevScreen
+		m.PrevScreen = ScreenDashboard
+		m.Cursor = 2
+		m.CloudLoading = true
+		return m, loadCloudStatus(m.store, m.CloudDataDir)
+	}
+	return m, nil
+}
+
+func cloudEnrollVisibleItems(height int) int {
+	visible := height - 12
+	if visible < 3 {
+		return 3
+	}
+	return visible
+}
+
+func cloudStatusVisibleItems(height int) int {
+	visible := height - 16
+	if visible < 3 {
+		return 3
+	}
+	return visible
+}
+
+func cloudScrollForCursor(cursor, scroll, visible int) int {
+	if cursor < scroll {
+		return cursor
+	}
+	if cursor >= scroll+visible {
+		return cursor - visible + 1
+	}
+	return scroll
+}
+
+func clampCloudScroll(scroll, total, visible int) int {
+	maxScroll := total - visible
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scroll > maxScroll {
+		return maxScroll
+	}
+	if scroll < 0 {
+		return 0
+	}
+	return scroll
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

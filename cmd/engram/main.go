@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/yersonargotev/engram/internal/cloud"
 	"github.com/yersonargotev/engram/internal/cloud/autosync"
 	"github.com/yersonargotev/engram/internal/cloud/constants"
 	"github.com/yersonargotev/engram/internal/cloud/remote"
@@ -75,7 +76,7 @@ var (
 	// detectProject is injectable for testing; wraps project.DetectProject.
 	detectProject = projectpkg.DetectProject
 
-	newTUIModel   = func(s *store.Store) tui.Model { return tui.New(s, version) }
+	newTUIModel   = func(s *store.Store, dataDir string) tui.Model { return tui.NewWithDataDir(s, version, dataDir) }
 	newTeaProgram = tea.NewProgram
 	runTeaProgram = (*tea.Program).Run
 
@@ -442,22 +443,12 @@ func envBool(key string) bool {
 }
 
 func resolveCloudRuntimeConfig(cfg store.Config) (*cloudConfig, error) {
-	cc, err := loadCloudConfig(cfg)
+	cc, err := cloud.ResolveClientConfig(cfg.DataDir)
 	if err != nil {
 		return nil, fmt.Errorf("read cloud config: %w", err)
 	}
 	if cc == nil {
 		cc = &cloudConfig{}
-	}
-	// ENGRAM_CLOUD_TOKEN overrides any token stored in cloud.json.
-	// When the env var is absent, the persisted token from cloud.json is used
-	// as a fallback so that `engram sync --cloud` works without requiring the
-	// env var to be set in every shell session (fix for issue #343).
-	if v := strings.TrimSpace(os.Getenv("ENGRAM_CLOUD_SERVER")); v != "" {
-		cc.ServerURL = v
-	}
-	if v := strings.TrimSpace(os.Getenv("ENGRAM_CLOUD_TOKEN")); v != "" {
-		cc.Token = v
 	}
 	return cc, nil
 }
@@ -927,7 +918,7 @@ func cmdTUI(cfg store.Config) {
 	}
 	defer s.Close()
 
-	model := newTUIModel(s)
+	model := newTUIModel(s, cfg.DataDir)
 	p := newTeaProgram(model)
 	if _, err := runTeaProgram(p); err != nil {
 		fatal(err)

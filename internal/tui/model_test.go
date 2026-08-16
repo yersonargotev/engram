@@ -11,6 +11,7 @@ import (
 
 type testFixture struct {
 	store        *store.Store
+	dataDir      string
 	sessionID    string
 	obsID        int64
 	secondObs    int64
@@ -63,7 +64,7 @@ func newTestFixture(t *testing.T) testFixture {
 		t.Fatalf("add second observation: %v", err)
 	}
 
-	return testFixture{store: s, sessionID: "session-1", obsID: obsID, secondObs: secondObs, otherSession: "session-2"}
+	return testFixture{store: s, dataDir: cfg.DataDir, sessionID: "session-1", obsID: obsID, secondObs: secondObs, otherSession: "session-2"}
 }
 
 func TestNewInitializesModelDefaults(t *testing.T) {
@@ -103,6 +104,9 @@ func TestScreenCloudSettingsConstant(t *testing.T) {
 		ScreenSessionDetail,
 		ScreenSetup,
 		ScreenCloudSettings,
+		ScreenCloudConfigure,
+		ScreenCloudStatus,
+		ScreenCloudEnroll,
 	} {
 		if seen[s] {
 			t.Fatalf("screen constant %d is duplicated", s)

@@ -5,11 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yersonargotev/engram/internal/setup"
 	"github.com/yersonargotev/engram/internal/store"
 	"github.com/yersonargotev/engram/internal/version"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestUpdateHandlesWindowSizeAndCtrlC(t *testing.T) {
@@ -728,6 +728,9 @@ func TestHandleKeyPressRouterAndClearsError(t *testing.T) {
 		ScreenSessionDetail,
 		ScreenSetup,
 		ScreenCloudSettings,
+		ScreenCloudConfigure,
+		ScreenCloudStatus,
+		ScreenCloudEnroll,
 	} {
 		m.Screen = screen
 		m.ErrorMsg = "old error"

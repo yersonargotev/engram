@@ -161,6 +161,21 @@ engram tui
 
 **Navigation**: `j/k` vim keys, `Enter` to drill in, `c` to copy content to clipboard (OSC 52), `/` to search, `Esc` back. Catppuccin Mocha theme.
 
+The Dashboard also includes **Cloud sync settings**, a local-first cloud control
+center with three real flows: configure and persist an HTTP(S) server URL, view
+local cloud configuration/enrollment/sync diagnostics, and enroll local projects
+for replication. Enrollment backfills that project's existing local sync
+mutations but does not perform a network sync; use `engram sync --cloud
+--project <project>` or configure autosync separately. Local SQLite remains the
+source of truth.
+
+The TUI never prompts for or displays a cloud secret. Authentication uses
+`ENGRAM_CLOUD_TOKEN` when set, otherwise the token already saved in the local
+`cloud.json` configuration. The status view reports only whether a token is
+available; “ready” is local configuration state, not a remote auth check. See
+[DOCS.md — Cloud control center](DOCS.md#cloud-control-center) for navigation
+and behavior details.
+
 ## Git Sync
 
 Share memories across machines. Uses compressed chunks — no merge conflicts, no huge files.

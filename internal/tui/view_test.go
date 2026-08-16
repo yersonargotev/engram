@@ -385,6 +385,9 @@ func TestViewRouterCoversAllScreens(t *testing.T) {
 		{screen: ScreenSessionDetail, want: "Session:"},
 		{screen: ScreenSetup, want: "Setup"},
 		{screen: ScreenCloudSettings, want: "Cloud sync settings"},
+		{screen: ScreenCloudConfigure, want: "Configure cloud server"},
+		{screen: ScreenCloudStatus, want: "Cloud sync status"},
+		{screen: ScreenCloudEnroll, want: "Enroll projects"},
 	}
 
 	for _, tt := range tests {

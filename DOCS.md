@@ -581,7 +581,11 @@ Inspect or replay the `sync_apply_deferred` queue.
 - `engram cloud repair materialize-mutations --project <project> (--dry-run|--apply)` — explicit server-side Postgres repair that backfills existing `cloud_mutations` into compatible `cloud_chunks` without deleting remote data
 - `engram cloud bootstrap admin --username <name> [--email <email>] [--grant-project <project>]... [--issue-token [name]]` — create the first managed admin (see [Managed users, tokens, and CLI bootstrap](#managed-users-tokens-and-cli-bootstrap))
 
-Cloud auth token is provided at runtime via `ENGRAM_CLOUD_TOKEN` (not by a dedicated CLI subcommand).
+Cloud client authentication is resolved from `ENGRAM_CLOUD_TOKEN` first, then from
+the token already present in the local `cloud.json`; `engram cloud config
+--server <url>` changes only the server URL and preserves any saved token. The
+cloud serve process itself still reads its server-side bearer credential from
+its runtime environment.
 Cloud server startup fails closed when the token is missing unless `ENGRAM_CLOUD_INSECURE_NO_AUTH=1` is explicitly set for local insecure development.
 `ENGRAM_CLOUD_INSECURE_NO_AUTH=1` cannot be combined with `ENGRAM_CLOUD_TOKEN`.
 Cloud server always requires `ENGRAM_CLOUD_ALLOWED_PROJECTS` (comma-separated), including insecure mode, so project scope remains server-enforced.
@@ -1247,6 +1251,7 @@ Interactive Bubbletea-based terminal UI. Launch with `engram tui`.
 | **Timeline**            | Chronological context around an observation (before/after)        |
 | **Sessions**            | Browse all sessions                                               |
 | **Session Detail**      | Observations within a specific session                            |
+| **Cloud sync settings** | Local-first cloud control center: configure a server, inspect local cloud readiness/sync state, and enroll projects |
 
 ### Navigation
 
@@ -1255,8 +1260,39 @@ Interactive Bubbletea-based terminal UI. Launch with `engram tui`.
 - `c` — Copy observation content to clipboard (OSC 52; works in search results, recent list, detail, and session views)
 - `t` — View timeline for selected observation
 - `s` or `/` — Quick search from any screen
-- `Esc` or `q` — Go back / quit
+- `Esc` — Go back or cancel an active text field
+- `q` — Go back / quit when a text field is not focused; inside search and URL fields it is typed normally
 - `Ctrl+C` — Force quit
+
+### Cloud control center
+
+From the Dashboard, select **Cloud sync settings**. The control center has three
+working flows:
+
+- **Configure server** — Enter an absolute `http://` or `https://` URL and press
+  `Enter`. The URL is validated and persisted in the local data directory's
+  `cloud.json`; an existing saved token is preserved. This screen does not ask
+  for a token. Client authentication is resolved from `ENGRAM_CLOUD_TOKEN`
+  first, or from the token already present in `cloud.json` when the environment
+  variable is not set. The TUI only shows whether a token is configured; it
+  never displays or echoes the secret.
+- **View status** — Inspect local configuration and sync readiness: the resolved
+  server URL, whether authentication material is present, the local sync
+  lifecycle, enrolled project count/list, and any persisted reason code or
+  diagnostic message. `r` refreshes this read-only view. “Auth ready” means a
+  token is available locally; it does not perform a remote authentication or
+  health check.
+- **Enroll projects** — Browse project names known by the local store, including
+  projects already enrolled. Select an unenrolled project with `Enter` to mark
+  it for cloud replication; enrollment backfills its existing local sync
+  mutations. Enrollment is idempotent, and the screen does not push data by
+  itself. Select an already enrolled project to see that it is already enrolled.
+  `r` reloads the local list.
+
+Cloud remains opt-in and local-first: local SQLite is authoritative, enrollment
+controls which project may replicate, and an explicit `engram sync --cloud
+--project <project>` (or separately configured autosync) performs transport.
+The TUI does not unenroll projects, repair upgrade blockers, or run cloud sync.
 
 ### Visual Features
 

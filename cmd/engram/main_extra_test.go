@@ -165,7 +165,7 @@ func stubRuntimeHooks(t *testing.T) {
 		return mcpserver.NewMCPServer("test", "0", mcpserver.WithRecovery())
 	}
 	serveMCP = func(_ *mcpserver.MCPServer, _ ...mcpserver.StdioOption) error { return nil }
-	newTUIModel = func(_ *store.Store) tui.Model { return tui.New(nil, "") }
+	newTUIModel = func(_ *store.Store, _ string) tui.Model { return tui.New(nil, "") }
 	newTeaProgram = func(tea.Model, ...tea.ProgramOption) *tea.Program { return &tea.Program{} }
 	runTeaProgram = func(*tea.Program) (tea.Model, error) { return nil, nil }
 	setupSupportedAgents = setup.SupportedAgents

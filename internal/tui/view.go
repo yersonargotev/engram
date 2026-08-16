@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/yersonargotev/engram/internal/store"
 	"github.com/yersonargotev/engram/internal/timeutil"
 	"github.com/yersonargotev/engram/internal/version"
 )
@@ -88,6 +89,8 @@ func (m Model) View() string {
 		content = m.viewCloudStatus()
 	case ScreenCloudEnroll:
 		content = m.viewCloudEnroll()
+	case ScreenReview:
+		content = m.viewReview()
 	default:
 		content = "Unknown screen"
 	}
@@ -464,6 +467,62 @@ func (m Model) viewRecent() string {
 	return b.String()
 }
 
+// ─── Review Memories ───────────────────────────────────────────────────────
+
+func (m Model) viewReview() string {
+	var b strings.Builder
+
+	project := m.CurrentProject
+	if project == "" {
+		project = "unresolved project"
+	}
+	header := fmt.Sprintf("  Review memories · %s", project)
+	b.WriteString(headerStyle.Render(header))
+	b.WriteString("\n")
+
+	if m.ReviewNotice != "" {
+		b.WriteString(copyFeedbackStyle.Render(m.ReviewNotice))
+		b.WriteString("\n\n")
+	}
+	if m.ReviewError != "" {
+		b.WriteString(errorStyle.Render("Review unavailable: " + m.ReviewError))
+		b.WriteString("\n\n")
+		b.WriteString(helpStyle.Render("  r refresh • esc/q back"))
+		return b.String()
+	}
+	if m.ReviewLoading {
+		b.WriteString(noResultsStyle.Render("Loading memories due for review..."))
+		b.WriteString("\n\n")
+		b.WriteString(helpStyle.Render("  esc/q back"))
+		return b.String()
+	}
+
+	count := len(m.ReviewObservations)
+	if count == 0 {
+		b.WriteString(noResultsStyle.Render("No memories are due for review in this project."))
+		b.WriteString("\n\n")
+		b.WriteString(helpStyle.Render("  r refresh • esc/q back"))
+		return b.String()
+	}
+
+	visibleItems := reviewVisibleItems(m.Height)
+	end := m.Scroll + visibleItems
+	if end > count {
+		end = count
+	}
+	for i := m.Scroll; i < end; i++ {
+		o := m.ReviewObservations[i]
+		b.WriteString(m.renderObservationListItem(i, o.ID, o.Type, o.Title, o.Content, o.CreatedAt, o.Project, o.State(), o.ReviewAfter, o.Pinned))
+	}
+	if count > visibleItems {
+		b.WriteString(fmt.Sprintf("\n  %s",
+			timestampStyle.Render(fmt.Sprintf("showing %d-%d of %d", m.Scroll+1, end, count))))
+	}
+
+	b.WriteString(helpStyle.Render("\n  j/k navigate • enter detail • c copy • r refresh • esc/q back"))
+	return b.String()
+}
+
 // ─── Observation Detail ──────────────────────────────────────────────────────
 
 func (m Model) viewObservationDetail() string {
@@ -540,6 +599,9 @@ func (m Model) viewObservationDetail() string {
 	// Split wrapped content into lines
 	contentLines := strings.Split(wrappedContent, "\n")
 	maxLines := m.Height - 16
+	if m.PrevScreen == ScreenReview {
+		maxLines -= 3
+	}
 	if maxLines < 5 {
 		maxLines = 5
 	}
@@ -568,7 +630,28 @@ func (m Model) viewObservationDetail() string {
 			timestampStyle.Render(fmt.Sprintf("line %d-%d of %d", m.DetailScroll+1, end, len(contentLines)))))
 	}
 
-	b.WriteString(helpStyle.Render("\n  j/k scroll • c copy • t timeline • esc back"))
+	if m.PrevScreen == ScreenReview {
+		if m.ReviewNotice != "" {
+			b.WriteString("\n" + copyFeedbackStyle.Render(m.ReviewNotice))
+		}
+		if m.ReviewError != "" {
+			b.WriteString("\n" + errorStyle.Render("Review action failed: "+m.ReviewError))
+		}
+		if m.ReviewMutating {
+			b.WriteString("\n" + noResultsStyle.Render("Updating local memory state..."))
+		} else if m.ReviewConfirming {
+			b.WriteString("\n" + stateWarningBadgeStyle.Render("Mark this memory reviewed? This confirms it is still current and resets its local review date."))
+			b.WriteString(helpStyle.Render("\n  y confirm • n/esc cancel • local to this device"))
+		} else {
+			pinAction := "pin"
+			if obs.Pinned {
+				pinAction = "unpin"
+			}
+			b.WriteString(helpStyle.Render(fmt.Sprintf("\n  j/k scroll • c copy • t timeline • m mark reviewed • p %s • esc back\n  review and pin changes are local to this device", pinAction)))
+		}
+	} else {
+		b.WriteString(helpStyle.Render("\n  j/k scroll • c copy • t timeline • esc back"))
+	}
 
 	return b.String()
 }
@@ -925,6 +1008,10 @@ func (m Model) renderObservationListItem(index int, id int64, obsType, title, co
 	if pinned {
 		pinBadge = " " + detailValueStyle.Render("[pinned]")
 	}
+	timeLabel := localTime(createdAt)
+	if state == store.ObservationStateNeedsReview && reviewAfter != nil {
+		timeLabel = "review due " + formatReviewDate(*reviewAfter)
+	}
 
 	line := fmt.Sprintf("%s%s %s%s%s %s%s  %s\n",
 		cursor,
@@ -934,7 +1021,7 @@ func (m Model) renderObservationListItem(index int, id int64, obsType, title, co
 		pinBadge,
 		style.Render(truncateStr(title, 50)),
 		proj,
-		timestampStyle.Render(localTime(createdAt)))
+		timestampStyle.Render(timeLabel))
 
 	// Content preview on second line
 	preview := truncateStr(content, 80)

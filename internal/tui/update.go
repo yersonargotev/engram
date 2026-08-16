@@ -19,6 +19,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
+		if m.Screen == ScreenReview {
+			m.Cursor, m.Scroll = clampReviewViewport(m.Cursor, m.Scroll, len(m.ReviewObservations), reviewVisibleItems(m.Height))
+		}
 		if m.Screen == ScreenCloudStatus {
 			m.CloudScroll = clampCloudScroll(m.CloudScroll, len(m.CloudStatus.ProjectStates), cloudStatusVisibleItems(m.Height))
 		}
@@ -134,6 +137,55 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.ErrorMsg = ""
 		return m, loadRecentSessions(m.store)
+
+	case reviewObservationsMsg:
+		m.ReviewLoading = false
+		if msg.err != nil {
+			m.ReviewError = msg.err.Error()
+			return m, nil
+		}
+		m.ReviewError = ""
+		m.CurrentProject = msg.project
+		m.ReviewObservations = msg.observations
+		m.Cursor, m.Scroll = clampReviewViewport(m.Cursor, m.Scroll, len(m.ReviewObservations), reviewVisibleItems(m.Height))
+		return m, nil
+
+	case reviewMarkedMsg:
+		m.ReviewMutating = false
+		m.ReviewConfirming = false
+		if msg.err != nil {
+			m.ReviewError = msg.err.Error()
+			return m, nil
+		}
+		m.ReviewError = ""
+		m.SelectedObservation = msg.observation
+		m.ReviewNotice = "✓ Memory marked reviewed (local to this device)"
+		m.Screen = ScreenReview
+		m.ReviewLoading = true
+		return m, m.loadReviewObservations()
+
+	case reviewPinnedMsg:
+		m.ReviewMutating = false
+		if msg.err != nil {
+			m.ReviewError = msg.err.Error()
+			return m, nil
+		}
+		m.ReviewError = ""
+		m.SelectedObservation = msg.observation
+		if msg.observation != nil {
+			for i := range m.ReviewObservations {
+				if m.ReviewObservations[i].ID == msg.observation.ID {
+					m.ReviewObservations[i] = *msg.observation
+					break
+				}
+			}
+			state := "unpinned"
+			if msg.observation.Pinned {
+				state = "pinned"
+			}
+			m.ReviewNotice = fmt.Sprintf("✓ Memory %s (local to this device)", state)
+		}
+		return m, nil
 
 	case setupInstallMsg:
 		m.SetupInstalling = false
@@ -263,6 +315,8 @@ func (m Model) handleKeyPress(key string) (tea.Model, tea.Cmd) {
 		return m.handleCloudStatusKeys(key)
 	case ScreenCloudEnroll:
 		return m.handleCloudEnrollKeys(key)
+	case ScreenReview:
+		return m.handleReviewKeys(key)
 	}
 	return m, nil
 }
@@ -272,6 +326,7 @@ func (m Model) handleKeyPress(key string) (tea.Model, tea.Cmd) {
 var dashboardMenuItems = []string{
 	"Search memories",
 	"Recent observations",
+	"Review memories",
 	"Browse sessions",
 	"Setup agent plugin",
 	"Cloud sync settings",
@@ -325,13 +380,22 @@ func (m Model) handleDashboardSelection() (tea.Model, tea.Cmd) {
 		m.Cursor = 0
 		m.Scroll = 0
 		return m, loadRecentObservations(m.store)
-	case 2: // Sessions
+	case 2: // Review memories
+		m.PrevScreen = ScreenDashboard
+		m.Screen = ScreenReview
+		m.Cursor = 0
+		m.Scroll = 0
+		m.ReviewLoading = true
+		m.ReviewError = ""
+		m.ReviewNotice = ""
+		return m, m.loadReviewObservations()
+	case 3: // Sessions
 		m.PrevScreen = ScreenDashboard
 		m.Screen = ScreenSessions
 		m.Cursor = 0
 		m.Scroll = 0
 		return m, loadRecentSessions(m.store)
-	case 3: // Setup
+	case 4: // Setup
 		m.PrevScreen = ScreenDashboard
 		m.Screen = ScreenSetup
 		m.Cursor = 0
@@ -342,15 +406,64 @@ func (m Model) handleDashboardSelection() (tea.Model, tea.Cmd) {
 		m.SetupInstalling = false
 		m.SetupInstallingName = ""
 		return m, nil
-	case 4: // Cloud sync settings
+	case 5: // Cloud sync settings
 		m.PrevScreen = ScreenDashboard
 		m.Screen = ScreenCloudSettings
 		m.Cursor = 0
 		m.CloudNotice = ""
 		m.CloudLoading = true
 		return m, loadCloudStatus(m.store, m.CloudDataDir)
-	case 5: // Quit
+	case 6: // Quit
 		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// ─── Review Memories ───────────────────────────────────────────────────────
+
+func (m Model) handleReviewKeys(key string) (tea.Model, tea.Cmd) {
+	visibleItems := reviewVisibleItems(m.Height)
+
+	switch key {
+	case "up", "k":
+		if m.Cursor > 0 {
+			m.Cursor--
+			if m.Cursor < m.Scroll {
+				m.Scroll = m.Cursor
+			}
+		}
+	case "down", "j":
+		if m.Cursor < len(m.ReviewObservations)-1 {
+			m.Cursor++
+			if m.Cursor >= m.Scroll+visibleItems {
+				m.Scroll = m.Cursor - visibleItems + 1
+			}
+		}
+	case "enter", " ":
+		if m.Cursor >= 0 && m.Cursor < len(m.ReviewObservations) {
+			m.PrevScreen = ScreenReview
+			m.ReviewCursor = m.Cursor
+			m.ReviewScroll = m.Scroll
+			m.ReviewError = ""
+			m.ReviewNotice = ""
+			return m, loadObservationDetail(m.store, m.ReviewObservations[m.Cursor].ID)
+		}
+	case "c":
+		if m.Cursor >= 0 && m.Cursor < len(m.ReviewObservations) {
+			return m, copyToClipboard(m.ReviewObservations[m.Cursor].Content)
+		}
+	case "r":
+		m.ReviewLoading = true
+		m.ReviewError = ""
+		m.ReviewNotice = ""
+		return m, m.loadReviewObservations()
+	case "esc", "q":
+		m.Screen = ScreenDashboard
+		m.Cursor = 0
+		m.Scroll = 0
+		m.ReviewConfirming = false
+		m.ReviewMutating = false
+		return m, loadStats(m.store)
 	}
 	return m, nil
 }
@@ -501,6 +614,43 @@ func (m Model) handleRecentKeys(key string) (tea.Model, tea.Cmd) {
 // ─── Observation Detail ──────────────────────────────────────────────────────
 
 func (m Model) handleObservationDetailKeys(key string) (tea.Model, tea.Cmd) {
+	if m.PrevScreen == ScreenReview {
+		if m.ReviewMutating {
+			return m, nil
+		}
+		if m.ReviewConfirming {
+			switch key {
+			case "y", "enter":
+				if m.SelectedObservation == nil {
+					m.ReviewConfirming = false
+					return m, nil
+				}
+				m.ReviewMutating = true
+				m.ReviewError = ""
+				return m, markReviewObservation(m.store, m.SelectedObservation.ID)
+			case "n", "esc", "q":
+				m.ReviewConfirming = false
+				return m, nil
+			}
+			return m, nil
+		}
+		switch key {
+		case "m":
+			if m.SelectedObservation != nil {
+				m.ReviewConfirming = true
+				m.ReviewError = ""
+			}
+			return m, nil
+		case "p":
+			if m.SelectedObservation != nil {
+				m.ReviewMutating = true
+				m.ReviewError = ""
+				return m, setReviewObservationPinned(m.store, m.SelectedObservation.ID, !m.SelectedObservation.Pinned)
+			}
+			return m, nil
+		}
+	}
+
 	switch key {
 	case "up", "k":
 		if m.DetailScroll > 0 {
@@ -519,8 +669,15 @@ func (m Model) handleObservationDetailKeys(key string) (tea.Model, tea.Cmd) {
 		}
 	case "esc", "q":
 		m.Screen = m.PrevScreen
-		m.Cursor = 0
 		m.DetailScroll = 0
+		if m.PrevScreen == ScreenReview {
+			m.Cursor = m.ReviewCursor
+			m.Scroll = m.ReviewScroll
+			m.ReviewConfirming = false
+			m.ReviewLoading = true
+			return m, m.refreshScreen(m.PrevScreen)
+		}
+		m.Cursor = 0
 		return m, m.refreshScreen(m.PrevScreen)
 	}
 	return m, nil
@@ -538,6 +695,12 @@ func (m Model) handleTimelineKeys(key string) (tea.Model, tea.Cmd) {
 		m.Scroll++
 	case "esc", "q":
 		m.Screen = m.PrevScreen
+		if m.PrevScreen == ScreenReview {
+			m.Cursor = m.ReviewCursor
+			m.Scroll = m.ReviewScroll
+			m.ReviewLoading = true
+			return m, m.refreshScreen(m.PrevScreen)
+		}
 		m.Cursor = 0
 		m.Scroll = 0
 		return m, m.refreshScreen(m.PrevScreen)
@@ -939,7 +1102,46 @@ func (m Model) refreshScreen(screen Screen) tea.Cmd {
 		return loadRecentObservations(m.store)
 	case ScreenSessions:
 		return loadRecentSessions(m.store)
+	case ScreenReview:
+		return m.loadReviewObservations()
 	default:
 		return nil
 	}
+}
+
+func reviewVisibleItems(height int) int {
+	visible := (height - 8) / 2
+	if visible < 3 {
+		return 3
+	}
+	return visible
+}
+
+func clampReviewViewport(cursor, scroll, total, visible int) (int, int) {
+	if total <= 0 {
+		return 0, 0
+	}
+	if cursor < 0 {
+		cursor = 0
+	}
+	if cursor >= total {
+		cursor = total - 1
+	}
+	maxScroll := total - visible
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	if cursor < scroll {
+		scroll = cursor
+	}
+	if cursor >= scroll+visible {
+		scroll = cursor - visible + 1
+	}
+	return cursor, scroll
 }

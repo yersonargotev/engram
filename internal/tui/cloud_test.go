@@ -118,7 +118,7 @@ func TestCloudSettingsActionsOpenWorkingScreens(t *testing.T) {
 func TestCloudNavigationPreservesParentContext(t *testing.T) {
 	m := NewWithDataDir(nil, "", t.TempDir())
 	m.Screen = ScreenDashboard
-	m.Cursor = 4
+	m.Cursor = 5
 
 	updatedModel, _ := m.Update(keyMsg("enter"))
 	updated := updatedModel.(Model)

@@ -17,6 +17,7 @@ import (
 
 	"github.com/yersonargotev/engram/internal/cloud"
 	"github.com/yersonargotev/engram/internal/cloud/constants"
+	"github.com/yersonargotev/engram/internal/memoryops"
 	"github.com/yersonargotev/engram/internal/setup"
 	"github.com/yersonargotev/engram/internal/store"
 	"github.com/yersonargotev/engram/internal/version"
@@ -45,6 +46,7 @@ const (
 	ScreenCloudConfigure
 	ScreenCloudStatus
 	ScreenCloudEnroll
+	ScreenReview
 )
 
 type SessionDeleteState int
@@ -101,6 +103,26 @@ type sessionDeletedMsg struct {
 	sessionID string
 	err       error
 }
+
+type reviewObservationsMsg struct {
+	observations []store.Observation
+	project      string
+	err          error
+}
+
+type reviewMarkedMsg struct {
+	observation *store.Observation
+	err         error
+}
+
+type reviewPinnedMsg struct {
+	observation *store.Observation
+	err         error
+}
+
+// ProjectResolver resolves the project associated with the TUI's current
+// working context. It is called for every review queue refresh.
+type ProjectResolver func() (string, error)
 
 type setupInstallMsg struct {
 	result *setup.Result
@@ -196,6 +218,18 @@ type Model struct {
 	SessionDeleteID      string
 	SessionDeleteProject string
 
+	// Local memory review workflow
+	CurrentProject         string
+	CurrentProjectResolver ProjectResolver
+	ReviewObservations     []store.Observation
+	ReviewLoading          bool
+	ReviewMutating         bool
+	ReviewConfirming       bool
+	ReviewError            string
+	ReviewNotice           string
+	ReviewCursor           int
+	ReviewScroll           int
+
 	// Clipboard feedback
 	CopyFeedback string // "✓ Copied!" or "" — shown for 2 s after copy
 
@@ -223,12 +257,28 @@ type Model struct {
 
 // New creates a new TUI model connected to the given store.
 func New(s *store.Store, version string) Model {
-	return NewWithDataDir(s, version, "")
+	return NewWithProject(s, version, "", "")
 }
 
 // NewWithDataDir creates a model that can read and update the persisted cloud
 // client configuration alongside the local store.
 func NewWithDataDir(s *store.Store, version, dataDir string) Model {
+	return NewWithProject(s, version, dataDir, "")
+}
+
+// NewWithProject creates a model with the current project resolved by the CLI.
+// Project-scoped workflows must never silently fall back to all projects.
+func NewWithProject(s *store.Store, version, dataDir, project string) Model {
+	return newModel(s, version, dataDir, project, nil)
+}
+
+// NewWithProjectResolver creates a model that resolves the current project on
+// every review queue load, allowing refresh to recover from detection errors.
+func NewWithProjectResolver(s *store.Store, version, dataDir string, resolver ProjectResolver) Model {
+	return newModel(s, version, dataDir, "", resolver)
+}
+
+func newModel(s *store.Store, version, dataDir, project string, resolver ProjectResolver) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Search memories..."
 	ti.CharLimit = 256
@@ -244,13 +294,15 @@ func NewWithDataDir(s *store.Store, version, dataDir string) Model {
 	cloudInput.Width = 64
 
 	return Model{
-		store:            s,
-		Version:          version,
-		Screen:           ScreenDashboard,
-		SearchInput:      ti,
-		SetupSpinner:     sp,
-		CloudDataDir:     strings.TrimSpace(dataDir),
-		CloudServerInput: cloudInput,
+		store:                  s,
+		Version:                version,
+		Screen:                 ScreenDashboard,
+		SearchInput:            ti,
+		SetupSpinner:           sp,
+		CloudDataDir:           strings.TrimSpace(dataDir),
+		CloudServerInput:       cloudInput,
+		CurrentProject:         strings.TrimSpace(project),
+		CurrentProjectResolver: resolver,
 	}
 }
 
@@ -296,6 +348,53 @@ func loadObservationDetail(s *store.Store, id int64) tea.Cmd {
 	return func() tea.Msg {
 		obs, err := s.GetObservation(id)
 		return observationDetailMsg{observation: obs, err: err}
+	}
+}
+
+func loadReviewObservations(s *store.Store, project string) tea.Cmd {
+	return func() tea.Msg {
+		project = strings.TrimSpace(project)
+		if s == nil {
+			return reviewObservationsMsg{project: project, err: errors.New("store is unavailable")}
+		}
+		if project == "" {
+			return reviewObservationsMsg{err: errors.New("current project could not be resolved")}
+		}
+		observations, err := memoryops.New(s).ReviewList(memoryops.ReviewListInput{Project: project, Limit: 100})
+		return reviewObservationsMsg{observations: observations, project: project, err: err}
+	}
+}
+
+func (m Model) loadReviewObservations() tea.Cmd {
+	if m.CurrentProjectResolver == nil {
+		return loadReviewObservations(m.store, m.CurrentProject)
+	}
+	return func() tea.Msg {
+		project, err := m.CurrentProjectResolver()
+		if err != nil {
+			return reviewObservationsMsg{err: err}
+		}
+		return loadReviewObservations(m.store, project)()
+	}
+}
+
+func markReviewObservation(s *store.Store, id int64) tea.Cmd {
+	return func() tea.Msg {
+		if s == nil {
+			return reviewMarkedMsg{err: errors.New("store is unavailable")}
+		}
+		observation, err := memoryops.New(s).ReviewMark(id)
+		return reviewMarkedMsg{observation: observation, err: err}
+	}
+}
+
+func setReviewObservationPinned(s *store.Store, id int64, pinned bool) tea.Cmd {
+	return func() tea.Msg {
+		if s == nil {
+			return reviewPinnedMsg{err: errors.New("store is unavailable")}
+		}
+		observation, err := memoryops.New(s).SetPinned(id, pinned)
+		return reviewPinnedMsg{observation: observation, err: err}
 	}
 }
 

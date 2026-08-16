@@ -172,7 +172,7 @@ func TestHandleDashboardAndSearchKeyPaths(t *testing.T) {
 	}
 
 	m = New(fx.store, "")
-	m.Cursor = 2
+	m.Cursor = 3
 	updatedModel, cmd = m.handleDashboardSelection()
 	updated = updatedModel.(Model)
 	if updated.Screen != ScreenSessions {
@@ -183,7 +183,7 @@ func TestHandleDashboardAndSearchKeyPaths(t *testing.T) {
 	}
 
 	m = New(fx.store, "")
-	m.Cursor = 3
+	m.Cursor = 4
 	updatedModel, cmd = m.handleDashboardSelection()
 	updated = updatedModel.(Model)
 	if updated.Screen != ScreenSetup || len(updated.SetupAgents) == 0 {
@@ -234,7 +234,7 @@ func TestDashboardHasCloudSettingsMenuItem(t *testing.T) {
 
 func TestCloudSettingsNavigation(t *testing.T) {
 	m := New(nil, "")
-	m.Cursor = 4 // Cloud sync settings
+	m.Cursor = 5 // Cloud sync settings
 
 	updatedModel, _ := m.handleDashboardSelection()
 	updated := updatedModel.(Model)
@@ -757,7 +757,7 @@ func TestHandleDashboardKeysAndSelectionRemainingBranches(t *testing.T) {
 		t.Fatal("cursor should stay at bottom boundary")
 	}
 
-	m.Cursor = 5
+	m.Cursor = len(dashboardMenuItems) - 1
 	_, cmd := m.handleDashboardKeys(" ")
 	if cmd == nil {
 		t.Fatal("space on quit item should return quit command")
@@ -775,10 +775,10 @@ func TestHandleDashboardKeysAndSelectionRemainingBranches(t *testing.T) {
 		t.Fatal("cursor 0 selection should open search")
 	}
 
-	m.Cursor = 5
+	m.Cursor = len(dashboardMenuItems) - 1
 	_, cmd = m.handleDashboardSelection()
 	if cmd == nil {
-		t.Fatal("cursor 5 selection should quit")
+		t.Fatal("last dashboard selection should quit")
 	}
 
 	m.Cursor = 99

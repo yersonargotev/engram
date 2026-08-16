@@ -161,6 +161,12 @@ engram tui
 
 **Navigation**: `j/k` vim keys, `Enter` to drill in, `c` to copy content to clipboard (OSC 52), `/` to search, `Esc` back. Catppuccin Mocha theme.
 
+The Dashboard's **Review memories** queue shows memories due for verification in
+the current project. Open a memory to read its full content, press `m` to enter
+an explicit mark-reviewed confirmation, or `p` to pin/unpin it. Press `r` to
+refresh the queue. Review dates and pins are local to this device; opening a
+memory never marks it reviewed, and pinning does not remove it from the queue.
+
 The Dashboard also includes **Cloud sync settings**, a local-first cloud control
 center with three real flows: configure and persist an HTTP(S) server URL, view
 local cloud configuration/enrollment/sync diagnostics, and enroll local projects

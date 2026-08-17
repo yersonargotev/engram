@@ -140,8 +140,10 @@ const (
 )
 
 type InputTruncation struct {
-	Signal       SignalType `json:"signal"`
-	OmittedTerms int        `json:"omitted_terms"`
+	Signal        SignalType `json:"signal"`
+	OmittedTerms  int        `json:"omitted_terms"`
+	TotalTerms    int        `json:"total_terms,omitempty"`
+	AnalyzedTerms int        `json:"analyzed_terms,omitempty"`
 }
 
 var ErrMemoryStore = errors.New("task briefing: memory store failure")
@@ -193,8 +195,14 @@ func (g *Generator) Generate(input Input) (Result, error) {
 	}
 
 	candidates := make(map[int64]store.Observation)
+	retrievedQueries := make(map[string]struct{}, len(signals))
 	for _, signal := range signals {
-		results, err := g.store.Search(strings.Join(signal.terms, " "), store.SearchOptions{
+		query := strings.Join(signal.terms, " ")
+		if _, seen := retrievedQueries[query]; seen {
+			continue
+		}
+		retrievedQueries[query] = struct{}{}
+		results, err := g.store.Search(query, store.SearchOptions{
 			Project:   input.Project,
 			Scope:     input.Scope,
 			Limit:     candidateRetrievalLimit,
@@ -364,7 +372,7 @@ func buildSignals(input Input) ([]weightedSignal, []Diagnostic, *BaseResolution)
 	for _, raw := range rawSignals {
 		terms, omitted := normalizeTermsWithCount(raw.raw, raw.limit)
 		if omitted > 0 {
-			truncation := InputTruncation{Signal: raw.kind, OmittedTerms: omitted}
+			truncation := InputTruncation{Signal: raw.kind, OmittedTerms: omitted, TotalTerms: len(terms) + omitted, AnalyzedTerms: len(terms)}
 			if raw.kind == SignalTaskIntent {
 				diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticTaskInputTruncated, Truncations: []InputTruncation{truncation}})
 			} else {

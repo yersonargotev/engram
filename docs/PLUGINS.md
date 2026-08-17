@@ -292,7 +292,7 @@ The `engram conflicts <sub-command>` command provides read and scan access to th
 | `engram conflicts show <id>` | Show full detail for one relation row (source/target observation snippets) |
 | `engram conflicts stats` | Aggregate counts grouped by relation type and judgment status; includes deferred and dead queue sizes |
 | `engram conflicts scan` | Walk observations for a project, find conflict candidates, and (with `--apply`) insert new pending relation rows up to a `--max-insert` cap |
-| `engram conflicts deferred` | Inspect and replay rows in `sync_apply_deferred`; supports `--status`, `--inspect <sync_id>`, and `--replay` |
+| `engram conflicts deferred` | Inspect and replay rows in `sync_apply_deferred`, or recover exactly one `dead` relation locally with `--recover <sync_id>`; targeted recovery is idempotent and never republishes an outbound mutation |
 
 When `--project` is omitted, the command falls back to the cwd-detected project (same resolution as all other `engram` commands).
 

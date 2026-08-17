@@ -559,6 +559,7 @@ Walk observations for the project, run FindCandidates, and report or insert new 
 
 ```
 engram conflicts deferred [--status <deferred|dead|applied>] [--limit <N>] [--inspect <sync_id>] [--replay]
+engram conflicts deferred --recover <sync_id> [--json]
 ```
 
 Inspect or replay the `sync_apply_deferred` queue.
@@ -566,6 +567,8 @@ Inspect or replay the `sync_apply_deferred` queue.
 - Default: list rows with sync_id, apply_status, retry_count, first_seen_at.
 - `--inspect <sync_id>`: print full decoded payload for one row; exits non-zero when not found.
 - `--replay`: call `ReplayDeferred()` and print retried/succeeded/failed/dead counts.
+- `--recover <sync_id>`: immediately revalidate and apply one `dead` relation through the canonical local store path. Recovery preserves remote provenance and never creates an outbound sync mutation. Success atomically retains an `applied` tombstone, so repeating the command is a successful `already_recovered` no-op. A later pulled mutation with the same sync ID starts a new queue episode.
+- `--recover` is distinct from `--replay`: replay processes automatic `deferred` retries and deletes rows after successful application; recover targets exactly one `dead` row and retains its applied receipt. It requires no confirmation and may be combined only with `--json`.
 
 ### Cloud CLI (opt-in)
 

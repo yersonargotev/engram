@@ -19,7 +19,8 @@
     "DiffTermLimit": 16,
     "PathTermLimit": 12,
     "CommitTermLimit": 12,
-    "UntrackedTermLimit": 12
+    "UntrackedTermLimit": 12,
+    "GitInputByteLimit": 1048576
   },
   "scenarios": [
     {
@@ -31,7 +32,7 @@
         {"key":"git","title":"Authentication dashboard cards","content":"Authentication dashboard cards use compact spacing.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"task","because":"it matches authoritative Task intent","signals":["task_intent"]}],"must_not_appear":[{"key":"git","because":"repository-only evidence cannot override supplied Task intent"}],"order":["task"],"diagnostics":[],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"task","because":"it matches authoritative Task intent","signals":["task_intent"]}],"must_not_appear":[{"key":"git","because":"repository-only evidence cannot override supplied Task intent"}],"order":["task"],"diagnostics":[]}
     },
     {
       "name": "repository_only_clean_branch",
@@ -42,7 +43,7 @@
         {"key":"weak","title":"Dashboard release notes","content":"Record dashboard release dates.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"relevant","because":"clean-branch diff, path, and subject corroborate it","signals":["branch_diff","commit_subject"]}],"must_not_appear":[{"key":"weak","because":"one generic repository term is below threshold"}],"order":["relevant"],"diagnostics":[],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"relevant","because":"clean-branch diff, path, and subject corroborate it","signals":["branch_diff","commit_subject"]}],"must_not_appear":[{"key":"weak","because":"one generic repository term is below threshold"}],"order":["relevant"],"diagnostics":[]}
     },
     {
       "name": "dirty_worktree_signals",
@@ -53,7 +54,7 @@
         {"key":"weak","title":"Auth copy","content":"Authentication wording only.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"dirty","because":"staged and unstaged work independently corroborate it","signals":["staged_diff","unstaged_diff"]}],"must_not_appear":[{"key":"weak","because":"generic auth overlap is insufficient"}],"order":["dirty"],"diagnostics":[],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"dirty","because":"staged and unstaged work independently corroborate it","signals":["staged_diff","unstaged_diff"]}],"must_not_appear":[{"key":"weak","because":"generic auth overlap is insufficient"}],"order":["dirty"],"diagnostics":[]}
     },
     {
       "name": "commit_subjects_contribute",
@@ -64,7 +65,7 @@
         {"key":"other","title":"Cloud retry policy","content":"Retry remote uploads.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"commit","because":"branch name and commit subject corroborate the memory","signals":["branch","commit_subject"]}],"must_not_appear":[{"key":"other","because":"a lone retry term is weak"}],"order":["commit"],"diagnostics":[],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"commit","because":"branch name and commit subject corroborate the memory","signals":["branch","commit_subject"]}],"must_not_appear":[{"key":"other","because":"a lone retry term is weak"}],"order":["commit"],"diagnostics":[]}
     },
     {
       "name": "untracked_paths_without_content",
@@ -75,7 +76,7 @@
         {"key":"content","title":"Secret fixture content","content":"This would match only if untracked file content were read.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"untracked","because":"branch and untracked path terms corroborate it","signals":["branch","untracked_path"]}],"must_not_appear":[{"key":"content","because":"untracked file contents are never an input"}],"order":["untracked"],"diagnostics":[],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"untracked","because":"branch and untracked path terms corroborate it","signals":["branch","untracked_path"]}],"must_not_appear":[{"key":"content","because":"untracked file contents are never an input"}],"order":["untracked"],"diagnostics":[]}
     },
     {
       "name": "oversized_input_and_unresolved_base",
@@ -86,7 +87,7 @@
         {"key":"tail","title":"Tailtoken only","content":"tailtoken appears after the deterministic limit.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"bounded","because":"bounded prefix plus subject remains relevant","signals":["branch_diff","commit_subject"]}],"must_not_appear":[{"key":"tail","because":"terms after the deterministic input limit are omitted"}],"order":["bounded"],"diagnostics":["branch_base_unresolved","repository_input_truncated"],"budget_omissions":0,"truncations":{"branch_diff":52}}
+      "expected": {"must_appear":[{"key":"bounded","because":"bounded prefix plus subject remains relevant","signals":["branch_diff","commit_subject"]}],"must_not_appear":[{"key":"tail","because":"terms after the deterministic input limit are omitted"}],"order":["bounded"],"diagnostics":["branch_base_unresolved","repository_input_truncated"],"truncations":{"branch_diff":52}}
     },
     {
       "name": "project_mismatch_keeps_task_only",
@@ -97,7 +98,7 @@
         {"key":"git","title":"Dashboard card spacing","content":"Dashboard card spacing rules.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"task","because":"Task intent remains useful across cwd mismatch","signals":["task_intent"]}],"must_not_appear":[{"key":"git","because":"repository evidence is disabled on project mismatch"}],"order":["task"],"diagnostics":["repository_project_mismatch"],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"task","because":"Task intent remains useful across cwd mismatch","signals":["task_intent"]}],"must_not_appear":[{"key":"git","because":"repository evidence is disabled on project mismatch"}],"order":["task"],"diagnostics":["repository_project_mismatch"]}
     },
     {
       "name": "pin_boost_requires_relevance",
@@ -109,7 +110,7 @@
         {"key":"pinned_irrelevant","title":"Pinned typography","content":"Typography spacing preference.","project":"engram","scope":"project","pinned":true}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"pinned_relevant","because":"qualifying evidence receives a pin boost","signals":["task_intent"]},{"key":"relevant","because":"it independently matches Task intent","signals":["task_intent"]}],"must_not_appear":[{"key":"pinned_irrelevant","because":"pinning without qualifying evidence does not include a memory"}],"order":["pinned_relevant","relevant"],"diagnostics":[],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"pinned_relevant","because":"qualifying evidence receives a pin boost","signals":["task_intent"]},{"key":"relevant","because":"it independently matches Task intent","signals":["task_intent"]}],"must_not_appear":[{"key":"pinned_irrelevant","because":"pinning without qualifying evidence does not include a memory"}],"order":["pinned_relevant","relevant"],"diagnostics":[]}
     },
     {
       "name": "default_scopes_and_project_isolation",
@@ -121,7 +122,7 @@
         {"key":"other","title":"C Testing convention","content":"Another project testing convention.","project":"other","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"personal","because":"personal scope associated with the project is eligible","signals":["task_intent"]},{"key":"project","because":"project scope is eligible","signals":["task_intent"]}],"must_not_appear":[{"key":"other","because":"another project is never searched"}],"order":["personal","project"],"diagnostics":[],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"personal","because":"personal scope associated with the project is eligible","signals":["task_intent"]},{"key":"project","because":"project scope is eligible","signals":["task_intent"]}],"must_not_appear":[{"key":"other","because":"another project is never searched"}],"order":["personal","project"],"diagnostics":[]}
     },
     {
       "name": "scope_restriction",
@@ -132,7 +133,7 @@
         {"key":"personal","title":"Personal testing convention","content":"Personal testing convention.","project":"engram","scope":"personal"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"project","because":"it matches the requested project scope","signals":["task_intent"]}],"must_not_appear":[{"key":"personal","because":"explicit scope excludes personal memory"}],"order":["project"],"diagnostics":[],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"project","because":"it matches the requested project scope","signals":["task_intent"]}],"must_not_appear":[{"key":"personal","because":"explicit scope excludes personal memory"}],"order":["project"],"diagnostics":[]}
     },
     {
       "name": "lifecycle_and_relation_non_expansion",
@@ -149,7 +150,7 @@
         {"source":"new","target":"old","relation":"supersedes"},
         {"source":"active","target":"related","relation":"related"}
       ], "repeat": 3,
-      "expected": {"must_appear":[{"key":"active","because":"it independently matches Task intent","signals":["task_intent"]},{"key":"new","because":"the superseding memory independently matches","signals":["task_intent"]}],"must_not_appear":[{"key":"old","because":"a judged supersedes relation makes it ineligible"},{"key":"deleted","because":"deleted memories are filtered by the store"},{"key":"related","because":"relations do not expand the candidate set"}],"order":["active","new"],"diagnostics":[],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"active","because":"it independently matches Task intent","signals":["task_intent"]},{"key":"new","because":"the superseding memory independently matches","signals":["task_intent"]}],"must_not_appear":[{"key":"old","because":"a judged supersedes relation makes it ineligible"},{"key":"deleted","because":"deleted memories are filtered by the store"},{"key":"related","because":"relations do not expand the candidate set"}],"order":["active","new"],"diagnostics":[]}
     },
     {
       "name": "selected_conflict_is_visible",
@@ -160,7 +161,7 @@
         {"key":"b","title":"B Database migration strategy","content":"Database migration strategy uses direct replacement.","project":"engram","scope":"project"}
       ],
       "relations": [{"source":"a","target":"b","relation":"conflicts_with"}], "repeat": 3,
-      "expected": {"must_appear":[{"key":"a","because":"conflicts do not silently adjudicate relevant memories","signals":["task_intent"]},{"key":"b","because":"both sides of the conflict remain visible","signals":["task_intent"]}],"must_not_appear":[],"order":["a","b"],"diagnostics":["selected_memory_conflict"],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"a","because":"conflicts do not silently adjudicate relevant memories","signals":["task_intent"]},{"key":"b","because":"both sides of the conflict remain visible","signals":["task_intent"]}],"must_not_appear":[],"order":["a","b"],"diagnostics":["selected_memory_conflict"]}
     },
     {
       "name": "git_failure_degrades",
@@ -171,7 +172,7 @@
         {"key":"other","title":"Unstaged formatter","content":"Formatter behavior unrelated to tokens.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"remaining","because":"staged diff and affected path remain usable","signals":["staged_diff","affected_path"]}],"must_not_appear":[{"key":"other","because":"a failed source contributes no fabricated evidence"}],"order":["remaining"],"diagnostics":["git_operation_failed"],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"remaining","because":"staged diff and affected path remain usable","signals":["staged_diff","affected_path"]}],"must_not_appear":[{"key":"other","because":"a failed source contributes no fabricated evidence"}],"order":["remaining"],"diagnostics":["git_operation_failed"]}
     },
     {
       "name": "store_failure_is_error",
@@ -179,7 +180,7 @@
       "input": {"project":"engram","task_intent":"store failure"},
       "memories": [{"key":"memory","title":"Store failure handling","content":"Store failures are errors.","project":"engram","scope":"project"}],
       "relations": [], "repeat": 2, "close_store": true,
-      "expected": {"must_appear":[],"must_not_appear":[{"key":"memory","because":"the operation fails before returning a briefing"}],"order":[],"diagnostics":[],"error_code":"memory_store_failure","budget_omissions":0}
+      "expected": {"must_appear":[],"must_not_appear":[{"key":"memory","because":"the operation fails before returning a briefing"}],"order":[],"diagnostics":[],"error_code":"memory_store_failure"}
     },
     {
       "name": "absence_of_signals_is_empty_success",
@@ -187,18 +188,18 @@
       "input": {"project":"engram"},
       "memories": [{"key":"unrelated","title":"Existing memory","content":"Durable but unrelated knowledge.","project":"engram","scope":"project"}],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[],"must_not_appear":[{"key":"unrelated","because":"no signal qualifies any memory"}],"order":[],"diagnostics":["no_usable_signals"],"budget_omissions":0}
+      "expected": {"must_appear":[],"must_not_appear":[{"key":"unrelated","because":"no signal qualifies any memory"}],"order":[],"diagnostics":["no_usable_signals"]}
     },
     {
-      "name": "whole_memory_output_budget",
-      "purpose": "Memories are included or omitted atomically under the total budget.",
-      "input": {"project":"engram","task_intent":"budget memory policy"},
+      "name": "duplicate_repository_payload_is_single_scoring_group",
+      "purpose": "Identical normalized Repository payloads remain traceable by source but contribute only their strongest weight before ranking.",
+      "input": {"project":"engram","repository_project":"engram","repository":{"staged_diff":"token migration","unstaged_diff":"token migration","affected_paths":["architecture/decision.go"],"commit_subjects":["architecture decision"]}},
       "memories": [
-        {"key":"small","title":"A Budget memory policy","content":"Budget memory policy keeps complete units.","project":"engram","scope":"project"},
-        {"key":"huge","title":"Z Budget memory policy","content":"budget memory policy payload ","content_repeat":220,"project":"engram","scope":"project"}
+        {"key":"corroborated","title":"Architecture decision","content":"Architecture decision guidance.","project":"engram","scope":"project"},
+        {"key":"duplicated","title":"Token migration","content":"Token migration guidance.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"small","because":"the complete memory fits the output budget","signals":["task_intent"]}],"must_not_appear":[{"key":"huge","because":"the complete memory does not fit and must not be truncated"}],"order":["small"],"diagnostics":["output_budget_exhausted"],"budget_omissions":1}
+      "expected": {"must_appear":[{"key":"corroborated","because":"distinct path and commit evidence corroborate independently","signals":["affected_path","commit_subject"]}],"must_not_appear":[{"key":"duplicated","because":"identical staged and unstaged payloads cannot cross the threshold twice"}],"order":["corroborated"],"diagnostics":[]}
     },
     {
       "name": "precision_first_does_not_fill_limit",
@@ -209,7 +210,7 @@
         {"key":"weak","title":"Cache glossary","content":"A generic cache term.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"strong","because":"multiple repository sources provide qualifying evidence","signals":["branch_diff","commit_subject"]}],"must_not_appear":[{"key":"weak","because":"weak evidence is not used to fill the result cap"}],"order":["strong"],"diagnostics":[],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"strong","because":"multiple repository sources provide qualifying evidence","signals":["branch_diff","commit_subject"]}],"must_not_appear":[{"key":"weak","because":"weak evidence is not used to fill the result cap"}],"order":["strong"],"diagnostics":[]}
     },
     {
       "name": "maximum_result_count",
@@ -224,7 +225,7 @@
         {"key":"f","title":"F Bounded result memory","content":"Bounded result memory.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"a","because":"it ranks within the deterministic cap","signals":["task_intent"]},{"key":"b","because":"it ranks within the deterministic cap","signals":["task_intent"]},{"key":"c","because":"it ranks within the deterministic cap","signals":["task_intent"]},{"key":"d","because":"it ranks within the deterministic cap","signals":["task_intent"]},{"key":"e","because":"it ranks within the deterministic cap","signals":["task_intent"]}],"must_not_appear":[{"key":"f","because":"it ranks beyond the maximum result count"}],"order":["a","b","c","d","e"],"diagnostics":["result_limit_reached"],"budget_omissions":0}
+      "expected": {"must_appear":[{"key":"a","because":"it ranks within the deterministic cap","signals":["task_intent"]},{"key":"b","because":"it ranks within the deterministic cap","signals":["task_intent"]},{"key":"c","because":"it ranks within the deterministic cap","signals":["task_intent"]},{"key":"d","because":"it ranks within the deterministic cap","signals":["task_intent"]},{"key":"e","because":"it ranks within the deterministic cap","signals":["task_intent"]}],"must_not_appear":[{"key":"f","because":"it ranks beyond the maximum result count"}],"order":["a","b","c","d","e"],"diagnostics":["result_limit_reached"]}
     },
     {
       "name": "repository_project_unresolved_disables_signals",
@@ -232,7 +233,7 @@
       "input": {"project":"engram","repository":{"branch_diff":"cache migration architecture","commit_subjects":["cache migration architecture"]}},
       "memories": [{"key":"repo","title":"Cache migration architecture","content":"Cache migration architecture decision.","project":"engram","scope":"project"}],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[],"must_not_appear":[{"key":"repo","because":"repository identity is unresolved, so its signals are disabled"}],"order":[],"diagnostics":["repository_project_unresolved","no_usable_signals"],"budget_omissions":0}
+      "expected": {"must_appear":[],"must_not_appear":[{"key":"repo","because":"repository identity is unresolved, so its signals are disabled"}],"order":[],"diagnostics":["repository_project_unresolved","no_usable_signals"]}
     },
     {
       "name": "every_repository_source_is_bounded",
@@ -252,7 +253,7 @@
         {"key":"tails","title":"Repository omitted tails","content":"Repository omitted tails.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"retained","because":"every retained bounded prefix contributes deterministic evidence","signals":["branch","branch_diff","staged_diff","unstaged_diff","affected_path","commit_subject","untracked_path"]}],"must_not_appear":[{"key":"tails","because":"the first omitted term from every Repository source is excluded"}],"order":["retained"],"diagnostics":["repository_input_truncated"],"budget_omissions":0,"truncations":{"branch":1,"branch_diff":1,"staged_diff":1,"unstaged_diff":1,"affected_path":1,"commit_subject":1,"untracked_path":1}}
+      "expected": {"must_appear":[{"key":"retained","because":"every retained bounded prefix contributes deterministic evidence","signals":["branch","branch_diff","staged_diff","unstaged_diff","affected_path","commit_subject","untracked_path"]}],"must_not_appear":[{"key":"tails","because":"the first omitted term from every Repository source is excluded"}],"order":["retained"],"diagnostics":["repository_input_truncated"],"truncations":{"branch":1,"branch_diff":1,"staged_diff":1,"unstaged_diff":1,"affected_path":1,"commit_subject":1,"untracked_path":1}}
     },
     {
       "name": "task_and_repository_truncation_are_distinct",
@@ -264,25 +265,16 @@
         {"key":"tail","title":"Omitted task tail","content":"Omitted task tail.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"retained","because":"the retained Task prefix satisfies the authoritative Task gate","signals":["task_intent"]}],"must_not_appear":[{"key":"tail","because":"the omitted Task term cannot create evidence"}],"order":["retained"],"diagnostics":["task_input_truncated"],"budget_omissions":0,"truncations":{"task_intent":1}}
+      "expected": {"must_appear":[{"key":"retained","because":"the retained Task prefix satisfies the authoritative Task gate","signals":["task_intent"]}],"must_not_appear":[{"key":"tail","because":"the omitted Task term cannot create evidence"}],"order":["retained"],"diagnostics":["task_input_truncated"],"truncations":{"task_intent":1}}
     },
     {
       "name": "diagnostic_only_output_is_bounded",
-      "purpose": "Repeated Git failures are deduplicated so an empty result still respects the total output budget.",
+      "purpose": "Repeated Git failures are deduplicated before the CLI applies its exact public output budget.",
       "input": {"project":"engram","repository_project":"engram"},
       "repeat_git_failure": 1000,
       "memories": [{"key":"unrelated","title":"Unrelated memory","content":"No Repository signal can select this memory.","project":"engram","scope":"project"}],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[],"must_not_appear":[{"key":"unrelated","because":"Git degradation alone does not create Selection evidence"}],"order":[],"diagnostics":["git_operation_failed","no_usable_signals"],"budget_omissions":0}
-    },
-    {
-      "name": "diagnostic_output_budget_failure",
-      "purpose": "An impossible diagnostic-only budget returns a typed deterministic error.",
-      "input": {"project":"engram"},
-      "output_budget": 1,
-      "memories": [{"key":"unrelated","title":"Unrelated memory","content":"No signal selects this memory.","project":"engram","scope":"project"}],
-      "relations": [], "repeat": 2,
-      "expected": {"must_appear":[],"must_not_appear":[{"key":"unrelated","because":"generation fails before returning an over-budget result"}],"order":[],"diagnostics":[],"error_code":"output_budget_failure","budget_omissions":0}
+      "expected": {"must_appear":[],"must_not_appear":[{"key":"unrelated","because":"Git degradation alone does not create Selection evidence"}],"order":[],"diagnostics":["git_operation_failed","no_usable_signals"]}
     }
   ]
 }

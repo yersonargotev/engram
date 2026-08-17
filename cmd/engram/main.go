@@ -1591,11 +1591,12 @@ func cmdContext(cfg store.Config) {
 			return
 		}
 		output := newContextBriefingOutput(project, scope, result)
-		if jsonMode {
-			_ = writeCLIJSON(output)
+		encoded, encodeErr := encodeContextBriefing(output, jsonMode, taskSet, taskbriefing.CalibratedDefaults.TotalOutputBudget)
+		if encodeErr != nil {
+			failCLI(jsonMode, "output_budget_failure", encodeErr.Error(), nil)
 			return
 		}
-		renderContextBriefing(output, taskSet)
+		fmt.Fprint(os.Stdout, string(encoded))
 		return
 	}
 

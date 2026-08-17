@@ -229,12 +229,30 @@ func TestGenerateUsesSingleDirtyWorktreeSource(t *testing.T) {
 	}
 }
 
-func TestGenerateDeduplicatesCandidateButPreservesIndependentSources(t *testing.T) {
+func TestGenerateDeduplicatesIdenticalEvidenceBeforeRanking(t *testing.T) {
 	memoryStore := newTestStore(t)
 	seedBriefingMemory(t, memoryStore, "duplicate-evidence", "engram", "Token migration", "Token migration guidance.")
 	input := Input{Project: "engram", RepositoryProject: "engram", Repository: RepositorySignals{
 		StagedDiff: "token migration", UnstagedDiff: "token migration",
 	}}
+
+	result, err := New(memoryStore).Generate(input)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if len(result.Memories) != 0 {
+		t.Fatalf("memories = %#v, duplicated evidence must not cross the relevance threshold", result.Memories)
+	}
+}
+
+func TestGeneratePreservesSourcesForDeduplicatedEvidence(t *testing.T) {
+	memoryStore := newTestStore(t)
+	seedBriefingMemory(t, memoryStore, "duplicate-evidence", "engram", "Token migration", "Token migration guidance.")
+	input := Input{
+		Project: "engram", TaskIntent: "token migration",
+		RepositoryProject: "engram",
+		Repository:        RepositorySignals{StagedDiff: "token migration", UnstagedDiff: "token migration"},
+	}
 
 	first, err := New(memoryStore).Generate(input)
 	if err != nil {
@@ -251,8 +269,11 @@ func TestGenerateDeduplicatesCandidateButPreservesIndependentSources(t *testing.
 	for _, evidence := range first.Memories[0].Evidence {
 		signals = append(signals, evidence.Signal)
 	}
-	if !reflect.DeepEqual(signals, []SignalType{SignalStagedDiff, SignalUnstagedDiff}) {
-		t.Fatalf("signals = %v, want each independent source exactly once", signals)
+	if !reflect.DeepEqual(signals, []SignalType{SignalTaskIntent, SignalStagedDiff, SignalUnstagedDiff}) {
+		t.Fatalf("signals = %v, want each source traceable exactly once", signals)
+	}
+	if first.Memories[0].Score != CalibratedDefaults.TaskWeight+CalibratedDefaults.TitleOrTopicBonus {
+		t.Fatalf("score = %d, duplicated payloads must contribute only the strongest grouped weight", first.Memories[0].Score)
 	}
 }
 
@@ -484,13 +505,13 @@ func TestRunGitTermsCommandReportsProcessFailures(t *testing.T) {
 
 	t.Run("start", func(t *testing.T) {
 		t.Setenv("PATH", "")
-		if _, _, err := runGitTermsCommand(repo, 4, "status"); err == nil {
+		if _, _, _, err := runGitTermsCommand(repo, 4, "status"); err == nil {
 			t.Fatal("runGitTermsCommand succeeded without a Git executable")
 		}
 	})
 
 	t.Run("wait", func(t *testing.T) {
-		if _, _, err := runGitTermsCommand(repo, 4, "not-a-git-subcommand"); err == nil {
+		if _, _, _, err := runGitTermsCommand(repo, 4, "not-a-git-subcommand"); err == nil {
 			t.Fatal("runGitTermsCommand succeeded for a failing Git command")
 		}
 	})
@@ -500,30 +521,68 @@ func TestRunGitTermsCommandReportsProcessFailures(t *testing.T) {
 		writeTestFile(t, filepath.Join(repo, "oversized.txt"), "retained "+longToken+" preserved")
 		runGit(t, repo, "add", "oversized.txt")
 		runGit(t, repo, "commit", "-m", "Add oversized token")
-		terms, omitted, err := runGitTermsCommand(repo, 4, "show", "HEAD:oversized.txt")
-		if err != nil || terms != "retained preserved" || omitted != 1 {
+		terms, omitted, complete, err := runGitTermsCommand(repo, 4, "show", "HEAD:oversized.txt")
+		if err != nil || !complete || terms != "retained preserved" || omitted != 1 {
 			t.Fatalf("terms = %q, omitted = %d, err = %v; want usable terms plus typed truncation", terms, omitted, err)
 		}
 	})
 }
 
-func TestRunGitTermsCommandCountsUniqueOmittedTerms(t *testing.T) {
+func TestRunGitTermsCommandCountsOmittedOccurrencesWithBoundedVocabulary(t *testing.T) {
 	repo := newCleanFeatureRepository(t, "engram")
 	writeTestFile(t, filepath.Join(repo, "dedupe.txt"), "alpha beta gamma gamma gamma\n")
 	runGit(t, repo, "add", "dedupe.txt")
 	runGit(t, repo, "commit", "-m", "Add repeated terms")
 
-	terms, omitted, err := runGitTermsCommand(repo, 2, "show", "HEAD:dedupe.txt")
+	terms, omitted, complete, err := runGitTermsCommand(repo, 2, "show", "HEAD:dedupe.txt")
 	if err != nil {
 		t.Fatalf("runGitTermsCommand: %v", err)
 	}
-	if terms != "alpha beta" || omitted != 1 {
-		t.Fatalf("terms = %q, omitted = %d, want two retained and one unique omitted term", terms, omitted)
+	if !complete || terms != "alpha beta" || omitted != 3 {
+		t.Fatalf("terms = %q, omitted = %d, want two retained terms and three omitted occurrences", terms, omitted)
+	}
+}
+
+func TestNormalizeTermsWithCountMatchesStreamingOmissionSemantics(t *testing.T) {
+	terms, omitted := normalizeTermsWithCount("alpha beta gamma gamma delta alpha epsilon", 2)
+	if !reflect.DeepEqual(terms, []string{"alpha", "beta"}) || omitted != 4 {
+		t.Fatalf("terms = %v, omitted = %d, want retained vocabulary and bounded omitted occurrences", terms, omitted)
+	}
+}
+
+func TestReadBoundedGitTermsStopsAtDeterministicByteLimit(t *testing.T) {
+	input := strings.NewReader(strings.Repeat("alpha ", int(CalibratedDefaults.GitInputByteLimit)/6+10))
+	terms, omitted, complete, err := readBoundedGitTerms(input, 2)
+	if err != nil {
+		t.Fatalf("readBoundedGitTerms: %v", err)
+	}
+	if complete || terms != "alpha" || omitted != 0 {
+		t.Fatalf("terms = %q, omitted = %d, complete = %v; want bounded partial scan", terms, omitted, complete)
+	}
+}
+
+func TestAcquireRepositoryTermsMarksIncompletePrefixCounts(t *testing.T) {
+	original := gitTermsOutput
+	gitTermsOutput = func(string, int, ...string) (string, int, bool, error) {
+		return "alpha beta", 7, false, nil
+	}
+	t.Cleanup(func() { gitTermsOutput = original })
+
+	repository := RepositorySignals{}
+	acquireRepositoryTerms(&repository, "/unused", SignalBranchDiff, 2, func(value string) {
+		repository.BranchDiff = value
+	}, "diff")
+	if repository.BranchDiff != "alpha beta" || len(repository.AcquisitionTruncations) != 1 {
+		t.Fatalf("repository = %#v", repository)
+	}
+	truncation := repository.AcquisitionTruncations[0]
+	if truncation.CountComplete || truncation.TotalTerms != 9 || truncation.AnalyzedTerms != 2 || truncation.OmittedTerms != 7 {
+		t.Fatalf("truncation = %#v, want explicitly incomplete prefix counts", truncation)
 	}
 }
 
 func TestReadBoundedGitTermsPropagatesReaderFailure(t *testing.T) {
-	_, _, err := readBoundedGitTerms(iotest.TimeoutReader(strings.NewReader("alpha beta")), 4)
+	_, _, _, err := readBoundedGitTerms(iotest.TimeoutReader(strings.NewReader("alpha beta")), 4)
 	if !errors.Is(err, iotest.ErrTimeout) {
 		t.Fatalf("error = %v, want %v", err, iotest.ErrTimeout)
 	}
@@ -600,9 +659,9 @@ func stubGitCommandFailure(t *testing.T, fail func(args []string) bool) {
 func stubGitTermsFailure(t *testing.T, fail func(args []string) bool) {
 	t.Helper()
 	original := gitTermsOutput
-	gitTermsOutput = func(directory string, termLimit int, args ...string) (string, int, error) {
+	gitTermsOutput = func(directory string, termLimit int, args ...string) (string, int, bool, error) {
 		if fail(args) {
-			return "", 0, errors.New("git command unavailable")
+			return "", 0, false, errors.New("git command unavailable")
 		}
 		return original(directory, termLimit, args...)
 	}

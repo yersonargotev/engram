@@ -2,13 +2,10 @@
 package taskbriefing
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/yersonargotev/engram/internal/store"
 )
@@ -71,6 +68,7 @@ type Defaults struct {
 	PathTermLimit       int
 	CommitTermLimit     int
 	UntrackedTermLimit  int
+	GitInputByteLimit   int64
 }
 
 var CalibratedDefaults = Defaults{
@@ -93,6 +91,7 @@ var CalibratedDefaults = Defaults{
 	PathTermLimit:       12,
 	CommitTermLimit:     12,
 	UntrackedTermLimit:  12,
+	GitInputByteLimit:   1024 * 1024,
 }
 
 const candidateRetrievalLimit = 20
@@ -115,7 +114,12 @@ type Result struct {
 	Diagnostics          []Diagnostic     `json:"diagnostics"`
 	BaseResolution       *BaseResolution  `json:"base_resolution,omitempty"`
 	ResultLimitOmissions int              `json:"result_limit_omissions,omitempty"`
-	BudgetOmissions      int              `json:"budget_omissions"`
+	ConflictPairs        []ConflictPair   `json:"-"`
+}
+
+type ConflictPair struct {
+	SourceID string
+	TargetID string
 }
 
 type Diagnostic struct {
@@ -144,6 +148,7 @@ type InputTruncation struct {
 	OmittedTerms  int        `json:"omitted_terms"`
 	TotalTerms    int        `json:"total_terms,omitempty"`
 	AnalyzedTerms int        `json:"analyzed_terms,omitempty"`
+	CountComplete bool       `json:"count_complete"`
 }
 
 var ErrMemoryStore = errors.New("task briefing: memory store failure")
@@ -159,8 +164,7 @@ func (e *generateError) Unwrap() error { return e.err }
 type GenerateErrorCode string
 
 const (
-	ErrorMemoryStoreFailure  GenerateErrorCode = "memory_store_failure"
-	ErrorOutputBudgetFailure GenerateErrorCode = "output_budget_failure"
+	ErrorMemoryStoreFailure GenerateErrorCode = "memory_store_failure"
 )
 
 func ErrorCode(err error) GenerateErrorCode {
@@ -172,12 +176,11 @@ func ErrorCode(err error) GenerateErrorCode {
 }
 
 type Generator struct {
-	store        *store.Store
-	outputBudget int
+	store *store.Store
 }
 
 func New(memoryStore *store.Store) *Generator {
-	return &Generator{store: memoryStore, outputBudget: CalibratedDefaults.TotalOutputBudget}
+	return &Generator{store: memoryStore}
 }
 
 func (g *Generator) Generate(input Input) (Result, error) {
@@ -187,35 +190,38 @@ func (g *Generator) Generate(input Input) (Result, error) {
 	signals, diagnostics, baseResolution := buildSignals(input)
 	if len(signals) == 0 {
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticNoUsableSignals})
-		result := Result{Diagnostics: diagnostics, BaseResolution: baseResolution}
-		if !fitsOutputBudget(result, g.outputBudget) {
-			return Result{}, &generateError{code: ErrorOutputBudgetFailure, err: errors.New("diagnostics exceed total output budget")}
-		}
-		return result, nil
+		return Result{Diagnostics: diagnostics, BaseResolution: baseResolution}, nil
 	}
+	groups := groupSignals(signals)
+	candidates, err := g.retrieveCandidates(input, groups)
+	if err != nil {
+		return Result{}, err
+	}
+	relations, err := g.loadCandidateRelations(candidates)
+	if err != nil {
+		return Result{}, err
+	}
+	selected := rankCandidates(input, groups, candidates, relations)
+	return g.boundSelection(input.Limit, selected, diagnostics, baseResolution, relations), nil
+}
 
+func (g *Generator) retrieveCandidates(input Input, groups []signalGroup) (map[int64]store.Observation, error) {
 	candidates := make(map[int64]store.Observation)
-	retrievedQueries := make(map[string]struct{}, len(signals))
-	for _, signal := range signals {
-		query := strings.Join(signal.terms, " ")
-		if _, seen := retrievedQueries[query]; seen {
-			continue
-		}
-		retrievedQueries[query] = struct{}{}
-		results, err := g.store.Search(query, store.SearchOptions{
-			Project:   input.Project,
-			Scope:     input.Scope,
-			Limit:     candidateRetrievalLimit,
-			MatchMode: "any",
+	for _, group := range groups {
+		results, err := g.store.Search(strings.Join(group.terms, " "), store.SearchOptions{
+			Project: input.Project, Scope: input.Scope, Limit: candidateRetrievalLimit, MatchMode: "any",
 		})
 		if err != nil {
-			return Result{}, &generateError{code: ErrorMemoryStoreFailure, err: fmt.Errorf("%w: %v", ErrMemoryStore, err)}
+			return nil, &generateError{code: ErrorMemoryStoreFailure, err: fmt.Errorf("%w: %v", ErrMemoryStore, err)}
 		}
 		for _, result := range results {
 			candidates[result.ID] = result.Observation
 		}
 	}
+	return candidates, nil
+}
 
+func (g *Generator) loadCandidateRelations(candidates map[int64]store.Observation) (map[string]store.ObservationRelations, error) {
 	syncIDs := make([]string, 0, len(candidates))
 	for _, memory := range candidates {
 		syncIDs = append(syncIDs, memory.SyncID)
@@ -223,38 +229,34 @@ func (g *Generator) Generate(input Input) (Result, error) {
 	sort.Strings(syncIDs)
 	relations, err := g.store.GetRelationsForObservations(syncIDs)
 	if err != nil {
-		return Result{}, &generateError{code: ErrorMemoryStoreFailure, err: fmt.Errorf("%w: %v", ErrMemoryStore, err)}
+		return nil, &generateError{code: ErrorMemoryStoreFailure, err: fmt.Errorf("%w: %v", ErrMemoryStore, err)}
 	}
+	return relations, nil
+}
 
+func rankCandidates(input Input, groups []signalGroup, candidates map[int64]store.Observation, relations map[string]store.ObservationRelations) []SelectedMemory {
 	selected := make([]SelectedMemory, 0, len(candidates))
 	for _, memory := range candidates {
 		if isSuperseded(relations[memory.SyncID]) {
 			continue
 		}
-		var evidenceItems []SelectionEvidence
-		score := 0
+		matches := make([]matchedSignalGroup, 0, len(groups))
 		hasTaskEvidence := false
-		for _, signal := range signals {
-			evidence := matchEvidence(memory, signal.kind, signal.terms)
-			minimumTerms := 2
-			if signal.kind == SignalTaskIntent {
-				minimumTerms = (len(signal.terms) + 1) / 2
-			}
-			if len(evidence.MatchedTerms) < minimumTerms {
+		for _, group := range groups {
+			evidence := matchEvidence(memory, group.sources[0], group.terms)
+			if len(evidence.MatchedTerms) < group.minimumTerms() {
 				continue
 			}
-			evidenceItems = append(evidenceItems, evidence)
-			score += signal.weight
-			if containsString(evidence.MatchedFields, "title") || containsString(evidence.MatchedFields, "topic_key") {
-				score += CalibratedDefaults.TitleOrTopicBonus
-			}
-			if signal.kind == SignalTaskIntent {
+			matches = append(matches, matchedSignalGroup{group: group, evidence: evidence})
+			if containsSignalType(group.sources, SignalTaskIntent) {
 				hasTaskEvidence = true
 			}
 		}
 		if input.TaskIntent != "" && !hasTaskEvidence {
 			continue
 		}
+		evidenceItems := expandSelectionEvidence(matches)
+		score := scoreMatchedGroups(matches)
 		if score < CalibratedDefaults.InclusionThreshold {
 			continue
 		}
@@ -279,10 +281,48 @@ func (g *Generator) Generate(input Input) (Result, error) {
 		}
 		return selected[i].Memory.ID < selected[j].Memory.ID
 	})
+	return selected
+}
 
+type matchedSignalGroup struct {
+	group    signalGroup
+	evidence SelectionEvidence
+}
+
+func (g signalGroup) minimumTerms() int {
+	if containsSignalType(g.sources, SignalTaskIntent) {
+		return (len(g.terms) + 1) / 2
+	}
+	return 2
+}
+
+func expandSelectionEvidence(matches []matchedSignalGroup) []SelectionEvidence {
+	var evidenceItems []SelectionEvidence
+	for _, match := range matches {
+		for _, source := range match.group.sources {
+			evidence := match.evidence
+			evidence.Signal = source
+			evidenceItems = append(evidenceItems, evidence)
+		}
+	}
+	return evidenceItems
+}
+
+func scoreMatchedGroups(matches []matchedSignalGroup) int {
+	score := 0
+	for _, match := range matches {
+		score += match.group.weight
+		if containsString(match.evidence.MatchedFields, "title") || containsString(match.evidence.MatchedFields, "topic_key") {
+			score += CalibratedDefaults.TitleOrTopicBonus
+		}
+	}
+	return score
+}
+
+func (g *Generator) boundSelection(inputLimit int, selected []SelectedMemory, diagnostics []Diagnostic, baseResolution *BaseResolution, relations map[string]store.ObservationRelations) Result {
 	resultLimit := CalibratedDefaults.MaximumResultCount
-	if input.Limit > 0 && input.Limit < resultLimit {
-		resultLimit = input.Limit
+	if inputLimit > 0 && inputLimit < resultLimit {
+		resultLimit = inputLimit
 	}
 	resultLimitOmissions := 0
 	if len(selected) > resultLimit {
@@ -291,41 +331,47 @@ func (g *Generator) Generate(input Input) (Result, error) {
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticResultLimitReached})
 	}
 
-	bounded := make([]SelectedMemory, 0, len(selected))
-	budgetOmissions := 0
-	for _, memory := range selected {
-		candidateMemories := appendCopy(bounded, memory)
-		if !fitsOutputBudget(Result{Memories: candidateMemories, Diagnostics: diagnostics, BaseResolution: baseResolution, ResultLimitOmissions: resultLimitOmissions}, g.outputBudget) {
-			budgetOmissions++
-			continue
-		}
-		bounded = append(bounded, memory)
-	}
-	if budgetOmissions > 0 {
-		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticOutputBudgetExhausted})
-	}
-	if hasSelectedConflict(bounded, relations) {
+	if hasSelectedConflict(selected, relations) {
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticSelectedMemoryConflict})
 	}
-	for !fitsOutputBudget(Result{Memories: bounded, Diagnostics: diagnostics, BaseResolution: baseResolution, ResultLimitOmissions: resultLimitOmissions, BudgetOmissions: budgetOmissions}, g.outputBudget) && len(bounded) > 0 {
-		bounded = bounded[:len(bounded)-1]
-		budgetOmissions++
-		if !hasDiagnostic(diagnostics, DiagnosticOutputBudgetExhausted) {
-			diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticOutputBudgetExhausted})
-		}
-		diagnostics = withoutDiagnostic(diagnostics, DiagnosticSelectedMemoryConflict)
-		if hasSelectedConflict(bounded, relations) {
-			diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticSelectedMemoryConflict})
-		}
-	}
 
-	return Result{Memories: bounded, Diagnostics: diagnostics, BaseResolution: baseResolution, ResultLimitOmissions: resultLimitOmissions, BudgetOmissions: budgetOmissions}, nil
+	return Result{
+		Memories: selected, Diagnostics: diagnostics, BaseResolution: baseResolution,
+		ResultLimitOmissions: resultLimitOmissions,
+		ConflictPairs:        selectedConflictPairs(selected, relations),
+	}
 }
 
 type weightedSignal struct {
 	kind   SignalType
 	terms  []string
 	weight int
+}
+
+type signalGroup struct {
+	terms   []string
+	sources []SignalType
+	weight  int
+}
+
+func groupSignals(signals []weightedSignal) []signalGroup {
+	groups := make([]signalGroup, 0, len(signals))
+	byQuery := make(map[string]int, len(signals))
+	for _, signal := range signals {
+		query := strings.Join(signal.terms, " ")
+		if index, found := byQuery[query]; found {
+			groups[index].sources = append(groups[index].sources, signal.kind)
+			if signal.weight > groups[index].weight {
+				groups[index].weight = signal.weight
+			}
+			continue
+		}
+		byQuery[query] = len(groups)
+		groups = append(groups, signalGroup{
+			terms: append([]string(nil), signal.terms...), sources: []SignalType{signal.kind}, weight: signal.weight,
+		})
+	}
+	return groups
 }
 
 func buildSignals(input Input) ([]weightedSignal, []Diagnostic, *BaseResolution) {
@@ -372,7 +418,7 @@ func buildSignals(input Input) ([]weightedSignal, []Diagnostic, *BaseResolution)
 	for _, raw := range rawSignals {
 		terms, omitted := normalizeTermsWithCount(raw.raw, raw.limit)
 		if omitted > 0 {
-			truncation := InputTruncation{Signal: raw.kind, OmittedTerms: omitted, TotalTerms: len(terms) + omitted, AnalyzedTerms: len(terms)}
+			truncation := InputTruncation{Signal: raw.kind, OmittedTerms: omitted, TotalTerms: len(terms) + omitted, AnalyzedTerms: len(terms), CountComplete: true}
 			if raw.kind == SignalTaskIntent {
 				diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticTaskInputTruncated, Truncations: []InputTruncation{truncation}})
 			} else {
@@ -390,36 +436,13 @@ func buildSignals(input Input) ([]weightedSignal, []Diagnostic, *BaseResolution)
 	return signals, diagnostics, baseResolution
 }
 
-var tokenSeparator = regexp.MustCompile(`[^\pL\pN]+`)
-
 func normalizeTerms(raw string, limit int) []string {
 	terms, _ := normalizeTermsWithCount(raw, limit)
 	return terms
 }
 
 func normalizeTermsWithCount(raw string, limit int) ([]string, int) {
-	normalized := tokenSeparator.ReplaceAllString(strings.ToLower(raw), " ")
-	seen := make(map[string]struct{})
-	capacity := limit
-	if capacity > len(normalized) {
-		capacity = len(normalized)
-	}
-	terms := make([]string, 0, capacity)
-	omitted := 0
-	for _, term := range strings.Fields(normalized) {
-		if shouldIgnoreTerm(term) {
-			continue
-		}
-		if _, exists := seen[term]; exists {
-			continue
-		}
-		seen[term] = struct{}{}
-		if len(terms) < limit {
-			terms = append(terms, term)
-		} else {
-			omitted++
-		}
-	}
+	terms, omitted, _, _ := collectTerms(strings.NewReader(raw), limit, 0)
 	return terms, omitted
 }
 
@@ -470,53 +493,11 @@ func containsTerm(value, term string) bool {
 	return false
 }
 
-func shouldIgnoreTerm(term string) bool {
-	if len([]rune(term)) < 2 {
-		return true
-	}
-	for _, r := range term {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return false
-		}
-	}
-	return true
-}
-
 func repositoryHasInput(repository RepositorySignals) bool {
 	return repository.Branch != "" || repository.BranchDiff != "" || repository.StagedDiff != "" ||
 		repository.UnstagedDiff != "" || len(repository.AffectedPaths) > 0 ||
 		len(repository.CommitSubjects) > 0 || len(repository.UntrackedPaths) > 0 ||
 		repository.BaseUnresolved || len(repository.GitFailures) > 0 || repository.BaseResolution != nil
-}
-
-func appendCopy(memories []SelectedMemory, memory SelectedMemory) []SelectedMemory {
-	result := make([]SelectedMemory, len(memories), len(memories)+1)
-	copy(result, memories)
-	return append(result, memory)
-}
-
-func fitsOutputBudget(result Result, budget int) bool {
-	encoded, err := json.Marshal(result)
-	return err == nil && len(encoded) <= budget
-}
-
-func hasDiagnostic(diagnostics []Diagnostic, code DiagnosticCode) bool {
-	for _, diagnostic := range diagnostics {
-		if diagnostic.Code == code {
-			return true
-		}
-	}
-	return false
-}
-
-func withoutDiagnostic(diagnostics []Diagnostic, code DiagnosticCode) []Diagnostic {
-	filtered := diagnostics[:0]
-	for _, diagnostic := range diagnostics {
-		if diagnostic.Code != code {
-			filtered = append(filtered, diagnostic)
-		}
-	}
-	return filtered
 }
 
 func normalizeGitFailureSources(sources []SignalType) []SignalType {
@@ -550,6 +531,24 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
+func containsSignalType(values []SignalType, target SignalType) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDiagnostic(diagnostics []Diagnostic, code DiagnosticCode) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
 func isSuperseded(relations store.ObservationRelations) bool {
 	for _, relation := range relations.AsTarget {
 		if relation.JudgmentStatus == store.JudgmentStatusJudged && relation.Relation == store.RelationSupersedes {
@@ -560,19 +559,24 @@ func isSuperseded(relations store.ObservationRelations) bool {
 }
 
 func hasSelectedConflict(selected []SelectedMemory, relations map[string]store.ObservationRelations) bool {
+	return len(selectedConflictPairs(selected, relations)) > 0
+}
+
+func selectedConflictPairs(selected []SelectedMemory, relations map[string]store.ObservationRelations) []ConflictPair {
 	selectedIDs := make(map[string]struct{}, len(selected))
 	for _, memory := range selected {
 		selectedIDs[memory.Memory.SyncID] = struct{}{}
 	}
+	var pairs []ConflictPair
 	for _, memory := range selected {
 		for _, relation := range relations[memory.Memory.SyncID].AsSource {
 			if relation.JudgmentStatus != store.JudgmentStatusJudged || relation.Relation != store.RelationConflictsWith {
 				continue
 			}
 			if _, found := selectedIDs[relation.TargetID]; found {
-				return true
+				pairs = append(pairs, ConflictPair{SourceID: memory.Memory.SyncID, TargetID: relation.TargetID})
 			}
 		}
 	}
-	return false
+	return pairs
 }

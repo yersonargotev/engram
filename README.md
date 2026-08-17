@@ -421,7 +421,7 @@ engram context engram --brief --task "implement deterministic task briefing sele
 engram context engram --brief --scope personal --json
 ```
 
-Engram derives transient Repository signals from the branch name, committed diff, affected paths, and commit subjects, plus staged changes, unstaged changes, and untracked paths. Staged and unstaged diffs contribute bounded terms and affected paths; untracked files contribute paths only—Engram never opens their content. The comparison base resolves in this order: an explicit `--base REF`, the current branch's configured upstream, then the remote default branch. An upstream that tracks the same branch is skipped because it cannot identify feature-branch commits; resolution then continues to the remote default.
+Engram derives transient Repository signals from the branch name, committed diff, affected paths, and commit subjects, plus staged changes, unstaged changes, and untracked paths. Staged and unstaged diffs contribute bounded terms and affected paths; untracked files contribute paths only—Engram never opens their content. The comparison base resolves in this order: an explicit `--base REF`, a configured upstream that represents a distinct comparison lineage, then the remote default branch. A same-branch tracking upstream is not a comparison base because its head normally matches the feature branch; Engram skips it and continues to the remote default.
 
 Repository signals are used only when the cwd repository resolves to the selected
 project. A mismatch disables them and reports `repository_project_mismatch`;
@@ -433,7 +433,9 @@ for the selected project are eligible by default, while `--scope project` or
 The result limit is a cap, not a quota: weak matches are excluded, and at most
 five memories are returned. Relevant pins may improve ordering but cannot force
 an unrelated memory into a briefing. Deleted and superseded memories stay out;
-selected judged conflicts remain visible. Memories are emitted whole, and a
+selected judged conflicts remain visible. Identical normalized evidence from
+multiple Repository sources remains traceable under every source but contributes
+only its strongest weight during ranking. Memories are emitted whole, and a
 lower-ranked memory that does not fit the bounded output is omitted and counted.
 
 Task intent and Repository signals are transient: they are used only for local
@@ -441,7 +443,14 @@ deterministic selection and are never saved as memories. Raw diff content is not
 echoed in briefing output, and untracked file content is neither read nor emitted.
 Every input source has a calibrated deterministic term bound. If a bound is
 reached, JSON diagnostics include each source's `total_terms`, `analyzed_terms`,
-and `omitted_terms`; human output shows the same counts. A failed optional
+and `omitted_terms`; human output shows the same counts. Acquisition retains only
+the calibrated vocabulary; after that bound, `omitted_terms` counts eligible
+occurrences without retaining their values. Git streams also have a deterministic
+one-MiB acquisition ceiling. `count_complete: false` marks prefix counts when
+that ceiling is reached, so partial analysis is never presented as complete.
+Both human and compact JSON output
+are measured as their exact stdout byte streams and are limited to 4,096 bytes.
+A failed optional
 signal-acquisition Git operation reports its source and preserves all other usable
 Task or Repository signals; failed base resolution reports
 `branch_base_unresolved`. If
@@ -451,7 +460,8 @@ errors. Human and JSON briefings expose the resolved base, source-level Selectio
 evidence, typed degradations, and result/output omissions. Supported briefing
 flags are `--task INTENT`, `--base REF`, `--scope project|personal`, `--limit 1..5`,
 and `--json`; `--task`, `--base`, and `--limit` require `--brief`. Without `--brief`,
-the existing chronological human and JSON contracts are unchanged.
+the existing chronological human and JSON contracts are unchanged. The four
+examples above are executed as CLI contract tests.
 
 ### Key Environment Variables
 

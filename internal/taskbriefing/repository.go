@@ -1,15 +1,12 @@
 package taskbriefing
 
 import (
-	"bufio"
 	"context"
-	"errors"
 	"io"
 	"os/exec"
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 
 	projectpkg "github.com/yersonargotev/engram/internal/project"
 )
@@ -86,16 +83,16 @@ func inspectRepository(workingDirectory, explicitBase, selectedProject string) (
 }
 
 func acquireRepositoryTerms(repository *RepositorySignals, root string, signal SignalType, limit int, set func(string), args ...string) {
-	value, omittedTerms, err := gitTermsOutput(root, limit, args...)
+	value, omittedTerms, countComplete, err := gitTermsOutput(root, limit, args...)
 	if err != nil {
 		repository.GitFailures = append(repository.GitFailures, signal)
 		return
 	}
 	set(value)
-	if omittedTerms > 0 {
+	if omittedTerms > 0 || !countComplete {
 		analyzedTerms := len(normalizeTerms(value, limit))
 		repository.AcquisitionTruncations = append(repository.AcquisitionTruncations, InputTruncation{
-			Signal: signal, OmittedTerms: omittedTerms, TotalTerms: analyzedTerms + omittedTerms, AnalyzedTerms: analyzedTerms,
+			Signal: signal, OmittedTerms: omittedTerms, TotalTerms: analyzedTerms + omittedTerms, AnalyzedTerms: analyzedTerms, CountComplete: countComplete,
 		})
 	}
 }
@@ -171,87 +168,37 @@ func runGitCommand(directory string, args ...string) (string, error) {
 	return string(output), err
 }
 
-func runGitTermsCommand(directory string, termLimit int, args ...string) (string, int, error) {
+func runGitTermsCommand(directory string, termLimit int, args ...string) (string, int, bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	commandArgs := append([]string{"-C", directory}, args...)
 	command := exec.CommandContext(ctx, "git", commandArgs...)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
 	if err := command.Start(); err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
 
-	terms, omitted, scanErr := readBoundedGitTerms(stdout, termLimit)
+	terms, omitted, complete, scanErr := readBoundedGitTerms(stdout, termLimit)
 	if scanErr != nil {
 		cancel()
 		_ = command.Wait()
-		return "", 0, scanErr
+		return "", 0, false, scanErr
+	}
+	if !complete {
+		cancel()
+		_ = command.Wait()
+		return terms, omitted, false, nil
 	}
 	if err := command.Wait(); err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
-	return terms, omitted, nil
+	return terms, omitted, true, nil
 }
 
-const maximumGitTermBytes = 64 * 1024
-
-func readBoundedGitTerms(input io.Reader, termLimit int) (string, int, error) {
-	reader := bufio.NewReader(input)
-	retained := make([]string, 0, termLimit)
-	seen := make(map[string]struct{}, termLimit)
-	omitted := 0
-	var token strings.Builder
-	overflowed := false
-	flush := func() {
-		if overflowed {
-			omitted++
-			overflowed = false
-			token.Reset()
-			return
-		}
-		if token.Len() == 0 {
-			return
-		}
-		term := strings.ToLower(token.String())
-		token.Reset()
-		if shouldIgnoreTerm(term) {
-			return
-		}
-		if _, exists := seen[term]; exists {
-			return
-		}
-		seen[term] = struct{}{}
-		if len(retained) < termLimit {
-			retained = append(retained, term)
-			return
-		}
-		omitted++
-	}
-
-	for {
-		r, size, err := reader.ReadRune()
-		if errors.Is(err, io.EOF) {
-			flush()
-			return strings.Join(retained, " "), omitted, nil
-		}
-		if err != nil {
-			return "", 0, err
-		}
-		if !unicode.IsLetter(r) && !unicode.IsNumber(r) {
-			flush()
-			continue
-		}
-		if overflowed {
-			continue
-		}
-		if token.Len()+size > maximumGitTermBytes {
-			overflowed = true
-			token.Reset()
-			continue
-		}
-		token.WriteRune(r)
-	}
+func readBoundedGitTerms(input io.Reader, termLimit int) (string, int, bool, error) {
+	terms, omitted, complete, err := collectTerms(input, termLimit, CalibratedDefaults.GitInputByteLimit)
+	return strings.Join(terms, " "), omitted, complete, err
 }

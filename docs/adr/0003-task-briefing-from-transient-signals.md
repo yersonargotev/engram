@@ -19,4 +19,12 @@ project boundaries.
 Ranking weights, relevance thresholds, and input budgets must be validated
 against a versioned scenario corpus before implementation. V1 exposes the CLI
 mode only; a task-aware MCP operation remains a required follow-up after the CLI
-contract is validated.
+contract is validated. Identical normalized Repository payloads form one ranking
+group using the strongest contributing weight while preserving source-level
+evidence. Repository acquisition retains only bounded vocabulary, counts later
+eligible occurrences without retaining their values, and stops Git streams at a
+deterministic one-MiB ceiling with explicitly incomplete prefix counts. The public output
+budget applies to the exact human or compact JSON byte stream written to stdout.
+A configured upstream qualifies as a comparison base only when it represents a
+lineage distinct from the current branch; same-branch tracking continues to the
+remote default because it cannot identify feature-branch changes.

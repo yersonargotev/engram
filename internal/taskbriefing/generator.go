@@ -27,15 +27,17 @@ const (
 )
 
 type RepositorySignals struct {
-	Branch         string       `json:"branch"`
-	BranchDiff     string       `json:"branch_diff"`
-	StagedDiff     string       `json:"staged_diff"`
-	UnstagedDiff   string       `json:"unstaged_diff"`
-	AffectedPaths  []string     `json:"affected_paths"`
-	CommitSubjects []string     `json:"commit_subjects"`
-	UntrackedPaths []string     `json:"untracked_paths"`
-	BaseUnresolved bool         `json:"base_unresolved"`
-	GitFailures    []SignalType `json:"git_failures"`
+	Branch                 string            `json:"branch"`
+	BranchDiff             string            `json:"branch_diff"`
+	StagedDiff             string            `json:"staged_diff"`
+	UnstagedDiff           string            `json:"unstaged_diff"`
+	AffectedPaths          []string          `json:"affected_paths"`
+	CommitSubjects         []string          `json:"commit_subjects"`
+	UntrackedPaths         []string          `json:"untracked_paths"`
+	BaseUnresolved         bool              `json:"base_unresolved"`
+	GitFailures            []SignalType      `json:"git_failures"`
+	BaseResolution         *BaseResolution   `json:"base_resolution,omitempty"`
+	AcquisitionTruncations []InputTruncation `json:"-"`
 }
 
 type Input struct {
@@ -45,6 +47,8 @@ type Input struct {
 	Limit             int               `json:"limit,omitempty"`
 	RepositoryProject string            `json:"repository_project"`
 	Repository        RepositorySignals `json:"repository"`
+	WorkingDirectory  string            `json:"working_directory,omitempty"`
+	ExplicitBase      string            `json:"explicit_base,omitempty"`
 }
 
 type Defaults struct {
@@ -109,6 +113,7 @@ type SelectedMemory struct {
 type Result struct {
 	Memories             []SelectedMemory `json:"memories"`
 	Diagnostics          []Diagnostic     `json:"diagnostics"`
+	BaseResolution       *BaseResolution  `json:"base_resolution,omitempty"`
 	ResultLimitOmissions int              `json:"result_limit_omissions,omitempty"`
 	BudgetOmissions      int              `json:"budget_omissions"`
 }
@@ -174,10 +179,13 @@ func New(memoryStore *store.Store) *Generator {
 }
 
 func (g *Generator) Generate(input Input) (Result, error) {
-	signals, diagnostics := buildSignals(input)
+	if input.WorkingDirectory != "" {
+		input.RepositoryProject, input.Repository = inspectRepository(input.WorkingDirectory, input.ExplicitBase, input.Project)
+	}
+	signals, diagnostics, baseResolution := buildSignals(input)
 	if len(signals) == 0 {
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticNoUsableSignals})
-		result := Result{Diagnostics: diagnostics}
+		result := Result{Diagnostics: diagnostics, BaseResolution: baseResolution}
 		if !fitsOutputBudget(result, g.outputBudget) {
 			return Result{}, &generateError{code: ErrorOutputBudgetFailure, err: errors.New("diagnostics exceed total output budget")}
 		}
@@ -279,7 +287,7 @@ func (g *Generator) Generate(input Input) (Result, error) {
 	budgetOmissions := 0
 	for _, memory := range selected {
 		candidateMemories := appendCopy(bounded, memory)
-		if !fitsOutputBudget(Result{Memories: candidateMemories, Diagnostics: diagnostics, ResultLimitOmissions: resultLimitOmissions}, g.outputBudget) {
+		if !fitsOutputBudget(Result{Memories: candidateMemories, Diagnostics: diagnostics, BaseResolution: baseResolution, ResultLimitOmissions: resultLimitOmissions}, g.outputBudget) {
 			budgetOmissions++
 			continue
 		}
@@ -291,7 +299,7 @@ func (g *Generator) Generate(input Input) (Result, error) {
 	if hasSelectedConflict(bounded, relations) {
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticSelectedMemoryConflict})
 	}
-	for !fitsOutputBudget(Result{Memories: bounded, Diagnostics: diagnostics, ResultLimitOmissions: resultLimitOmissions, BudgetOmissions: budgetOmissions}, g.outputBudget) && len(bounded) > 0 {
+	for !fitsOutputBudget(Result{Memories: bounded, Diagnostics: diagnostics, BaseResolution: baseResolution, ResultLimitOmissions: resultLimitOmissions, BudgetOmissions: budgetOmissions}, g.outputBudget) && len(bounded) > 0 {
 		bounded = bounded[:len(bounded)-1]
 		budgetOmissions++
 		if !hasDiagnostic(diagnostics, DiagnosticOutputBudgetExhausted) {
@@ -303,7 +311,7 @@ func (g *Generator) Generate(input Input) (Result, error) {
 		}
 	}
 
-	return Result{Memories: bounded, Diagnostics: diagnostics, ResultLimitOmissions: resultLimitOmissions, BudgetOmissions: budgetOmissions}, nil
+	return Result{Memories: bounded, Diagnostics: diagnostics, BaseResolution: baseResolution, ResultLimitOmissions: resultLimitOmissions, BudgetOmissions: budgetOmissions}, nil
 }
 
 type weightedSignal struct {
@@ -312,16 +320,19 @@ type weightedSignal struct {
 	weight int
 }
 
-func buildSignals(input Input) ([]weightedSignal, []Diagnostic) {
+func buildSignals(input Input) ([]weightedSignal, []Diagnostic, *BaseResolution) {
 	var diagnostics []Diagnostic
 	repository := input.Repository
+	baseResolution := repository.BaseResolution
 	hasRepositoryInput := repositoryHasInput(repository)
 	if hasRepositoryInput && input.RepositoryProject == "" {
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticRepositoryProjectUnresolved})
 		repository = RepositorySignals{}
+		baseResolution = nil
 	} else if input.RepositoryProject != "" && !strings.EqualFold(input.RepositoryProject, input.Project) {
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticRepositoryProjectMismatch})
 		repository = RepositorySignals{}
+		baseResolution = nil
 	} else {
 		if repository.BaseUnresolved {
 			diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticBranchBaseUnresolved})
@@ -349,7 +360,7 @@ func buildSignals(input Input) ([]weightedSignal, []Diagnostic) {
 		{kind: SignalUntrackedPath, raw: strings.Join(repository.UntrackedPaths, " "), weight: CalibratedDefaults.UntrackedPathWeight, limit: CalibratedDefaults.UntrackedTermLimit},
 	}
 	signals := make([]weightedSignal, 0, len(rawSignals))
-	var repositoryTruncations []InputTruncation
+	repositoryTruncations := append([]InputTruncation(nil), repository.AcquisitionTruncations...)
 	for _, raw := range rawSignals {
 		terms, omitted := normalizeTermsWithCount(raw.raw, raw.limit)
 		if omitted > 0 {
@@ -368,7 +379,7 @@ func buildSignals(input Input) ([]weightedSignal, []Diagnostic) {
 	if len(repositoryTruncations) > 0 {
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticRepositoryInputTruncated, Truncations: repositoryTruncations})
 	}
-	return signals, diagnostics
+	return signals, diagnostics, baseResolution
 }
 
 var tokenSeparator = regexp.MustCompile(`[^\pL\pN]+`)
@@ -467,7 +478,7 @@ func repositoryHasInput(repository RepositorySignals) bool {
 	return repository.Branch != "" || repository.BranchDiff != "" || repository.StagedDiff != "" ||
 		repository.UnstagedDiff != "" || len(repository.AffectedPaths) > 0 ||
 		len(repository.CommitSubjects) > 0 || len(repository.UntrackedPaths) > 0 ||
-		repository.BaseUnresolved || len(repository.GitFailures) > 0
+		repository.BaseUnresolved || len(repository.GitFailures) > 0 || repository.BaseResolution != nil
 }
 
 func appendCopy(memories []SelectedMemory, memory SelectedMemory) []SelectedMemory {

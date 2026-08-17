@@ -41,6 +41,27 @@ type stubCloudAutosyncManager struct {
 	notified int
 }
 
+func TestTaskBriefingDocumentationDescribesCleanBranchBaseResolution(t *testing.T) {
+	readmePath := filepath.Join("..", "..", "README.md")
+	contents, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("read %s: %v", readmePath, err)
+	}
+	readme := string(contents)
+	for _, required := range []string{
+		"engram context --brief --base main",
+		"branch name, committed diff, affected paths, and commit subjects",
+		"explicit `--base REF`, the current branch's configured upstream, then the",
+		"remote default branch",
+		"An upstream that tracks the same branch is skipped",
+		"repository_project_mismatch",
+	} {
+		if !strings.Contains(readme, required) {
+			t.Fatalf("README missing task briefing contract %q", required)
+		}
+	}
+}
+
 type stubCloudRuntimeServer struct {
 	started bool
 	err     error

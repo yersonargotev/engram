@@ -189,7 +189,7 @@ func TestPrintUsage(t *testing.T) {
 	if !strings.Contains(stdout, "search <query>") || !strings.Contains(stdout, "setup [agent]") {
 		t.Fatalf("usage missing expected commands: %q", stdout)
 	}
-	if !strings.Contains(stdout, "--brief [--task INTENT]") || !strings.Contains(stdout, "--limit 1..5") {
+	if !strings.Contains(stdout, "--brief [--task INTENT] [--base REF]") || !strings.Contains(stdout, "--limit 1..5") {
 		t.Fatalf("usage missing task briefing flags: %q", stdout)
 	}
 	for _, agent := range []string{"opencode", "pi", "claude-code", "gemini-cli", "codex", "antigravity-cli", "windsurf", "qwen", "kiro", "cursor", "vscode-copilot", "kilocode"} {

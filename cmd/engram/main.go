@@ -116,10 +116,11 @@ var (
 	generateTaskBriefing = func(s *store.Store, input taskbriefing.Input) (taskbriefing.Result, error) {
 		return taskbriefing.New(s).Generate(input)
 	}
-	storeStats        = func(s *store.Store) (*store.Stats, error) { return s.Stats() }
-	storeExport       = func(s *store.Store) (*store.ExportData, error) { return s.Export() }
-	jsonMarshalIndent = json.MarshalIndent
-	runDiagnostics    = func(ctx context.Context, s *store.Store, project, check string) (diagnostic.Report, error) {
+	taskBriefingWorkingDirectory = currentCWD
+	storeStats                   = func(s *store.Store) (*store.Stats, error) { return s.Stats() }
+	storeExport                  = func(s *store.Store) (*store.ExportData, error) { return s.Export() }
+	jsonMarshalIndent            = json.MarshalIndent
+	runDiagnostics               = func(ctx context.Context, s *store.Store, project, check string) (diagnostic.Report, error) {
 		runner := diagnostic.NewRunner()
 		scope := diagnostic.Scope{Store: s, Project: project, Now: time.Now()}
 		if strings.TrimSpace(check) != "" {
@@ -1453,8 +1454,10 @@ func cmdContext(cfg store.Config) {
 	project := ""
 	scope := ""
 	task := ""
+	base := ""
 	brief := false
 	taskSet := false
+	baseSet := false
 	limitSet := false
 	limit := 0
 	jsonMode := hasArg("--json")
@@ -1474,6 +1477,18 @@ func cmdContext(cfg store.Config) {
 			i++
 			if task == "" {
 				failCLI(jsonMode, "invalid_arguments", "--task requires a non-empty value", nil)
+				return
+			}
+		case "--base":
+			if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
+				failCLI(jsonMode, "invalid_arguments", "--base requires a non-empty ref", nil)
+				return
+			}
+			baseSet = true
+			base = strings.TrimSpace(os.Args[i+1])
+			i++
+			if base == "" {
+				failCLI(jsonMode, "invalid_arguments", "--base requires a non-empty ref", nil)
 				return
 			}
 		case "--limit":
@@ -1509,8 +1524,8 @@ func cmdContext(cfg store.Config) {
 			}
 		}
 	}
-	if !brief && (taskSet || limitSet) {
-		failCLI(jsonMode, "invalid_arguments", "--task and --limit require --brief", nil)
+	if !brief && (taskSet || baseSet || limitSet) {
+		failCLI(jsonMode, "invalid_arguments", "--task, --base, and --limit require --brief", nil)
 		return
 	}
 	if brief && scope != "" && scope != "project" && scope != "personal" {
@@ -1560,10 +1575,12 @@ func cmdContext(cfg store.Config) {
 			return
 		}
 		result, generateErr := generateTaskBriefing(s, taskbriefing.Input{
-			Project:    project,
-			Scope:      scope,
-			TaskIntent: task,
-			Limit:      limit,
+			Project:          project,
+			Scope:            scope,
+			TaskIntent:       task,
+			Limit:            limit,
+			WorkingDirectory: taskBriefingWorkingDirectory(),
+			ExplicitBase:     base,
 		})
 		if generateErr != nil {
 			code := string(taskbriefing.ErrorCode(generateErr))
@@ -3068,9 +3085,9 @@ Commands:
                        compare  <id-a> <id-b> --relation R --confidence N --reasoning TEXT [--json]
   doctor             Run read-only operational diagnostics [--json] [--project P] [--check CODE]
   context [project]  Show recent context from previous sessions
-                       --brief [--task INTENT] [--scope project|personal]
+                       --brief [--task INTENT] [--base REF] [--scope project|personal]
                                [--limit 1..5] [--json]
-                       Select complete durable memories for an explicit task.
+                       Select complete durable memories for a task or clean feature branch.
   stats              Show memory system statistics
   export [file]      Export all memories to JSON (default: engram-export.json)
   import <file>      Import memories from a JSON export file

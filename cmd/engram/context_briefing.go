@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -23,6 +25,7 @@ type contextBriefingOutput struct {
 	BaseResolution       *taskbriefing.BaseResolution `json:"base_resolution,omitempty"`
 	ResultLimitOmissions int                          `json:"result_limit_omissions"`
 	BudgetOmissions      int                          `json:"budget_omissions"`
+	conflictPairs        []taskbriefing.ConflictPair
 }
 
 func newContextBriefingOutput(project, scope string, result taskbriefing.Result) contextBriefingOutput {
@@ -46,75 +49,123 @@ func newContextBriefingOutput(project, scope string, result taskbriefing.Result)
 		Diagnostics:          diagnostics,
 		BaseResolution:       result.BaseResolution,
 		ResultLimitOmissions: result.ResultLimitOmissions,
-		BudgetOmissions:      result.BudgetOmissions,
+		conflictPairs:        result.ConflictPairs,
 	}
 }
 
-func renderContextBriefing(output contextBriefingOutput, taskProvided bool) {
-	fmt.Println("## Task Briefing")
-	fmt.Printf("Project: %s\n", output.Project)
-	if output.BaseResolution != nil {
-		fmt.Printf("Base: %s (%s)\n", output.BaseResolution.Ref, output.BaseResolution.Source)
+func encodeContextBriefing(output contextBriefingOutput, jsonMode, taskProvided bool, budget int) ([]byte, error) {
+	for {
+		var encoded []byte
+		if jsonMode {
+			var err error
+			encoded, err = json.Marshal(output)
+			if err != nil {
+				return nil, err
+			}
+			encoded = append(encoded, '\n')
+		} else {
+			encoded = formatContextBriefing(output, taskProvided)
+		}
+		if len(encoded) <= budget {
+			return encoded, nil
+		}
+		if len(output.Memories) == 0 {
+			return nil, fmt.Errorf("task briefing metadata exceeds %d-byte output budget", budget)
+		}
+		output.Memories = output.Memories[:len(output.Memories)-1]
+		output.BudgetOmissions++
+		output.Diagnostics = withoutContextBriefingDiagnostic(output.Diagnostics, taskbriefing.DiagnosticSelectedMemoryConflict)
+		if contextBriefingHasSelectedConflict(output) {
+			output.Diagnostics = append(output.Diagnostics, taskbriefing.Diagnostic{Code: taskbriefing.DiagnosticSelectedMemoryConflict})
+		}
+		if !hasContextBriefingDiagnostic(output.Diagnostics, taskbriefing.DiagnosticOutputBudgetExhausted) {
+			output.Diagnostics = append(output.Diagnostics, taskbriefing.Diagnostic{Code: taskbriefing.DiagnosticOutputBudgetExhausted})
+		}
 	}
-	fmt.Println()
+}
+
+func contextBriefingHasSelectedConflict(output contextBriefingOutput) bool {
+	selected := make(map[string]struct{}, len(output.Memories))
+	for _, memory := range output.Memories {
+		selected[memory.Memory.SyncID] = struct{}{}
+	}
+	for _, pair := range output.conflictPairs {
+		_, sourceSelected := selected[pair.SourceID]
+		_, targetSelected := selected[pair.TargetID]
+		if sourceSelected && targetSelected {
+			return true
+		}
+	}
+	return false
+}
+
+func formatContextBriefing(output contextBriefingOutput, taskProvided bool) []byte {
+	var buffer bytes.Buffer
+	fmt.Fprintln(&buffer, "## Task Briefing")
+	fmt.Fprintf(&buffer, "Project: %s\n", output.Project)
+	if output.BaseResolution != nil {
+		fmt.Fprintf(&buffer, "Base: %s (%s)\n", output.BaseResolution.Ref, output.BaseResolution.Source)
+	}
+	fmt.Fprintln(&buffer)
 	if len(output.Memories) == 0 {
-		fmt.Println("No relevant durable memories found for this task.")
+		fmt.Fprintln(&buffer, "No relevant durable memories found for this task.")
 		if !taskProvided {
-			fmt.Println("Provide --task \"<intent>\" to guide selection.")
+			fmt.Fprintln(&buffer, "Provide --task \"<intent>\" to guide selection.")
 		}
 	} else {
 		for _, selected := range output.Memories {
 			memory := selected.Memory
-			fmt.Printf("### #%d [%s] %s\n", memory.ID, memory.Type, memory.Title)
-			fmt.Printf("Scope: %s\n\n%s\n\n", memory.Scope, memory.Content)
-			fmt.Println("Selection evidence:")
+			fmt.Fprintf(&buffer, "### #%d [%s] %s\n", memory.ID, memory.Type, memory.Title)
+			fmt.Fprintf(&buffer, "Scope: %s\n\n%s\n\n", memory.Scope, memory.Content)
+			fmt.Fprintln(&buffer, "Selection evidence:")
 			for _, evidence := range selected.Evidence {
-				fmt.Printf("- %s: matched %s in %s\n", evidence.Signal, strings.Join(evidence.MatchedTerms, ", "), strings.Join(evidence.MatchedFields, ", "))
+				fmt.Fprintf(&buffer, "- %s: matched %s in %s\n", evidence.Signal, strings.Join(evidence.MatchedTerms, ", "), strings.Join(evidence.MatchedFields, ", "))
 			}
 			if selected.PinBoost > 0 {
-				fmt.Printf("- pin: relevant pinned memory received +%d\n", selected.PinBoost)
+				fmt.Fprintf(&buffer, "- pin: relevant pinned memory received +%d\n", selected.PinBoost)
 			}
-			fmt.Println()
+			fmt.Fprintln(&buffer)
 		}
 	}
 	if len(output.Diagnostics) > 0 {
-		fmt.Println("Diagnostics:")
+		fmt.Fprintln(&buffer, "Diagnostics:")
 		for _, diagnostic := range output.Diagnostics {
-			fmt.Printf("- %s: %s%s\n", diagnostic.Code, contextBriefingDiagnosticMessage(diagnostic), contextBriefingDiagnosticDetails(diagnostic))
+			fmt.Fprintf(&buffer, "- %s: %s\n", diagnostic.Code, formatContextBriefingDiagnostic(diagnostic))
 		}
 	}
 	if output.ResultLimitOmissions > 0 || output.BudgetOmissions > 0 {
-		fmt.Printf("Omitted: %d by result limit, %d by output budget\n", output.ResultLimitOmissions, output.BudgetOmissions)
+		fmt.Fprintf(&buffer, "Omitted: %d by result limit, %d by output budget\n", output.ResultLimitOmissions, output.BudgetOmissions)
 	}
+	return buffer.Bytes()
 }
 
-func contextBriefingDiagnosticDetails(diagnostic taskbriefing.Diagnostic) string {
+func formatContextBriefingDiagnostic(diagnostic taskbriefing.Diagnostic) string {
 	switch diagnostic.Code {
 	case taskbriefing.DiagnosticGitOperationFailed:
 		if len(diagnostic.Sources) == 0 {
-			return ""
+			return "Some repository evidence was unavailable."
 		}
 		sources := make([]string, len(diagnostic.Sources))
 		for index, source := range diagnostic.Sources {
 			sources[index] = string(source)
 		}
-		return fmt.Sprintf(" Failed sources: %s; remaining usable signals were retained.", strings.Join(sources, ", "))
+		return fmt.Sprintf("Some repository evidence was unavailable. Failed sources: %s; remaining usable signals were retained.", strings.Join(sources, ", "))
 	case taskbriefing.DiagnosticTaskInputTruncated, taskbriefing.DiagnosticRepositoryInputTruncated:
+		message := "Repository evidence exceeded deterministic input bounds."
+		if diagnostic.Code == taskbriefing.DiagnosticTaskInputTruncated {
+			message = "Task intent exceeded the deterministic input bound."
+		}
 		if len(diagnostic.Truncations) == 0 {
-			return ""
+			return message
 		}
 		truncations := make([]string, len(diagnostic.Truncations))
 		for index, truncation := range diagnostic.Truncations {
 			truncations[index] = fmt.Sprintf("%s: %d total, %d analyzed, %d omitted", truncation.Signal, truncation.TotalTerms, truncation.AnalyzedTerms, truncation.OmittedTerms)
+			if !truncation.CountComplete {
+				truncations[index] += " (prefix count; acquisition cutoff reached)"
+			}
 		}
-		return " Truncation: " + strings.Join(truncations, "; ")
-	default:
-		return ""
-	}
-}
-
-func contextBriefingDiagnosticMessage(diagnostic taskbriefing.Diagnostic) string {
-	switch diagnostic.Code {
+		return message + " Truncation: " + strings.Join(truncations, "; ")
 	case taskbriefing.DiagnosticNoUsableSignals:
 		return "No usable task or repository signal was available."
 	case taskbriefing.DiagnosticRepositoryProjectUnresolved:
@@ -123,12 +174,6 @@ func contextBriefingDiagnosticMessage(diagnostic taskbriefing.Diagnostic) string
 		return "Repository evidence was ignored because it belongs to another project."
 	case taskbriefing.DiagnosticBranchBaseUnresolved:
 		return "Committed branch evidence was unavailable because no base resolved."
-	case taskbriefing.DiagnosticGitOperationFailed:
-		return "Some repository evidence was unavailable."
-	case taskbriefing.DiagnosticTaskInputTruncated:
-		return "Task intent exceeded the deterministic input bound."
-	case taskbriefing.DiagnosticRepositoryInputTruncated:
-		return "Repository evidence exceeded deterministic input bounds."
 	case taskbriefing.DiagnosticResultLimitReached:
 		return "Lower-ranked relevant memories were omitted by the result limit."
 	case taskbriefing.DiagnosticOutputBudgetExhausted:
@@ -138,4 +183,23 @@ func contextBriefingDiagnosticMessage(diagnostic taskbriefing.Diagnostic) string
 	default:
 		return "Task briefing completed with a typed degradation."
 	}
+}
+
+func hasContextBriefingDiagnostic(diagnostics []taskbriefing.Diagnostic, code taskbriefing.DiagnosticCode) bool {
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func withoutContextBriefingDiagnostic(diagnostics []taskbriefing.Diagnostic, code taskbriefing.DiagnosticCode) []taskbriefing.Diagnostic {
+	filtered := make([]taskbriefing.Diagnostic, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code != code {
+			filtered = append(filtered, diagnostic)
+		}
+	}
+	return filtered
 }

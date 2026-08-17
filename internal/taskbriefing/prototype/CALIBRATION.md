@@ -34,13 +34,18 @@ generation does not add memories.
 | Pin boost | 2 | `pin_boost_requires_relevance` reorders qualifying memories but excludes an irrelevant pin. |
 | Inclusion threshold | 10 | Repository-only selection needs corroboration; `precision_first_does_not_fill_limit` leaves weak candidates out. |
 | Maximum result count | 5 | `maximum_result_count` deterministically returns five of six equally relevant memories. The value is a cap, not a quota. |
-| Total output budget | 4,096 JSON bytes | `whole_memory_output_budget` retains a complete small result and omits an oversized result atomically, including Selection evidence and diagnostics in the measurement. |
+| Total output budget | 4,096 output bytes | CLI tests retain or omit complete memories atomically while measuring only the selected human or compact JSON stream, including metadata, Selection evidence, diagnostics, and the final newline. |
+| Git input ceiling | 1 MiB per command | `TestReadBoundedGitTermsStopsAtDeterministicByteLimit` proves acquisition stops at the calibrated ceiling and exposes incomplete prefix counts. |
 
 ## Input bounds
 
 Inputs are normalized and deduplicated before retrieval. The prototype retains
 at most 12 Task terms, 6 branch-name terms, 16 terms for each diff source, and
-12 terms for each path, commit-subject, or untracked-path source. The
+12 terms for each path, commit-subject, or untracked-path source. Only retained
+vocabulary is tracked in memory; eligible occurrences after the bound are
+counted without retaining their values. Git streams stop at a deterministic
+one-MiB acquisition ceiling and mark those prefix counts with
+`count_complete: false`. The
 `every_repository_source_is_bounded` scenario crosses every Repository limit;
 `task_and_repository_truncation_are_distinct` crosses the Task limit; and
 `oversized_input_and_unresolved_base` combines a bounded diff with degraded base
@@ -62,3 +67,9 @@ ties. Recency is not relevance evidence. A missing or mismatched repository
 project disables Repository signals, while an explicit Task can still select
 memories. Optional Git failures degrade instead of failing retrieval, and a
 memory-store failure returns a typed error.
+
+Identical normalized payloads from multiple signal sources form one retrieval
+and ranking group. The group contributes its strongest source weight once, while
+Selection evidence still lists every contributing source. The
+`duplicate_repository_payload_is_single_scoring_group` scenario prevents
+duplicated worktree content from manufacturing relevance.

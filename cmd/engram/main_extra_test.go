@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -51,13 +52,69 @@ func TestTaskBriefingDocumentationDescribesCleanBranchBaseResolution(t *testing.
 	for _, required := range []string{
 		"engram context --brief --base main",
 		"branch name, committed diff, affected paths, and commit subjects",
-		"explicit `--base REF`, the current branch's configured upstream, then the",
-		"remote default branch",
-		"An upstream that tracks the same branch is skipped",
+		"explicit `--base REF`, a configured upstream that represents a distinct",
+		"comparison lineage, then the remote default branch",
+		"A same-branch tracking upstream is not a comparison base",
 		"repository_project_mismatch",
 	} {
 		if !strings.Contains(readme, required) {
 			t.Fatalf("README missing task briefing contract %q", required)
+		}
+	}
+}
+
+func TestTaskBriefingREADMEExamplesExecute(t *testing.T) {
+	readmePath := filepath.Join("..", "..", "README.md")
+	contents, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("read %s: %v", readmePath, err)
+	}
+	sectionStart := strings.Index(string(contents), "### Task briefings")
+	if sectionStart < 0 {
+		t.Fatal("README lacks Task briefings section")
+	}
+	section := string(contents)[sectionStart:]
+	blockStart := strings.Index(section, "```bash\n")
+	if blockStart < 0 {
+		t.Fatal("Task briefings section lacks bash examples")
+	}
+	block := section[blockStart+len("```bash\n"):]
+	blockEnd := strings.Index(block, "```")
+	if blockEnd < 0 {
+		t.Fatal("Task briefings bash block is unterminated")
+	}
+	lines := strings.Split(strings.TrimSpace(block[:blockEnd]), "\n")
+	examples := []struct {
+		line string
+		args []string
+	}{
+		{`engram context --brief --task "implement deterministic task briefing selection"`, []string{"engram", "context", "--brief", "--task", "implement deterministic task briefing selection"}},
+		{`engram context --brief --base main`, []string{"engram", "context", "--brief", "--base", "main"}},
+		{`engram context engram --brief --task "implement deterministic task briefing selection" --scope project --limit 3 --json`, []string{"engram", "context", "engram", "--brief", "--task", "implement deterministic task briefing selection", "--scope", "project", "--limit", "3", "--json"}},
+		{`engram context engram --brief --scope personal --json`, []string{"engram", "context", "engram", "--brief", "--scope", "personal", "--json"}},
+	}
+	if len(lines) != len(examples) {
+		t.Fatalf("README examples = %v, want %d executable commands", lines, len(examples))
+	}
+
+	cfg := testConfig(t)
+	mustSeedObservation(t, cfg, "readme-project", "engram", "decision", "Deterministic task briefing selection", "Implement deterministic task briefing selection.", "project")
+	mustSeedObservation(t, cfg, "readme-personal", "engram", "preference", "Task briefing preference", "Prefer deterministic task briefing selection.", "personal")
+	repo := newBriefingCLIRepository(t, "engram")
+	t.Chdir(repo)
+	for index, example := range examples {
+		if lines[index] != example.line {
+			t.Fatalf("README example %d = %q, want %q", index+1, lines[index], example.line)
+		}
+		withArgs(t, example.args...)
+		stdout, stderr := captureOutput(t, func() { cmdContext(cfg) })
+		if stderr != "" || stdout == "" {
+			t.Fatalf("example %q failed: stdout=%q stderr=%q", example.line, stdout, stderr)
+		}
+		if slices.Contains(example.args, "--json") {
+			if output := decodeCLIJSON(t, stdout); output["mode"] != "brief" {
+				t.Fatalf("example %q output = %#v", example.line, output)
+			}
 		}
 	}
 }

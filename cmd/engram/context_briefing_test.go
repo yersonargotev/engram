@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -12,6 +13,136 @@ import (
 	"github.com/yersonargotev/engram/internal/store"
 	"github.com/yersonargotev/engram/internal/taskbriefing"
 )
+
+func TestEncodeContextBriefingEnforcesPublicByteBudget(t *testing.T) {
+	memories := make([]contextBriefingMemory, 0, 3)
+	for index := 0; index < 3; index++ {
+		memories = append(memories, contextBriefingMemory{
+			Memory: store.Observation{
+				ID: int64(index + 1), Type: "decision", Title: "Bounded task briefing",
+				Content: strings.Repeat("complete durable memory content ", 55), Scope: "project",
+			},
+			Evidence: []taskbriefing.SelectionEvidence{{
+				Signal: taskbriefing.SignalTaskIntent, MatchedTerms: []string{"bounded", "briefing"}, MatchedFields: []string{"title", "content"},
+			}},
+		})
+	}
+	base := contextBriefingOutput{Mode: "brief", Project: "engram", Memories: memories, Diagnostics: []taskbriefing.Diagnostic{}}
+	retainedByFormat := make(map[string]int)
+
+	for _, jsonMode := range []bool{false, true} {
+		name := "human"
+		if jsonMode {
+			name = "json"
+		}
+		t.Run(name, func(t *testing.T) {
+			encoded, err := encodeContextBriefing(base, jsonMode, true, taskbriefing.CalibratedDefaults.TotalOutputBudget)
+			if err != nil {
+				t.Fatalf("encodeContextBriefing: %v", err)
+			}
+			if len(encoded) > taskbriefing.CalibratedDefaults.TotalOutputBudget {
+				t.Fatalf("encoded bytes = %d, budget = %d", len(encoded), taskbriefing.CalibratedDefaults.TotalOutputBudget)
+			}
+			text := string(encoded)
+			if !strings.Contains(text, "output_budget_exhausted") {
+				t.Fatalf("output lacks budget diagnostic: %q", text)
+			}
+			if jsonMode {
+				var output contextBriefingOutput
+				if err := json.Unmarshal(encoded, &output); err != nil {
+					t.Fatalf("decode bounded JSON: %v", err)
+				}
+				if output.BudgetOmissions == 0 || len(output.Memories) == 0 {
+					t.Fatalf("bounded output = %#v, want whole retained and omitted memories", output)
+				}
+				retainedByFormat[name] = len(output.Memories)
+				for _, memory := range output.Memories {
+					if memory.Memory.Content != memories[0].Memory.Content {
+						t.Fatal("retained memory was truncated")
+					}
+				}
+			} else {
+				retainedByFormat[name] = strings.Count(text, "### #")
+				if !strings.Contains(text, "Omitted:") || !strings.Contains(text, memories[0].Memory.Content) {
+					t.Fatalf("human output does not preserve whole-memory omission contract: %q", text)
+				}
+			}
+		})
+	}
+	if retainedByFormat["human"] <= retainedByFormat["json"] {
+		t.Fatalf("selected format did not use its own byte budget: %#v", retainedByFormat)
+	}
+}
+
+func TestEncodeContextBriefingRemovesConflictDiagnosticAfterBudgetOmission(t *testing.T) {
+	memories := []contextBriefingMemory{
+		{Memory: store.Observation{SyncID: "memory-a", Title: "Conflict A", Content: strings.Repeat("complete memory A ", 40)}},
+		{Memory: store.Observation{SyncID: "memory-b", Title: "Conflict B", Content: strings.Repeat("complete memory B ", 40)}},
+	}
+	output := contextBriefingOutput{
+		Mode:        "brief",
+		Project:     "engram",
+		Memories:    memories,
+		Diagnostics: []taskbriefing.Diagnostic{{Code: taskbriefing.DiagnosticSelectedMemoryConflict}},
+		conflictPairs: []taskbriefing.ConflictPair{{
+			SourceID: "memory-a",
+			TargetID: "memory-b",
+		}},
+	}
+	oneMemory := output
+	oneMemory.Memories = memories[:1]
+	oneMemory.Diagnostics = []taskbriefing.Diagnostic{{Code: taskbriefing.DiagnosticOutputBudgetExhausted}}
+	oneMemory.BudgetOmissions = 1
+	encodedOne, err := json.Marshal(oneMemory)
+	if err != nil {
+		t.Fatalf("marshal one-memory output: %v", err)
+	}
+
+	encoded, err := encodeContextBriefing(output, true, true, len(encodedOne)+1)
+	if err != nil {
+		t.Fatalf("encodeContextBriefing: %v", err)
+	}
+	var bounded contextBriefingOutput
+	if err := json.Unmarshal(encoded, &bounded); err != nil {
+		t.Fatalf("decode bounded output: %v", err)
+	}
+	if len(bounded.Memories) != 1 || bounded.BudgetOmissions != 1 {
+		t.Fatalf("bounded output = %#v, want one retained and one omitted memory", bounded)
+	}
+	if hasContextBriefingDiagnostic(bounded.Diagnostics, taskbriefing.DiagnosticSelectedMemoryConflict) {
+		t.Fatalf("stale conflict diagnostic remained after one side was omitted: %#v", bounded.Diagnostics)
+	}
+	if !hasContextBriefingDiagnostic(bounded.Diagnostics, taskbriefing.DiagnosticOutputBudgetExhausted) {
+		t.Fatalf("missing output budget diagnostic: %#v", bounded.Diagnostics)
+	}
+}
+
+func TestFormatContextBriefingDiagnosticCoversKnownCodes(t *testing.T) {
+	diagnostics := []taskbriefing.Diagnostic{
+		{Code: taskbriefing.DiagnosticNoUsableSignals},
+		{Code: taskbriefing.DiagnosticRepositoryProjectUnresolved},
+		{Code: taskbriefing.DiagnosticRepositoryProjectMismatch},
+		{Code: taskbriefing.DiagnosticBranchBaseUnresolved},
+		{Code: taskbriefing.DiagnosticGitOperationFailed, Sources: []taskbriefing.SignalType{taskbriefing.SignalStagedDiff}},
+		{Code: taskbriefing.DiagnosticTaskInputTruncated, Truncations: []taskbriefing.InputTruncation{{Signal: taskbriefing.SignalTaskIntent, TotalTerms: 13, AnalyzedTerms: 12, OmittedTerms: 1, CountComplete: true}}},
+		{Code: taskbriefing.DiagnosticRepositoryInputTruncated, Truncations: []taskbriefing.InputTruncation{{Signal: taskbriefing.SignalBranchDiff, TotalTerms: 17, AnalyzedTerms: 16, OmittedTerms: 1, CountComplete: false}}},
+		{Code: taskbriefing.DiagnosticResultLimitReached},
+		{Code: taskbriefing.DiagnosticOutputBudgetExhausted},
+		{Code: taskbriefing.DiagnosticSelectedMemoryConflict},
+	}
+	for _, diagnostic := range diagnostics {
+		message := formatContextBriefingDiagnostic(diagnostic)
+		if message == "" || message == "Task briefing completed with a typed degradation." {
+			t.Errorf("diagnostic %s lacks owned formatting: %q", diagnostic.Code, message)
+		}
+	}
+	if message := formatContextBriefingDiagnostic(diagnostics[4]); !strings.Contains(message, "staged_diff") {
+		t.Fatalf("Git diagnostic lacks sources: %q", message)
+	}
+	if message := formatContextBriefingDiagnostic(diagnostics[6]); !strings.Contains(message, "acquisition cutoff reached") {
+		t.Fatalf("incomplete truncation lacks prefix warning: %q", message)
+	}
+}
 
 func TestCmdContextBriefUsesCleanBranchEvidenceWithoutTask(t *testing.T) {
 	cfg := testConfig(t)
@@ -204,7 +335,7 @@ func TestCmdContextBriefHumanOutputExplainsPartialGitFailuresAndTruncation(t *te
 	generateTaskBriefing = func(*store.Store, taskbriefing.Input) (taskbriefing.Result, error) {
 		return taskbriefing.Result{Diagnostics: []taskbriefing.Diagnostic{
 			{Code: taskbriefing.DiagnosticGitOperationFailed, Sources: []taskbriefing.SignalType{taskbriefing.SignalStagedDiff, taskbriefing.SignalUntrackedPath}},
-			{Code: taskbriefing.DiagnosticRepositoryInputTruncated, Truncations: []taskbriefing.InputTruncation{{Signal: taskbriefing.SignalUnstagedDiff, TotalTerms: 18, AnalyzedTerms: 16, OmittedTerms: 2}}},
+			{Code: taskbriefing.DiagnosticRepositoryInputTruncated, Truncations: []taskbriefing.InputTruncation{{Signal: taskbriefing.SignalUnstagedDiff, TotalTerms: 18, AnalyzedTerms: 16, OmittedTerms: 2, CountComplete: true}}},
 		}}, nil
 	}
 	t.Cleanup(func() { generateTaskBriefing = original })

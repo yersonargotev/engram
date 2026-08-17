@@ -27,7 +27,6 @@ type corpusScenario struct {
 	Relations        []relationFixture `json:"relations"`
 	OversizedSources []oversizedSource `json:"oversized_sources"`
 	RepeatGitFailure int               `json:"repeat_git_failure"`
-	OutputBudget     int               `json:"output_budget"`
 	Repeat           int               `json:"repeat"`
 	CloseStore       bool              `json:"close_store"`
 	Expected         corpusExpected    `json:"expected"`
@@ -64,13 +63,12 @@ type memoryExpectation struct {
 }
 
 type corpusExpected struct {
-	MustAppear      []memoryExpectation `json:"must_appear"`
-	MustNotAppear   []memoryExpectation `json:"must_not_appear"`
-	Order           []string            `json:"order"`
-	Diagnostics     []DiagnosticCode    `json:"diagnostics"`
-	ErrorCode       GenerateErrorCode   `json:"error_code"`
-	BudgetOmissions int                 `json:"budget_omissions"`
-	Truncations     map[SignalType]int  `json:"truncations"`
+	MustAppear    []memoryExpectation `json:"must_appear"`
+	MustNotAppear []memoryExpectation `json:"must_not_appear"`
+	Order         []string            `json:"order"`
+	Diagnostics   []DiagnosticCode    `json:"diagnostics"`
+	ErrorCode     GenerateErrorCode   `json:"error_code"`
+	Truncations   map[SignalType]int  `json:"truncations"`
 }
 
 func TestScenarioCorpus(t *testing.T) {
@@ -135,9 +133,6 @@ func runCorpusScenario(t *testing.T, scenario corpusScenario) {
 	var baseline Result
 	for run := 0; run < repeat; run++ {
 		generator := New(memoryStore)
-		if scenario.OutputBudget > 0 {
-			generator.outputBudget = scenario.OutputBudget
-		}
 		result, generateErr := generator.Generate(input)
 		if scenario.Expected.ErrorCode != "" {
 			if generateErr == nil || ErrorCode(generateErr) != scenario.Expected.ErrorCode {
@@ -283,9 +278,6 @@ func assertCorpusExpectations(t *testing.T, scenario corpusScenario, result Resu
 	if !equalDiagnosticCodes(actualDiagnostics, wantDiagnostics) {
 		t.Errorf("diagnostics = %v, want %v", actualDiagnostics, wantDiagnostics)
 	}
-	if result.BudgetOmissions != scenario.Expected.BudgetOmissions {
-		t.Errorf("budget omissions = %d, want %d", result.BudgetOmissions, scenario.Expected.BudgetOmissions)
-	}
 	actualTruncations := make(map[SignalType]int)
 	for _, diagnostic := range result.Diagnostics {
 		for _, truncation := range diagnostic.Truncations {
@@ -294,13 +286,6 @@ func assertCorpusExpectations(t *testing.T, scenario corpusScenario, result Resu
 	}
 	if !equalTruncations(actualTruncations, scenario.Expected.Truncations) {
 		t.Errorf("truncations = %v, want %v", actualTruncations, scenario.Expected.Truncations)
-	}
-	encoded, err := json.Marshal(result)
-	if err != nil {
-		t.Fatalf("marshal result: %v", err)
-	}
-	if len(encoded) > CalibratedDefaults.TotalOutputBudget {
-		t.Errorf("result uses %d bytes, exceeds total output budget %d", len(encoded), CalibratedDefaults.TotalOutputBudget)
 	}
 }
 

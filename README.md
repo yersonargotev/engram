@@ -394,7 +394,7 @@ Your production engram is fully untouched throughout.
 | `engram delete prompt <id>`                | Delete a prompt by ID (permanent)                                     |
 | `engram delete project <name> [--hard]`    | Cascade-delete a project: soft-deletes observations by default (`--hard` removes permanently and also removes sessions) |
 | `engram timeline <obs_id>`                 | Chronological context                                           |
-| `engram context [project]`                 | Recent session context                                          |
+| `engram context [project]`                 | Recent session context; add `--brief` for task selection         |
 | `engram stats`                             | Memory statistics                                               |
 | `engram export [file]`                     | Export to JSON                                                  |
 | `engram import <file>`                     | Import from JSON                                                |
@@ -407,6 +407,35 @@ Your production engram is fully untouched throughout.
 | `engram version`                           | Show version                                                    |
 
 Full CLI with all flags → [docs/ARCHITECTURE.md#cli-reference](docs/ARCHITECTURE.md#cli-reference)
+
+### Task briefings
+
+Chronological context remains the default. Add `--brief` and an explicit Task
+intent to select a small, deterministic set of complete durable memories:
+
+```bash
+engram context --brief --task "implement deterministic task briefing selection"
+engram context engram --brief --task "implement deterministic task briefing selection" --scope project --limit 3 --json
+```
+
+This task-only slice uses Task intent as the authoritative selection signal. It
+does not yet inspect the Git branch or worktree. If `project` is omitted, Engram
+must resolve exactly one project from the current directory; ambiguity is a
+structured error. Project and personal memories for that project are eligible
+by default, while `--scope project` or `--scope personal` narrows selection.
+
+The result limit is a cap, not a quota: weak matches are excluded, and at most
+five memories are returned. Relevant pins may improve ordering but cannot force
+an unrelated memory into a briefing. Deleted and superseded memories stay out;
+selected judged conflicts remain visible. Memories are emitted whole, and a
+lower-ranked memory that does not fit the bounded output is omitted and counted.
+
+Task intent is transient: it is used only for local deterministic selection and
+is neither saved as a memory nor echoed in briefing output. `--brief` without a
+usable Task intent succeeds with an empty briefing and suggests supplying
+`--task`. JSON mode returns native memory, Selection evidence, diagnostic, and
+omission fields; without `--brief`, the existing chronological human and JSON
+contracts are unchanged.
 
 ### Key Environment Variables
 

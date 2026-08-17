@@ -1,13 +1,14 @@
 # Task briefing v1 calibration
 
-This directory is retained decision evidence for Task briefing relevance. It is
-an executable prototype, not production command behavior: no code here is wired
-to `engram context`.
+This directory retains the versioned decision evidence that calibrated Task
+briefing relevance. The production generator now lives at the parent
+`internal/taskbriefing` module seam, and the retained corpus verifies that same
+interface. The CLI task-only adapter is wired separately from this evidence.
 
 Run the corpus with:
 
 ```sh
-go test ./internal/taskbriefing/prototype -run '^TestScenarioCorpus$' -count=1 -v
+go test ./internal/taskbriefing -run '^TestScenarioCorpus$' -count=1 -v
 ```
 
 The versioned source is [`testdata/v1/scenarios.json`](testdata/v1/scenarios.json).

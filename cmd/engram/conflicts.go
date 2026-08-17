@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -55,7 +56,7 @@ func printConflictsUsage() {
 	fmt.Fprintln(os.Stderr, "  scan       [--project P]  [--since RFC3339]  [--dry-run]  [--apply]  [--max-insert N]")
 	fmt.Fprintln(os.Stderr, "             [--semantic]  [--concurrency N]  [--timeout-per-call SECONDS]")
 	fmt.Fprintln(os.Stderr, "             [--max-semantic N]  [--yes]")
-	fmt.Fprintln(os.Stderr, "  deferred   [--status S]  [--limit N]  [--inspect SYNC_ID]  [--replay]")
+	fmt.Fprintln(os.Stderr, "  deferred   [--status S]  [--limit N]  [--inspect SYNC_ID]  [--replay]  [--recover SYNC_ID [--json]]")
 	fmt.Fprintln(os.Stderr, "  judge      <judgment-id> --relation R [--reason TEXT] [--evidence TEXT] [--confidence N] [--session-id ID] [--json]")
 	fmt.Fprintln(os.Stderr, "  compare    <id-a> <id-b> --relation R --confidence N --reasoning TEXT [--model ID] [--json]")
 }
@@ -722,32 +723,62 @@ func cmdConflictsScan(cfg store.Config) {
 func cmdConflictsDeferred(cfg store.Config) {
 	args := os.Args[3:]
 
-	var statusFlag, inspectFlag string
+	var statusFlag, inspectFlag, recoverFlag string
 	replay := false
 	limit := 50
+	statusSet := false
+	limitSet := false
+	inspectSet := false
+	recoverSet := false
+	recoverValueMissing := false
+	jsonOutput := false
+	var recoverExtraArgs []string
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--status":
-			if i+1 < len(args) {
+			statusSet = true
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
 				statusFlag = args[i+1]
 				i++
 			}
 		case "--limit":
-			if i+1 < len(args) {
+			limitSet = true
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
 				if n, err := strconv.Atoi(args[i+1]); err == nil {
 					limit = n
 				}
 				i++
 			}
 		case "--inspect":
-			if i+1 < len(args) {
+			inspectSet = true
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
 				inspectFlag = args[i+1]
 				i++
 			}
 		case "--replay":
 			replay = true
+		case "--recover":
+			if recoverSet {
+				recoverExtraArgs = append(recoverExtraArgs, args[i])
+			}
+			recoverSet = true
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
+				recoverValueMissing = true
+				continue
+			}
+			recoverFlag = strings.TrimSpace(args[i+1])
+			i++
+		case "--json":
+			jsonOutput = true
+		default:
+			recoverExtraArgs = append(recoverExtraArgs, args[i])
 		}
+	}
+
+	if recoverSet && (recoverValueMissing || recoverFlag == "" || inspectSet || replay || statusSet || limitSet || len(recoverExtraArgs) > 0) {
+		failCLI(jsonOutput, "invalid_arguments", "usage: engram conflicts deferred --recover <sync_id> [--json]", nil)
+		return
 	}
 
 	// Mutex: --inspect and --replay cannot be combined.
@@ -763,6 +794,26 @@ func cmdConflictsDeferred(cfg store.Config) {
 		return
 	}
 	defer s.Close()
+
+	if recoverSet {
+		result, err := s.RecoverDeferred(recoverFlag)
+		if err != nil {
+			writeDeferredRecoveryError(jsonOutput, err)
+			return
+		}
+		if jsonOutput {
+			if err := writeCLIJSON(result); err != nil {
+				fatal(err)
+			}
+			return
+		}
+		if result.Result == "already_recovered" {
+			fmt.Printf("Deferred mutation %s was already recovered.\n", result.SyncID)
+			return
+		}
+		fmt.Printf("Recovered deferred mutation %s locally.\n", result.SyncID)
+		return
+	}
 
 	if replay {
 		result, err := s.ReplayDeferred()
@@ -829,4 +880,28 @@ func cmdConflictsDeferred(cfg store.Config) {
 		fmt.Printf("  first_seen_at: %s\n", row.FirstSeenAt)
 		fmt.Println()
 	}
+}
+
+func writeDeferredRecoveryError(jsonOutput bool, err error) {
+	code := "deferred_recovery_failed"
+	message := err.Error()
+	var details map[string]any
+	var recoveryErr *store.DeferredRecoveryError
+
+	switch {
+	case errors.Is(err, store.ErrDeferredNotFound):
+		code = "deferred_not_found"
+	case errors.Is(err, store.ErrInvalidRecoveryState):
+		code = "invalid_recovery_state"
+		if errors.As(err, &recoveryErr) {
+			details = map[string]any{"status": recoveryErr.Status}
+		}
+	case errors.Is(err, store.ErrUnsupportedDeferredEntity):
+		code = "unsupported_deferred_entity"
+	case errors.Is(err, store.ErrDeferredRecoveryFailed):
+		if errors.As(err, &recoveryErr) {
+			details = map[string]any{"reason": recoveryErr.Reason}
+		}
+	}
+	failCLI(jsonOutput, code, message, details)
 }

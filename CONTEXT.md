@@ -24,3 +24,8 @@ _Avoid_: Session capture, activity logging
 An action that records or coordinates transient agent activity, such as prompts,
 session boundaries, or passive capture.
 _Avoid_: Memory operation
+
+**Dead mutation recovery**:
+A deliberate local attempt to apply a previously abandoned remote mutation
+without emitting a new outbound mutation.
+_Avoid_: Republish, requeue

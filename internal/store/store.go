@@ -70,8 +70,13 @@ var (
 	// ErrApplyDead is returned when a deferred relation payload cannot be
 	// decoded or fails a hard validation. The row is written to
 	// sync_apply_deferred with apply_status='dead' and is never retried
-	// automatically; Phase 3 adds a republish CLI.
+	// automatically. Operators may attempt targeted local recovery.
 	ErrApplyDead = errors.New("relation apply permanently failed: payload invalid or undecodable")
+
+	ErrDeferredNotFound          = errors.New("deferred mutation not found")
+	ErrInvalidRecoveryState      = errors.New("deferred mutation is not recoverable in its current state")
+	ErrUnsupportedDeferredEntity = errors.New("deferred mutation entity is not supported for recovery")
+	ErrDeferredRecoveryFailed    = errors.New("deferred mutation recovery failed")
 )
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -1066,7 +1071,7 @@ func (s *Store) migrate() error {
 		}
 	}
 
-	// Phase 3: add republish CLI, surface dead rows via mem_status.
+	// Deferred relation lifecycle, including operator-created applied tombstones.
 	if _, err := s.execHook(s.db, `
 		CREATE TABLE IF NOT EXISTS sync_apply_deferred (
 			sync_id           TEXT    PRIMARY KEY,
@@ -4219,8 +4224,27 @@ func (s *Store) ApplyPulledMutation(targetKey string, mutation SyncMutation) err
 						(sync_id, entity, payload, apply_status, retry_count, first_seen_at)
 					VALUES (?, ?, ?, 'deferred', 0, datetime('now'))
 					ON CONFLICT(sync_id) DO UPDATE SET
-						payload            = excluded.payload,
-						last_attempted_at  = datetime('now')
+						payload = excluded.payload,
+						apply_status = CASE
+							WHEN sync_apply_deferred.apply_status IN ('dead', 'applied') THEN 'deferred'
+							ELSE sync_apply_deferred.apply_status
+						END,
+						retry_count = CASE
+							WHEN sync_apply_deferred.apply_status IN ('dead', 'applied') THEN 0
+							ELSE sync_apply_deferred.retry_count
+						END,
+						last_error = CASE
+							WHEN sync_apply_deferred.apply_status IN ('dead', 'applied') THEN NULL
+							ELSE sync_apply_deferred.last_error
+						END,
+						last_attempted_at = CASE
+							WHEN sync_apply_deferred.apply_status IN ('dead', 'applied') THEN NULL
+							ELSE datetime('now')
+						END,
+						first_seen_at = CASE
+							WHEN sync_apply_deferred.apply_status IN ('dead', 'applied') THEN excluded.first_seen_at
+							ELSE sync_apply_deferred.first_seen_at
+						END
 				`, mutation.EntityKey, mutation.Entity, mutation.Payload); deferErr != nil {
 					return fmt.Errorf("ApplyPulledMutation: write deferred row: %w", deferErr)
 				}
@@ -4232,13 +4256,23 @@ func (s *Store) ApplyPulledMutation(targetKey string, mutation SyncMutation) err
 					mutation.Seq, mutation.EntityKey, applyErr)
 				if _, deferErr := s.execHook(tx, `
 					INSERT INTO sync_apply_deferred
-						(sync_id, entity, payload, apply_status, retry_count, first_seen_at)
-					VALUES (?, ?, ?, 'dead', 0, datetime('now'))
+						(sync_id, entity, payload, apply_status, retry_count,
+						 last_error, last_attempted_at, first_seen_at)
+					VALUES (?, ?, ?, 'dead', 0, ?, datetime('now'), datetime('now'))
 					ON CONFLICT(sync_id) DO UPDATE SET
 						payload           = excluded.payload,
 						apply_status      = 'dead',
-						last_attempted_at = datetime('now')
-				`, mutation.EntityKey, mutation.Entity, mutation.Payload); deferErr != nil {
+						retry_count = CASE
+							WHEN sync_apply_deferred.apply_status IN ('dead', 'applied') THEN 0
+							ELSE sync_apply_deferred.retry_count
+						END,
+						last_error        = excluded.last_error,
+						last_attempted_at = excluded.last_attempted_at,
+						first_seen_at = CASE
+							WHEN sync_apply_deferred.apply_status IN ('dead', 'applied') THEN excluded.first_seen_at
+							ELSE sync_apply_deferred.first_seen_at
+						END
+				`, mutation.EntityKey, mutation.Entity, mutation.Payload, applyErr.Error()); deferErr != nil {
 					return fmt.Errorf("ApplyPulledMutation: write dead row: %w", deferErr)
 				}
 				// Fall through to advance the cursor (ACK the seq).
@@ -6845,6 +6879,109 @@ type ReplayDeferredResult struct {
 	Succeeded int
 	Failed    int
 	Dead      int
+}
+
+// RecoverDeferred synchronously applies one dead remote relation mutation and
+// retains an applied tombstone. The relation and tombstone transition commit in
+// one transaction, and the canonical pull apply path never emits outbound work.
+func (s *Store) RecoverDeferred(syncID string) (result DeferredRecoveryResult, err error) {
+	result.SyncID = syncID
+	err = s.withTx(func(tx *sql.Tx) error {
+		var entity, payload, status, firstSeenAt string
+		var retryCount int
+		var lastError, lastAttemptedAt sql.NullString
+		err := tx.QueryRow(`
+			SELECT entity, payload, apply_status, retry_count,
+			       last_error, last_attempted_at, first_seen_at
+			FROM sync_apply_deferred
+			WHERE sync_id = ?
+		`, syncID).Scan(
+			&entity, &payload, &status, &retryCount,
+			&lastError, &lastAttemptedAt, &firstSeenAt,
+		)
+		if err == sql.ErrNoRows {
+			return ErrDeferredNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("RecoverDeferred: read row: %w", err)
+		}
+		if entity != SyncEntityRelation {
+			return ErrUnsupportedDeferredEntity
+		}
+		if status == "applied" {
+			result.Status = "applied"
+			result.Result = "already_recovered"
+			return nil
+		}
+		if status != "dead" {
+			return &DeferredRecoveryError{Status: status, cause: ErrInvalidRecoveryState}
+		}
+		var identity struct {
+			SyncID string `json:"sync_id"`
+		}
+		if err := decodeSyncPayload([]byte(payload), &identity); err != nil {
+			return &DeferredRecoveryError{Reason: "invalid_payload", cause: ErrDeferredRecoveryFailed, err: err}
+		}
+		if strings.TrimSpace(identity.SyncID) == "" || identity.SyncID != syncID {
+			return &DeferredRecoveryError{
+				Reason: "invalid_payload",
+				cause:  ErrDeferredRecoveryFailed,
+				err:    errors.New("relation payload sync_id does not match deferred row"),
+			}
+		}
+
+		mutation := SyncMutation{
+			Entity:    entity,
+			EntityKey: syncID,
+			Op:        SyncOpUpsert,
+			Payload:   payload,
+			Source:    SyncSourceRemote,
+		}
+		if err := s.applyPulledMutationTx(tx, mutation); err != nil {
+			reason := "apply_failed"
+			if errors.Is(err, ErrApplyDead) {
+				reason = "invalid_payload"
+			} else if errors.Is(err, ErrRelationFKMissing) {
+				reason = "dependency_missing"
+			}
+			return &DeferredRecoveryError{Reason: reason, cause: ErrDeferredRecoveryFailed, err: err}
+		}
+
+		if _, err := s.execHook(tx, `
+			INSERT INTO sync_apply_deferred
+				(sync_id, entity, payload, apply_status, retry_count,
+				 last_error, last_attempted_at, first_seen_at)
+			VALUES (?, ?, ?, 'applied', ?, ?, datetime('now'), ?)
+			ON CONFLICT(sync_id) DO UPDATE SET
+				entity            = excluded.entity,
+				payload           = excluded.payload,
+				apply_status      = excluded.apply_status,
+				retry_count       = excluded.retry_count,
+				last_error        = excluded.last_error,
+				last_attempted_at = excluded.last_attempted_at,
+				first_seen_at     = excluded.first_seen_at
+		`, syncID, entity, payload, retryCount, lastError, firstSeenAt); err != nil {
+			return &DeferredRecoveryError{
+				Reason: "apply_failed",
+				cause:  ErrDeferredRecoveryFailed,
+				err:    fmt.Errorf("retain applied tombstone: %w", err),
+			}
+		}
+
+		result.Status = "applied"
+		result.Result = "recovered"
+		return nil
+	})
+	if err != nil {
+		if !errors.Is(err, ErrDeferredNotFound) &&
+			!errors.Is(err, ErrInvalidRecoveryState) &&
+			!errors.Is(err, ErrUnsupportedDeferredEntity) &&
+			!errors.Is(err, ErrDeferredRecoveryFailed) {
+			err = &DeferredRecoveryError{Reason: "apply_failed", cause: ErrDeferredRecoveryFailed, err: err}
+		}
+		return DeferredRecoveryResult{}, err
+	}
+	return result, nil
 }
 
 // ReplayDeferred retries all rows in sync_apply_deferred with apply_status='deferred'

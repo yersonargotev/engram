@@ -139,6 +139,32 @@ type DeferredRow struct {
 	FirstSeenAt     string         `json:"first_seen_at"`
 }
 
+// DeferredRecoveryResult reports the outcome of one targeted dead mutation recovery.
+type DeferredRecoveryResult struct {
+	SyncID string `json:"sync_id"`
+	Status string `json:"status"`
+	Result string `json:"result"`
+}
+
+// DeferredRecoveryError carries stable recovery details while preserving an
+// errors.Is-compatible category for CLI and other callers.
+type DeferredRecoveryError struct {
+	Reason string
+	Status string
+	cause  error
+	err    error
+}
+
+func (e *DeferredRecoveryError) Error() string {
+	message := e.cause.Error()
+	if e.err != nil {
+		message += ": " + e.err.Error()
+	}
+	return message
+}
+
+func (e *DeferredRecoveryError) Unwrap() error { return e.cause }
+
 // ScanResult holds the output of a ScanProject call.
 type ScanResult struct {
 	Project           string `json:"project"`

@@ -5736,13 +5736,10 @@ func (s *Store) applyRelationUpsertTx(tx *sql.Tx, mutation SyncMutation) error {
 		return fmt.Errorf("%w: decode relation payload: %v", ErrApplyDead, err)
 	}
 
-	// Step 1b: required field validation — missing sync_id, source_id, or target_id is not
+	// Step 1b: required field validation — missing source_id or target_id is not
 	// a retryable FK miss; it is a permanent payload defect (ErrApplyDead).
-	if strings.TrimSpace(p.SyncID) == "" || strings.TrimSpace(p.SourceID) == "" || strings.TrimSpace(p.TargetID) == "" {
-		return fmt.Errorf("%w: relation payload missing required sync_id, source_id, or target_id", ErrApplyDead)
-	}
-	if mutation.EntityKey != "" && mutation.EntityKey != p.SyncID {
-		return fmt.Errorf("%w: relation payload sync_id does not match mutation entity key", ErrApplyDead)
+	if strings.TrimSpace(p.SourceID) == "" || strings.TrimSpace(p.TargetID) == "" {
+		return fmt.Errorf("%w: relation payload missing required source_id or target_id", ErrApplyDead)
 	}
 
 	// Step 2: FK precondition — both observations must exist locally (by sync_id).
@@ -6918,6 +6915,19 @@ func (s *Store) RecoverDeferred(syncID string) (result DeferredRecoveryResult, e
 		}
 		if status != "dead" {
 			return &DeferredRecoveryError{Status: status, cause: ErrInvalidRecoveryState}
+		}
+		var identity struct {
+			SyncID string `json:"sync_id"`
+		}
+		if err := decodeSyncPayload([]byte(payload), &identity); err != nil {
+			return &DeferredRecoveryError{Reason: "invalid_payload", cause: ErrDeferredRecoveryFailed, err: err}
+		}
+		if strings.TrimSpace(identity.SyncID) == "" || identity.SyncID != syncID {
+			return &DeferredRecoveryError{
+				Reason: "invalid_payload",
+				cause:  ErrDeferredRecoveryFailed,
+				err:    errors.New("relation payload sync_id does not match deferred row"),
+			}
 		}
 
 		mutation := SyncMutation{

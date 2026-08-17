@@ -16,8 +16,9 @@ deliverable independent from memory availability.
 3. Use the returned project when it is unambiguous. When `project` is empty,
    present `available_projects` and obtain an exact selection before writing or
    searching. Never infer a project from a similar name.
-4. Pass `--project <project>` to subsequent project-scoped commands when the
-   working directory does not resolve to that exact project.
+4. Pass the exact project explicitly when the working directory does not
+   resolve to it: use `--project <project>` for project-scoped commands and the
+   positional `[project]` argument for `engram context`.
 
 Use `--json` for agent and script operations. Parse successful stdout as JSON;
 parse non-zero stderr as `{"code","message","details?"}`. Treat failures as
@@ -30,24 +31,35 @@ been skipped without blocking the primary task.
 
 Recall only when prior project knowledge could materially change the work.
 
-1. Search one lookup intent with one to three distinctive anchors:
+1. Generate one Task briefing from the current task intent:
+
+   ```bash
+   engram context "<project>" --brief --task "<current task intent>" \
+     --scope project --limit 5 --json
+   ```
+
+2. Inspect every selected memory's complete content and Selection evidence.
+   Honor typed diagnostics, especially selected conflicts and input or output
+   omissions. Use `engram get <id> --json` when relation context could change
+   the task.
+3. Run a targeted search when the briefing command is unavailable, when a
+   material memory is expected but absent, or when the task needs an exact
+   known fact. Search one lookup intent with one to three distinctive anchors:
 
    ```bash
    engram search "<narrow query>" --project "<project>" --match-mode all --limit 5 --json
    ```
 
-2. Inspect every result's content, state, pin, and relations. Use
-   `engram get <id> --json` when a selected memory needs complete metadata or
-   relation context.
-3. If a material memory is expected and the first search is empty, refine once.
+4. Inspect every search result's content, state, pin, and relations. If a
+   material memory is expected and the first search is empty, refine once.
    Remove generic terms or switch to `--match-mode any`; keep the same intent.
-4. Prefer the newest applicable memory while honoring `supersedes`,
+5. Prefer the newest applicable memory while honoring `supersedes`,
    `superseded_by`, and `conflicts_with` relations. Surface unresolved conflicts
    instead of silently choosing one side.
 
 Use `--all-projects` only for an explicitly cross-project request. Complete
-recall when relevant context is accounted for or two targeted searches are
-empty.
+recall when the briefing and any warranted targeted search account for relevant
+context, or when the briefing and up to two targeted searches are empty.
 
 ## Preserve
 

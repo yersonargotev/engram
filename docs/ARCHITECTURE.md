@@ -273,6 +273,8 @@ engram delete project <name> [--hard]
                           with --hard, which also removes sessions); always removes prompts
 engram timeline <obs_id>  Chronological context around an observation
 engram context [project]  Recent context from previous sessions
+                          [--brief [--task INTENT] [--scope project|personal]
+                           [--limit 1..5] [--json]]
 engram stats              Memory statistics
 engram export [file]      Export all memories to JSON
 engram import <file>      Import memories from JSON

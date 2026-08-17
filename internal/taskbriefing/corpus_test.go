@@ -1,4 +1,4 @@
-package prototype
+package taskbriefing
 
 import (
 	"encoding/json"
@@ -74,7 +74,7 @@ type corpusExpected struct {
 }
 
 func TestScenarioCorpus(t *testing.T) {
-	data, err := os.ReadFile("testdata/v1/scenarios.json")
+	data, err := os.ReadFile("prototype/testdata/v1/scenarios.json")
 	if err != nil {
 		t.Fatalf("read corpus: %v", err)
 	}

@@ -1,0 +1,75 @@
+package taskbriefing
+
+import (
+	"reflect"
+	"testing"
+
+	"github.com/yersonargotev/engram/internal/store"
+)
+
+func TestGenerateHonorsSmallerResultLimit(t *testing.T) {
+	memoryStore := newTestStore(t)
+	for index, title := range []string{"Alpha task briefing", "Beta task briefing"} {
+		sessionID := "limit-session-" + string(rune('a'+index))
+		if err := memoryStore.CreateSession(sessionID, "engram", "/tmp/engram"); err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+		if _, err := memoryStore.AddObservation(store.AddObservationParams{
+			SessionID: sessionID,
+			Type:      "decision",
+			Title:     title,
+			Content:   "Use deterministic task briefing selection for durable memories.",
+			Project:   "engram",
+			Scope:     "project",
+		}); err != nil {
+			t.Fatalf("AddObservation: %v", err)
+		}
+	}
+
+	result, err := New(memoryStore).Generate(Input{
+		Project:    "engram",
+		TaskIntent: "implement deterministic task briefing selection",
+		Limit:      1,
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if len(result.Memories) != 1 {
+		t.Fatalf("memories = %d, want 1", len(result.Memories))
+	}
+	if result.ResultLimitOmissions != 1 {
+		t.Fatalf("result limit omissions = %d, want 1", result.ResultLimitOmissions)
+	}
+	if !hasDiagnostic(result.Diagnostics, DiagnosticResultLimitReached) {
+		t.Fatalf("diagnostics = %#v, want %s", result.Diagnostics, DiagnosticResultLimitReached)
+	}
+}
+
+func TestGenerateReportsEveryMatchedMemoryField(t *testing.T) {
+	memoryStore := newTestStore(t)
+	if err := memoryStore.CreateSession("evidence-session", "engram", "/tmp/engram"); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := memoryStore.AddObservation(store.AddObservationParams{
+		SessionID: "evidence-session",
+		Type:      "decision",
+		Title:     "Task briefing",
+		Content:   "A task briefing selects durable memories.",
+		Project:   "engram",
+		Scope:     "project",
+	}); err != nil {
+		t.Fatalf("AddObservation: %v", err)
+	}
+
+	result, err := New(memoryStore).Generate(Input{Project: "engram", TaskIntent: "briefing"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if len(result.Memories) != 1 || len(result.Memories[0].Evidence) != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+	want := []string{"content", "title"}
+	if got := result.Memories[0].Evidence[0].MatchedFields; !reflect.DeepEqual(got, want) {
+		t.Fatalf("matched fields = %v, want %v", got, want)
+	}
+}

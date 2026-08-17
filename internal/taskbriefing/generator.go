@@ -1,6 +1,5 @@
-// Package prototype contains the retained calibration prototype for Task briefing.
-// It is intentionally not wired into any production command.
-package prototype
+// Package taskbriefing selects durable memories for a transient task.
+package taskbriefing
 
 import (
 	"encoding/json"
@@ -43,6 +42,7 @@ type Input struct {
 	Project           string            `json:"project"`
 	Scope             string            `json:"scope"`
 	TaskIntent        string            `json:"task_intent"`
+	Limit             int               `json:"limit,omitempty"`
 	RepositoryProject string            `json:"repository_project"`
 	Repository        RepositorySignals `json:"repository"`
 }
@@ -107,9 +107,10 @@ type SelectedMemory struct {
 }
 
 type Result struct {
-	Memories        []SelectedMemory `json:"memories"`
-	Diagnostics     []Diagnostic     `json:"diagnostics"`
-	BudgetOmissions int              `json:"budget_omissions"`
+	Memories             []SelectedMemory `json:"memories"`
+	Diagnostics          []Diagnostic     `json:"diagnostics"`
+	ResultLimitOmissions int              `json:"result_limit_omissions,omitempty"`
+	BudgetOmissions      int              `json:"budget_omissions"`
 }
 
 type Diagnostic struct {
@@ -138,7 +139,7 @@ type InputTruncation struct {
 	OmittedTerms int        `json:"omitted_terms"`
 }
 
-var ErrMemoryStore = errors.New("task briefing prototype: memory store failure")
+var ErrMemoryStore = errors.New("task briefing: memory store failure")
 
 type generateError struct {
 	code GenerateErrorCode
@@ -263,8 +264,14 @@ func (g *Generator) Generate(input Input) (Result, error) {
 		return selected[i].Memory.ID < selected[j].Memory.ID
 	})
 
-	if len(selected) > CalibratedDefaults.MaximumResultCount {
-		selected = selected[:CalibratedDefaults.MaximumResultCount]
+	resultLimit := CalibratedDefaults.MaximumResultCount
+	if input.Limit > 0 && input.Limit < resultLimit {
+		resultLimit = input.Limit
+	}
+	resultLimitOmissions := 0
+	if len(selected) > resultLimit {
+		resultLimitOmissions = len(selected) - resultLimit
+		selected = selected[:resultLimit]
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticResultLimitReached})
 	}
 
@@ -272,7 +279,7 @@ func (g *Generator) Generate(input Input) (Result, error) {
 	budgetOmissions := 0
 	for _, memory := range selected {
 		candidateMemories := appendCopy(bounded, memory)
-		if !fitsOutputBudget(Result{Memories: candidateMemories, Diagnostics: diagnostics}, g.outputBudget) {
+		if !fitsOutputBudget(Result{Memories: candidateMemories, Diagnostics: diagnostics, ResultLimitOmissions: resultLimitOmissions}, g.outputBudget) {
 			budgetOmissions++
 			continue
 		}
@@ -284,7 +291,7 @@ func (g *Generator) Generate(input Input) (Result, error) {
 	if hasSelectedConflict(bounded, relations) {
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticSelectedMemoryConflict})
 	}
-	for !fitsOutputBudget(Result{Memories: bounded, Diagnostics: diagnostics, BudgetOmissions: budgetOmissions}, g.outputBudget) && len(bounded) > 0 {
+	for !fitsOutputBudget(Result{Memories: bounded, Diagnostics: diagnostics, ResultLimitOmissions: resultLimitOmissions, BudgetOmissions: budgetOmissions}, g.outputBudget) && len(bounded) > 0 {
 		bounded = bounded[:len(bounded)-1]
 		budgetOmissions++
 		if !hasDiagnostic(diagnostics, DiagnosticOutputBudgetExhausted) {
@@ -296,7 +303,7 @@ func (g *Generator) Generate(input Input) (Result, error) {
 		}
 	}
 
-	return Result{Memories: bounded, Diagnostics: diagnostics, BudgetOmissions: budgetOmissions}, nil
+	return Result{Memories: bounded, Diagnostics: diagnostics, ResultLimitOmissions: resultLimitOmissions, BudgetOmissions: budgetOmissions}, nil
 }
 
 type weightedSignal struct {
@@ -416,12 +423,15 @@ func matchEvidence(memory store.Observation, signal SignalType, terms []string) 
 	matchedTerms := make([]string, 0, len(terms))
 	matchedFields := make(map[string]struct{})
 	for _, term := range terms {
+		matched := false
 		for _, field := range fields {
 			if containsTerm(field.value, term) {
-				matchedTerms = append(matchedTerms, term)
 				matchedFields[field.name] = struct{}{}
-				break
+				matched = true
 			}
+		}
+		if matched {
+			matchedTerms = append(matchedTerms, term)
 		}
 	}
 	fieldNames := make([]string, 0, len(matchedFields))

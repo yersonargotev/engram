@@ -410,23 +410,18 @@ Full CLI with all flags → [docs/ARCHITECTURE.md#cli-reference](docs/ARCHITECTU
 
 ### Task briefings
 
-Chronological context remains the default. Add `--brief` and an explicit Task
-intent to select a small, deterministic set of complete durable memories:
+Chronological context remains the default. `--brief` selects a small,
+deterministic set of complete durable memories. An explicit Task intent is
+authoritative when supplied:
 
 ```bash
 engram context --brief --task "implement deterministic task briefing selection"
 engram context --brief --base main
 engram context engram --brief --task "implement deterministic task briefing selection" --scope project --limit 3 --json
+engram context engram --brief --scope personal --json
 ```
 
-On a clean feature branch, Engram also derives transient Repository signals from
-the branch name, committed diff, affected paths, and commit subjects. Task intent
-remains authoritative when supplied. The comparison base resolves in this order:
-an explicit `--base REF`, the current branch's configured upstream, then the
-remote default branch. An upstream that tracks the same branch is skipped because
-it cannot identify feature-branch commits; resolution then continues to the remote
-default. If no base resolves, committed evidence is omitted and a typed degradation
-is returned while any remaining Task or branch signal continues.
+Engram derives transient Repository signals from the branch name, committed diff, affected paths, and commit subjects, plus staged changes, unstaged changes, and untracked paths. Staged and unstaged diffs contribute bounded terms and affected paths; untracked files contribute paths only—Engram never opens their content. The comparison base resolves in this order: an explicit `--base REF`, the current branch's configured upstream, then the remote default branch. An upstream that tracks the same branch is skipped because it cannot identify feature-branch commits; resolution then continues to the remote default.
 
 Repository signals are used only when the cwd repository resolves to the selected
 project. A mismatch disables them and reports `repository_project_mismatch`;
@@ -443,10 +438,20 @@ lower-ranked memory that does not fit the bounded output is omitted and counted.
 
 Task intent and Repository signals are transient: they are used only for local
 deterministic selection and are never saved as memories. Raw diff content is not
-echoed in briefing output. `--brief` without usable Task or Repository signals
-succeeds with an empty briefing and suggests supplying `--task`. Human and JSON
-briefings expose the resolved base and source-level Selection evidence; without
-`--brief`, the existing chronological human and JSON contracts are unchanged.
+echoed in briefing output, and untracked file content is neither read nor emitted.
+Every input source has a calibrated deterministic term bound. If a bound is
+reached, JSON diagnostics include each source's `total_terms`, `analyzed_terms`,
+and `omitted_terms`; human output shows the same counts. A failed optional
+signal-acquisition Git operation reports its source and preserves all other usable
+Task or Repository signals; failed base resolution reports
+`branch_base_unresolved`. If
+no Repository signal is usable and no Task intent is supplied, `--brief` succeeds
+with an empty briefing and suggests `--task`; memory-store failures remain command
+errors. Human and JSON briefings expose the resolved base, source-level Selection
+evidence, typed degradations, and result/output omissions. Supported briefing
+flags are `--task INTENT`, `--base REF`, `--scope project|personal`, `--limit 1..5`,
+and `--json`; `--task`, `--base`, and `--limit` require `--brief`. Without `--brief`,
+the existing chronological human and JSON contracts are unchanged.
 
 ### Key Environment Variables
 

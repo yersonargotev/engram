@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/yersonargotev/engram/internal/store"
 )
@@ -142,6 +143,145 @@ func TestGenerateDegradesWhenBranchBaseCannotResolve(t *testing.T) {
 	}
 }
 
+func TestGenerateUsesDirtyWorkingTreeEvidenceWithoutBranchBase(t *testing.T) {
+	repo := newCleanFeatureRepository(t, "engram")
+	runGit(t, repo, "symbolic-ref", "-d", "refs/remotes/origin/HEAD")
+	writeTestFile(t, filepath.Join(repo, "staged", "schema_migration.go"), "package staged\n\n// schema migration contract\n")
+	runGit(t, repo, "add", "staged/schema_migration.go")
+	writeTestFile(t, filepath.Join(repo, "unstaged", "cache_invalidation.go"), "package unstaged\n")
+	runGit(t, repo, "add", "unstaged/cache_invalidation.go")
+	writeTestFile(t, filepath.Join(repo, "unstaged", "cache_invalidation.go"), "package unstaged\n\n// cache invalidation policy\n")
+	writeTestFile(t, filepath.Join(repo, "untracked", "secret_evidence.go"), "untracked contents must not affect selection\n")
+
+	memoryStore := newTestStore(t)
+	seedBriefingMemory(t, memoryStore, "dirty-working-tree", "engram", "Dirty working tree", "Schema migration contract and cache invalidation policy.")
+
+	result, err := New(memoryStore).Generate(Input{Project: "engram", WorkingDirectory: repo})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !hasDiagnostic(result.Diagnostics, DiagnosticBranchBaseUnresolved) {
+		t.Fatalf("diagnostics = %#v, want unresolved branch base", result.Diagnostics)
+	}
+	if len(result.Memories) != 1 {
+		t.Fatalf("memories = %#v, want dirty working tree evidence", result.Memories)
+	}
+	var signals []SignalType
+	for _, evidence := range result.Memories[0].Evidence {
+		signals = append(signals, evidence.Signal)
+	}
+	for _, signal := range []SignalType{SignalStagedDiff, SignalUnstagedDiff, SignalAffectedPath} {
+		if !containsSignal(signals, signal) {
+			t.Fatalf("signals = %v, want %s", signals, signal)
+		}
+	}
+}
+
+func TestGenerateUsesSingleDirtyWorktreeSource(t *testing.T) {
+	tests := []struct {
+		name       string
+		branch     string
+		want       SignalType
+		notWant    SignalType
+		prepare    func(t *testing.T, repo string)
+		memoryText string
+	}{
+		{
+			name: "staged only", branch: "feat/schema-migration", want: SignalStagedDiff, notWant: SignalUnstagedDiff,
+			prepare: func(t *testing.T, repo string) {
+				writeTestFile(t, filepath.Join(repo, "schema_migration.go"), "package migration\n\n// schema migration\n")
+				runGit(t, repo, "add", "schema_migration.go")
+			},
+			memoryText: "Schema migration",
+		},
+		{
+			name: "unstaged only", branch: "feat/cache-invalidation", want: SignalUnstagedDiff, notWant: SignalStagedDiff,
+			prepare: func(t *testing.T, repo string) {
+				writeTestFile(t, filepath.Join(repo, "README.md"), "base\ncache invalidation\n")
+			},
+			memoryText: "Cache invalidation",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newCleanFeatureRepository(t, "engram")
+			runGit(t, repo, "branch", "-m", tt.branch)
+			tt.prepare(t, repo)
+			memoryStore := newTestStore(t)
+			seedBriefingMemory(t, memoryStore, "single-source", "engram", tt.memoryText, tt.memoryText+" guidance.")
+
+			result, err := New(memoryStore).Generate(Input{Project: "engram", WorkingDirectory: repo, ExplicitBase: "main"})
+			if err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+			if len(result.Memories) != 1 {
+				t.Fatalf("memories = %#v, want single-source worktree selection", result.Memories)
+			}
+			var signals []SignalType
+			for _, evidence := range result.Memories[0].Evidence {
+				signals = append(signals, evidence.Signal)
+			}
+			if !containsSignal(signals, tt.want) || containsSignal(signals, tt.notWant) {
+				t.Fatalf("signals = %v, want %s without %s", signals, tt.want, tt.notWant)
+			}
+		})
+	}
+}
+
+func TestGenerateDeduplicatesCandidateButPreservesIndependentSources(t *testing.T) {
+	memoryStore := newTestStore(t)
+	seedBriefingMemory(t, memoryStore, "duplicate-evidence", "engram", "Token migration", "Token migration guidance.")
+	input := Input{Project: "engram", RepositoryProject: "engram", Repository: RepositorySignals{
+		StagedDiff: "token migration", UnstagedDiff: "token migration",
+	}}
+
+	first, err := New(memoryStore).Generate(input)
+	if err != nil {
+		t.Fatalf("Generate(first): %v", err)
+	}
+	second, err := New(memoryStore).Generate(input)
+	if err != nil {
+		t.Fatalf("Generate(second): %v", err)
+	}
+	if !reflect.DeepEqual(first, second) || len(first.Memories) != 1 {
+		t.Fatalf("results are not deterministic or candidate was duplicated: first=%#v second=%#v", first, second)
+	}
+	var signals []SignalType
+	for _, evidence := range first.Memories[0].Evidence {
+		signals = append(signals, evidence.Signal)
+	}
+	if !reflect.DeepEqual(signals, []SignalType{SignalStagedDiff, SignalUnstagedDiff}) {
+		t.Fatalf("signals = %v, want each independent source exactly once", signals)
+	}
+}
+
+func TestGenerateUsesUntrackedPathsWithoutReadingTheirContents(t *testing.T) {
+	repo := newCleanFeatureRepository(t, "engram")
+	writeTestFile(t, filepath.Join(repo, "untracked", "clean_branch_release_playbook.md"), "private launch password rotation")
+	memoryStore := newTestStore(t)
+	seedBriefingMemory(t, memoryStore, "untracked-path", "engram", "Clean branch release playbook", "Follow the clean branch release playbook.")
+	seedBriefingMemory(t, memoryStore, "untracked-content", "engram", "Private launch password", "Rotate the private launch password.")
+
+	result, err := New(memoryStore).Generate(Input{Project: "engram", WorkingDirectory: repo, ExplicitBase: "main"})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if len(result.Memories) != 1 {
+		t.Fatalf("result = %#v, want untracked path evidence", result)
+	}
+	found := make([]SignalType, 0, len(result.Memories[0].Evidence))
+	for _, evidence := range result.Memories[0].Evidence {
+		found = append(found, evidence.Signal)
+	}
+	if !containsSignal(found, SignalUntrackedPath) {
+		t.Fatalf("signals = %v, want %s", found, SignalUntrackedPath)
+	}
+	if result.Memories[0].Memory.Title != "Clean branch release playbook" {
+		t.Fatalf("selected %q, want path-derived memory without private content", result.Memories[0].Memory.Title)
+	}
+}
+
 func TestGenerateDisablesRepositoryEvidenceForAnotherSelectedProject(t *testing.T) {
 	repo := newCleanFeatureRepository(t, "other-project")
 	memoryStore := newTestStore(t)
@@ -178,7 +318,7 @@ func TestGenerateContinuesWhenRepositoryCommandsDegrade(t *testing.T) {
 			wantSource: SignalBranchDiff,
 			stub: func(t *testing.T) {
 				stubGitTermsFailure(t, func(args []string) bool {
-					return len(args) > 1 && args[0] == "diff" && args[1] == "--no-ext-diff"
+					return len(args) > 1 && args[0] == "diff" && args[1] == "--no-ext-diff" && strings.Contains(strings.Join(args, " "), "..HEAD")
 				})
 			},
 		},
@@ -196,6 +336,31 @@ func TestGenerateContinuesWhenRepositoryCommandsDegrade(t *testing.T) {
 			wantSource: SignalCommitSubject,
 			stub: func(t *testing.T) {
 				stubGitTermsFailure(t, func(args []string) bool { return len(args) > 0 && args[0] == "log" })
+			},
+		},
+		{
+			name:       "staged diff",
+			wantSource: SignalStagedDiff,
+			stub: func(t *testing.T) {
+				stubGitTermsFailure(t, func(args []string) bool {
+					return len(args) > 1 && args[0] == "diff" && args[1] == "--cached"
+				})
+			},
+		},
+		{
+			name:       "unstaged diff",
+			wantSource: SignalUnstagedDiff,
+			stub: func(t *testing.T) {
+				stubGitTermsFailure(t, func(args []string) bool {
+					return len(args) > 1 && args[0] == "diff" && args[1] == "--no-ext-diff" && !strings.Contains(strings.Join(args, " "), "..HEAD")
+				})
+			},
+		},
+		{
+			name:       "untracked paths",
+			wantSource: SignalUntrackedPath,
+			stub: func(t *testing.T) {
+				stubGitTermsFailure(t, func(args []string) bool { return len(args) > 0 && args[0] == "ls-files" })
 			},
 		},
 	}
@@ -309,7 +474,7 @@ func TestGenerateBoundsAcquiredCommittedDiffTerms(t *testing.T) {
 		t.Fatalf("Generate: %v", err)
 	}
 	truncations := diagnosticTruncations(result.Diagnostics, DiagnosticRepositoryInputTruncated)
-	if len(truncations) == 0 || truncations[0].Signal != SignalBranchDiff || truncations[0].OmittedTerms == 0 {
+	if len(truncations) == 0 || truncations[0].Signal != SignalBranchDiff || truncations[0].OmittedTerms == 0 || truncations[0].TotalTerms != truncations[0].AnalyzedTerms+truncations[0].OmittedTerms {
 		t.Fatalf("truncations = %#v, want bounded committed diff evidence", truncations)
 	}
 }
@@ -330,15 +495,38 @@ func TestRunGitTermsCommandReportsProcessFailures(t *testing.T) {
 		}
 	})
 
-	t.Run("scanner", func(t *testing.T) {
+	t.Run("oversized token is a truncation", func(t *testing.T) {
 		longToken := strings.Repeat("a", 70*1024)
-		writeTestFile(t, filepath.Join(repo, "oversized.txt"), longToken)
+		writeTestFile(t, filepath.Join(repo, "oversized.txt"), "retained "+longToken+" preserved")
 		runGit(t, repo, "add", "oversized.txt")
 		runGit(t, repo, "commit", "-m", "Add oversized token")
-		if _, _, err := runGitTermsCommand(repo, 4, "show", "--format=", "HEAD", "--", "oversized.txt"); err == nil {
-			t.Fatal("runGitTermsCommand succeeded for an oversized token")
+		terms, omitted, err := runGitTermsCommand(repo, 4, "show", "HEAD:oversized.txt")
+		if err != nil || terms != "retained preserved" || omitted != 1 {
+			t.Fatalf("terms = %q, omitted = %d, err = %v; want usable terms plus typed truncation", terms, omitted, err)
 		}
 	})
+}
+
+func TestRunGitTermsCommandCountsUniqueOmittedTerms(t *testing.T) {
+	repo := newCleanFeatureRepository(t, "engram")
+	writeTestFile(t, filepath.Join(repo, "dedupe.txt"), "alpha beta gamma gamma gamma\n")
+	runGit(t, repo, "add", "dedupe.txt")
+	runGit(t, repo, "commit", "-m", "Add repeated terms")
+
+	terms, omitted, err := runGitTermsCommand(repo, 2, "show", "HEAD:dedupe.txt")
+	if err != nil {
+		t.Fatalf("runGitTermsCommand: %v", err)
+	}
+	if terms != "alpha beta" || omitted != 1 {
+		t.Fatalf("terms = %q, omitted = %d, want two retained and one unique omitted term", terms, omitted)
+	}
+}
+
+func TestReadBoundedGitTermsPropagatesReaderFailure(t *testing.T) {
+	_, _, err := readBoundedGitTerms(iotest.TimeoutReader(strings.NewReader("alpha beta")), 4)
+	if !errors.Is(err, iotest.ErrTimeout) {
+		t.Fatalf("error = %v, want %v", err, iotest.ErrTimeout)
+	}
 }
 
 func newCleanFeatureRepository(t *testing.T, remoteProject string) string {

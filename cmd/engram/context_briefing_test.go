@@ -168,6 +168,60 @@ func TestCmdContextBriefFusesTaskAndCleanBranchEvidence(t *testing.T) {
 	}
 }
 
+func TestCmdContextBriefExposesDirtyWorktreeSourceTypesWithoutRawContent(t *testing.T) {
+	cfg := testConfig(t)
+	mustSeedObservation(t, cfg, "brief-dirty-worktree", "engram", "decision", "Dirty worktree evidence", "Staged worktree evidence, unstaged worktree evidence, and untracked worktree evidence select durable memories.", "project")
+	repo := newBriefingCLIRepository(t, "engram")
+	writeBriefingCLIFile(t, filepath.Join(repo, "staged_worktree_evidence.go"), "package evidence\n\n// staged worktree evidence\n")
+	runBriefingGit(t, repo, "add", "staged_worktree_evidence.go")
+	writeBriefingCLIFile(t, filepath.Join(repo, "README.md"), "base\n// unstaged worktree evidence\n")
+	writeBriefingCLIFile(t, filepath.Join(repo, "untracked_worktree_evidence.txt"), "untracked file content must remain private\n")
+	t.Chdir(repo)
+
+	withArgs(t, "engram", "context", "engram", "--brief", "--base", "main", "--json")
+	stdout, stderr := captureOutput(t, func() { cmdContext(cfg) })
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if strings.Contains(stdout, "// staged worktree evidence") || strings.Contains(stdout, "// unstaged worktree evidence") || strings.Contains(stdout, "untracked file content must remain private") {
+		t.Fatalf("structured output emitted raw worktree content: %q", stdout)
+	}
+	memories := decodeCLIJSON(t, stdout)["memories"].([]any)
+	if len(memories) != 1 {
+		t.Fatalf("memories = %#v, want dirty-worktree selection", memories)
+	}
+	evidence := memories[0].(map[string]any)["evidence"].([]any)
+	for _, source := range []string{"staged_diff", "unstaged_diff", "untracked_path"} {
+		if !jsonEvidenceContains(evidence, source) {
+			t.Fatalf("evidence = %#v, want %s source", evidence, source)
+		}
+	}
+}
+
+func TestCmdContextBriefHumanOutputExplainsPartialGitFailuresAndTruncation(t *testing.T) {
+	cfg := testConfig(t)
+	original := generateTaskBriefing
+	generateTaskBriefing = func(*store.Store, taskbriefing.Input) (taskbriefing.Result, error) {
+		return taskbriefing.Result{Diagnostics: []taskbriefing.Diagnostic{
+			{Code: taskbriefing.DiagnosticGitOperationFailed, Sources: []taskbriefing.SignalType{taskbriefing.SignalStagedDiff, taskbriefing.SignalUntrackedPath}},
+			{Code: taskbriefing.DiagnosticRepositoryInputTruncated, Truncations: []taskbriefing.InputTruncation{{Signal: taskbriefing.SignalUnstagedDiff, TotalTerms: 18, AnalyzedTerms: 16, OmittedTerms: 2}}},
+		}}, nil
+	}
+	t.Cleanup(func() { generateTaskBriefing = original })
+	mustSeedObservation(t, cfg, "brief-diagnostic-output", "engram", "decision", "Diagnostic output", "Diagnostic output memory.", "project")
+
+	withArgs(t, "engram", "context", "engram", "--brief")
+	stdout, stderr := captureOutput(t, func() { cmdContext(cfg) })
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	for _, expected := range []string{"staged_diff", "untracked_path", "unstaged_diff: 18 total, 16 analyzed, 2 omitted"} {
+		if !strings.Contains(stdout, expected) {
+			t.Fatalf("human output missing %q: %q", expected, stdout)
+		}
+	}
+}
+
 func TestCmdContextBriefReturnsStructuredTaskSelection(t *testing.T) {
 	cfg := testConfig(t)
 	disableBriefingRepositoryInspection(t)

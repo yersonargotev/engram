@@ -80,11 +80,36 @@ func renderContextBriefing(output contextBriefingOutput, taskProvided bool) {
 	if len(output.Diagnostics) > 0 {
 		fmt.Println("Diagnostics:")
 		for _, diagnostic := range output.Diagnostics {
-			fmt.Printf("- %s: %s\n", diagnostic.Code, contextBriefingDiagnosticMessage(diagnostic))
+			fmt.Printf("- %s: %s%s\n", diagnostic.Code, contextBriefingDiagnosticMessage(diagnostic), contextBriefingDiagnosticDetails(diagnostic))
 		}
 	}
 	if output.ResultLimitOmissions > 0 || output.BudgetOmissions > 0 {
 		fmt.Printf("Omitted: %d by result limit, %d by output budget\n", output.ResultLimitOmissions, output.BudgetOmissions)
+	}
+}
+
+func contextBriefingDiagnosticDetails(diagnostic taskbriefing.Diagnostic) string {
+	switch diagnostic.Code {
+	case taskbriefing.DiagnosticGitOperationFailed:
+		if len(diagnostic.Sources) == 0 {
+			return ""
+		}
+		sources := make([]string, len(diagnostic.Sources))
+		for index, source := range diagnostic.Sources {
+			sources[index] = string(source)
+		}
+		return fmt.Sprintf(" Failed sources: %s; remaining usable signals were retained.", strings.Join(sources, ", "))
+	case taskbriefing.DiagnosticTaskInputTruncated, taskbriefing.DiagnosticRepositoryInputTruncated:
+		if len(diagnostic.Truncations) == 0 {
+			return ""
+		}
+		truncations := make([]string, len(diagnostic.Truncations))
+		for index, truncation := range diagnostic.Truncations {
+			truncations[index] = fmt.Sprintf("%s: %d total, %d analyzed, %d omitted", truncation.Signal, truncation.TotalTerms, truncation.AnalyzedTerms, truncation.OmittedTerms)
+		}
+		return " Truncation: " + strings.Join(truncations, "; ")
+	default:
+		return ""
 	}
 }
 

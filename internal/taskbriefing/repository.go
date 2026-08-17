@@ -3,12 +3,13 @@ package taskbriefing
 import (
 	"bufio"
 	"context"
+	"errors"
+	"io"
 	"os/exec"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	projectpkg "github.com/yersonargotev/engram/internal/project"
 )
@@ -52,43 +53,51 @@ func inspectRepository(workingDirectory, explicitBase, selectedProject string) (
 	}
 
 	base := resolveBranchBase(root, explicitBase, repository.Branch)
+	affectedPathBase := "HEAD"
 	if base == nil {
 		repository.BaseUnresolved = true
-		return repositoryProject, repository
-	}
-	mergeBase, err := gitCommandOutput(root, "merge-base", "HEAD", base.Ref)
-	if err != nil || strings.TrimSpace(mergeBase) == "" {
+	} else if mergeBase, err := gitCommandOutput(root, "merge-base", "HEAD", base.Ref); err != nil || strings.TrimSpace(mergeBase) == "" {
 		repository.BaseUnresolved = true
-		return repositoryProject, repository
+	} else {
+		repository.BaseResolution = base
+		rangeSpec := strings.TrimSpace(mergeBase) + "..HEAD"
+		affectedPathBase = strings.TrimSpace(mergeBase)
+		acquireRepositoryTerms(&repository, root, SignalBranchDiff, CalibratedDefaults.DiffTermLimit, func(value string) {
+			repository.BranchDiff = value
+		}, "diff", "--no-ext-diff", "--no-textconv", "--unified=0", rangeSpec, "--")
+		acquireRepositoryTerms(&repository, root, SignalCommitSubject, CalibratedDefaults.CommitTermLimit, func(value string) {
+			repository.CommitSubjects = []string{value}
+		}, "log", "--format=%s%x00", rangeSpec, "--")
 	}
-	repository.BaseResolution = base
-	rangeSpec := strings.TrimSpace(mergeBase) + "..HEAD"
 
-	if diff, omittedTerms, commandErr := gitTermsOutput(root, CalibratedDefaults.DiffTermLimit, "diff", "--no-ext-diff", "--no-textconv", "--unified=0", rangeSpec, "--"); commandErr != nil {
-		repository.GitFailures = append(repository.GitFailures, SignalBranchDiff)
-	} else {
-		repository.BranchDiff = diff
-		if omittedTerms > 0 {
-			repository.AcquisitionTruncations = append(repository.AcquisitionTruncations, InputTruncation{Signal: SignalBranchDiff, OmittedTerms: omittedTerms})
-		}
-	}
-	if paths, omittedTerms, commandErr := gitTermsOutput(root, CalibratedDefaults.PathTermLimit, "diff", "--name-only", "-z", rangeSpec, "--"); commandErr != nil {
-		repository.GitFailures = append(repository.GitFailures, SignalAffectedPath)
-	} else {
-		repository.AffectedPaths = []string{paths}
-		if omittedTerms > 0 {
-			repository.AcquisitionTruncations = append(repository.AcquisitionTruncations, InputTruncation{Signal: SignalAffectedPath, OmittedTerms: omittedTerms})
-		}
-	}
-	if subjects, omittedTerms, commandErr := gitTermsOutput(root, CalibratedDefaults.CommitTermLimit, "log", "--format=%s%x00", rangeSpec, "--"); commandErr != nil {
-		repository.GitFailures = append(repository.GitFailures, SignalCommitSubject)
-	} else {
-		repository.CommitSubjects = []string{subjects}
-		if omittedTerms > 0 {
-			repository.AcquisitionTruncations = append(repository.AcquisitionTruncations, InputTruncation{Signal: SignalCommitSubject, OmittedTerms: omittedTerms})
-		}
-	}
+	acquireRepositoryTerms(&repository, root, SignalStagedDiff, CalibratedDefaults.DiffTermLimit, func(value string) {
+		repository.StagedDiff = value
+	}, "diff", "--cached", "--no-ext-diff", "--no-textconv", "--unified=0", "--")
+	acquireRepositoryTerms(&repository, root, SignalUnstagedDiff, CalibratedDefaults.DiffTermLimit, func(value string) {
+		repository.UnstagedDiff = value
+	}, "diff", "--no-ext-diff", "--no-textconv", "--unified=0", "--")
+	acquireRepositoryTerms(&repository, root, SignalAffectedPath, CalibratedDefaults.PathTermLimit, func(value string) {
+		repository.AffectedPaths = []string{value}
+	}, "diff", "--name-only", "-z", affectedPathBase, "--")
+	acquireRepositoryTerms(&repository, root, SignalUntrackedPath, CalibratedDefaults.UntrackedTermLimit, func(value string) {
+		repository.UntrackedPaths = []string{value}
+	}, "ls-files", "--others", "--exclude-standard", "-z")
 	return repositoryProject, repository
+}
+
+func acquireRepositoryTerms(repository *RepositorySignals, root string, signal SignalType, limit int, set func(string), args ...string) {
+	value, omittedTerms, err := gitTermsOutput(root, limit, args...)
+	if err != nil {
+		repository.GitFailures = append(repository.GitFailures, signal)
+		return
+	}
+	set(value)
+	if omittedTerms > 0 {
+		analyzedTerms := len(normalizeTerms(value, limit))
+		repository.AcquisitionTruncations = append(repository.AcquisitionTruncations, InputTruncation{
+			Signal: signal, OmittedTerms: omittedTerms, TotalTerms: analyzedTerms + omittedTerms, AnalyzedTerms: analyzedTerms,
+		})
+	}
 }
 
 func resolveBranchBase(root, explicitBase, currentBranch string) *BaseResolution {
@@ -175,28 +184,8 @@ func runGitTermsCommand(directory string, termLimit int, args ...string) (string
 		return "", 0, err
 	}
 
-	retained := make([]string, 0, termLimit)
-	seen := make(map[string]struct{}, termLimit)
-	omitted := 0
-	scanner := bufio.NewScanner(stdout)
-	scanner.Split(scanAlphanumericToken)
-	scanner.Buffer(make([]byte, 4096), 64*1024)
-	for scanner.Scan() {
-		term := strings.ToLower(scanner.Text())
-		if shouldIgnoreTerm(term) {
-			continue
-		}
-		if _, exists := seen[term]; exists {
-			continue
-		}
-		if len(retained) < termLimit {
-			seen[term] = struct{}{}
-			retained = append(retained, term)
-			continue
-		}
-		omitted++
-	}
-	if scanErr := scanner.Err(); scanErr != nil {
+	terms, omitted, scanErr := readBoundedGitTerms(stdout, termLimit)
+	if scanErr != nil {
 		cancel()
 		_ = command.Wait()
 		return "", 0, scanErr
@@ -204,36 +193,65 @@ func runGitTermsCommand(directory string, termLimit int, args ...string) (string
 	if err := command.Wait(); err != nil {
 		return "", 0, err
 	}
-	return strings.Join(retained, " "), omitted, nil
+	return terms, omitted, nil
 }
 
-func scanAlphanumericToken(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	start := 0
-	for start < len(data) {
-		r, size := utf8.DecodeRune(data[start:])
-		if r == utf8.RuneError && size == 1 && !atEOF && !utf8.FullRune(data[start:]) {
-			return 0, nil, nil
+const maximumGitTermBytes = 64 * 1024
+
+func readBoundedGitTerms(input io.Reader, termLimit int) (string, int, error) {
+	reader := bufio.NewReader(input)
+	retained := make([]string, 0, termLimit)
+	seen := make(map[string]struct{}, termLimit)
+	omitted := 0
+	var token strings.Builder
+	overflowed := false
+	flush := func() {
+		if overflowed {
+			omitted++
+			overflowed = false
+			token.Reset()
+			return
 		}
-		if unicode.IsLetter(r) || unicode.IsNumber(r) {
-			break
+		if token.Len() == 0 {
+			return
 		}
-		start += size
+		term := strings.ToLower(token.String())
+		token.Reset()
+		if shouldIgnoreTerm(term) {
+			return
+		}
+		if _, exists := seen[term]; exists {
+			return
+		}
+		seen[term] = struct{}{}
+		if len(retained) < termLimit {
+			retained = append(retained, term)
+			return
+		}
+		omitted++
 	}
-	for end := start; end < len(data); {
-		r, size := utf8.DecodeRune(data[end:])
-		if r == utf8.RuneError && size == 1 && !atEOF && !utf8.FullRune(data[end:]) {
-			return 0, nil, nil
+
+	for {
+		r, size, err := reader.ReadRune()
+		if errors.Is(err, io.EOF) {
+			flush()
+			return strings.Join(retained, " "), omitted, nil
+		}
+		if err != nil {
+			return "", 0, err
 		}
 		if !unicode.IsLetter(r) && !unicode.IsNumber(r) {
-			return end + size, data[start:end], nil
+			flush()
+			continue
 		}
-		end += size
+		if overflowed {
+			continue
+		}
+		if token.Len()+size > maximumGitTermBytes {
+			overflowed = true
+			token.Reset()
+			continue
+		}
+		token.WriteRune(r)
 	}
-	if atEOF && start < len(data) {
-		return len(data), data[start:], nil
-	}
-	if start > 0 {
-		return start, nil, nil
-	}
-	return 0, nil, nil
 }

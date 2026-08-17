@@ -15,13 +15,14 @@ type contextBriefingMemory struct {
 }
 
 type contextBriefingOutput struct {
-	Mode                 string                    `json:"mode"`
-	Project              string                    `json:"project"`
-	Scope                string                    `json:"scope,omitempty"`
-	Memories             []contextBriefingMemory   `json:"memories"`
-	Diagnostics          []taskbriefing.Diagnostic `json:"diagnostics"`
-	ResultLimitOmissions int                       `json:"result_limit_omissions"`
-	BudgetOmissions      int                       `json:"budget_omissions"`
+	Mode                 string                       `json:"mode"`
+	Project              string                       `json:"project"`
+	Scope                string                       `json:"scope,omitempty"`
+	Memories             []contextBriefingMemory      `json:"memories"`
+	Diagnostics          []taskbriefing.Diagnostic    `json:"diagnostics"`
+	BaseResolution       *taskbriefing.BaseResolution `json:"base_resolution,omitempty"`
+	ResultLimitOmissions int                          `json:"result_limit_omissions"`
+	BudgetOmissions      int                          `json:"budget_omissions"`
 }
 
 func newContextBriefingOutput(project, scope string, result taskbriefing.Result) contextBriefingOutput {
@@ -43,6 +44,7 @@ func newContextBriefingOutput(project, scope string, result taskbriefing.Result)
 		Scope:                scope,
 		Memories:             memories,
 		Diagnostics:          diagnostics,
+		BaseResolution:       result.BaseResolution,
 		ResultLimitOmissions: result.ResultLimitOmissions,
 		BudgetOmissions:      result.BudgetOmissions,
 	}
@@ -50,7 +52,11 @@ func newContextBriefingOutput(project, scope string, result taskbriefing.Result)
 
 func renderContextBriefing(output contextBriefingOutput, taskProvided bool) {
 	fmt.Println("## Task Briefing")
-	fmt.Printf("Project: %s\n\n", output.Project)
+	fmt.Printf("Project: %s\n", output.Project)
+	if output.BaseResolution != nil {
+		fmt.Printf("Base: %s (%s)\n", output.BaseResolution.Ref, output.BaseResolution.Source)
+	}
+	fmt.Println()
 	if len(output.Memories) == 0 {
 		fmt.Println("No relevant durable memories found for this task.")
 		if !taskProvided {

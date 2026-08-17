@@ -415,14 +415,25 @@ intent to select a small, deterministic set of complete durable memories:
 
 ```bash
 engram context --brief --task "implement deterministic task briefing selection"
+engram context --brief --base main
 engram context engram --brief --task "implement deterministic task briefing selection" --scope project --limit 3 --json
 ```
 
-This task-only slice uses Task intent as the authoritative selection signal. It
-does not yet inspect the Git branch or worktree. If `project` is omitted, Engram
-must resolve exactly one project from the current directory; ambiguity is a
-structured error. Project and personal memories for that project are eligible
-by default, while `--scope project` or `--scope personal` narrows selection.
+On a clean feature branch, Engram also derives transient Repository signals from
+the branch name, committed diff, affected paths, and commit subjects. Task intent
+remains authoritative when supplied. The comparison base resolves in this order:
+an explicit `--base REF`, the current branch's configured upstream, then the
+remote default branch. An upstream that tracks the same branch is skipped because
+it cannot identify feature-branch commits; resolution then continues to the remote
+default. If no base resolves, committed evidence is omitted and a typed degradation
+is returned while any remaining Task or branch signal continues.
+
+Repository signals are used only when the cwd repository resolves to the selected
+project. A mismatch disables them and reports `repository_project_mismatch`;
+Task intent can still produce a task-only briefing, while an invocation without
+Task intent returns a successful empty briefing. Project and personal memories
+for the selected project are eligible by default, while `--scope project` or
+`--scope personal` narrows selection.
 
 The result limit is a cap, not a quota: weak matches are excluded, and at most
 five memories are returned. Relevant pins may improve ordering but cannot force
@@ -430,12 +441,12 @@ an unrelated memory into a briefing. Deleted and superseded memories stay out;
 selected judged conflicts remain visible. Memories are emitted whole, and a
 lower-ranked memory that does not fit the bounded output is omitted and counted.
 
-Task intent is transient: it is used only for local deterministic selection and
-is neither saved as a memory nor echoed in briefing output. `--brief` without a
-usable Task intent succeeds with an empty briefing and suggests supplying
-`--task`. JSON mode returns native memory, Selection evidence, diagnostic, and
-omission fields; without `--brief`, the existing chronological human and JSON
-contracts are unchanged.
+Task intent and Repository signals are transient: they are used only for local
+deterministic selection and are never saved as memories. Raw diff content is not
+echoed in briefing output. `--brief` without usable Task or Repository signals
+succeeds with an empty briefing and suggests supplying `--task`. Human and JSON
+briefings expose the resolved base and source-level Selection evidence; without
+`--brief`, the existing chronological human and JSON contracts are unchanged.
 
 ### Key Environment Variables
 

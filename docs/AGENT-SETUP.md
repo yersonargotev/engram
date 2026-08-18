@@ -409,6 +409,8 @@ engram setup codex
 
 > `engram setup codex` automatically writes the full Memory Protocol to `~/.codex/engram-instructions.md` and a compaction recovery prompt to `~/.codex/engram-compact-prompt.md`. No additional configuration needed.
 
+The Codex plugin marks the Engram session as ended only when Codex emits `SessionEnd`, not after each turn. The hook uses bounded, fail-open adapters on Unix and native Windows so an unavailable local server never blocks Codex shutdown.
+
 Manual alternative: add to your `~/.codex/config.toml` (Windows: `%APPDATA%\codex\config.toml`):
 
 ```toml

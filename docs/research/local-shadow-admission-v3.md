@@ -55,7 +55,7 @@ Use dedicated ordinary SQLite tables owned by `internal/store`; do not reuse
 | --- | --- | --- |
 | Shadow run | Local run ID, project, selected session ID, timestamps, evidence/generator/policy versions, acquisition counts, diagnostic codes | Evidence bundle JSON, prompt or summary text, transcript, tool output, repository diff |
 | Proposal assessment | Local proposal ID, run ID, redacted title/content, type, scope, category, protected flag, evidence reference IDs, proposal reason codes, recommendation and assessment reason codes | Source excerpts, nearby Memory content, model prompts/responses |
-| Human correction | Event ID, proposal ID, verdict, bounded sanitized note, timestamp | Copied source evidence or user identity not needed by the local experiment |
+| Human correction | Event ID, proposal ID, per-proposal ordinal, verdict, bounded sanitized note, timestamp | Copied source evidence or user identity not needed by the local experiment |
 
 The proposal text is the minimum reviewable derived artifact, but it is still
 sensitive data. V3 stores it only after the same `<private>` block redaction used
@@ -84,15 +84,17 @@ event pointing to a proposal, following the provenance principle that a revision
 derived from, rather than a silent overwrite of, its original entity
 ([W3C PROV-O](https://www.w3.org/TR/prov-o/)).
 
-For a proposal, order corrections by `(created_at, correction_id)` and use the last
-event as the current human verdict. Preserve earlier events for audit. An identical
+For a proposal, assign a transactionally increasing zero-based correction ordinal
+and use the highest ordinal as the current human verdict. Preserve earlier events
+for audit; the ordinal avoids depending on SQLite `rowid` or second-resolution
+timestamps for event order. An identical
 retry is idempotent only when its normalized `(verdict, note)` equals the latest
 event: return that event without inserting. Returning to an older verdict after an
 intervening correction is a real new event and must append.
 
 Validate proposal existence, restrict verdicts to `admit | review | reject`, bound
 notes, and insert under a transaction. Listing must
-use an explicit stable order, such as run time descending then proposal ID ascending;
+use an explicit stable order, such as run time plus run ID then proposal ordinal;
 SQLite does not guarantee row order without `ORDER BY`.
 
 ## Metrics and gates

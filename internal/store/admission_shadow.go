@@ -17,7 +17,10 @@ type AdmissionShadowRun struct {
 	Project              string                    `json:"project"`
 	SessionID            string                    `json:"session_id,omitempty"`
 	Mode                 string                    `json:"mode"`
-	AdmissionVersion     string                    `json:"admission_version"`
+	EvidenceVersion      string                    `json:"evidence_version"`
+	GeneratorVersion     string                    `json:"generator_version"`
+	PolicyVersion        string                    `json:"policy_version"`
+	DiagnosticCodes      []string                  `json:"diagnostic_codes"`
 	IncludedItems        int                       `json:"included_items"`
 	IncludedContentBytes int                       `json:"included_content_bytes"`
 	CreatedAt            string                    `json:"created_at"`
@@ -45,6 +48,7 @@ type AdmissionShadowProposal struct {
 type AdmissionShadowReview struct {
 	ID          string `json:"id"`
 	ProposalID  string `json:"proposal_id"`
+	Ordinal     int    `json:"ordinal"`
 	Verdict     string `json:"verdict"`
 	Note        string `json:"note"`
 	Unsupported bool   `json:"unsupported"`
@@ -69,7 +73,10 @@ type CreateAdmissionShadowRunParams struct {
 	Project              string
 	SessionID            string
 	Mode                 string
-	AdmissionVersion     string
+	EvidenceVersion      string
+	GeneratorVersion     string
+	PolicyVersion        string
+	DiagnosticCodes      []string
 	IncludedItems        int
 	IncludedContentBytes int
 	Proposals            []AdmissionShadowProposalInput
@@ -93,7 +100,10 @@ func (s *Store) migrateAdmissionShadow() error {
 			project                TEXT NOT NULL,
 			session_id             TEXT,
 			mode                   TEXT NOT NULL,
-			admission_version      TEXT NOT NULL,
+			evidence_version       TEXT NOT NULL,
+			generator_version      TEXT NOT NULL,
+			policy_version         TEXT NOT NULL,
+			diagnostic_codes       TEXT NOT NULL DEFAULT '[]',
 			included_items         INTEGER NOT NULL DEFAULT 0 CHECK (included_items >= 0),
 			included_content_bytes INTEGER NOT NULL DEFAULT 0 CHECK (included_content_bytes >= 0),
 			created_at             TEXT NOT NULL DEFAULT (datetime('now'))
@@ -121,20 +131,22 @@ func (s *Store) migrateAdmissionShadow() error {
 		CREATE TABLE IF NOT EXISTS admission_shadow_reviews (
 			id           TEXT PRIMARY KEY,
 			proposal_id  TEXT NOT NULL,
+			ordinal      INTEGER NOT NULL CHECK (ordinal >= 0),
 			verdict      TEXT NOT NULL,
 			note         TEXT NOT NULL DEFAULT '',
 			unsupported  BOOLEAN NOT NULL DEFAULT 0,
 			privacy_leak BOOLEAN NOT NULL DEFAULT 0,
 			created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-			FOREIGN KEY (proposal_id) REFERENCES admission_shadow_proposals(id) ON DELETE CASCADE
+			FOREIGN KEY (proposal_id) REFERENCES admission_shadow_proposals(id) ON DELETE CASCADE,
+			UNIQUE (proposal_id, ordinal)
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_admission_shadow_runs_project_created
 			ON admission_shadow_runs(project, created_at, id);
 		CREATE INDEX IF NOT EXISTS idx_admission_shadow_proposals_run_ordinal
 			ON admission_shadow_proposals(run_id, ordinal);
-		CREATE INDEX IF NOT EXISTS idx_admission_shadow_reviews_proposal_created
-			ON admission_shadow_reviews(proposal_id, created_at, id);
+		CREATE INDEX IF NOT EXISTS idx_admission_shadow_reviews_proposal_ordinal
+			ON admission_shadow_reviews(proposal_id, ordinal);
 	`)
 	return err
 }
@@ -148,29 +160,37 @@ func (s *Store) CreateAdmissionShadowRun(p CreateAdmissionShadowRunParams) (*Adm
 	p.Project = strings.TrimSpace(p.Project)
 	p.SessionID = stripPrivateTags(p.SessionID)
 	p.Mode = stripPrivateTags(p.Mode)
-	p.AdmissionVersion = stripPrivateTags(p.AdmissionVersion)
+	p.EvidenceVersion = stripPrivateTags(p.EvidenceVersion)
+	p.GeneratorVersion = stripPrivateTags(p.GeneratorVersion)
+	p.PolicyVersion = stripPrivateTags(p.PolicyVersion)
+	p.DiagnosticCodes = redactAdmissionShadowStrings(p.DiagnosticCodes)
 	if p.Project == "" {
 		return nil, fmt.Errorf("admission shadow run requires project")
 	}
 	if p.Mode == "" {
 		return nil, fmt.Errorf("admission shadow run requires mode")
 	}
-	if p.AdmissionVersion == "" {
-		return nil, fmt.Errorf("admission shadow run requires admission version")
+	if p.EvidenceVersion == "" || p.GeneratorVersion == "" || p.PolicyVersion == "" {
+		return nil, fmt.Errorf("admission shadow run requires evidence, generator, and policy versions")
 	}
 	if p.IncludedItems < 0 || p.IncludedContentBytes < 0 {
 		return nil, fmt.Errorf("admission shadow acquisition counts must not be negative")
 	}
 
 	runID := newSyncID("shadow-run")
-	err := s.withTx(func(tx *sql.Tx) error {
+	diagnosticCodes, err := marshalAdmissionShadowStrings(p.DiagnosticCodes)
+	if err != nil {
+		return nil, err
+	}
+	err = s.withTx(func(tx *sql.Tx) error {
 		if _, err := s.execHook(tx, `
 			INSERT INTO admission_shadow_runs (
-				id, project, session_id, mode, admission_version,
-				included_items, included_content_bytes
-			) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				id, project, session_id, mode, evidence_version, generator_version,
+				policy_version, diagnostic_codes, included_items, included_content_bytes
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			runID, p.Project, nullableString(p.SessionID), p.Mode,
-			p.AdmissionVersion, p.IncludedItems, p.IncludedContentBytes,
+			p.EvidenceVersion, p.GeneratorVersion, p.PolicyVersion, diagnosticCodes,
+			p.IncludedItems, p.IncludedContentBytes,
 		); err != nil {
 			return fmt.Errorf("insert admission shadow run: %w", err)
 		}
@@ -233,11 +253,12 @@ func (s *Store) ListAdmissionShadowRuns(project string) ([]AdmissionShadowRun, e
 		return nil, fmt.Errorf("admission shadow run listing requires project")
 	}
 	rows, err := s.queryItHook(s.db, `
-		SELECT id, project, ifnull(session_id, ''), mode, admission_version,
+		SELECT id, project, ifnull(session_id, ''), mode, evidence_version,
+		       generator_version, policy_version, diagnostic_codes,
 		       included_items, included_content_bytes, created_at
 		FROM admission_shadow_runs
 		WHERE project = ?
-		ORDER BY datetime(created_at), rowid`, project)
+		ORDER BY datetime(created_at), id`, project)
 	if err != nil {
 		return nil, err
 	}
@@ -245,9 +266,14 @@ func (s *Store) ListAdmissionShadowRuns(project string) ([]AdmissionShadowRun, e
 	runs := make([]AdmissionShadowRun, 0)
 	for rows.Next() {
 		var run AdmissionShadowRun
+		var diagnosticCodes string
 		if err := rows.Scan(&run.ID, &run.Project, &run.SessionID, &run.Mode,
-			&run.AdmissionVersion, &run.IncludedItems, &run.IncludedContentBytes,
+			&run.EvidenceVersion, &run.GeneratorVersion, &run.PolicyVersion,
+			&diagnosticCodes, &run.IncludedItems, &run.IncludedContentBytes,
 			&run.CreatedAt); err != nil {
+			return nil, err
+		}
+		if run.DiagnosticCodes, err = unmarshalAdmissionShadowStrings(diagnosticCodes); err != nil {
 			return nil, err
 		}
 		runs = append(runs, run)
@@ -276,7 +302,7 @@ func (s *Store) ListAdmissionShadowProposals(project string, pendingOnly bool) (
 			SELECT 1 FROM admission_shadow_reviews rv WHERE rv.proposal_id = p.id
 		)`
 	}
-	query += ` ORDER BY datetime(r.created_at), r.rowid, p.ordinal`
+	query += ` ORDER BY datetime(r.created_at), r.id, p.ordinal`
 
 	proposals, err := s.queryAdmissionShadowProposals(query, project)
 	if err != nil {
@@ -333,10 +359,18 @@ func (s *Store) AddAdmissionShadowReview(p AddAdmissionShadowReviewParams) (*Adm
 			alreadyRecorded = true
 			return nil
 		}
+		var nextOrdinal int
+		if err := tx.QueryRow(`
+			SELECT ifnull(MAX(ordinal) + 1, 0)
+			FROM admission_shadow_reviews
+			WHERE proposal_id = ?`, p.ProposalID).Scan(&nextOrdinal); err != nil {
+			return err
+		}
 
 		result = AdmissionShadowReview{
 			ID:          newSyncID("shadow-review"),
 			ProposalID:  p.ProposalID,
+			Ordinal:     nextOrdinal,
 			Verdict:     p.Verdict,
 			Note:        p.Note,
 			Unsupported: p.Unsupported,
@@ -344,9 +378,9 @@ func (s *Store) AddAdmissionShadowReview(p AddAdmissionShadowReviewParams) (*Adm
 		}
 		if _, err := s.execHook(tx, `
 			INSERT INTO admission_shadow_reviews (
-				id, proposal_id, verdict, note, unsupported, privacy_leak
-			) VALUES (?, ?, ?, ?, ?, ?)`,
-			result.ID, result.ProposalID, result.Verdict, result.Note,
+				id, proposal_id, ordinal, verdict, note, unsupported, privacy_leak
+			) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			result.ID, result.ProposalID, result.Ordinal, result.Verdict, result.Note,
 			result.Unsupported, result.PrivacyLeak,
 		); err != nil {
 			return err
@@ -425,14 +459,20 @@ func unmarshalAdmissionShadowStrings(encoded string) ([]string, error) {
 
 func (s *Store) admissionShadowRunByID(runID string) (*AdmissionShadowRun, error) {
 	var run AdmissionShadowRun
+	var diagnosticCodes string
 	err := s.db.QueryRow(`
-		SELECT id, project, ifnull(session_id, ''), mode, admission_version,
+		SELECT id, project, ifnull(session_id, ''), mode, evidence_version,
+		       generator_version, policy_version, diagnostic_codes,
 		       included_items, included_content_bytes, created_at
 		FROM admission_shadow_runs WHERE id = ?`, runID).Scan(
-		&run.ID, &run.Project, &run.SessionID, &run.Mode, &run.AdmissionVersion,
+		&run.ID, &run.Project, &run.SessionID, &run.Mode, &run.EvidenceVersion,
+		&run.GeneratorVersion, &run.PolicyVersion, &diagnosticCodes,
 		&run.IncludedItems, &run.IncludedContentBytes, &run.CreatedAt,
 	)
 	if err != nil {
+		return nil, err
+	}
+	if run.DiagnosticCodes, err = unmarshalAdmissionShadowStrings(diagnosticCodes); err != nil {
 		return nil, err
 	}
 	return &run, nil
@@ -489,14 +529,13 @@ func (s *Store) queryAdmissionShadowProposals(query string, args ...any) ([]Admi
 
 func (s *Store) listAdmissionShadowReviews(project string) (map[string][]AdmissionShadowReview, error) {
 	rows, err := s.queryItHook(s.db, `
-		SELECT rv.id, rv.proposal_id, rv.verdict, rv.note, rv.unsupported,
+		SELECT rv.id, rv.proposal_id, rv.ordinal, rv.verdict, rv.note, rv.unsupported,
 		       rv.privacy_leak, rv.created_at
 		FROM admission_shadow_reviews rv
 		JOIN admission_shadow_proposals p ON p.id = rv.proposal_id
 		JOIN admission_shadow_runs r ON r.id = p.run_id
 		WHERE r.project = ?
-		ORDER BY datetime(r.created_at), r.rowid, p.ordinal,
-		         datetime(rv.created_at), rv.rowid`, project)
+		ORDER BY datetime(r.created_at), r.id, p.ordinal, rv.ordinal, rv.id`, project)
 	if err != nil {
 		return nil, err
 	}
@@ -504,7 +543,7 @@ func (s *Store) listAdmissionShadowReviews(project string) (map[string][]Admissi
 	result := make(map[string][]AdmissionShadowReview)
 	for rows.Next() {
 		var review AdmissionShadowReview
-		if err := rows.Scan(&review.ID, &review.ProposalID, &review.Verdict,
+		if err := rows.Scan(&review.ID, &review.ProposalID, &review.Ordinal, &review.Verdict,
 			&review.Note, &review.Unsupported, &review.PrivacyLeak,
 			&review.CreatedAt); err != nil {
 			return nil, err
@@ -517,12 +556,12 @@ func (s *Store) listAdmissionShadowReviews(project string) (map[string][]Admissi
 func admissionShadowLatestReviewTx(tx *sql.Tx, proposalID string) (*AdmissionShadowReview, error) {
 	var review AdmissionShadowReview
 	err := tx.QueryRow(`
-		SELECT id, proposal_id, verdict, note, unsupported, privacy_leak, created_at
+		SELECT id, proposal_id, ordinal, verdict, note, unsupported, privacy_leak, created_at
 		FROM admission_shadow_reviews
 		WHERE proposal_id = ?
-		ORDER BY datetime(created_at) DESC, rowid DESC
+		ORDER BY ordinal DESC, id DESC
 		LIMIT 1`, proposalID).Scan(
-		&review.ID, &review.ProposalID, &review.Verdict, &review.Note,
+		&review.ID, &review.ProposalID, &review.Ordinal, &review.Verdict, &review.Note,
 		&review.Unsupported, &review.PrivacyLeak, &review.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {

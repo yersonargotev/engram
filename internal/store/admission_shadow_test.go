@@ -8,6 +8,26 @@ import (
 	"testing"
 )
 
+func TestRedactPrivateBlocksHandlesNestedUnclosedAndCaseInsensitiveTags(t *testing.T) {
+	tests := map[string]string{
+		"unicode prefix": "café <PRIVATE>credential</PRIVATE> remains",
+		"nested":         "before <private>outer <private>inner</private> tail</private> after",
+		"unclosed":       "before <private>credential tail",
+	}
+	want := map[string]string{
+		"unicode prefix": "café [REDACTED] remains",
+		"nested":         "before [REDACTED] after",
+		"unclosed":       "before [REDACTED]",
+	}
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := RedactPrivateBlocks(input); got != want[name] {
+				t.Fatalf("RedactPrivateBlocks(%q) = %q, want %q", input, got, want[name])
+			}
+		})
+	}
+}
+
 func TestAdmissionShadowMigrationFreshAndReopened(t *testing.T) {
 	dir := t.TempDir()
 	cfg := mustDefaultConfig(t)
@@ -125,21 +145,24 @@ func TestCreateAdmissionShadowRunPersistsRedactedImmutableSnapshot(t *testing.T)
 		Project:              " ENGRAM ",
 		SessionID:            "deleted-or-missing-session",
 		Mode:                 "session",
-		AdmissionVersion:     "v1",
+		EvidenceVersion:      "v1",
+		GeneratorVersion:     "v1",
+		PolicyVersion:        "v1",
+		DiagnosticCodes:      []string{"session_summary_fallback"},
 		IncludedItems:        3,
 		IncludedContentBytes: 144,
 		Proposals: []AdmissionShadowProposalInput{
 			{
 				Type:                  "decision",
 				Title:                 "Keep <private>title-secret</private> locally",
-				Content:               "SQLite <private>content-secret</private> is authoritative.",
+				Content:               "SQLite <private>outer <private>nested-secret</private> trailing-secret</private> is authoritative.",
 				Scope:                 "project",
 				Category:              "decision",
 				Protected:             true,
 				Recommendation:        "review",
 				ProposalReasonCodes:   []string{"structured_section"},
 				AssessmentReasonCodes: []string{"protected_proposal", "requires_review"},
-				EvidenceRefs:          []string{"prompt:1", "summary:<private>ref-secret</private>"},
+				EvidenceRefs:          []string{"prompt:1", "summary:<private>unclosed-ref-secret"},
 			},
 			{
 				Type:                  "discovery",
@@ -157,7 +180,9 @@ func TestCreateAdmissionShadowRunPersistsRedactedImmutableSnapshot(t *testing.T)
 	if err != nil {
 		t.Fatalf("create shadow run: %v", err)
 	}
-	if run.ID == "" || run.Project != "engram" || run.IncludedItems != 3 || run.IncludedContentBytes != 144 {
+	if run.ID == "" || run.Project != "engram" || run.IncludedItems != 3 || run.IncludedContentBytes != 144 ||
+		run.EvidenceVersion != "v1" || run.GeneratorVersion != "v1" || run.PolicyVersion != "v1" ||
+		!reflect.DeepEqual(run.DiagnosticCodes, []string{"session_summary_fallback"}) {
 		t.Fatalf("run metadata = %#v", run)
 	}
 	if len(run.Proposals) != 2 {
@@ -170,7 +195,7 @@ func TestCreateAdmissionShadowRunPersistsRedactedImmutableSnapshot(t *testing.T)
 	if err != nil {
 		t.Fatalf("marshal run: %v", err)
 	}
-	for _, secret := range []string{"title-secret", "content-secret", "ref-secret", "<private>"} {
+	for _, secret := range []string{"title-secret", "nested-secret", "trailing-secret", "unclosed-ref-secret", "<private>", "</private>"} {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("persisted result contains private value %q: %s", secret, encoded)
 		}
@@ -207,7 +232,9 @@ func TestCreateAdmissionShadowRunRollsBackAtomically(t *testing.T) {
 	_, err := s.CreateAdmissionShadowRun(CreateAdmissionShadowRunParams{
 		Project:          "engram",
 		Mode:             "session",
-		AdmissionVersion: "v1",
+		EvidenceVersion:  "v1",
+		GeneratorVersion: "v1",
+		PolicyVersion:    "v1",
 		Proposals: []AdmissionShadowProposalInput{
 			validAdmissionShadowProposal("first"),
 			{
@@ -236,6 +263,12 @@ func TestListAdmissionShadowProposalsDeterministicPendingAndProjectScoped(t *tes
 	first := mustCreateAdmissionShadowRun(t, s, "engram", "first", "second")
 	second := mustCreateAdmissionShadowRun(t, s, "engram", "third")
 	_ = mustCreateAdmissionShadowRun(t, s, "other", "hidden")
+	if _, err := s.db.Exec(`UPDATE admission_shadow_runs SET created_at = ? WHERE id = ?`, "2026-08-19 10:00:00", first.ID); err != nil {
+		t.Fatalf("set first run time: %v", err)
+	}
+	if _, err := s.db.Exec(`UPDATE admission_shadow_runs SET created_at = ? WHERE id = ?`, "2026-08-19 10:00:01", second.ID); err != nil {
+		t.Fatalf("set second run time: %v", err)
+	}
 
 	review, alreadyRecorded, err := s.AddAdmissionShadowReview(AddAdmissionShadowReviewParams{
 		ProposalID: first.Proposals[1].ID,
@@ -288,7 +321,7 @@ func TestAddAdmissionShadowReviewIsAppendOnlyIdempotentAndRedacted(t *testing.T)
 	s := newTestStore(t)
 	run := mustCreateAdmissionShadowRun(t, s, "engram", "proposal")
 	proposalID := run.Proposals[0].ID
-	longNote := strings.Repeat("x", MaxAdmissionShadowReviewNoteLength+20) + "<private>note-secret</private>"
+	longNote := "Review <private>outer <private>nested-note-secret</private> trailing-note-secret</private> " + strings.Repeat("x", MaxAdmissionShadowReviewNoteLength+20)
 
 	first, alreadyRecorded, err := s.AddAdmissionShadowReview(AddAdmissionShadowReviewParams{
 		ProposalID:  proposalID,
@@ -303,8 +336,11 @@ func TestAddAdmissionShadowReviewIsAppendOnlyIdempotentAndRedacted(t *testing.T)
 	if alreadyRecorded {
 		t.Fatal("first review reported as already recorded")
 	}
-	if len([]rune(first.Note)) > MaxAdmissionShadowReviewNoteLength || strings.Contains(first.Note, "note-secret") {
+	if len([]rune(first.Note)) > MaxAdmissionShadowReviewNoteLength || strings.Contains(first.Note, "nested-note-secret") || strings.Contains(first.Note, "trailing-note-secret") {
 		t.Fatalf("bounded redacted note = %q", first.Note)
+	}
+	if first.Ordinal != 0 {
+		t.Fatalf("first review ordinal = %d, want 0", first.Ordinal)
 	}
 	if !first.Unsupported || !first.PrivacyLeak {
 		t.Fatalf("safety flags = unsupported:%t privacy_leak:%t", first.Unsupported, first.PrivacyLeak)
@@ -343,6 +379,9 @@ func TestAddAdmissionShadowReviewIsAppendOnlyIdempotentAndRedacted(t *testing.T)
 	if different.ID == first.ID {
 		t.Fatal("different safety flags did not append a review")
 	}
+	if different.Ordinal != 1 {
+		t.Fatalf("second review ordinal = %d, want 1", different.Ordinal)
+	}
 	returnToFirst, alreadyRecorded, err := s.AddAdmissionShadowReview(AddAdmissionShadowReviewParams{
 		ProposalID:  proposalID,
 		Verdict:     "review",
@@ -358,6 +397,9 @@ func TestAddAdmissionShadowReviewIsAppendOnlyIdempotentAndRedacted(t *testing.T)
 	}
 	if returnToFirst.ID == first.ID || returnToFirst.ID == different.ID {
 		t.Fatal("A to B to A must append the final A as a new audit event")
+	}
+	if returnToFirst.Ordinal != 2 {
+		t.Fatalf("third review ordinal = %d, want 2", returnToFirst.Ordinal)
 	}
 
 	listed, err := s.ListAdmissionShadowProposals("engram", false)
@@ -424,7 +466,9 @@ func TestAdmissionShadowRunDoesNotDependOnSessionLifetime(t *testing.T) {
 		Project:          "engram",
 		SessionID:        "short-lived",
 		Mode:             "session",
-		AdmissionVersion: "v1",
+		EvidenceVersion:  "v1",
+		GeneratorVersion: "v1",
+		PolicyVersion:    "v1",
 	})
 	if err != nil {
 		t.Fatalf("create shadow run: %v", err)
@@ -466,7 +510,9 @@ func mustCreateAdmissionShadowRun(t *testing.T, s *Store, project string, titles
 		Project:              project,
 		SessionID:            "session-that-may-be-cleaned-up",
 		Mode:                 "session",
-		AdmissionVersion:     "v1",
+		EvidenceVersion:      "v1",
+		GeneratorVersion:     "v1",
+		PolicyVersion:        "v1",
 		IncludedItems:        len(proposals),
 		IncludedContentBytes: 100,
 		Proposals:            proposals,

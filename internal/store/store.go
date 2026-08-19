@@ -6759,18 +6759,41 @@ func normalizeExistingSyncID(existing, prefix string) string {
 	return newSyncID(prefix)
 }
 
-// privateTagRegex matches <private>...</private> tags and their contents.
-// Supports multiline and nested content. Case-insensitive.
-var privateTagRegex = regexp.MustCompile(`(?is)<private>.*?</private>`)
-
 // stripPrivateTags removes all <private>...</private> content from a string.
 // This ensures sensitive information (API keys, passwords, personal data)
 // is never persisted to the memory database.
 func stripPrivateTags(s string) string {
-	result := privateTagRegex.ReplaceAllString(s, "[REDACTED]")
-	// Clean up multiple consecutive [REDACTED] and excessive whitespace
-	result = strings.TrimSpace(result)
-	return result
+	return RedactPrivateBlocks(s)
+}
+
+var privateTagBoundaryRegex = regexp.MustCompile(`(?i)</?private>`)
+
+// RedactPrivateBlocks replaces private blocks without leaking nested or
+// unclosed content. Tags are matched case-insensitively and may span lines.
+func RedactPrivateBlocks(s string) string {
+	var result strings.Builder
+	result.Grow(len(s))
+	depth := 0
+	cursor := 0
+	for _, match := range privateTagBoundaryRegex.FindAllStringIndex(s, -1) {
+		tagStart, tagEnd := match[0], match[1]
+		if depth == 0 {
+			result.WriteString(s[cursor:tagStart])
+			result.WriteString("[REDACTED]")
+		}
+		if s[tagStart+1] == '/' {
+			if depth > 0 {
+				depth--
+			}
+		} else {
+			depth++
+		}
+		cursor = tagEnd
+	}
+	if depth == 0 {
+		result.WriteString(s[cursor:])
+	}
+	return strings.TrimSpace(result.String())
 }
 
 // sanitizeFTS wraps each word in quotes so FTS5 doesn't choke on special chars.

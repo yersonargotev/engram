@@ -16,6 +16,10 @@ import (
 const (
 	// EvidenceBundleVersion identifies the deterministic preview input contract.
 	EvidenceBundleVersion = "v1"
+	// AdmissionGeneratorVersion identifies the deterministic proposal grammar.
+	AdmissionGeneratorVersion = "v1"
+	// AdmissionPolicyVersion identifies the deterministic assessment policy.
+	AdmissionPolicyVersion = "v1"
 
 	MaxEvidenceItems       = 32
 	MaxEvidenceItemBytes   = 16 * 1024
@@ -405,12 +409,11 @@ var sectionDefinitions = map[string]sectionDefinition{
 }
 
 var (
-	listItemPattern   = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$`)
-	privateTagPattern = regexp.MustCompile(`(?is)<private>.*?</private>`)
-	redactionPattern  = regexp.MustCompile(`(?i)\[redacted\]|<redacted>|\bredacted\b|\*+`)
-	boldPattern       = regexp.MustCompile(`\*\*([^*]+)\*\*`)
-	italicPattern     = regexp.MustCompile(`\*([^*]+)\*`)
-	codePattern       = regexp.MustCompile("`([^`]+)`")
+	listItemPattern  = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$`)
+	redactionPattern = regexp.MustCompile(`(?i)\[redacted\]|<redacted>|\bredacted\b|\*+`)
+	boldPattern      = regexp.MustCompile(`\*\*([^*]+)\*\*`)
+	italicPattern    = regexp.MustCompile(`\*([^*]+)\*`)
+	codePattern      = regexp.MustCompile("`([^`]+)`")
 )
 
 func generateMemoryProposals(bundle EvidenceBundle) ([]MemoryProposal, error) {
@@ -601,7 +604,7 @@ func cleanProposalContent(content string) string {
 }
 
 func redactPrivateContent(content string) string {
-	return privateTagPattern.ReplaceAllString(content, "[REDACTED]")
+	return store.RedactPrivateBlocks(content)
 }
 
 func normalizeProposalContent(content string) string {

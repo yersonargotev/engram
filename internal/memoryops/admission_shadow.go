@@ -61,7 +61,7 @@ type AdmissionMetricsResult struct {
 	ReasonCodedProposalCount      int            `json:"reason_coded_proposal_count"`
 	AutomaticRejectGateBlocked    bool           `json:"automatic_reject_gate_blocked"`
 	AutomaticPromotionGateBlocked bool           `json:"automatic_promotion_gate_blocked"`
-	ByAdmissionVersion            map[string]int `json:"by_admission_version"`
+	ByPolicyVersion               map[string]int `json:"by_policy_version"`
 	ByRecommendation              map[string]int `json:"by_recommendation"`
 	ByCategory                    map[string]int `json:"by_category"`
 	ByHumanVerdict                map[string]int `json:"by_human_verdict"`
@@ -106,11 +106,18 @@ func (s *Service) RunAdmissionShadow(input AdmissionShadowInput) (*AdmissionShad
 			EvidenceRefs:          append([]string{}, assessed.Assessment.EvidenceRefs...),
 		})
 	}
+	diagnosticCodes := make([]string, 0, len(preview.Diagnostics))
+	for _, diagnostic := range preview.Diagnostics {
+		diagnosticCodes = append(diagnosticCodes, diagnostic.Code)
+	}
 	run, err := s.store.CreateAdmissionShadowRun(store.CreateAdmissionShadowRunParams{
 		Project:              project,
 		SessionID:            sessionID,
 		Mode:                 preview.Acquisition.Mode,
-		AdmissionVersion:     preview.Acquisition.EvidenceVersion,
+		EvidenceVersion:      preview.Acquisition.EvidenceVersion,
+		GeneratorVersion:     AdmissionGeneratorVersion,
+		PolicyVersion:        AdmissionPolicyVersion,
+		DiagnosticCodes:      diagnosticCodes,
 		IncludedItems:        preview.Acquisition.IncludedItems,
 		IncludedContentBytes: preview.Acquisition.IncludedContentBytes,
 		Proposals:            proposalInputs,
@@ -205,21 +212,21 @@ func (s *Service) AdmissionMetrics(input AdmissionMetricsInput) (*AdmissionMetri
 		return nil, fmt.Errorf("list admission shadow proposals: %w", err)
 	}
 	metrics := &AdmissionMetricsResult{
-		Project:            project,
-		RunCount:           len(runs),
-		ProposalCount:      len(proposals),
-		ByAdmissionVersion: map[string]int{},
-		ByRecommendation:   map[string]int{},
-		ByCategory:         map[string]int{},
-		ByHumanVerdict:     map[string]int{},
-		ByReasonCode:       map[string]int{},
+		Project:          project,
+		RunCount:         len(runs),
+		ProposalCount:    len(proposals),
+		ByPolicyVersion:  map[string]int{},
+		ByRecommendation: map[string]int{},
+		ByCategory:       map[string]int{},
+		ByHumanVerdict:   map[string]int{},
+		ByReasonCode:     map[string]int{},
 	}
-	versionsByRun := make(map[string]string, len(runs))
+	policyVersionsByRun := make(map[string]string, len(runs))
 	for _, run := range runs {
-		versionsByRun[run.ID] = run.AdmissionVersion
+		policyVersionsByRun[run.ID] = run.PolicyVersion
 	}
 	for _, proposal := range proposals {
-		metrics.ByAdmissionVersion[versionsByRun[proposal.RunID]]++
+		metrics.ByPolicyVersion[policyVersionsByRun[proposal.RunID]]++
 		metrics.ByRecommendation[proposal.Recommendation]++
 		metrics.ByCategory[proposal.Category]++
 		if len(proposal.AssessmentReasonCodes) > 0 {

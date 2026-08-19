@@ -19,15 +19,17 @@ search/context, FTS, normal export/import, cloud materialization, and Promotion.
 Deleting a project also deletes its local shadow rows.
 
 The retained contract includes local identifiers, project and selected session ID,
-policy/evidence version, acquisition counts, redacted proposal text and metadata,
-reason codes, evidence reference identifiers, and bounded corrections. It excludes
+separate evidence/generator/policy versions, acquisition counts and diagnostic
+codes, redacted proposal text and metadata, reason codes, evidence reference
+identifiers, and bounded corrections. It excludes
 Evidence bundle content, prompt and summary text, transcripts, repository diffs,
 tool output, model prompts, and model responses. `<private>` blocks are redacted at
 acquisition and again at the store boundary.
 
-Corrections accept `admit`, `review`, or `reject`. They append events without
-mutating the original assessment; an identical retry of the latest normalized event
-is idempotent. Metrics use only the latest correction per proposal and report raw
+Corrections accept `admit`, `review`, or `reject`. They append events with a
+transactionally increasing per-proposal ordinal without mutating the original
+assessment; an identical retry of the latest normalized event is idempotent.
+Metrics use only the highest-ordinal correction per proposal and report raw
 counts and distributions. Any protected false reject blocks the automatic-reject
 readiness gate. Any explicitly marked unsupported proposal or privacy leak blocks
 the automatic-promotion readiness gate. The gates are advisory and enable no

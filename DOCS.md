@@ -112,13 +112,15 @@ migrations. The complete input grammar and examples are in
 
 `admission shadow` is an explicit, local-only evaluation path over an existing
 session. It reuses preview's bounded acquisition and policy, then atomically retains
-only redacted proposal/assessment snapshots and provenance identifiers. It never
+separate evidence/generator/policy versions, diagnostic codes, and only redacted
+proposal/assessment snapshots plus provenance identifiers. It never
 retains raw Evidence, creates a Memory, or changes `save`/`mem_save`. It is not run
 from lifecycle hooks.
 
 `admission review list` shows pending proposals for one project. `admission review
-mark` appends a human correction; identical retries are idempotent and later changes
-remain auditable. Optional `--unsupported` and `--privacy-leak` findings feed the
+mark` appends a human correction with a stable per-proposal ordinal; identical
+retries are idempotent and later changes remain auditable. Optional `--unsupported`
+and `--privacy-leak` findings feed the
 safety gates reported by `admission metrics`. Notes are bounded to 4,096 Unicode
 characters and must not contain raw evidence or secrets.
 

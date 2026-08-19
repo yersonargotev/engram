@@ -19,7 +19,9 @@ func TestRunAdmissionShadowRetainsAssessmentsWithoutCreatingMemories(t *testing.
 	if err != nil {
 		t.Fatalf("run admission shadow: %v", err)
 	}
-	if result.Run.Project != "engram" || result.Run.SessionID != "shadow-session" || result.Run.AdmissionVersion != EvidenceBundleVersion {
+	if result.Run.Project != "engram" || result.Run.SessionID != "shadow-session" ||
+		result.Run.EvidenceVersion != EvidenceBundleVersion || result.Run.GeneratorVersion != AdmissionGeneratorVersion ||
+		result.Run.PolicyVersion != AdmissionPolicyVersion {
 		t.Fatalf("run = %#v", result.Run)
 	}
 	if result.Run.IncludedItems != 2 || len(result.Proposals) != 2 {
@@ -57,7 +59,7 @@ func TestAdmissionReviewListMarkAndMetrics(t *testing.T) {
 	if len(pending.Proposals) != 2 {
 		t.Fatalf("pending proposals = %#v", pending.Proposals)
 	}
-	if len(pending.Runs) != 1 || pending.Runs[0].SessionID != "shadow-review" || pending.Runs[0].AdmissionVersion != EvidenceBundleVersion {
+	if len(pending.Runs) != 1 || pending.Runs[0].SessionID != "shadow-review" || pending.Runs[0].PolicyVersion != AdmissionPolicyVersion {
 		t.Fatalf("pending run metadata = %#v", pending.Runs)
 	}
 
@@ -114,8 +116,8 @@ func TestAdmissionReviewListMarkAndMetrics(t *testing.T) {
 	if metrics.ByRecommendation[string(AdmissionAdmit)] != 1 || metrics.ByRecommendation[string(AdmissionReview)] != 1 {
 		t.Fatalf("recommendations = %#v", metrics.ByRecommendation)
 	}
-	if metrics.ByAdmissionVersion[EvidenceBundleVersion] != 2 {
-		t.Fatalf("proposals by admission version = %#v", metrics.ByAdmissionVersion)
+	if metrics.ByPolicyVersion[AdmissionPolicyVersion] != 2 {
+		t.Fatalf("proposals by policy version = %#v", metrics.ByPolicyVersion)
 	}
 }
 
@@ -142,7 +144,9 @@ func TestAdmissionMetricsBlocksAutomaticRejectAfterProtectedFalseReject(t *testi
 	run, err := service.store.CreateAdmissionShadowRun(store.CreateAdmissionShadowRunParams{
 		Project:          "engram",
 		Mode:             "session",
-		AdmissionVersion: EvidenceBundleVersion,
+		EvidenceVersion:  EvidenceBundleVersion,
+		GeneratorVersion: AdmissionGeneratorVersion,
+		PolicyVersion:    AdmissionPolicyVersion,
 		Proposals: []store.AdmissionShadowProposalInput{{
 			Type:                  "decision",
 			Title:                 "Protected proposal",

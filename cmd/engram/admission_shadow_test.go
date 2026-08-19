@@ -102,6 +102,58 @@ func TestCmdAdmissionShadowHumanOutput(t *testing.T) {
 	}
 }
 
+func TestCmdAdmissionReviewAndMetricsHumanOutputIsComplete(t *testing.T) {
+	cfg := testConfig(t)
+	mustSeedAdmissionSession(t, cfg, "shadow-human-review", "engram", []string{
+		"Remember this: Human review output remains complete.",
+	}, "## Decisions\n- Human metrics expose distributions.")
+
+	withArgs(t, "engram", "admission", "shadow", "--project", "engram", "--session", "shadow-human-review", "--json")
+	stdout, stderr := captureOutput(t, func() { cmdAdmission(cfg) })
+	if stderr != "" {
+		t.Fatalf("shadow stderr = %q", stderr)
+	}
+	shadow := decodeCLIJSON(t, stdout)
+	proposals := shadow["proposals"].([]any)
+
+	withArgs(t, "engram", "admission", "review", "list", "--project", "engram")
+	stdout, stderr = captureOutput(t, func() { cmdAdmission(cfg) })
+	if stderr != "" {
+		t.Fatalf("review list stderr = %q", stderr)
+	}
+	for _, want := range []string{
+		"Human review output remains complete.", "Category: explicit_request", "protected: true",
+		"Assessment reasons: explicit_user_request", "Evidence: prompt:", "Policy: v1",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("review list missing %q: %q", want, stdout)
+		}
+	}
+
+	for _, proposal := range proposals {
+		id := proposal.(map[string]any)["id"].(string)
+		withArgs(t, "engram", "admission", "review", "mark", id, "--verdict", "admit")
+		_, stderr = captureOutput(t, func() { cmdAdmission(cfg) })
+		if stderr != "" {
+			t.Fatalf("mark stderr = %q", stderr)
+		}
+	}
+
+	withArgs(t, "engram", "admission", "metrics", "--project", "engram")
+	stdout, stderr = captureOutput(t, func() { cmdAdmission(cfg) })
+	if stderr != "" {
+		t.Fatalf("metrics stderr = %q", stderr)
+	}
+	for _, want := range []string{
+		"review events: 2", "Protected false rejects: 0", "Unsupported: 0; privacy leaks: 0",
+		"Policy versions:", "Recommendations:", "Categories:", "Human verdicts:", "Reason codes:",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("metrics missing %q: %q", want, stdout)
+		}
+	}
+}
+
 func TestCmdAdmissionShadowStrictErrorsAreJSON(t *testing.T) {
 	stubExitWithPanic(t)
 	cfg := testConfig(t)

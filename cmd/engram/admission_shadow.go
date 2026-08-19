@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/yersonargotev/engram/internal/memoryops"
@@ -332,19 +333,52 @@ func renderAdmissionReviewList(result *memoryops.AdmissionReviewListResult) {
 		return
 	}
 	for _, run := range result.Runs {
-		fmt.Printf("Run %s: session %s; admission %s; %d evidence item(s)\n",
-			run.ID, run.SessionID, run.AdmissionVersion, run.IncludedItems)
+		fmt.Printf("Run %s: session %s; evidence %s; generator %s; Policy: %s; %d evidence item(s)\n",
+			run.ID, run.SessionID, run.EvidenceVersion, run.GeneratorVersion,
+			run.PolicyVersion, run.IncludedItems)
+		if len(run.DiagnosticCodes) > 0 {
+			fmt.Printf("  Diagnostics: %s\n", strings.Join(run.DiagnosticCodes, ", "))
+		}
 	}
 	for index, proposal := range result.Proposals {
-		fmt.Printf("%d. [%s] %s (%s; run %s)\n",
-			index+1, proposal.Recommendation, proposal.Title, proposal.ID, proposal.RunID)
+		fmt.Printf("\n%d. [%s] %s\n", index+1, proposal.Recommendation, proposal.Title)
+		fmt.Printf("   Content: %s\n", proposal.Content)
+		fmt.Printf("   Category: %s; protected: %t; type: %s; scope: %s\n",
+			proposal.Category, proposal.Protected, proposal.Type, proposal.Scope)
+		fmt.Printf("   Proposal reasons: %s\n", strings.Join(proposal.ProposalReasonCodes, ", "))
+		fmt.Printf("   Assessment reasons: %s\n", strings.Join(proposal.AssessmentReasonCodes, ", "))
+		fmt.Printf("   Evidence: %s\n", strings.Join(proposal.EvidenceRefs, ", "))
+		fmt.Printf("   Proposal: %s; run: %s\n", proposal.ID, proposal.RunID)
 	}
 }
 
 func renderAdmissionMetrics(result *memoryops.AdmissionMetricsResult) {
 	fmt.Printf("Admission metrics for %s\n", result.Project)
-	fmt.Printf("Runs: %d; proposals: %d; reviewed: %d; pending: %d\n", result.RunCount, result.ProposalCount, result.ReviewedProposalCount, result.PendingProposalCount)
+	fmt.Printf("Runs: %d; proposals: %d; review events: %d; reviewed: %d; pending: %d\n",
+		result.RunCount, result.ProposalCount, result.ReviewCount,
+		result.ReviewedProposalCount, result.PendingProposalCount)
 	fmt.Printf("Agreement: %d; disagreement: %d\n", result.AgreementCount, result.DisagreementCount)
+	fmt.Printf("Protected false rejects: %d\n", result.ProtectedFalseRejectCount)
+	fmt.Printf("Unsupported: %d; privacy leaks: %d\n", result.UnsupportedCount, result.PrivacyLeakCount)
+	fmt.Printf("Reason-coded proposals: %d/%d\n", result.ReasonCodedProposalCount, result.ProposalCount)
+	renderAdmissionMetricMap("Policy versions", result.ByPolicyVersion)
+	renderAdmissionMetricMap("Recommendations", result.ByRecommendation)
+	renderAdmissionMetricMap("Categories", result.ByCategory)
+	renderAdmissionMetricMap("Human verdicts", result.ByHumanVerdict)
+	renderAdmissionMetricMap("Reason codes", result.ByReasonCode)
 	fmt.Printf("Automatic reject gate blocked: %t\n", result.AutomaticRejectGateBlocked)
 	fmt.Printf("Automatic promotion gate blocked: %t\n", result.AutomaticPromotionGateBlocked)
+}
+
+func renderAdmissionMetricMap(label string, values map[string]int) {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, values[key]))
+	}
+	fmt.Printf("%s: %s\n", label, strings.Join(parts, ", "))
 }

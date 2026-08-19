@@ -547,8 +547,10 @@ appends a new audit event. `--unsupported` and `--privacy-leak` record explicit
 safety findings. Notes are truncated to 4,096 Unicode characters; do not paste raw
 evidence or secrets into them.
 
-Shadow tables retain the selected session ID, acquisition counts, redacted proposal
-and assessment snapshots, provenance references, and append-only corrections. They
+Shadow tables retain the selected session ID, distinct evidence/generator/policy
+versions, acquisition counts and diagnostic codes, redacted proposal and assessment
+snapshots, provenance references, and append-only corrections with stable
+per-proposal ordinals. They
 never retain the Evidence bundle, prompt/summary text, repository diffs, or tool
 output. They are excluded from Memory search, context, normal export/import, sync,
 cloud, and promotion. `engram delete project` removes the project's shadow rows.

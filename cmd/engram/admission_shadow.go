@@ -87,27 +87,9 @@ func cmdAdmissionReview(cfg store.Config, jsonMode bool) {
 }
 
 func cmdAdmissionReviewList(cfg store.Config, jsonMode bool) {
-	project := ""
-	seenProject := false
-	for index := 4; index < len(os.Args); index++ {
-		switch os.Args[index] {
-		case "--json":
-			jsonMode = true
-		case "--project":
-			if seenProject || index+1 >= len(os.Args) || strings.HasPrefix(os.Args[index+1], "--") {
-				failCLI(jsonMode, "invalid_arguments", "--project requires one non-empty value", nil)
-				return
-			}
-			seenProject = true
-			project = strings.TrimSpace(os.Args[index+1])
-			index++
-		case "help", "--help", "-h":
-			printAdmissionUsage()
-			return
-		default:
-			admissionUnknownArgument(jsonMode, os.Args[index])
-			return
-		}
+	project, jsonMode, proceed := parseAdmissionProjectFlags(4, jsonMode)
+	if !proceed {
+		return
 	}
 	if project == "" {
 		failCLI(jsonMode, "invalid_arguments", "admission review list requires --project", nil)
@@ -134,6 +116,10 @@ func cmdAdmissionReviewList(cfg store.Config, jsonMode bool) {
 }
 
 func cmdAdmissionReviewMark(cfg store.Config, jsonMode bool) {
+	if len(os.Args) >= 5 && isAdmissionHelpArgument(os.Args[4]) {
+		printAdmissionUsage()
+		return
+	}
 	if len(os.Args) < 5 || strings.HasPrefix(os.Args[4], "--") || strings.TrimSpace(os.Args[4]) == "" {
 		failCLI(jsonMode, "invalid_arguments", "admission review mark requires PROPOSAL_ID", nil)
 		return
@@ -216,27 +202,9 @@ func cmdAdmissionReviewMark(cfg store.Config, jsonMode bool) {
 }
 
 func cmdAdmissionMetrics(cfg store.Config, jsonMode bool) {
-	project := ""
-	seenProject := false
-	for index := 3; index < len(os.Args); index++ {
-		switch os.Args[index] {
-		case "--json":
-			jsonMode = true
-		case "--project":
-			if seenProject || index+1 >= len(os.Args) || strings.HasPrefix(os.Args[index+1], "--") {
-				failCLI(jsonMode, "invalid_arguments", "--project requires one non-empty value", nil)
-				return
-			}
-			seenProject = true
-			project = strings.TrimSpace(os.Args[index+1])
-			index++
-		case "help", "--help", "-h":
-			printAdmissionUsage()
-			return
-		default:
-			admissionUnknownArgument(jsonMode, os.Args[index])
-			return
-		}
+	project, jsonMode, proceed := parseAdmissionProjectFlags(3, jsonMode)
+	if !proceed {
+		return
 	}
 	if project == "" {
 		failCLI(jsonMode, "invalid_arguments", "admission metrics requires --project", nil)
@@ -260,6 +228,41 @@ func cmdAdmissionMetrics(cfg store.Config, jsonMode bool) {
 		return
 	}
 	renderAdmissionMetrics(result)
+}
+
+func parseAdmissionProjectFlags(start int, jsonMode bool) (string, bool, bool) {
+	project := ""
+	seenProject := false
+	for index := start; index < len(os.Args); index++ {
+		switch os.Args[index] {
+		case "--json":
+			jsonMode = true
+		case "--project":
+			if seenProject || index+1 >= len(os.Args) || strings.HasPrefix(os.Args[index+1], "--") {
+				failCLI(jsonMode, "invalid_arguments", "--project requires one non-empty value", nil)
+				return "", jsonMode, false
+			}
+			seenProject = true
+			project = strings.TrimSpace(os.Args[index+1])
+			index++
+		case "help", "--help", "-h":
+			printAdmissionUsage()
+			return "", jsonMode, false
+		default:
+			admissionUnknownArgument(jsonMode, os.Args[index])
+			return "", jsonMode, false
+		}
+	}
+	return project, jsonMode, true
+}
+
+func isAdmissionHelpArgument(argument string) bool {
+	switch strings.ToLower(strings.TrimSpace(argument)) {
+	case "help", "--help", "-h":
+		return true
+	default:
+		return false
+	}
 }
 
 func openAdmissionProjectStore(cfg store.Config, project string, jsonMode bool) *store.Store {

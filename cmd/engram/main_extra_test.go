@@ -799,7 +799,7 @@ func TestMainAdmissionHelpDoesNotCreateLocalDatabase(t *testing.T) {
 		{"engram", "admission", "preview", "--help"},
 		{"engram", "admission", "shadow", "--help"},
 		{"engram", "admission", "review", "list", "--help"},
-		{"engram", "admission", "review", "mark", "proposal-id", "--help"},
+		{"engram", "admission", "review", "mark", "--help"},
 		{"engram", "admission", "metrics", "--help"},
 	} {
 		t.Run(strings.Join(args[2:], "_"), func(t *testing.T) {

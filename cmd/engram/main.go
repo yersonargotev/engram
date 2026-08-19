@@ -758,7 +758,8 @@ func handleConfigFreeCommand(args []string) bool {
 				cmdAdmission(store.Config{})
 				return true
 			}
-			if subcommand == "review" && args[2] == "mark" && len(args) >= 5 && isHelp(args[4]) {
+			if subcommand == "review" && args[2] == "mark" &&
+				((len(args) >= 4 && isHelp(args[3])) || (len(args) >= 5 && isHelp(args[4]))) {
 				cmdAdmission(store.Config{})
 				return true
 			}

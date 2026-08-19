@@ -275,6 +275,12 @@ engram timeline <obs_id>  Chronological context around an observation
 engram context [project]  Recent context from previous sessions
                           [--brief [--task INTENT] [--base REF] [--scope project|personal]
                            [--limit 1..5] [--json]]
+engram admission preview  Generate and assess Memory proposals without persisting them
+                          --project PROJECT (--input FILE|- | --session SESSION_ID) [--json]
+engram admission shadow   Explicitly retain derived local snapshots from one session
+                          --project PROJECT --session SESSION_ID [--json]
+engram admission review   List pending snapshots or append a human correction
+engram admission metrics  Report project-local evaluation metrics and safety gates
 engram stats              Memory statistics
 engram export [file]      Export all memories to JSON
 engram import <file>      Import memories from JSON

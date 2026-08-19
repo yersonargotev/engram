@@ -1097,6 +1097,10 @@ func (s *Store) migrate() error {
 		return err
 	}
 
+	if err := s.migrateAdmissionShadow(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -2251,6 +2255,27 @@ func (s *Store) SessionObservations(sessionID string, limit int) ([]Observation,
 	return s.queryObservations(query, sessionID, limit)
 }
 
+// LatestSessionObservationByType returns the newest active observation of a
+// given type for one session. A missing match is represented by (nil, nil).
+func (s *Store) LatestSessionObservationByType(sessionID, typ string) (*Observation, error) {
+	row := s.db.QueryRow(
+		`SELECT `+observationSelectColumns+`
+		 FROM observations
+		 WHERE session_id = ? AND type = ? AND deleted_at IS NULL
+		 ORDER BY datetime(created_at) DESC, id DESC
+		 LIMIT 1`,
+		strings.TrimSpace(sessionID), strings.TrimSpace(typ),
+	)
+	var observation Observation
+	if err := scanObservationRow(row, &observation); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &observation, nil
+}
+
 // ─── Observations ────────────────────────────────────────────────────────────
 
 func (s *Store) AddObservation(p AddObservationParams) (int64, error) {
@@ -2423,6 +2448,34 @@ func (s *Store) RecentObservations(project, scope string, limit int) ([]Observat
 	args = append(args, limit)
 
 	return s.queryObservations(query, args...)
+}
+
+// ObservationContentExists reports whether an active observation has the same
+// normalized content within one project and scope. It is a read-only counterpart
+// to the duplicate check used by persistence flows.
+func (s *Store) ObservationContentExists(content, project, scope string) (bool, error) {
+	if strings.TrimSpace(content) == "" {
+		return false, nil
+	}
+	project, _ = NormalizeProject(project)
+	scope = normalizeScope(scope)
+
+	var exists bool
+	err := s.db.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1
+			FROM observations
+			WHERE normalized_hash = ?
+			  AND LOWER(ifnull(project, '')) = ?
+			  AND scope = ?
+			  AND deleted_at IS NULL
+			LIMIT 1
+		)
+	`, hashNormalized(content), project, scope).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 func (s *Store) PinnedObservations(project, scope string) ([]Observation, error) {
@@ -2686,6 +2739,48 @@ func (s *Store) RecentPrompts(project string, limit int) ([]Prompt, error) {
 		results = append(results, p)
 	}
 	return results, rows.Err()
+}
+
+// SessionPrompts returns the latest bounded prompt window for one session in
+// chronological order, plus the exact number of prompts available.
+func (s *Store) SessionPrompts(sessionID string, limit int) ([]Prompt, int, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE session_id = ?`, sessionID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 || total == 0 {
+		return []Prompt{}, total, nil
+	}
+
+	rows, err := s.queryItHook(s.db, `
+		SELECT id, sync_id, session_id, content, project, created_at
+		FROM (
+			SELECT id, ifnull(sync_id, '') AS sync_id, session_id, content,
+			       ifnull(project, '') AS project, created_at
+			FROM user_prompts
+			WHERE session_id = ?
+			ORDER BY datetime(created_at) DESC, id DESC
+			LIMIT ?
+		)
+		ORDER BY datetime(created_at) ASC, id ASC`, sessionID, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	prompts := make([]Prompt, 0, min(limit, total))
+	for rows.Next() {
+		var prompt Prompt
+		if err := rows.Scan(&prompt.ID, &prompt.SyncID, &prompt.SessionID, &prompt.Content, &prompt.Project, &prompt.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		prompts = append(prompts, prompt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return prompts, total, nil
 }
 
 func (s *Store) SearchPrompts(query string, project string, limit int) ([]Prompt, error) {
@@ -3268,7 +3363,7 @@ func (s *Store) Stats() (*Stats, error) {
 // ─── Project Existence ───────────────────────────────────────────────────────
 
 // ProjectExists returns true if the named project has at least one record in
-// any of observations, sessions, prompts, or enrollment tables.
+// any of observations, sessions, prompts, enrollment, or local shadow tables.
 // Uses a single UNION ALL LIMIT 1 query for efficiency (REQ-315).
 // The sync_enrolled_projects branch ensures a project enrolled via EnrollProject()
 // without any other data is still recognized (JC1).
@@ -3286,9 +3381,11 @@ SELECT 1 FROM (
   SELECT project FROM user_prompts WHERE LOWER(project) = ?
   UNION ALL
   SELECT project FROM sync_enrolled_projects WHERE LOWER(project) = ?
+  UNION ALL
+  SELECT project FROM admission_shadow_runs WHERE LOWER(project) = ?
 ) LIMIT 1`
 	var dummy int
-	err := s.db.QueryRow(query, name, name, name, name).Scan(&dummy)
+	err := s.db.QueryRow(query, name, name, name, name, name).Scan(&dummy)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
@@ -4898,11 +4995,12 @@ func (s *Store) PruneProject(project string) (*PruneResult, error) {
 
 // DeleteProjectResult summarises a cascade project deletion.
 type DeleteProjectResult struct {
-	Project             string `json:"project"`
-	ObservationsDeleted int64  `json:"observations_deleted"`
-	PromptsDeleted      int64  `json:"prompts_deleted"`
-	SessionsDeleted     int64  `json:"sessions_deleted"`
-	HardDelete          bool   `json:"hard_delete"`
+	Project                    string `json:"project"`
+	ObservationsDeleted        int64  `json:"observations_deleted"`
+	PromptsDeleted             int64  `json:"prompts_deleted"`
+	SessionsDeleted            int64  `json:"sessions_deleted"`
+	AdmissionShadowRunsDeleted int64  `json:"admission_shadow_runs_deleted"`
+	HardDelete                 bool   `json:"hard_delete"`
 }
 
 // DeleteProject removes all data associated with a project in a single
@@ -4930,7 +5028,8 @@ func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectRe
 	result := &DeleteProjectResult{Project: project, HardDelete: hardDelete}
 
 	err := s.withTx(func(tx *sql.Tx) error {
-		// Existence check: at least one session or observation must exist.
+		// Existence check: at least one durable, lifecycle, or local shadow row
+		// must exist for this project.
 		var sessionCount int
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM sessions WHERE project = ?`, project).Scan(&sessionCount); err != nil {
 			return fmt.Errorf("delete project: count sessions: %w", err)
@@ -4939,7 +5038,11 @@ func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectRe
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM observations WHERE project = ?`, project).Scan(&obsCount); err != nil {
 			return fmt.Errorf("delete project: count observations: %w", err)
 		}
-		if sessionCount == 0 && obsCount == 0 {
+		var shadowRunCount int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM admission_shadow_runs WHERE project = ?`, project).Scan(&shadowRunCount); err != nil {
+			return fmt.Errorf("delete project: count admission shadow runs: %w", err)
+		}
+		if sessionCount == 0 && obsCount == 0 && shadowRunCount == 0 {
 			return fmt.Errorf("%w: %q", ErrProjectNotFound, project)
 		}
 
@@ -4980,7 +5083,15 @@ func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectRe
 		}
 		result.PromptsDeleted, _ = res.RowsAffected()
 
-		// 3. Delete sessions — only when hard-deleting, because observation rows
+		// 3. Delete local-only admission shadow runs. Proposal snapshots and
+		//    corrections cascade from the run and never enter sync/export.
+		res, err = s.execHook(tx, `DELETE FROM admission_shadow_runs WHERE project = ?`, project)
+		if err != nil {
+			return fmt.Errorf("delete project: delete admission shadow runs: %w", err)
+		}
+		result.AdmissionShadowRunsDeleted, _ = res.RowsAffected()
+
+		// 4. Delete sessions — only when hard-deleting, because observation rows
 		//    reference sessions via a NOT NULL FK and soft-deleted rows are still
 		//    present in the table.
 		if hardDelete {

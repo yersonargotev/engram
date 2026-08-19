@@ -1,0 +1,282 @@
+{
+  "version": "v1",
+  "scenarios": [
+    {
+      "id": "explicit_request_english",
+      "evidence": {
+        "version": "v1",
+        "items": [
+          {
+            "reference": "prompt-en",
+            "source": "user_prompt",
+            "content": "Remember this: Explicit saves remain authoritative."
+          }
+        ]
+      },
+      "expected": [
+        {
+          "type": "manual",
+          "title": "Explicit saves remain authoritative.",
+          "content": "Explicit saves remain authoritative.",
+          "scope": "project",
+          "category": "explicit_request",
+          "protected": true,
+          "evidence_refs": ["prompt-en"],
+          "reason_codes": ["explicit_user_request"]
+        }
+      ]
+    },
+    {
+      "id": "explicit_request_spanish",
+      "evidence": {
+        "version": "v1",
+        "items": [
+          {
+            "reference": "prompt-es",
+            "source": "user_prompt",
+            "content": "Recuerda esto: SQLite local es la fuente de verdad."
+          }
+        ]
+      },
+      "expected": [
+        {
+          "type": "manual",
+          "title": "SQLite local es la fuente de verdad.",
+          "content": "SQLite local es la fuente de verdad.",
+          "scope": "project",
+          "category": "explicit_request",
+          "protected": true,
+          "evidence_refs": ["prompt-es"],
+          "reason_codes": ["explicit_user_request"]
+        }
+      ]
+    },
+    {
+      "id": "structured_decision",
+      "evidence": {
+        "version": "v1",
+        "items": [
+          {
+            "reference": "summary-decision",
+            "source": "session_summary",
+            "content": "## Decisions\n- Keep admission assessments non-persisting in the first increment."
+          }
+        ]
+      },
+      "expected": [
+        {
+          "type": "decision",
+          "title": "Keep admission assessments non-persisting in the first increment.",
+          "content": "Keep admission assessments non-persisting in the first increment.",
+          "scope": "project",
+          "category": "decision",
+          "protected": true,
+          "evidence_refs": ["summary-decision"],
+          "reason_codes": ["structured_section"]
+        }
+      ]
+    },
+    {
+      "id": "structured_root_cause",
+      "evidence": {
+        "version": "v1",
+        "items": [
+          {
+            "reference": "note-root-cause",
+            "source": "agent_note",
+            "content": "### Root Causes\n1. Prompt capture was empty because the adapter never submitted the prompt."
+          }
+        ]
+      },
+      "expected": [
+        {
+          "type": "bugfix",
+          "title": "Prompt capture was empty because the adapter never submitted the prompt.",
+          "content": "Prompt capture was empty because the adapter never submitted the prompt.",
+          "scope": "project",
+          "category": "root_cause",
+          "protected": true,
+          "evidence_refs": ["note-root-cause"],
+          "reason_codes": ["structured_section"]
+        }
+      ]
+    },
+    {
+      "id": "structured_invariant",
+      "evidence": {
+        "version": "v1",
+        "items": [
+          {
+            "reference": "summary-invariant",
+            "source": "session_summary",
+            "content": "## Invariants\n- Protected proposals must never receive a reject recommendation."
+          }
+        ]
+      },
+      "expected": [
+        {
+          "type": "architecture",
+          "title": "Protected proposals must never receive a reject recommendation.",
+          "content": "Protected proposals must never receive a reject recommendation.",
+          "scope": "project",
+          "category": "invariant",
+          "protected": true,
+          "evidence_refs": ["summary-invariant"],
+          "reason_codes": ["structured_section"]
+        }
+      ]
+    },
+    {
+      "id": "structured_constraint",
+      "evidence": {
+        "version": "v1",
+        "items": [
+          {
+            "reference": "summary-constraint",
+            "source": "session_summary",
+            "content": "## Constraints\n- Never send complete transcripts to an admission model."
+          }
+        ]
+      },
+      "expected": [
+        {
+          "type": "policy",
+          "title": "Never send complete transcripts to an admission model.",
+          "content": "Never send complete transcripts to an admission model.",
+          "scope": "project",
+          "category": "constraint",
+          "protected": true,
+          "evidence_refs": ["summary-constraint"],
+          "reason_codes": ["structured_section"]
+        }
+      ]
+    },
+    {
+      "id": "structured_preference",
+      "evidence": {
+        "version": "v1",
+        "items": [
+          {
+            "reference": "summary-preference",
+            "source": "session_summary",
+            "content": "## Preferences\n- Prefer neutral Spanish in user-facing messages."
+          }
+        ]
+      },
+      "expected": [
+        {
+          "type": "preference",
+          "title": "Prefer neutral Spanish in user-facing messages.",
+          "content": "Prefer neutral Spanish in user-facing messages.",
+          "scope": "project",
+          "category": "preference",
+          "protected": true,
+          "evidence_refs": ["summary-preference"],
+          "reason_codes": ["structured_section"]
+        }
+      ]
+    },
+    {
+      "id": "structured_key_learning",
+      "evidence": {
+        "version": "v1",
+        "items": [
+          {
+            "reference": "summary-learning",
+            "source": "session_summary",
+            "content": "## Key Learnings\n- Session prompt coverage differs between agent adapters."
+          }
+        ]
+      },
+      "expected": [
+        {
+          "type": "discovery",
+          "title": "Session prompt coverage differs between agent adapters.",
+          "content": "Session prompt coverage differs between agent adapters.",
+          "scope": "project",
+          "category": "learning",
+          "protected": false,
+          "evidence_refs": ["summary-learning"],
+          "reason_codes": ["structured_section"]
+        }
+      ]
+    },
+    {
+      "id": "structured_sections_spanish",
+      "evidence": {
+        "version": "v1",
+        "items": [
+          {
+            "reference": "summary-es",
+            "source": "session_summary",
+            "content": "## Decisiones\n- Mantener los plugins delgados.\n\n## Aprendizajes clave\n- La captura pasiva requiere una sección estructurada."
+          }
+        ]
+      },
+      "expected": [
+        {
+          "type": "decision",
+          "title": "Mantener los plugins delgados.",
+          "content": "Mantener los plugins delgados.",
+          "scope": "project",
+          "category": "decision",
+          "protected": true,
+          "evidence_refs": ["summary-es"],
+          "reason_codes": ["structured_section"]
+        },
+        {
+          "type": "discovery",
+          "title": "La captura pasiva requiere una sección estructurada.",
+          "content": "La captura pasiva requiere una sección estructurada.",
+          "scope": "project",
+          "category": "learning",
+          "protected": false,
+          "evidence_refs": ["summary-es"],
+          "reason_codes": ["structured_section"]
+        }
+      ]
+    },
+    {
+      "id": "transient_progress_is_not_generated",
+      "evidence": {
+        "version": "v1",
+        "items": [
+          {
+            "reference": "note-progress",
+            "source": "agent_note",
+            "content": "I updated two files and the test suite is still running."
+          }
+        ]
+      },
+      "expected": []
+    },
+    {
+      "id": "tool_output_is_not_generated",
+      "evidence": {
+        "version": "v1",
+        "items": [
+          {
+            "reference": "tool-output",
+            "source": "tool_output",
+            "content": "## Decisions\n- 983 packages downloaded successfully."
+          }
+        ]
+      },
+      "expected": []
+    },
+    {
+      "id": "repository_signal_is_provenance_only",
+      "evidence": {
+        "version": "v1",
+        "items": [
+          {
+            "reference": "repository-signal",
+            "source": "repository_signal",
+            "content": "## Invariants\n- internal/store/store.go changed"
+          }
+        ]
+      },
+      "expected": []
+    }
+  ]
+}

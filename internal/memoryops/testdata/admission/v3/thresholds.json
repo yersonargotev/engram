@@ -1,0 +1,8 @@
+{
+  "version": "v3",
+  "minimum_generation_recall": 1.0,
+  "minimum_admit_precision": 1.0,
+  "maximum_protected_false_rejects": 0,
+  "maximum_unsupported_proposals": 0,
+  "maximum_privacy_leaks": 0
+}

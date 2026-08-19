@@ -392,9 +392,13 @@ Your production engram is fully untouched throughout.
 | `engram delete <obs_id>`                   | Delete an observation (soft by default; `--hard` removes permanently) |
 | `engram delete session <id>`               | Delete a session by ID (must have no observations)                    |
 | `engram delete prompt <id>`                | Delete a prompt by ID (permanent)                                     |
-| `engram delete project <name> [--hard]`    | Cascade-delete a project: soft-deletes observations by default (`--hard` removes permanently and also removes sessions) |
+| `engram delete project <name> [--hard]`    | Cascade-delete a project and its local shadow-admission data; soft-deletes observations by default (`--hard` also removes sessions) |
 | `engram timeline <obs_id>`                 | Chronological context                                           |
 | `engram context [project]`                 | Recent session context; add `--brief` for task selection         |
+| `engram admission preview`                 | Preview deterministic Memory proposals and assessments without persisting them |
+| `engram admission shadow`                  | Explicitly retain one local shadow run from an existing session |
+| `engram admission review list\|mark`       | Review pending shadow proposals and append human corrections |
+| `engram admission metrics`                 | Report project-local shadow evaluation metrics and safety gates |
 | `engram stats`                             | Memory statistics                                               |
 | `engram export [file]`                     | Export to JSON                                                  |
 | `engram import <file>`                     | Import from JSON                                                |
@@ -462,6 +466,104 @@ flags are `--task INTENT`, `--base REF`, `--scope project|personal`, `--limit 1.
 and `--json`; `--task`, `--base`, and `--limit` require `--brief`. Without `--brief`,
 the existing chronological human and JSON contracts are unchanged. The four
 examples above are executed as CLI contract tests.
+
+### Memory admission preview
+
+`admission preview` exercises Engram's deterministic proposal-generation and
+admission logic through the real local binary. Provide either a bounded Evidence
+bundle or an existing session ID; Engram reads existing Memories in the selected
+project to identify normalized exact duplicates, then prints advisory `admit`,
+`review`, or `reject` assessments. It does not persist proposals or assessments
+and does not change or intercept `save`/`mem_save`.
+
+```json
+{
+  "version": "v1",
+  "items": [
+    {
+      "reference": "prompt-1",
+      "source": "user_prompt",
+      "content": "Remember this: Explicit saves remain authoritative."
+    },
+    {
+      "reference": "summary-1",
+      "source": "session_summary",
+      "content": "## Key Learnings\n- Session evidence differs between agent adapters."
+    }
+  ]
+}
+```
+
+```bash
+engram admission preview --project engram --input evidence.json
+engram admission preview --project engram --input evidence.json --json
+cat evidence.json | engram admission preview --project engram --input - --json
+engram admission preview --project engram --session SESSION_ID
+engram admission preview --project engram --session SESSION_ID --json
+```
+
+`--input` and `--session` are mutually exclusive. Session mode reads the latest
+bounded window of persisted user prompts and the newest active `session_summary`
+Memory for that session. When no such Memory exists, it falls back to the summary
+stored on the session itself. The requested project must match the session's
+normalized project. Output includes per-source available, included, omitted, and
+truncated item counts, so bounded evidence is never presented as complete.
+
+The v1 input accepts at most 1 MiB of JSON, 32 items, 16 KiB per item, and 64 KiB
+of combined evidence content. Supported sources are `user_prompt`, `session_summary`,
+`agent_note`, `repository_signal`, and `tool_output`. Only `Remember this:` /
+`Recuerda esto:` user-prompt lines and numbered or bulleted items under Decisions,
+Root Causes, Invariants, Constraints, Preferences, or Key Learnings sections (and
+their Spanish equivalents) formulate proposals. Repository signals and tool output
+never formulate proposals in v1. Explicit requests are admitted; protected
+decisions, root causes, invariants, constraints, and preferences are never rejected;
+all ambiguous content remains `review`.
+
+This command is non-persisting at the memory-domain level. It opens Engram's normal
+local store, so existing database initialization and migrations still apply. There
+is no MCP, plugin, UI, automatic lifecycle execution, promotion, or LLM integration
+for admission preview in this increment. Session mode consumes only evidence
+already persisted by existing lifecycle integrations.
+
+#### Opt-in local shadow evaluation
+
+Shadow evaluation uses the same deterministic session acquisition and Admission
+assessment as preview, but retains a derived local snapshot so humans can correct
+the recommendation and measure it. Running the command is the opt-in boundary:
+Engram never invokes it from session lifecycle hooks.
+
+```bash
+engram admission shadow --project engram --session SESSION_ID
+engram admission review list --project engram
+engram admission review mark PROPOSAL_ID --verdict admit --note "Confirmed"
+engram admission review mark PROPOSAL_ID --verdict reject --unsupported
+engram admission metrics --project engram
+```
+
+Add `--json` to any command. `review list` returns only proposals without a human
+correction. `review mark` accepts `admit`, `review`, or `reject`; an identical retry
+returns the latest correction without duplicating it, while a later changed verdict
+appends a new audit event. `--unsupported` and `--privacy-leak` record explicit
+safety findings. Notes are truncated to 4,096 Unicode characters; do not paste raw
+evidence or secrets into them.
+
+Shadow tables retain the selected session ID, acquisition counts, redacted proposal
+and assessment snapshots, provenance references, and append-only corrections. They
+never retain the Evidence bundle, prompt/summary text, repository diffs, or tool
+output. They are excluded from Memory search, context, normal export/import, sync,
+cloud, and promotion. `engram delete project` removes the project's shadow rows.
+
+Metrics count runs, proposals, review events, uniquely reviewed and pending
+proposals, agreement/disagreement, distributions by policy version, recommendation,
+category, human verdict, and reason code. Any reported privacy leak or unsupported
+proposal blocks the automatic-promotion readiness gate; any protected false reject
+blocks the automatic-reject readiness gate. These gates are measurement signals
+only—V3 performs no automatic promotion or rejection.
+
+The checked-in V3 calibration and held-out fixtures are separate deterministic
+regression corpora with predeclared thresholds. They are synthetic and do not
+establish production readiness; that requires a consented, independently labeled
+real-session corpus.
 
 ### Key Environment Variables
 

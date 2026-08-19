@@ -83,6 +83,11 @@ engram suggest-topic-key [--type V] [--title V|--content V] [--json]
 engram conflicts judge <judgment-id> --relation R [--confidence N] [--json]
 engram conflicts compare <id-a> <id-b> --relation R --confidence N --reasoning TEXT [--json]
 engram projects merge --from SOURCE [--from SOURCE...] --to TARGET [--dry-run] [--yes] [--json]
+engram admission preview --project PROJECT (--input FILE|- | --session SESSION_ID) [--json]
+engram admission shadow --project PROJECT --session SESSION_ID [--json]
+engram admission review list --project PROJECT [--json]
+engram admission review mark PROPOSAL_ID --verdict admit|review|reject [--note TEXT] [--unsupported] [--privacy-leak] [--json]
+engram admission metrics --project PROJECT [--json]
 ```
 
 `save` exits successfully after the memory is persisted even when its response
@@ -90,6 +95,37 @@ contains `judgment_required: true`; callers can resolve each returned candidate
 with `conflicts judge`. Review timestamps and pins are local-only. `conflicts
 compare` persists a verdict supplied by the caller and never invokes an LLM;
 automatic semantic discovery remains under `conflicts scan --semantic`.
+
+`admission preview` accepts a strict v1 Evidence bundle and runs deterministic
+Memory proposal generation plus Admission assessment against existing local
+Memories. The report is advisory and non-persisting: it does not create proposals,
+assessments, observations, sessions, or prompts. It requires an existing explicit
+project and exactly one evidence source: a file or stdin (`--input -`), or an
+existing matching session (`--session SESSION_ID`). Session acquisition reads a
+bounded latest prompt window and the newest persisted session summary, then reports
+per-source coverage, omissions, and truncation. It never invokes an LLM.
+The v1 bounds are 1 MiB of JSON, 32 evidence items, 16 KiB per item, and 64 KiB
+combined content.
+Opening the normal SQLite store may still perform existing initialization or
+migrations. The complete input grammar and examples are in
+[README.md](README.md#memory-admission-preview).
+
+`admission shadow` is an explicit, local-only evaluation path over an existing
+session. It reuses preview's bounded acquisition and policy, then atomically retains
+only redacted proposal/assessment snapshots and provenance identifiers. It never
+retains raw Evidence, creates a Memory, or changes `save`/`mem_save`. It is not run
+from lifecycle hooks.
+
+`admission review list` shows pending proposals for one project. `admission review
+mark` appends a human correction; identical retries are idempotent and later changes
+remain auditable. Optional `--unsupported` and `--privacy-leak` findings feed the
+safety gates reported by `admission metrics`. Notes are bounded to 4,096 Unicode
+characters and must not contain raw evidence or secrets.
+
+The shadow tables are excluded from Memory search/context, normal export/import,
+sync, cloud, and promotion. `delete project` removes the project's retained shadow
+runs and their child rows. Metrics use the latest correction per proposal and report
+raw project-local counts; they do not enable automatic admission behavior.
 
 ## HTTP API Endpoints
 

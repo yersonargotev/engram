@@ -666,6 +666,8 @@ func main() {
 		cmdDoctor(cfg)
 	case "context":
 		cmdContext(cfg)
+	case "admission":
+		cmdAdmission(cfg)
 	case "stats":
 		cmdStats(cfg)
 	case "export":
@@ -706,7 +708,7 @@ func shouldCheckForUpdates(args []string) bool {
 	}
 	command := strings.ToLower(strings.TrimSpace(args[0]))
 	switch command {
-	case "mcp", "serve", "protocol-mode":
+	case "mcp", "serve", "protocol-mode", "admission":
 		return false
 	case "cloud":
 		return len(args) < 2 || strings.ToLower(strings.TrimSpace(args[1])) != "serve"
@@ -730,6 +732,34 @@ func handleConfigFreeCommand(args []string) bool {
 			subcommand := strings.ToLower(strings.TrimSpace(args[1]))
 			if subcommand == "--help" || subcommand == "-h" || subcommand == "help" {
 				cmdCloud(store.Config{})
+				return true
+			}
+		}
+	case "admission":
+		isHelp := func(arg string) bool {
+			arg = strings.ToLower(strings.TrimSpace(arg))
+			return arg == "--help" || arg == "-h" || arg == "help"
+		}
+		if len(args) >= 2 && isHelp(args[1]) {
+			cmdAdmission(store.Config{})
+			return true
+		}
+		if len(args) >= 3 {
+			subcommand := strings.ToLower(strings.TrimSpace(args[1]))
+			if (subcommand == "preview" || subcommand == "shadow" || subcommand == "metrics") && isHelp(args[2]) {
+				cmdAdmission(store.Config{})
+				return true
+			}
+			if subcommand == "review" && isHelp(args[2]) {
+				cmdAdmission(store.Config{})
+				return true
+			}
+			if subcommand == "review" && args[2] == "list" && len(args) >= 4 && isHelp(args[3]) {
+				cmdAdmission(store.Config{})
+				return true
+			}
+			if subcommand == "review" && args[2] == "mark" && len(args) >= 5 && isHelp(args[4]) {
+				cmdAdmission(store.Config{})
 				return true
 			}
 		}
@@ -1359,8 +1389,9 @@ func cmdDeleteProject(cfg store.Config) {
 	if hard {
 		kind = "hard-deleted"
 	}
-	fmt.Printf("Project %q %s: %d observation(s), %d prompt(s), %d session(s)\n",
-		result.Project, kind, result.ObservationsDeleted, result.PromptsDeleted, result.SessionsDeleted)
+	fmt.Printf("Project %q %s: %d observation(s), %d prompt(s), %d session(s), %d admission shadow run(s)\n",
+		result.Project, kind, result.ObservationsDeleted, result.PromptsDeleted,
+		result.SessionsDeleted, result.AdmissionShadowRunsDeleted)
 }
 
 func cmdTimeline(cfg store.Config) {
@@ -3071,7 +3102,7 @@ Commands:
                      Delete a prompt by ID (permanent)
   delete project <name> [--hard]
                      Cascade-delete a project: soft-deletes observations (or hard if --hard),
-                     removes prompts; with --hard also removes sessions
+                     removes prompts and local shadow runs; with --hard also removes sessions
   timeline <obs_id>  Show chronological context around an observation [--before N] [--after N]
   conflicts <sub>   Inspect and manage memory conflict relations
                        list     [--project P]  [--status S]  [--since RFC3339]  [--limit N]
@@ -3089,6 +3120,12 @@ Commands:
                        --brief [--task INTENT] [--base REF] [--scope project|personal]
                                [--limit 1..5] [--json]
                        Select complete durable memories for a task or clean feature branch.
+  admission preview  Generate and assess Memory proposals without persisting them
+                       --project PROJECT (--input FILE|- | --session SESSION_ID) [--json]
+  admission shadow   Retain one explicit local shadow run for later review
+                       --project PROJECT --session SESSION_ID [--json]
+  admission review   List or correct retained Memory proposals
+  admission metrics  Report project-local shadow evaluation metrics
   stats              Show memory system statistics
   export [file]      Export all memories to JSON (default: engram-export.json)
   import <file>      Import memories from a JSON export file

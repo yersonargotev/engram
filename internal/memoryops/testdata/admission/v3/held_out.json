@@ -1,0 +1,46 @@
+{
+  "version": "v3",
+  "partition": "held_out",
+  "scenarios": [
+    {
+      "id": "explicit_request_spanish",
+      "evidence": {
+        "version": "v1",
+        "items": [{"reference":"prompt-1","source":"user_prompt","content":"Recuerda esto: Las correcciones humanas son append-only."}]
+      },
+      "existing_contents": [],
+      "expected": [{"content":"Las correcciones humanas son append-only.","category":"explicit_request","recommendation":"admit"}],
+      "forbidden_text": []
+    },
+    {
+      "id": "private_learning_redacted",
+      "evidence": {
+        "version": "v1",
+        "items": [{"reference":"summary-1","source":"session_summary","content":"## Key Learnings\n- Never retain <private>held-out-secret</private> in shadow evidence."}]
+      },
+      "existing_contents": [],
+      "expected": [{"content":"Never retain [REDACTED] in shadow evidence.","category":"learning","recommendation":"review"}],
+      "forbidden_text": ["held-out-secret"]
+    },
+    {
+      "id": "repository_signal_is_provenance_only",
+      "evidence": {
+        "version": "v1",
+        "items": [{"reference":"repo-1","source":"repository_signal","content":"## Decisions\n- This must not formulate a proposal."}]
+      },
+      "existing_contents": [],
+      "expected": [],
+      "forbidden_text": []
+    },
+    {
+      "id": "duplicate_learning",
+      "evidence": {
+        "version": "v1",
+        "items": [{"reference":"summary-2","source":"session_summary","content":"## Key Learnings\n- Shadow metrics remain project-scoped."}]
+      },
+      "existing_contents": ["Shadow metrics remain project-scoped."],
+      "expected": [{"content":"Shadow metrics remain project-scoped.","category":"learning","recommendation":"reject"}],
+      "forbidden_text": []
+    }
+  ]
+}

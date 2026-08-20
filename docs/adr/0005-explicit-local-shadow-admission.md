@@ -17,11 +17,15 @@ snapshots plus append-only human corrections. The CLI remains a thin parser and
 renderer. Shadow rows have no sync triggers and are excluded from Memory
 search/context, FTS, normal export/import, cloud materialization, and Promotion.
 Deleting a project also deletes its local shadow rows.
+Project migration and merge move shadow runs atomically with the other project-owned
+records and report the moved count without producing shadow-data sync mutations.
 
 The retained contract includes local identifiers, project and selected session ID,
 separate evidence/generator/policy versions, acquisition counts and diagnostic
 codes, redacted proposal text and metadata, reason codes, evidence reference
-identifiers, and bounded corrections. It excludes
+identifiers restricted to `prompt:<local-id>`, `summary:<local-id>`, or the fixed
+`session-summary` fallback, and bounded corrections. Imported sync IDs are not valid
+shadow provenance. The retained contract excludes
 Evidence bundle content, prompt and summary text, transcripts, repository diffs,
 tool output, model prompts, and model responses. `<private>` blocks are redacted at
 acquisition and again at the store boundary.
@@ -30,10 +34,11 @@ Corrections accept `admit`, `review`, or `reject`. They append events with a
 transactionally increasing per-proposal ordinal without mutating the original
 assessment; an identical retry of the latest normalized event is idempotent.
 Metrics use only the highest-ordinal correction per proposal and report raw
-counts and distributions. Any protected false reject blocks the automatic-reject
-readiness gate. Any explicitly marked unsupported proposal or privacy leak blocks
-the automatic-promotion readiness gate. The gates are advisory and enable no
-automatic action.
+counts and distributions, including protected false rejects by proposal category
+and original assessment reason code. Any protected false reject blocks the
+automatic-reject readiness gate. Any explicitly marked unsupported proposal or
+privacy leak blocks the automatic-promotion readiness gate. The gates are advisory
+and enable no automatic action.
 
 Calibration and held-out fixtures remain separate and use thresholds declared in a
 versioned manifest. The V3 fixtures are synthetic regression evidence, not a claim

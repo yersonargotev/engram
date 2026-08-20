@@ -162,7 +162,7 @@ func TestCreateAdmissionShadowRunPersistsRedactedImmutableSnapshot(t *testing.T)
 				Recommendation:        "review",
 				ProposalReasonCodes:   []string{"structured_section"},
 				AssessmentReasonCodes: []string{"protected_proposal", "requires_review"},
-				EvidenceRefs:          []string{"prompt:1", "summary:<private>unclosed-ref-secret"},
+				EvidenceRefs:          []string{"prompt:1", "summary:1"},
 			},
 			{
 				Type:                  "discovery",
@@ -195,7 +195,7 @@ func TestCreateAdmissionShadowRunPersistsRedactedImmutableSnapshot(t *testing.T)
 	if err != nil {
 		t.Fatalf("marshal run: %v", err)
 	}
-	for _, secret := range []string{"title-secret", "nested-secret", "trailing-secret", "unclosed-ref-secret", "<private>", "</private>"} {
+	for _, secret := range []string{"title-secret", "nested-secret", "trailing-secret", "<private>", "</private>"} {
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("persisted result contains private value %q: %s", secret, encoded)
 		}
@@ -255,6 +255,31 @@ func TestCreateAdmissionShadowRunRollsBackAtomically(t *testing.T) {
 	}
 	if got := admissionShadowScalarInt(t, s, `SELECT COUNT(*) FROM admission_shadow_proposals`); got != 0 {
 		t.Fatalf("proposals after rollback = %d, want 0", got)
+	}
+}
+
+func TestCreateAdmissionShadowRunRejectsUnsafeEvidenceReferences(t *testing.T) {
+	s := newTestStore(t)
+	unsafeReference := "prompt:raw evidence disguised as an identifier"
+	proposal := validAdmissionShadowProposal("safe proposal")
+	proposal.EvidenceRefs = []string{unsafeReference}
+
+	_, err := s.CreateAdmissionShadowRun(CreateAdmissionShadowRunParams{
+		Project:          "engram",
+		Mode:             "session",
+		EvidenceVersion:  "v1",
+		GeneratorVersion: "v1",
+		PolicyVersion:    "v1",
+		Proposals:        []AdmissionShadowProposalInput{proposal},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid evidence reference") {
+		t.Fatalf("error = %v, want invalid evidence reference", err)
+	}
+	if strings.Contains(err.Error(), unsafeReference) {
+		t.Fatalf("error reflected unsafe evidence reference: %v", err)
+	}
+	if got := admissionShadowScalarInt(t, s, `SELECT COUNT(*) FROM admission_shadow_runs`); got != 0 {
+		t.Fatalf("runs after rejected reference = %d, want 0", got)
 	}
 }
 

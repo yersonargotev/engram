@@ -67,9 +67,12 @@ first-party secret-scanning documentation likewise distinguishes provider, gener
 and unstructured patterns rather than promising universal detection
 ([supported patterns](https://docs.github.com/en/code-security/reference/secret-security/supported-secret-scanning-patterns)).
 
-Evidence references are identifiers, not evidence excerpts. Do not retain hashes of
-raw prompts or summaries as a substitute: a hash adds no evaluation value here and
-can still enable guessing of low-entropy text.
+Evidence references are bounded identifiers, not evidence excerpts. Persist only
+controlled local forms: `prompt:<local-id>`, `summary:<local-id>`, or the fixed
+`session-summary` fallback. Never copy imported sync IDs into provenance because
+they are external input and may contain arbitrary source text or secrets. Do not
+retain hashes of raw prompts or summaries as a substitute: a hash adds no evaluation
+value here and can still enable guessing of low-entropy text.
 
 Local-only must be structural, not a flag that callers must remember. The shadow
 tables must have no code path into sync mutations/chunks, cloud materialization,
@@ -112,7 +115,7 @@ turn unreviewed proposals into implicit agreement or rejection.
 | Human outcome distribution | Uniquely reviewed proposals by latest human verdict |
 | Agreement | Latest human verdict equals original recommendation / uniquely reviewed proposals |
 | Disagreement | Latest human verdict differs / uniquely reviewed proposals |
-| Protected false rejects | Count of protected proposals originally `reject` whose latest human verdict is not `reject` |
+| Protected false rejects | Count of protected proposals originally `reject` whose latest human verdict is not `reject`, plus counts by proposal category and original assessment reason code |
 | Reason-code coverage | Proposals with at least one assessment reason code / all proposals, plus counts by reason code |
 
 `protected_false_rejects > 0` blocks any automatic-reject gate. Report this as an

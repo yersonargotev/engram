@@ -7,6 +7,43 @@ import (
 	"github.com/yersonargotev/engram/internal/store"
 )
 
+func TestRunAdmissionShadowUsesLocalEvidenceReferencesForImportedPrompts(t *testing.T) {
+	service := newTestService(t)
+	_, err := service.store.Import(&store.ExportData{
+		Sessions: []store.Session{{
+			ID:        "imported-session",
+			Project:   "engram",
+			Directory: "/work/engram",
+			StartedAt: "2026-08-19 10:00:00",
+		}},
+		Prompts: []store.Prompt{{
+			ID:        1,
+			SyncID:    "raw evidence or secret disguised as an identifier",
+			SessionID: "imported-session",
+			Project:   "engram",
+			Content:   "Remember this: Imported prompts use local provenance.",
+			CreatedAt: "2026-08-19 10:00:01",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("import session evidence: %v", err)
+	}
+
+	result, err := service.RunAdmissionShadow(AdmissionShadowInput{
+		Project:   "engram",
+		SessionID: "imported-session",
+	})
+	if err != nil {
+		t.Fatalf("run admission shadow: %v", err)
+	}
+	if len(result.Proposals) != 1 {
+		t.Fatalf("proposals = %#v, want one", result.Proposals)
+	}
+	if got := result.Proposals[0].EvidenceRefs; !reflect.DeepEqual(got, []string{"prompt:1"}) {
+		t.Fatalf("evidence references = %#v, want local prompt ID", got)
+	}
+}
+
 func TestRunAdmissionShadowRetainsAssessmentsWithoutCreatingMemories(t *testing.T) {
 	service := newTestService(t)
 	seedShadowSession(t, service.store, "shadow-session", "engram")
@@ -174,6 +211,12 @@ func TestAdmissionMetricsBlocksAutomaticRejectAfterProtectedFalseReject(t *testi
 	}
 	if !metrics.AutomaticRejectGateBlocked || metrics.ProtectedFalseRejectCount != 1 {
 		t.Fatalf("automatic reject gate = %#v", metrics)
+	}
+	if metrics.ProtectedFalseRejectsByCategory[string(ProposalDecision)] != 1 {
+		t.Fatalf("protected false rejects by category = %#v", metrics.ProtectedFalseRejectsByCategory)
+	}
+	if metrics.ProtectedFalseRejectsByReasonCode[ReasonNormalizedExactDuplicate] != 1 {
+		t.Fatalf("protected false rejects by reason code = %#v", metrics.ProtectedFalseRejectsByReasonCode)
 	}
 }
 

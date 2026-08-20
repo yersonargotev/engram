@@ -513,6 +513,44 @@ func TestCmdSaveAndSearch(t *testing.T) {
 	}
 }
 
+func TestCmdSavePreservesMalformedPrivateBlockCompatibility(t *testing.T) {
+	cfg := testConfig(t)
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "nested",
+			content: "before <private>outer <private>inner-secret</private> tail-secret</private> after",
+			want:    "before [REDACTED] tail-secret</private> after",
+		},
+		{
+			name:    "unclosed",
+			content: "before <private>unclosed-secret tail",
+			want:    "before <private>unclosed-secret tail",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			withArgs(t, "engram", "save", tc.name, tc.content, "--project", "compat", "--json")
+			stdout, stderr := captureOutput(t, func() { cmdSave(cfg) })
+			if stderr != "" {
+				t.Fatalf("save stderr = %q", stderr)
+			}
+			output := decodeCLIJSON(t, stdout)
+			observation, ok := output["observation"].(map[string]any)
+			if !ok {
+				t.Fatalf("save output = %#v", output)
+			}
+			if got := observation["content"]; got != tc.want {
+				t.Fatalf("saved content = %q, want compatibility value %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCmdTimeline(t *testing.T) {
 	cfg := testConfig(t)
 	mustSeedObservation(t, cfg, "s-1", "proj", "note", "first", "first content", "project")

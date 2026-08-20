@@ -549,18 +549,22 @@ evidence or secrets into them.
 
 Shadow tables retain the selected session ID, distinct evidence/generator/policy
 versions, acquisition counts and diagnostic codes, redacted proposal and assessment
-snapshots, provenance references, and append-only corrections with stable
-per-proposal ordinals. They
+snapshots, bounded local provenance references (`prompt:<local-id>`,
+`summary:<local-id>`, or `session-summary`), and append-only corrections with stable
+per-proposal ordinals. Imported sync IDs are never copied into provenance. They
 never retain the Evidence bundle, prompt/summary text, repository diffs, or tool
 output. They are excluded from Memory search, context, normal export/import, sync,
-cloud, and promotion. `engram delete project` removes the project's shadow rows.
+cloud, and promotion. `engram delete project` removes the project's shadow rows;
+project migration and merge move them atomically and report their count without
+creating shadow-data sync mutations.
 
 Metrics count runs, proposals, review events, uniquely reviewed and pending
 proposals, agreement/disagreement, distributions by policy version, recommendation,
 category, human verdict, and reason code. Any reported privacy leak or unsupported
 proposal blocks the automatic-promotion readiness gate; any protected false reject
-blocks the automatic-reject readiness gate. These gates are measurement signals
-only—V3 performs no automatic promotion or rejection.
+blocks the automatic-reject readiness gate. Protected false rejects are also broken
+down by proposal category and original assessment reason code. These gates are
+measurement signals only—V3 performs no automatic promotion or rejection.
 
 The checked-in V3 calibration and held-out fixtures are separate deterministic
 regression corpora with predeclared thresholds. They are synthetic and do not

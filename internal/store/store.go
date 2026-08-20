@@ -4544,10 +4544,11 @@ func (s *Store) IsProjectEnrolled(project string) (bool, error) {
 // ─── Project Migration ───────────────────────────────────────────────────────
 
 type MigrateResult struct {
-	Migrated            bool  `json:"migrated"`
-	ObservationsUpdated int64 `json:"observations_updated"`
-	SessionsUpdated     int64 `json:"sessions_updated"`
-	PromptsUpdated      int64 `json:"prompts_updated"`
+	Migrated                   bool  `json:"migrated"`
+	ObservationsUpdated        int64 `json:"observations_updated"`
+	SessionsUpdated            int64 `json:"sessions_updated"`
+	PromptsUpdated             int64 `json:"prompts_updated"`
+	AdmissionShadowRunsUpdated int64 `json:"admission_shadow_runs_updated"`
 }
 
 func (s *Store) MigrateProject(oldName, newName string) (*MigrateResult, error) {
@@ -4564,7 +4565,9 @@ func (s *Store) MigrateProject(oldName, newName string) (*MigrateResult, error) 
 			SELECT 1 FROM sessions WHERE project = ?
 			UNION ALL
 			SELECT 1 FROM user_prompts WHERE project = ?
-		)`, oldName, oldName, oldName,
+			UNION ALL
+			SELECT 1 FROM admission_shadow_runs WHERE project = ?
+		)`, oldName, oldName, oldName, oldName,
 	).Scan(&exists)
 	if err != nil {
 		return nil, fmt.Errorf("check old project: %w", err)
@@ -4594,6 +4597,12 @@ func (s *Store) MigrateProject(oldName, newName string) (*MigrateResult, error) 
 			return fmt.Errorf("migrate prompts: %w", err)
 		}
 		result.PromptsUpdated, _ = res.RowsAffected()
+
+		res, err = s.execHook(tx, `UPDATE admission_shadow_runs SET project = ? WHERE project = ?`, newName, oldName)
+		if err != nil {
+			return fmt.Errorf("migrate admission shadow runs: %w", err)
+		}
+		result.AdmissionShadowRunsUpdated, _ = res.RowsAffected()
 
 		// Enqueue sync mutations so cloud sync picks up the migrated records.
 		// Same pattern used by EnrollProject and MergeProjects.
@@ -4777,11 +4786,12 @@ func (s *Store) CountObservationsForProject(name string) (int, error) {
 // MergeResult summarizes the result of merging multiple project name variants
 // into a single canonical project name.
 type MergeResult struct {
-	Canonical           string   `json:"canonical"`
-	SourcesMerged       []string `json:"sources_merged"`
-	ObservationsUpdated int64    `json:"observations_updated"`
-	SessionsUpdated     int64    `json:"sessions_updated"`
-	PromptsUpdated      int64    `json:"prompts_updated"`
+	Canonical                  string   `json:"canonical"`
+	SourcesMerged              []string `json:"sources_merged"`
+	ObservationsUpdated        int64    `json:"observations_updated"`
+	SessionsUpdated            int64    `json:"sessions_updated"`
+	PromptsUpdated             int64    `json:"prompts_updated"`
+	AdmissionShadowRunsUpdated int64    `json:"admission_shadow_runs_updated"`
 }
 
 // PreviewMergeProjects reports the rows that MergeProjects would update without
@@ -4792,7 +4802,7 @@ func (s *Store) PreviewMergeProjects(sources []string, canonical string) (*Merge
 	if canonical == "" {
 		return nil, fmt.Errorf("canonical project name must not be empty")
 	}
-	result := &MergeResult{Canonical: canonical}
+	result := &MergeResult{Canonical: canonical, SourcesMerged: []string{}}
 	seen := map[string]struct{}{}
 	for _, input := range sources {
 		normalized, _ := NormalizeProject(input)
@@ -4812,7 +4822,7 @@ func (s *Store) PreviewMergeProjects(sources []string, canonical string) (*Merge
 		for i, v := range variants {
 			args[i] = v
 		}
-		var observations, sessions, prompts int64
+		var observations, sessions, prompts, shadowRuns int64
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM observations WHERE project IN (`+placeholders+`)`, args...).Scan(&observations); err != nil {
 			return nil, err
 		}
@@ -4822,12 +4832,16 @@ func (s *Store) PreviewMergeProjects(sources []string, canonical string) (*Merge
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE project IN (`+placeholders+`)`, args...).Scan(&prompts); err != nil {
 			return nil, err
 		}
-		if observations+sessions+prompts > 0 {
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM admission_shadow_runs WHERE project IN (`+placeholders+`)`, args...).Scan(&shadowRuns); err != nil {
+			return nil, err
+		}
+		if observations+sessions+prompts+shadowRuns > 0 {
 			result.SourcesMerged = append(result.SourcesMerged, normalized)
 		}
 		result.ObservationsUpdated += observations
 		result.SessionsUpdated += sessions
 		result.PromptsUpdated += prompts
+		result.AdmissionShadowRunsUpdated += shadowRuns
 	}
 	return result, nil
 }
@@ -4842,7 +4856,7 @@ func (s *Store) MergeProjects(sources []string, canonical string) (*MergeResult,
 		return nil, fmt.Errorf("canonical project name must not be empty")
 	}
 
-	result := &MergeResult{Canonical: canonical}
+	result := &MergeResult{Canonical: canonical, SourcesMerged: []string{}}
 
 	err := s.withTx(func(tx *sql.Tx) error {
 		seenSources := make(map[string]struct{})
@@ -4867,6 +4881,7 @@ func (s *Store) MergeProjects(sources []string, canonical string) (*MergeResult,
 			for _, variant := range sourceVariants {
 				args = append(args, variant)
 			}
+			sourceRowsUpdated := int64(0)
 
 			res, err := s.execHook(tx, `UPDATE observations SET project = ? WHERE project IN (`+placeholders+`)`, args...)
 			if err != nil {
@@ -4874,6 +4889,7 @@ func (s *Store) MergeProjects(sources []string, canonical string) (*MergeResult,
 			}
 			n, _ := res.RowsAffected()
 			result.ObservationsUpdated += n
+			sourceRowsUpdated += n
 
 			res, err = s.execHook(tx, `UPDATE sessions SET project = ? WHERE project IN (`+placeholders+`)`, args...)
 			if err != nil {
@@ -4881,6 +4897,7 @@ func (s *Store) MergeProjects(sources []string, canonical string) (*MergeResult,
 			}
 			n, _ = res.RowsAffected()
 			result.SessionsUpdated += n
+			sourceRowsUpdated += n
 
 			res, err = s.execHook(tx, `UPDATE user_prompts SET project = ? WHERE project IN (`+placeholders+`)`, args...)
 			if err != nil {
@@ -4888,8 +4905,19 @@ func (s *Store) MergeProjects(sources []string, canonical string) (*MergeResult,
 			}
 			n, _ = res.RowsAffected()
 			result.PromptsUpdated += n
+			sourceRowsUpdated += n
 
-			result.SourcesMerged = append(result.SourcesMerged, srcNormalized)
+			res, err = s.execHook(tx, `UPDATE admission_shadow_runs SET project = ? WHERE project IN (`+placeholders+`)`, args...)
+			if err != nil {
+				return fmt.Errorf("merge admission shadow runs %q → %q: %w", srcNormalized, canonical, err)
+			}
+			n, _ = res.RowsAffected()
+			result.AdmissionShadowRunsUpdated += n
+			sourceRowsUpdated += n
+
+			if sourceRowsUpdated > 0 {
+				result.SourcesMerged = append(result.SourcesMerged, srcNormalized)
+			}
 		}
 		// Enqueue sync mutations so cloud sync picks up the merged records.
 		// Same pattern used by EnrollProject.
@@ -6759,11 +6787,13 @@ func normalizeExistingSyncID(existing, prefix string) string {
 	return newSyncID(prefix)
 }
 
-// stripPrivateTags removes all <private>...</private> content from a string.
-// This ensures sensitive information (API keys, passwords, personal data)
-// is never persisted to the memory database.
+// privateTagRegex preserves the established save/mem_save redaction contract.
+// Admission uses RedactPrivateBlocks directly because its retained-data contract
+// additionally covers nested and unclosed private blocks.
+var privateTagRegex = regexp.MustCompile(`(?is)<private>.*?</private>`)
+
 func stripPrivateTags(s string) string {
-	return RedactPrivateBlocks(s)
+	return strings.TrimSpace(privateTagRegex.ReplaceAllString(s, "[REDACTED]"))
 }
 
 var privateTagBoundaryRegex = regexp.MustCompile(`(?i)</?private>`)

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	mcppkg "github.com/mark3labs/mcp-go/mcp"
 	"github.com/yersonargotev/engram/internal/project"
 	"github.com/yersonargotev/engram/internal/store"
-	mcppkg "github.com/mark3labs/mcp-go/mcp"
 )
 
 func newMCPTestStore(t *testing.T) *store.Store {
@@ -376,6 +376,29 @@ func TestHandleSaveRecordsActivityForExplicitSessionID(t *testing.T) {
 	}
 	if got := activity.ActivityScore(defaultSessionID("engram")); got != "" {
 		t.Fatalf("expected default session activity to remain untouched, got %q", got)
+	}
+}
+
+func TestHandleSavePreservesMalformedPrivateBlockCompatibility(t *testing.T) {
+	s := newMCPTestStore(t)
+	h := handleSave(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
+	content := "before <private>outer <private>inner-secret</private> tail-secret</private> after"
+
+	res, err := h(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+		"title":   "Malformed private block compatibility",
+		"content": content,
+		"type":    "discovery",
+		"project": "engram",
+	}}})
+	if err != nil || res.IsError {
+		t.Fatalf("mem_save: err=%v isError=%v text=%q", err, res.IsError, callResultText(t, res))
+	}
+	observations, err := s.RecentObservations("engram", "project", 1)
+	if err != nil {
+		t.Fatalf("recent observations: %v", err)
+	}
+	if len(observations) != 1 || observations[0].Content != "before [REDACTED] tail-secret</private> after" {
+		t.Fatalf("saved observations = %#v", observations)
 	}
 }
 
@@ -2911,6 +2934,19 @@ func TestHandleMergeProjects(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("add observation engram-memory: %v", err)
 	}
+	if _, err := s.CreateAdmissionShadowRun(store.CreateAdmissionShadowRunParams{
+		Project:          "engram-memory",
+		Mode:             "session",
+		EvidenceVersion:  "v1",
+		GeneratorVersion: "v1",
+		PolicyVersion:    "v1",
+		Proposals: []store.AdmissionShadowProposalInput{{
+			Type: "decision", Title: "shadow", Content: "shadow content", Scope: "project",
+			Category: "decision", Recommendation: "review", EvidenceRefs: []string{"prompt:1"},
+		}},
+	}); err != nil {
+		t.Fatalf("create admission shadow run: %v", err)
+	}
 
 	h := handleMergeProjects(s)
 
@@ -2933,6 +2969,9 @@ func TestHandleMergeProjects(t *testing.T) {
 	}
 	if !strings.Contains(text, "Observations moved") {
 		t.Fatalf("expected observations count in result, got %q", text)
+	}
+	if !strings.Contains(text, "Admission shadow runs moved: 1") {
+		t.Fatalf("expected shadow run count in result, got %q", text)
 	}
 
 	// Verify that engram-memory observations are now under "engram"

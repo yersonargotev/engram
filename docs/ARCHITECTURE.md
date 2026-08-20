@@ -292,6 +292,7 @@ engram conflicts <sub>    Inspect and manage memory conflict relations
                             list, show, stats, scan, deferred, judge, compare
 engram doctor             Run read-only operational diagnostics [--json] [--project P] [--check CODE]
 engram projects merge     Deterministic multi-source merge [--dry-run] [--yes] [--json]
+                          (includes local shadow-admission ownership; no shadow sync mutations)
 engram cloud status       Show cloud runtime/config status
 engram cloud config --server <url>
                           Configure cloud server URL

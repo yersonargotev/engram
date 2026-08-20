@@ -294,10 +294,7 @@ func (s *Service) acquireSessionAdmissionEvidence(project, sessionID string) (Ev
 			break
 		}
 		prompt := prompts[index]
-		reference := "prompt:" + prompt.SyncID
-		if prompt.SyncID == "" {
-			reference = "prompt:" + strconv.FormatInt(prompt.ID, 10)
-		}
+		reference := "prompt:" + strconv.FormatInt(prompt.ID, 10)
 		item, truncated := boundAcquiredEvidence(acquiredEvidenceItem{
 			reference: reference,
 			source:    EvidenceSourceUserPrompt,
@@ -344,17 +341,14 @@ func (s *Service) sessionSummaryEvidence(session *store.Session) (*acquiredEvide
 		return nil, fmt.Errorf("load admission preview session summary: %w", err)
 	}
 	if observation != nil && strings.TrimSpace(observation.Content) != "" {
-		reference := "summary:" + observation.SyncID
-		if observation.SyncID == "" {
-			reference = "summary:" + strconv.FormatInt(observation.ID, 10)
-		}
+		reference := "summary:" + strconv.FormatInt(observation.ID, 10)
 		return &acquiredEvidenceItem{reference: reference, source: EvidenceSourceSessionSummary, content: observation.Content}, nil
 	}
 	if session.Summary == nil || strings.TrimSpace(*session.Summary) == "" {
 		return nil, nil
 	}
 	return &acquiredEvidenceItem{
-		reference: "session:" + session.ID + ":summary",
+		reference: "session-summary",
 		source:    EvidenceSourceSessionSummary,
 		content:   *session.Summary,
 	}, nil

@@ -2252,7 +2252,7 @@ func cmdProjectsMerge(cfg store.Config) {
 			_ = writeCLIJSON(preview)
 			return
 		}
-		fmt.Printf("Would merge %v into %q: %d observations, %d sessions, %d prompts\n", preview.SourcesMerged, target, preview.ObservationsUpdated, preview.SessionsUpdated, preview.PromptsUpdated)
+		fmt.Printf("Would merge %v into %q: %d observations, %d sessions, %d prompts, %d admission shadow runs\n", preview.SourcesMerged, target, preview.ObservationsUpdated, preview.SessionsUpdated, preview.PromptsUpdated, preview.AdmissionShadowRunsUpdated)
 		return
 	}
 	if !yes {
@@ -2277,7 +2277,7 @@ func cmdProjectsMerge(cfg store.Config) {
 		_ = writeCLIJSON(result)
 		return
 	}
-	fmt.Printf("Merged %v into %q: %d observations, %d sessions, %d prompts\n", result.SourcesMerged, result.Canonical, result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated)
+	fmt.Printf("Merged %v into %q: %d observations, %d sessions, %d prompts, %d admission shadow runs\n", result.SourcesMerged, result.Canonical, result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated, result.AdmissionShadowRunsUpdated)
 }
 
 func cmdProjectsList(cfg store.Config) {
@@ -2565,6 +2565,7 @@ func cmdProjectsConsolidate(cfg store.Config) {
 		fmt.Printf("  Observations: %d\n", result.ObservationsUpdated)
 		fmt.Printf("  Sessions:     %d\n", result.SessionsUpdated)
 		fmt.Printf("  Prompts:      %d\n", result.PromptsUpdated)
+		fmt.Printf("  Shadow runs:  %d\n", result.AdmissionShadowRunsUpdated)
 		return
 	}
 
@@ -2675,8 +2676,8 @@ func cmdProjectsConsolidate(cfg store.Config) {
 			fmt.Println()
 			continue
 		}
-		fmt.Printf("  Merged: %d obs, %d sessions, %d prompts\n\n",
-			result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated)
+		fmt.Printf("  Merged: %d obs, %d sessions, %d prompts, %d shadow runs\n\n",
+			result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated, result.AdmissionShadowRunsUpdated)
 	}
 }
 

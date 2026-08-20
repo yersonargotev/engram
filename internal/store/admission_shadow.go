@@ -5,12 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
-const MaxAdmissionShadowReviewNoteLength = 4096
+const (
+	MaxAdmissionShadowReviewNoteLength       = 4096
+	MaxAdmissionShadowEvidenceReferences     = 32
+	MaxAdmissionShadowEvidenceReferenceBytes = 64
+)
 
 var ErrAdmissionShadowProposalNotFound = errors.New("admission shadow proposal not found")
+
+var admissionShadowEvidenceReferencePattern = regexp.MustCompile(`^(?:prompt|summary):[1-9][0-9]*$`)
 
 type AdmissionShadowRun struct {
 	ID                   string                    `json:"id"`
@@ -155,14 +162,14 @@ func (s *Store) migrateAdmissionShadow() error {
 // its proposal snapshots. Its input deliberately cannot carry raw evidence,
 // prompts, or summaries.
 func (s *Store) CreateAdmissionShadowRun(p CreateAdmissionShadowRunParams) (*AdmissionShadowRun, error) {
-	p.Project = stripPrivateTags(p.Project)
+	p.Project = RedactPrivateBlocks(p.Project)
 	p.Project, _ = NormalizeProject(p.Project)
 	p.Project = strings.TrimSpace(p.Project)
-	p.SessionID = stripPrivateTags(p.SessionID)
-	p.Mode = stripPrivateTags(p.Mode)
-	p.EvidenceVersion = stripPrivateTags(p.EvidenceVersion)
-	p.GeneratorVersion = stripPrivateTags(p.GeneratorVersion)
-	p.PolicyVersion = stripPrivateTags(p.PolicyVersion)
+	p.SessionID = RedactPrivateBlocks(p.SessionID)
+	p.Mode = RedactPrivateBlocks(p.Mode)
+	p.EvidenceVersion = RedactPrivateBlocks(p.EvidenceVersion)
+	p.GeneratorVersion = RedactPrivateBlocks(p.GeneratorVersion)
+	p.PolicyVersion = RedactPrivateBlocks(p.PolicyVersion)
 	p.DiagnosticCodes = redactAdmissionShadowStrings(p.DiagnosticCodes)
 	if p.Project == "" {
 		return nil, fmt.Errorf("admission shadow run requires project")
@@ -394,15 +401,19 @@ func (s *Store) AddAdmissionShadowReview(p AddAdmissionShadowReviewParams) (*Adm
 }
 
 func normalizeAdmissionShadowProposalInput(input AdmissionShadowProposalInput) (AdmissionShadowProposalInput, error) {
-	input.Type = stripPrivateTags(input.Type)
-	input.Title = stripPrivateTags(input.Title)
-	input.Content = stripPrivateTags(input.Content)
-	input.Scope = stripPrivateTags(input.Scope)
-	input.Category = stripPrivateTags(input.Category)
-	input.Recommendation = strings.ToLower(stripPrivateTags(input.Recommendation))
+	input.Type = RedactPrivateBlocks(input.Type)
+	input.Title = RedactPrivateBlocks(input.Title)
+	input.Content = RedactPrivateBlocks(input.Content)
+	input.Scope = RedactPrivateBlocks(input.Scope)
+	input.Category = RedactPrivateBlocks(input.Category)
+	input.Recommendation = strings.ToLower(RedactPrivateBlocks(input.Recommendation))
 	input.ProposalReasonCodes = redactAdmissionShadowStrings(input.ProposalReasonCodes)
 	input.AssessmentReasonCodes = redactAdmissionShadowStrings(input.AssessmentReasonCodes)
-	input.EvidenceRefs = redactAdmissionShadowStrings(input.EvidenceRefs)
+	var err error
+	input.EvidenceRefs, err = normalizeAdmissionShadowEvidenceReferences(input.EvidenceRefs)
+	if err != nil {
+		return input, err
+	}
 	if input.Type == "" || input.Title == "" || input.Scope == "" || input.Category == "" {
 		return input, fmt.Errorf("type, title, scope, and category are required")
 	}
@@ -422,7 +433,7 @@ func validAdmissionShadowVerdict(verdict string) bool {
 }
 
 func normalizeAdmissionShadowReviewNote(note string) string {
-	note = stripPrivateTags(note)
+	note = RedactPrivateBlocks(note)
 	runes := []rune(note)
 	if len(runes) > MaxAdmissionShadowReviewNoteLength {
 		note = string(runes[:MaxAdmissionShadowReviewNoteLength])
@@ -433,9 +444,25 @@ func normalizeAdmissionShadowReviewNote(note string) string {
 func redactAdmissionShadowStrings(values []string) []string {
 	result := make([]string, 0, len(values))
 	for _, value := range values {
-		result = append(result, stripPrivateTags(value))
+		result = append(result, RedactPrivateBlocks(value))
 	}
 	return result
+}
+
+func normalizeAdmissionShadowEvidenceReferences(values []string) ([]string, error) {
+	if len(values) > MaxAdmissionShadowEvidenceReferences {
+		return nil, fmt.Errorf("admission shadow proposal has %d evidence references: maximum is %d", len(values), MaxAdmissionShadowEvidenceReferences)
+	}
+	result := make([]string, 0, len(values))
+	for index, raw := range values {
+		value := strings.TrimSpace(raw)
+		if len([]byte(value)) > MaxAdmissionShadowEvidenceReferenceBytes ||
+			(value != "session-summary" && !admissionShadowEvidenceReferencePattern.MatchString(value)) {
+			return nil, fmt.Errorf("invalid evidence reference at index %d", index)
+		}
+		result = append(result, value)
+	}
+	return result, nil
 }
 
 func marshalAdmissionShadowStrings(values []string) (string, error) {

@@ -113,9 +113,11 @@ migrations. The complete input grammar and examples are in
 `admission shadow` is an explicit, local-only evaluation path over an existing
 session. It reuses preview's bounded acquisition and policy, then atomically retains
 separate evidence/generator/policy versions, diagnostic codes, and only redacted
-proposal/assessment snapshots plus provenance identifiers. It never
-retains raw Evidence, creates a Memory, or changes `save`/`mem_save`. It is not run
-from lifecycle hooks.
+proposal/assessment snapshots plus bounded local provenance identifiers:
+`prompt:<local-id>`, `summary:<local-id>`, or `session-summary`. Imported sync IDs
+and source text are never copied into those references. It never retains raw
+Evidence, creates a Memory, or changes `save`/`mem_save`. It is not run from
+lifecycle hooks.
 
 `admission review list` shows pending proposals for one project. `admission review
 mark` appends a human correction with a stable per-proposal ordinal; identical
@@ -126,8 +128,12 @@ characters and must not contain raw evidence or secrets.
 
 The shadow tables are excluded from Memory search/context, normal export/import,
 sync, cloud, and promotion. `delete project` removes the project's retained shadow
-runs and their child rows. Metrics use the latest correction per proposal and report
-raw project-local counts; they do not enable automatic admission behavior.
+runs and their child rows. Project migration and merge operations move local shadow
+runs atomically with the rest of the project and report the moved count, without
+creating sync mutations for shadow data. Metrics use the latest correction per
+proposal and report raw project-local counts, including protected false rejects
+broken down by category and original assessment reason code; they do not enable
+automatic admission behavior.
 
 ## HTTP API Endpoints
 
@@ -265,7 +271,7 @@ Engram is local-first: local SQLite is authoritative; cloud features are optiona
 
 - `GET /project/current` — Detect the current project. Query: `?cwd=/path/to/repo`
   - Always returns a success envelope with `{project, project_source, project_path, cwd, available_projects}` plus optional `warning`/`error_hint`
-- `POST /projects/migrate` — Migrate observations between project names. Body: `{old_project, new_project}`
+- `POST /projects/migrate` — Atomically migrate observations, sessions, prompts, and local shadow-admission runs between project names. Body: `{old_project, new_project}`. The response reports each moved count, including `admission_shadow_runs`.
 
 ### Conflict Audit (admin — local runtime only)
 

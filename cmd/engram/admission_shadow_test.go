@@ -82,6 +82,12 @@ func TestCmdAdmissionShadowReviewAndMetricsJSON(t *testing.T) {
 	if metrics["automatic_promotion_gate_blocked"] != true || metrics["automatic_reject_gate_blocked"] != false {
 		t.Fatalf("gates = %#v", metrics)
 	}
+	if _, ok := metrics["protected_false_rejects_by_category"].(map[string]any); !ok {
+		t.Fatalf("missing protected false reject category breakdown: %#v", metrics)
+	}
+	if _, ok := metrics["protected_false_rejects_by_reason_code"].(map[string]any); !ok {
+		t.Fatalf("missing protected false reject reason breakdown: %#v", metrics)
+	}
 }
 
 func TestCmdAdmissionShadowHumanOutput(t *testing.T) {
@@ -147,6 +153,7 @@ func TestCmdAdmissionReviewAndMetricsHumanOutputIsComplete(t *testing.T) {
 	for _, want := range []string{
 		"review events: 2", "Protected false rejects: 0", "Unsupported: 0; privacy leaks: 0",
 		"Policy versions:", "Recommendations:", "Categories:", "Human verdicts:", "Reason codes:",
+		"Protected false rejects by category:", "Protected false rejects by reason code:",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("metrics missing %q: %q", want, stdout)

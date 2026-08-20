@@ -369,6 +369,8 @@ func renderAdmissionMetrics(result *memoryops.AdmissionMetricsResult) {
 	renderAdmissionMetricMap("Categories", result.ByCategory)
 	renderAdmissionMetricMap("Human verdicts", result.ByHumanVerdict)
 	renderAdmissionMetricMap("Reason codes", result.ByReasonCode)
+	renderAdmissionMetricMap("Protected false rejects by category", result.ProtectedFalseRejectsByCategory)
+	renderAdmissionMetricMap("Protected false rejects by reason code", result.ProtectedFalseRejectsByReasonCode)
 	fmt.Printf("Automatic reject gate blocked: %t\n", result.AutomaticRejectGateBlocked)
 	fmt.Printf("Automatic promotion gate blocked: %t\n", result.AutomaticPromotionGateBlocked)
 }

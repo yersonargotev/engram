@@ -47,25 +47,27 @@ type AdmissionMetricsInput struct {
 }
 
 type AdmissionMetricsResult struct {
-	Project                       string         `json:"project"`
-	RunCount                      int            `json:"run_count"`
-	ProposalCount                 int            `json:"proposal_count"`
-	ReviewCount                   int            `json:"review_count"`
-	ReviewedProposalCount         int            `json:"reviewed_proposal_count"`
-	PendingProposalCount          int            `json:"pending_proposal_count"`
-	AgreementCount                int            `json:"agreement_count"`
-	DisagreementCount             int            `json:"disagreement_count"`
-	ProtectedFalseRejectCount     int            `json:"protected_false_reject_count"`
-	UnsupportedCount              int            `json:"unsupported_count"`
-	PrivacyLeakCount              int            `json:"privacy_leak_count"`
-	ReasonCodedProposalCount      int            `json:"reason_coded_proposal_count"`
-	AutomaticRejectGateBlocked    bool           `json:"automatic_reject_gate_blocked"`
-	AutomaticPromotionGateBlocked bool           `json:"automatic_promotion_gate_blocked"`
-	ByPolicyVersion               map[string]int `json:"by_policy_version"`
-	ByRecommendation              map[string]int `json:"by_recommendation"`
-	ByCategory                    map[string]int `json:"by_category"`
-	ByHumanVerdict                map[string]int `json:"by_human_verdict"`
-	ByReasonCode                  map[string]int `json:"by_reason_code"`
+	Project                           string         `json:"project"`
+	RunCount                          int            `json:"run_count"`
+	ProposalCount                     int            `json:"proposal_count"`
+	ReviewCount                       int            `json:"review_count"`
+	ReviewedProposalCount             int            `json:"reviewed_proposal_count"`
+	PendingProposalCount              int            `json:"pending_proposal_count"`
+	AgreementCount                    int            `json:"agreement_count"`
+	DisagreementCount                 int            `json:"disagreement_count"`
+	ProtectedFalseRejectCount         int            `json:"protected_false_reject_count"`
+	ProtectedFalseRejectsByCategory   map[string]int `json:"protected_false_rejects_by_category"`
+	ProtectedFalseRejectsByReasonCode map[string]int `json:"protected_false_rejects_by_reason_code"`
+	UnsupportedCount                  int            `json:"unsupported_count"`
+	PrivacyLeakCount                  int            `json:"privacy_leak_count"`
+	ReasonCodedProposalCount          int            `json:"reason_coded_proposal_count"`
+	AutomaticRejectGateBlocked        bool           `json:"automatic_reject_gate_blocked"`
+	AutomaticPromotionGateBlocked     bool           `json:"automatic_promotion_gate_blocked"`
+	ByPolicyVersion                   map[string]int `json:"by_policy_version"`
+	ByRecommendation                  map[string]int `json:"by_recommendation"`
+	ByCategory                        map[string]int `json:"by_category"`
+	ByHumanVerdict                    map[string]int `json:"by_human_verdict"`
+	ByReasonCode                      map[string]int `json:"by_reason_code"`
 }
 
 // RunAdmissionShadow explicitly acquires one session's bounded evidence,
@@ -212,14 +214,16 @@ func (s *Service) AdmissionMetrics(input AdmissionMetricsInput) (*AdmissionMetri
 		return nil, fmt.Errorf("list admission shadow proposals: %w", err)
 	}
 	metrics := &AdmissionMetricsResult{
-		Project:          project,
-		RunCount:         len(runs),
-		ProposalCount:    len(proposals),
-		ByPolicyVersion:  map[string]int{},
-		ByRecommendation: map[string]int{},
-		ByCategory:       map[string]int{},
-		ByHumanVerdict:   map[string]int{},
-		ByReasonCode:     map[string]int{},
+		Project:                           project,
+		RunCount:                          len(runs),
+		ProposalCount:                     len(proposals),
+		ByPolicyVersion:                   map[string]int{},
+		ByRecommendation:                  map[string]int{},
+		ByCategory:                        map[string]int{},
+		ByHumanVerdict:                    map[string]int{},
+		ByReasonCode:                      map[string]int{},
+		ProtectedFalseRejectsByCategory:   map[string]int{},
+		ProtectedFalseRejectsByReasonCode: map[string]int{},
 	}
 	policyVersionsByRun := make(map[string]string, len(runs))
 	for _, run := range runs {
@@ -250,6 +254,10 @@ func (s *Service) AdmissionMetrics(input AdmissionMetricsInput) (*AdmissionMetri
 		}
 		if proposal.Protected && proposal.Recommendation == string(AdmissionReject) && latest.Verdict != string(AdmissionReject) {
 			metrics.ProtectedFalseRejectCount++
+			metrics.ProtectedFalseRejectsByCategory[proposal.Category]++
+			for _, reasonCode := range proposal.AssessmentReasonCodes {
+				metrics.ProtectedFalseRejectsByReasonCode[reasonCode]++
+			}
 		}
 		if latest.Unsupported {
 			metrics.UnsupportedCount++

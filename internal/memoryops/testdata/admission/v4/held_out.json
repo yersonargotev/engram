@@ -1,0 +1,56 @@
+{
+  "version": "v4",
+  "partition": "held_out",
+  "scenarios": [
+    {
+      "id": "spanish_preference",
+      "evidence": {
+        "version": "v1",
+        "items": [{"reference":"summary-1","source":"session_summary","content":"## Preferencias\n- Mantener resultados deterministas."}]
+      },
+      "existing_contents": [],
+      "expected": [{"content":"Mantener resultados deterministas.","category":"preference","recommendation":"review"}],
+      "forbidden_text": []
+    },
+    {
+      "id": "unclosed_private_explicit_request",
+      "evidence": {
+        "version": "v1",
+        "items": [{"reference":"prompt-1","source":"user_prompt","content":"Remember this: Public retention rule <private>v4-secret-tail"}]
+      },
+      "existing_contents": [],
+      "expected": [{"content":"Public retention rule [REDACTED]","category":"explicit_request","recommendation":"admit"}],
+      "forbidden_text": ["v4-secret-tail"]
+    },
+    {
+      "id": "tool_output_is_provenance_only",
+      "evidence": {
+        "version": "v1",
+        "items": [{"reference":"tool-1","source":"tool_output","content":"## Root Causes\n- Tool output must not create this proposal."}]
+      },
+      "existing_contents": [],
+      "expected": [],
+      "forbidden_text": []
+    },
+    {
+      "id": "duplicate_learning_rejected",
+      "evidence": {
+        "version": "v1",
+        "items": [{"reference":"summary-2","source":"session_summary","content":"## Key Learnings\n- Review metrics use the latest correction."}]
+      },
+      "existing_contents": ["Review metrics use the latest correction."],
+      "expected": [{"content":"Review metrics use the latest correction.","category":"learning","recommendation":"reject"}],
+      "forbidden_text": []
+    },
+    {
+      "id": "protected_duplicate_remains_review",
+      "evidence": {
+        "version": "v1",
+        "items": [{"reference":"summary-3","source":"session_summary","content":"## Decisions\n- Local SQLite remains authoritative."}]
+      },
+      "existing_contents": ["Local SQLite remains authoritative."],
+      "expected": [{"content":"Local SQLite remains authoritative.","category":"decision","recommendation":"review"}],
+      "forbidden_text": []
+    }
+  ]
+}

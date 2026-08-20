@@ -2168,3 +2168,39 @@ func TestMigrateProjectCaseOnlySkipped(t *testing.T) {
 		t.Fatalf("expected status=skipped for case-only difference, got %v (full response: %#v)", resp["status"], resp)
 	}
 }
+
+func TestMigrateProjectMovesShadowOnlyProject(t *testing.T) {
+	st := newServerTestStore(t)
+	h := New(st, 0).Handler()
+	run, err := st.CreateAdmissionShadowRun(store.CreateAdmissionShadowRunParams{
+		Project:          "shadow-old",
+		Mode:             "session",
+		EvidenceVersion:  "v1",
+		GeneratorVersion: "v1",
+		PolicyVersion:    "v1",
+	})
+	if err != nil {
+		t.Fatalf("create admission shadow run: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/projects/migrate", strings.NewReader(
+		`{"old_project":"shadow-old","new_project":"shadow-new"}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["status"] != "migrated" || response["admission_shadow_runs"] != float64(1) {
+		t.Fatalf("migration response = %#v", response)
+	}
+	runs, err := st.ListAdmissionShadowRuns("shadow-new")
+	if err != nil || len(runs) != 1 || runs[0].ID != run.ID {
+		t.Fatalf("migrated shadow runs = %#v, err=%v", runs, err)
+	}
+}

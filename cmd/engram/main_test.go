@@ -192,6 +192,9 @@ func TestPrintUsage(t *testing.T) {
 	if !strings.Contains(stdout, "--brief [--task INTENT] [--base REF]") || !strings.Contains(stdout, "--limit 1..5") {
 		t.Fatalf("usage missing task briefing flags: %q", stdout)
 	}
+	if !strings.Contains(stdout, "admission preview") || !strings.Contains(stdout, "--project PROJECT (--input FILE|- | --session SESSION_ID)") {
+		t.Fatalf("usage missing admission preview command: %q", stdout)
+	}
 	for _, agent := range []string{"opencode", "pi", "claude-code", "gemini-cli", "codex", "antigravity-cli", "windsurf", "qwen", "kiro", "cursor", "vscode-copilot", "kilocode"} {
 		if !strings.Contains(stdout, agent) {
 			t.Fatalf("usage missing setup agent %q: %q", agent, stdout)
@@ -507,6 +510,44 @@ func TestCmdSaveAndSearch(t *testing.T) {
 	}
 	if !strings.Contains(noneOut, "No memories found") {
 		t.Fatalf("expected empty search message, got: %q", noneOut)
+	}
+}
+
+func TestCmdSavePreservesMalformedPrivateBlockCompatibility(t *testing.T) {
+	cfg := testConfig(t)
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "nested",
+			content: "before <private>outer <private>inner-secret</private> tail-secret</private> after",
+			want:    "before [REDACTED] tail-secret</private> after",
+		},
+		{
+			name:    "unclosed",
+			content: "before <private>unclosed-secret tail",
+			want:    "before <private>unclosed-secret tail",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			withArgs(t, "engram", "save", tc.name, tc.content, "--project", "compat", "--json")
+			stdout, stderr := captureOutput(t, func() { cmdSave(cfg) })
+			if stderr != "" {
+				t.Fatalf("save stderr = %q", stderr)
+			}
+			output := decodeCLIJSON(t, stdout)
+			observation, ok := output["observation"].(map[string]any)
+			if !ok {
+				t.Fatalf("save output = %#v", output)
+			}
+			if got := observation["content"]; got != tc.want {
+				t.Fatalf("saved content = %q, want compatibility value %q", got, tc.want)
+			}
+		})
 	}
 }
 

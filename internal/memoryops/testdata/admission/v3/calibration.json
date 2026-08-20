@@ -1,0 +1,36 @@
+{
+  "version": "v3",
+  "partition": "calibration",
+  "scenarios": [
+    {
+      "id": "explicit_request",
+      "evidence": {
+        "version": "v1",
+        "items": [{"reference":"prompt-1","source":"user_prompt","content":"Remember this: Explicit saves remain authoritative."}]
+      },
+      "existing_contents": [],
+      "expected": [{"content":"Explicit saves remain authoritative.","category":"explicit_request","recommendation":"admit"}],
+      "forbidden_text": []
+    },
+    {
+      "id": "structured_decision",
+      "evidence": {
+        "version": "v1",
+        "items": [{"reference":"summary-1","source":"session_summary","content":"## Decisions\n- Keep admission assessments local-only."}]
+      },
+      "existing_contents": [],
+      "expected": [{"content":"Keep admission assessments local-only.","category":"decision","recommendation":"review"}],
+      "forbidden_text": []
+    },
+    {
+      "id": "transient_progress",
+      "evidence": {
+        "version": "v1",
+        "items": [{"reference":"note-1","source":"agent_note","content":"Tests are running now."}]
+      },
+      "existing_contents": [],
+      "expected": [],
+      "forbidden_text": []
+    }
+  ]
+}

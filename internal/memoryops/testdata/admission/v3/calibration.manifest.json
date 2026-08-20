@@ -1,0 +1,14 @@
+{
+  "schema_version": "admission-corpus-manifest-v1",
+  "corpus_version": "v3",
+  "partition": "calibration",
+  "corpus_file": "calibration.json",
+  "corpus_sha256": "205bd6aedefbcb7f76107aa2aa96e7409856364946f01035accb1e92c7c54f8a",
+  "scenario_ids": ["explicit_request", "structured_decision", "transient_progress"],
+  "label_schema": "admission-v3-labels-v1",
+  "provenance": {
+    "kind": "synthetic",
+    "source": "Hand-authored deterministic calibration fixtures.",
+    "consent_status": "not_applicable"
+  }
+}

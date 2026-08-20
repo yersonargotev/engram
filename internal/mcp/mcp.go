@@ -23,13 +23,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 	"github.com/yersonargotev/engram/internal/diagnostic"
 	"github.com/yersonargotev/engram/internal/memoryops"
 	projectpkg "github.com/yersonargotev/engram/internal/project"
 	"github.com/yersonargotev/engram/internal/store"
 	"github.com/yersonargotev/engram/internal/timeutil"
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 )
 
 const sourceProcessOverride = "process_override"
@@ -2184,6 +2184,7 @@ func handleMergeProjects(s *store.Store) server.ToolHandlerFunc {
 		msg += fmt.Sprintf("  Observations moved: %d\n", result.ObservationsUpdated)
 		msg += fmt.Sprintf("  Sessions moved:     %d\n", result.SessionsUpdated)
 		msg += fmt.Sprintf("  Prompts moved:      %d\n", result.PromptsUpdated)
+		msg += fmt.Sprintf("  Admission shadow runs moved: %d\n", result.AdmissionShadowRunsUpdated)
 
 		return mcp.NewToolResultText(msg), nil
 	}

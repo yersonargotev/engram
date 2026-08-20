@@ -10,6 +10,43 @@ A durable, structured observation that can be recalled and curated independently
 of the coding session that produced it.
 _Avoid_: Note, record
 
+**Memory proposal**:
+Potentially durable knowledge that has not been accepted as a Memory.
+_Avoid_: Memory candidate, draft memory
+
+**Protected proposal**:
+A Memory proposal whose false rejection blocks any move toward automatic rejection.
+_Avoid_: Critical memory, mandatory save
+
+**Evidence bundle**:
+Bounded, provenance-bearing evidence used to formulate or assess Memory proposals.
+_Avoid_: Transcript, session dump
+
+**Evidence acquisition**:
+A read-only operation that builds an Evidence bundle from explicitly selected,
+already-persisted sources and reports any omissions or truncation.
+_Avoid_: Session ingestion, automatic capture
+
+**Admission assessment**:
+An explainable `admit`, `review`, or `reject` recommendation for a Memory proposal.
+It does not itself create or discard a Memory.
+_Avoid_: Classifier result, admission decision
+
+**Shadow admission run**:
+An explicitly requested, local evaluation that retains Memory proposals and
+Admission assessments for later correction and measurement without promoting
+them to Memories.
+_Avoid_: Session capture, automatic admission
+
+**Admission correction**:
+An append-only human verdict about one retained Memory proposal. It supplies
+evaluation evidence and does not itself promote, reject, or delete a Memory.
+_Avoid_: Memory review, approval
+
+**Promotion**:
+The explicit acceptance of a Memory proposal as a Memory.
+_Avoid_: Automatic save, candidate persistence
+
 **Memory operation**:
 An action that reads, creates, changes, organizes, reviews, or relates memories.
 It remains meaningful outside an active agent session.

@@ -96,13 +96,33 @@ func TestCLIReadCommandsJSON(t *testing.T) {
 func TestCLIProjectsMergeDryRunAndApplyJSON(t *testing.T) {
 	cfg := testConfig(t)
 	mustSeedObservation(t, cfg, "merge-a", "old-project", "manual", "old", "content", "project")
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateAdmissionShadowRun(store.CreateAdmissionShadowRunParams{
+		Project:          "old-project",
+		Mode:             "session",
+		EvidenceVersion:  "v1",
+		GeneratorVersion: "v1",
+		PolicyVersion:    "v1",
+		Proposals: []store.AdmissionShadowProposalInput{{
+			Type: "decision", Title: "shadow", Content: "shadow content", Scope: "project",
+			Category: "decision", Recommendation: "review", EvidenceRefs: []string{"prompt:1"},
+		}},
+	}); err != nil {
+		t.Fatalf("seed admission shadow run: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
 	withArgs(t, "engram", "projects", "merge", "--from", "old-project", "--to", "canonical", "--dry-run", "--json")
 	stdout, stderr := captureOutput(t, func() { cmdProjects(cfg) })
 	if stderr != "" {
 		t.Fatalf("dry stderr=%q", stderr)
 	}
 	dry := decodeCLIJSON(t, stdout)
-	if dry["dry_run"] != true {
+	if dry["dry_run"] != true || dry["admission_shadow_runs_updated"] != float64(1) {
 		t.Fatalf("dry=%v", dry)
 	}
 	withArgs(t, "engram", "projects", "merge", "--from", "old-project", "--to", "canonical", "--yes", "--json")
@@ -111,10 +131,10 @@ func TestCLIProjectsMergeDryRunAndApplyJSON(t *testing.T) {
 		t.Fatalf("apply stderr=%q", stderr)
 	}
 	applied := decodeCLIJSON(t, stdout)
-	if applied["dry_run"] != false {
+	if applied["dry_run"] != false || applied["admission_shadow_runs_updated"] != float64(1) {
 		t.Fatalf("applied=%v", applied)
 	}
-	s, err := store.New(cfg)
+	s, err = store.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +142,10 @@ func TestCLIProjectsMergeDryRunAndApplyJSON(t *testing.T) {
 	results, err := s.Search("old", store.SearchOptions{Project: "canonical", Limit: 10})
 	if err != nil || len(results) != 1 {
 		t.Fatalf("merge results=%v err=%v", results, err)
+	}
+	runs, err := s.ListAdmissionShadowRuns("canonical")
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("canonical shadow runs=%v err=%v", runs, err)
 	}
 }
 

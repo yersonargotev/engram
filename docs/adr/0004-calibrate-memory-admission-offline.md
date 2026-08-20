@@ -34,3 +34,21 @@ normal local store may run existing SQLite initialization or migrations;
 “non-persisting” means the preview never creates or changes Memories, proposals, or
 assessments. Automated shadow collection requires a later decision backed by
 calibration and a separate held-out evaluation corpus.
+
+## Auditable corpus freeze
+
+Calibration may change with the implementation. Held-out evaluation may not. Before
+adding or executing a held-out corpus, commit a manifest that freezes its exact
+SHA-256 and ordered scenario IDs together with the implementation commit,
+evidence/generator/policy versions, metric version, label schema, provenance and
+consent status, and numeric thresholds. Add the matching corpus in a later commit
+without changing that manifest or the frozen policy. Execute held-out tests only
+through the dedicated `admission_heldout` build tag; ordinary tests continue to run
+calibration and already-observed regression fixtures. A mismatch or later policy,
+metric, threshold, or corpus change requires a new version rather than rewriting the
+previous evaluation.
+
+The V3 evaluation fixtures entered alongside their policy and thresholds and are
+therefore observed regression evidence, not proof of a prior held-out freeze. V4 is
+the first corpus using the manifest-first history described above. Synthetic results
+remain regression evidence and do not establish production readiness.

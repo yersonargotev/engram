@@ -12,38 +12,13 @@ import (
 )
 
 func cmdAdmissionShadow(cfg store.Config, jsonMode bool) {
-	project := ""
-	sessionID := ""
-	seenProject := false
-	seenSession := false
-	for index := 3; index < len(os.Args); index++ {
-		switch os.Args[index] {
-		case "--json":
-			jsonMode = true
-		case "--project":
-			if seenProject || index+1 >= len(os.Args) || strings.HasPrefix(os.Args[index+1], "--") {
-				failCLI(jsonMode, "invalid_arguments", "--project requires one non-empty value", nil)
-				return
-			}
-			seenProject = true
-			project = strings.TrimSpace(os.Args[index+1])
-			index++
-		case "--session":
-			if seenSession || index+1 >= len(os.Args) || strings.HasPrefix(os.Args[index+1], "--") {
-				failCLI(jsonMode, "invalid_arguments", "--session requires one non-empty value", nil)
-				return
-			}
-			seenSession = true
-			sessionID = strings.TrimSpace(os.Args[index+1])
-			index++
-		case "help", "--help", "-h":
-			printAdmissionUsage()
-			return
-		default:
-			admissionUnknownArgument(jsonMode, os.Args[index])
-			return
-		}
+	flags, proceed := parseAdmissionFlags(3, jsonMode, admissionFlagOptions{Project: true, Session: true})
+	if !proceed {
+		return
 	}
+	project := flags.Project
+	sessionID := flags.SessionID
+	jsonMode = flags.JSONMode
 	if project == "" || sessionID == "" {
 		failCLI(jsonMode, "invalid_arguments", "admission shadow requires --project and --session", nil)
 		return
@@ -87,10 +62,12 @@ func cmdAdmissionReview(cfg store.Config, jsonMode bool) {
 }
 
 func cmdAdmissionReviewList(cfg store.Config, jsonMode bool) {
-	project, jsonMode, proceed := parseAdmissionProjectFlags(4, jsonMode)
+	flags, proceed := parseAdmissionFlags(4, jsonMode, admissionFlagOptions{Project: true})
 	if !proceed {
 		return
 	}
+	project := flags.Project
+	jsonMode = flags.JSONMode
 	if project == "" {
 		failCLI(jsonMode, "invalid_arguments", "admission review list requires --project", nil)
 		return
@@ -127,8 +104,12 @@ func cmdAdmissionReviewMark(cfg store.Config, jsonMode bool) {
 	proposalID := strings.TrimSpace(os.Args[4])
 	verdict := ""
 	note := ""
-	unsupported := false
-	privacyLeak := false
+	var unsupported *bool
+	var privacyLeak *bool
+	unsupportedSet := false
+	unsupportedCleared := false
+	privacyLeakSet := false
+	privacyLeakCleared := false
 	seenVerdict := false
 	seenNote := false
 	for index := 5; index < len(os.Args); index++ {
@@ -152,9 +133,37 @@ func cmdAdmissionReviewMark(cfg store.Config, jsonMode bool) {
 			note = os.Args[index+1]
 			index++
 		case "--unsupported":
-			unsupported = true
+			if unsupportedCleared {
+				failCLI(jsonMode, "invalid_arguments", "--unsupported cannot be combined with --clear-unsupported", nil)
+				return
+			}
+			unsupportedSet = true
+			value := true
+			unsupported = &value
+		case "--clear-unsupported":
+			if unsupportedSet {
+				failCLI(jsonMode, "invalid_arguments", "--clear-unsupported cannot be combined with --unsupported", nil)
+				return
+			}
+			unsupportedCleared = true
+			value := false
+			unsupported = &value
 		case "--privacy-leak":
-			privacyLeak = true
+			if privacyLeakCleared {
+				failCLI(jsonMode, "invalid_arguments", "--privacy-leak cannot be combined with --clear-privacy-leak", nil)
+				return
+			}
+			privacyLeakSet = true
+			value := true
+			privacyLeak = &value
+		case "--clear-privacy-leak":
+			if privacyLeakSet {
+				failCLI(jsonMode, "invalid_arguments", "--clear-privacy-leak cannot be combined with --privacy-leak", nil)
+				return
+			}
+			privacyLeakCleared = true
+			value := false
+			privacyLeak = &value
 		case "help", "--help", "-h":
 			printAdmissionUsage()
 			return
@@ -202,10 +211,12 @@ func cmdAdmissionReviewMark(cfg store.Config, jsonMode bool) {
 }
 
 func cmdAdmissionMetrics(cfg store.Config, jsonMode bool) {
-	project, jsonMode, proceed := parseAdmissionProjectFlags(3, jsonMode)
+	flags, proceed := parseAdmissionFlags(3, jsonMode, admissionFlagOptions{Project: true})
 	if !proceed {
 		return
 	}
+	project := flags.Project
+	jsonMode = flags.JSONMode
 	if project == "" {
 		failCLI(jsonMode, "invalid_arguments", "admission metrics requires --project", nil)
 		return
@@ -228,32 +239,6 @@ func cmdAdmissionMetrics(cfg store.Config, jsonMode bool) {
 		return
 	}
 	renderAdmissionMetrics(result)
-}
-
-func parseAdmissionProjectFlags(start int, jsonMode bool) (string, bool, bool) {
-	project := ""
-	seenProject := false
-	for index := start; index < len(os.Args); index++ {
-		switch os.Args[index] {
-		case "--json":
-			jsonMode = true
-		case "--project":
-			if seenProject || index+1 >= len(os.Args) || strings.HasPrefix(os.Args[index+1], "--") {
-				failCLI(jsonMode, "invalid_arguments", "--project requires one non-empty value", nil)
-				return "", jsonMode, false
-			}
-			seenProject = true
-			project = strings.TrimSpace(os.Args[index+1])
-			index++
-		case "help", "--help", "-h":
-			printAdmissionUsage()
-			return "", jsonMode, false
-		default:
-			admissionUnknownArgument(jsonMode, os.Args[index])
-			return "", jsonMode, false
-		}
-	}
-	return project, jsonMode, true
 }
 
 func isAdmissionHelpArgument(argument string) bool {

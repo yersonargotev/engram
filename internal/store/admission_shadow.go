@@ -93,8 +93,8 @@ type AddAdmissionShadowReviewParams struct {
 	ProposalID  string
 	Verdict     string
 	Note        string
-	Unsupported bool
-	PrivacyLeak bool
+	Unsupported *bool
+	PrivacyLeak *bool
 }
 
 // migrateAdmissionShadow creates the local-only persistence boundary for
@@ -360,8 +360,20 @@ func (s *Store) AddAdmissionShadowReview(p AddAdmissionShadowReviewParams) (*Adm
 		if err != nil {
 			return err
 		}
+		unsupported := false
+		privacyLeak := false
+		if latest != nil {
+			unsupported = latest.Unsupported
+			privacyLeak = latest.PrivacyLeak
+		}
+		if p.Unsupported != nil {
+			unsupported = *p.Unsupported
+		}
+		if p.PrivacyLeak != nil {
+			privacyLeak = *p.PrivacyLeak
+		}
 		if latest != nil && latest.Verdict == p.Verdict && latest.Note == p.Note &&
-			latest.Unsupported == p.Unsupported && latest.PrivacyLeak == p.PrivacyLeak {
+			latest.Unsupported == unsupported && latest.PrivacyLeak == privacyLeak {
 			result = *latest
 			alreadyRecorded = true
 			return nil
@@ -380,8 +392,8 @@ func (s *Store) AddAdmissionShadowReview(p AddAdmissionShadowReviewParams) (*Adm
 			Ordinal:     nextOrdinal,
 			Verdict:     p.Verdict,
 			Note:        p.Note,
-			Unsupported: p.Unsupported,
-			PrivacyLeak: p.PrivacyLeak,
+			Unsupported: unsupported,
+			PrivacyLeak: privacyLeak,
 		}
 		if _, err := s.execHook(tx, `
 			INSERT INTO admission_shadow_reviews (

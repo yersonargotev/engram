@@ -33,8 +33,8 @@ type AdmissionReviewMarkInput struct {
 	ProposalID  string
 	Verdict     AdmissionRecommendation
 	Note        string
-	Unsupported bool
-	PrivacyLeak bool
+	Unsupported *bool
+	PrivacyLeak *bool
 }
 
 type AdmissionReviewMarkResult struct {

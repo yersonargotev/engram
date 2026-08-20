@@ -38,10 +38,16 @@ counts and distributions, including protected false rejects by proposal category
 and original assessment reason code. Any protected false reject blocks the
 automatic-reject readiness gate. Any explicitly marked unsupported proposal or
 privacy leak blocks the automatic-promotion readiness gate. The gates are advisory
-and enable no automatic action.
+and enable no automatic action. Safety findings persist when a later correction
+omits their flags; only explicit clear flags append a retraction. This prevents a
+verdict-only or note-only edit from silently reopening a readiness gate.
 
-Calibration and held-out fixtures remain separate and use thresholds declared in a
-versioned manifest. The V3 fixtures are synthetic regression evidence, not a claim
-of production readiness. Automatic lifecycle collection, raw-evidence retention,
+Calibration and held-out fixtures remain separate and use content-addressed,
+versioned manifests. The original V3 evaluation cases entered with their policy and
+thresholds, so they are classified only as observed regression evidence. V4 freezes
+its corpus hash/IDs, policy and metric versions, and thresholds before the held-out
+corpus lands; its test requires the explicit `admission_heldout` build tag. All
+fixtures remain synthetic regression evidence, not a claim of production readiness.
+Automatic lifecycle collection, raw-evidence retention,
 LLM judgment, MCP/HTTP/plugin/UI integration, automatic retention, automatic
 Promotion/rejection, and changes to `save`/`mem_save` remain out of scope.

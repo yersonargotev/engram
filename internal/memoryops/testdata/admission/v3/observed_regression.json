@@ -1,6 +1,6 @@
 {
   "version": "v3",
-  "partition": "held_out",
+  "partition": "observed_regression",
   "scenarios": [
     {
       "id": "explicit_request_spanish",

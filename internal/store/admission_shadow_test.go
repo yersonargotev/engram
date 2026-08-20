@@ -352,8 +352,8 @@ func TestAddAdmissionShadowReviewIsAppendOnlyIdempotentAndRedacted(t *testing.T)
 		ProposalID:  proposalID,
 		Verdict:     "review",
 		Note:        longNote,
-		Unsupported: true,
-		PrivacyLeak: true,
+		Unsupported: admissionShadowBool(true),
+		PrivacyLeak: admissionShadowBool(true),
 	})
 	if err != nil {
 		t.Fatalf("add first review: %v", err)
@@ -375,8 +375,8 @@ func TestAddAdmissionShadowReviewIsAppendOnlyIdempotentAndRedacted(t *testing.T)
 		ProposalID:  proposalID,
 		Verdict:     " REVIEW ",
 		Note:        "  " + longNote + "  ",
-		Unsupported: true,
-		PrivacyLeak: true,
+		Unsupported: admissionShadowBool(true),
+		PrivacyLeak: admissionShadowBool(true),
 	})
 	if err != nil {
 		t.Fatalf("repeat identical review: %v", err)
@@ -388,12 +388,27 @@ func TestAddAdmissionShadowReviewIsAppendOnlyIdempotentAndRedacted(t *testing.T)
 		t.Fatalf("identical review id = %q, want %q", identical.ID, first.ID)
 	}
 
+	preserved, alreadyRecorded, err := s.AddAdmissionShadowReview(AddAdmissionShadowReviewParams{
+		ProposalID: proposalID,
+		Verdict:    "admit",
+		Note:       "Verdict changed without retracting safety findings.",
+	})
+	if err != nil {
+		t.Fatalf("append review with omitted safety flags: %v", err)
+	}
+	if alreadyRecorded || !preserved.Unsupported || !preserved.PrivacyLeak {
+		t.Fatalf("omitted safety flags were not preserved: %#v, already recorded: %t", preserved, alreadyRecorded)
+	}
+	if preserved.Ordinal != 1 {
+		t.Fatalf("preserved review ordinal = %d, want 1", preserved.Ordinal)
+	}
+
 	different, alreadyRecorded, err := s.AddAdmissionShadowReview(AddAdmissionShadowReviewParams{
 		ProposalID:  proposalID,
 		Verdict:     "review",
 		Note:        longNote,
-		Unsupported: false,
-		PrivacyLeak: true,
+		Unsupported: admissionShadowBool(false),
+		PrivacyLeak: admissionShadowBool(true),
 	})
 	if err != nil {
 		t.Fatalf("append corrected review: %v", err)
@@ -404,15 +419,15 @@ func TestAddAdmissionShadowReviewIsAppendOnlyIdempotentAndRedacted(t *testing.T)
 	if different.ID == first.ID {
 		t.Fatal("different safety flags did not append a review")
 	}
-	if different.Ordinal != 1 {
-		t.Fatalf("second review ordinal = %d, want 1", different.Ordinal)
+	if different.Ordinal != 2 {
+		t.Fatalf("explicit retraction ordinal = %d, want 2", different.Ordinal)
 	}
 	returnToFirst, alreadyRecorded, err := s.AddAdmissionShadowReview(AddAdmissionShadowReviewParams{
 		ProposalID:  proposalID,
 		Verdict:     "review",
 		Note:        longNote,
-		Unsupported: true,
-		PrivacyLeak: true,
+		Unsupported: admissionShadowBool(true),
+		PrivacyLeak: admissionShadowBool(true),
 	})
 	if err != nil {
 		t.Fatalf("return to earlier correction: %v", err)
@@ -423,20 +438,24 @@ func TestAddAdmissionShadowReviewIsAppendOnlyIdempotentAndRedacted(t *testing.T)
 	if returnToFirst.ID == first.ID || returnToFirst.ID == different.ID {
 		t.Fatal("A to B to A must append the final A as a new audit event")
 	}
-	if returnToFirst.Ordinal != 2 {
-		t.Fatalf("third review ordinal = %d, want 2", returnToFirst.Ordinal)
+	if returnToFirst.Ordinal != 3 {
+		t.Fatalf("return-to-first review ordinal = %d, want 3", returnToFirst.Ordinal)
 	}
 
 	listed, err := s.ListAdmissionShadowProposals("engram", false)
 	if err != nil {
 		t.Fatalf("list reviews: %v", err)
 	}
-	if len(listed) != 1 || len(listed[0].Reviews) != 3 {
+	if len(listed) != 1 || len(listed[0].Reviews) != 4 {
 		t.Fatalf("review history = %#v", listed)
 	}
 	if _, _, err := s.AddAdmissionShadowReview(AddAdmissionShadowReviewParams{ProposalID: "missing", Verdict: "admit"}); err == nil {
 		t.Fatal("review of missing proposal succeeded")
 	}
+}
+
+func admissionShadowBool(value bool) *bool {
+	return &value
 }
 
 func TestDeleteProjectCascadesAdmissionShadowLocallyAndPreservesOthers(t *testing.T) {

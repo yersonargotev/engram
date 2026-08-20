@@ -1,20 +1,52 @@
 package memoryops
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
 
+const admissionV3MetricsVersion = "admission-v3-metrics-v1"
+
 type admissionV3Thresholds struct {
-	Version                 string  `json:"version"`
 	MinimumGenerationRecall float64 `json:"minimum_generation_recall"`
 	MinimumAdmitPrecision   float64 `json:"minimum_admit_precision"`
 	MaximumProtectedRejects int     `json:"maximum_protected_false_rejects"`
 	MaximumUnsupported      int     `json:"maximum_unsupported_proposals"`
 	MaximumPrivacyLeaks     int     `json:"maximum_privacy_leaks"`
+}
+
+type admissionCorpusManifest struct {
+	SchemaVersion string                    `json:"schema_version"`
+	CorpusVersion string                    `json:"corpus_version"`
+	Partition     string                    `json:"partition"`
+	CorpusFile    string                    `json:"corpus_file"`
+	CorpusSHA256  string                    `json:"corpus_sha256"`
+	ScenarioIDs   []string                  `json:"scenario_ids"`
+	LabelSchema   string                    `json:"label_schema"`
+	Provenance    admissionCorpusProvenance `json:"provenance"`
+	Freeze        *admissionCorpusFreeze    `json:"freeze,omitempty"`
+	Thresholds    *admissionV3Thresholds    `json:"thresholds,omitempty"`
+}
+
+type admissionCorpusProvenance struct {
+	Kind          string `json:"kind"`
+	Source        string `json:"source"`
+	ConsentStatus string `json:"consent_status"`
+}
+
+type admissionCorpusFreeze struct {
+	ImplementationCommit string `json:"implementation_commit"`
+	EvidenceVersion      string `json:"evidence_version"`
+	GeneratorVersion     string `json:"generator_version"`
+	PolicyVersion        string `json:"policy_version"`
+	MetricsVersion       string `json:"metrics_version"`
 }
 
 type admissionV3Corpus struct {
@@ -49,9 +81,12 @@ type admissionV3CorpusMetrics struct {
 }
 
 func TestAdmissionV3CalibrationCorpus(t *testing.T) {
-	corpus := readAdmissionV3Corpus(t, "testdata/admission/v3/calibration.json")
+	corpus, manifest := readAdmissionV3Corpus(t, "testdata/admission/v3/calibration.manifest.json")
 	if corpus.Partition != "calibration" {
 		t.Fatalf("partition = %q, want calibration", corpus.Partition)
+	}
+	if manifest.Freeze != nil || manifest.Thresholds != nil {
+		t.Fatalf("calibration manifest must not declare held-out freeze or thresholds: %#v", manifest)
 	}
 	metrics := executeAdmissionV3Corpus(t, corpus)
 	if metrics.MatchedFacts != metrics.ExpectedFacts || metrics.UnsupportedProposals != 0 || metrics.PrivacyLeaks != 0 {
@@ -59,40 +94,23 @@ func TestAdmissionV3CalibrationCorpus(t *testing.T) {
 	}
 }
 
-func TestAdmissionV3HeldOutCorpusMeetsPredeclaredThresholds(t *testing.T) {
-	var thresholds admissionV3Thresholds
-	decodeAdmissionV3JSON(t, "testdata/admission/v3/thresholds.json", &thresholds)
-	if thresholds.Version != "v3" {
-		t.Fatalf("threshold version = %q, want v3", thresholds.Version)
+func TestAdmissionV3ObservedRegressionCorpus(t *testing.T) {
+	corpus, manifest := readAdmissionV3Corpus(t, "testdata/admission/v3/observed_regression.manifest.json")
+	if corpus.Partition != "observed_regression" {
+		t.Fatalf("partition = %q, want observed_regression", corpus.Partition)
 	}
-	corpus := readAdmissionV3Corpus(t, "testdata/admission/v3/held_out.json")
-	if corpus.Partition != "held_out" {
-		t.Fatalf("partition = %q, want held_out", corpus.Partition)
+	if manifest.Freeze != nil || manifest.Thresholds != nil {
+		t.Fatalf("observed regression manifest must not claim a held-out freeze: %#v", manifest)
 	}
 	metrics := executeAdmissionV3Corpus(t, corpus)
-
-	recall := ratio(metrics.MatchedFacts, metrics.ExpectedFacts)
-	precision := ratio(metrics.CorrectlyAdmitted, metrics.Admitted)
-	if recall < thresholds.MinimumGenerationRecall {
-		t.Errorf("generation recall = %.3f, want >= %.3f", recall, thresholds.MinimumGenerationRecall)
-	}
-	if precision < thresholds.MinimumAdmitPrecision {
-		t.Errorf("admit precision = %.3f, want >= %.3f", precision, thresholds.MinimumAdmitPrecision)
-	}
-	if metrics.ProtectedFalseRejects > thresholds.MaximumProtectedRejects {
-		t.Errorf("protected false rejects = %d, want <= %d", metrics.ProtectedFalseRejects, thresholds.MaximumProtectedRejects)
-	}
-	if metrics.UnsupportedProposals > thresholds.MaximumUnsupported {
-		t.Errorf("unsupported proposals = %d, want <= %d", metrics.UnsupportedProposals, thresholds.MaximumUnsupported)
-	}
-	if metrics.PrivacyLeaks > thresholds.MaximumPrivacyLeaks {
-		t.Errorf("privacy leaks = %d, want <= %d", metrics.PrivacyLeaks, thresholds.MaximumPrivacyLeaks)
+	if metrics.MatchedFacts != metrics.ExpectedFacts || metrics.UnsupportedProposals != 0 || metrics.PrivacyLeaks != 0 {
+		t.Fatalf("observed regression metrics = %#v", metrics)
 	}
 }
 
 func executeAdmissionV3Corpus(t *testing.T, corpus admissionV3Corpus) admissionV3CorpusMetrics {
 	t.Helper()
-	if corpus.Version != "v3" || len(corpus.Scenarios) == 0 {
+	if strings.TrimSpace(corpus.Version) == "" || len(corpus.Scenarios) == 0 {
 		t.Fatalf("invalid corpus header: %#v", corpus)
 	}
 	metrics := admissionV3CorpusMetrics{}
@@ -152,11 +170,49 @@ func executeAdmissionV3Corpus(t *testing.T, corpus admissionV3Corpus) admissionV
 	return metrics
 }
 
-func readAdmissionV3Corpus(t *testing.T, path string) admissionV3Corpus {
+func readAdmissionV3Corpus(t *testing.T, manifestPath string) (admissionV3Corpus, admissionCorpusManifest) {
 	t.Helper()
+	var manifest admissionCorpusManifest
+	decodeAdmissionV3JSON(t, manifestPath, &manifest)
+	if manifest.SchemaVersion != "admission-corpus-manifest-v1" || manifest.CorpusVersion == "" || manifest.Partition == "" ||
+		manifest.CorpusFile == "" || manifest.CorpusSHA256 == "" || len(manifest.ScenarioIDs) == 0 || manifest.LabelSchema == "" {
+		t.Fatalf("invalid corpus manifest header: %#v", manifest)
+	}
+	if manifest.Provenance.Kind != "synthetic" || strings.TrimSpace(manifest.Provenance.Source) == "" || manifest.Provenance.ConsentStatus != "not_applicable" {
+		t.Fatalf("invalid synthetic corpus provenance: %#v", manifest.Provenance)
+	}
+	if filepath.Base(manifest.CorpusFile) != manifest.CorpusFile {
+		t.Fatalf("corpus_file must be a local file name: %q", manifest.CorpusFile)
+	}
+	corpusPath := filepath.Join(filepath.Dir(manifestPath), manifest.CorpusFile)
+	encoded, err := os.ReadFile(corpusPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", corpusPath, err)
+	}
+	if actual := fmt.Sprintf("%x", sha256.Sum256(encoded)); actual != manifest.CorpusSHA256 {
+		t.Fatalf("corpus hash = %q, want frozen %q", actual, manifest.CorpusSHA256)
+	}
 	var corpus admissionV3Corpus
-	decodeAdmissionV3JSON(t, path, &corpus)
-	return corpus
+	decodeAdmissionV3JSONBytes(t, corpusPath, encoded, &corpus)
+	if corpus.Version != manifest.CorpusVersion || corpus.Partition != manifest.Partition {
+		t.Fatalf("corpus header %#v does not match manifest %#v", corpus, manifest)
+	}
+	ids := make([]string, 0, len(corpus.Scenarios))
+	seen := make(map[string]struct{}, len(corpus.Scenarios))
+	for _, scenario := range corpus.Scenarios {
+		if scenario.ID == "" {
+			t.Fatal("corpus scenario id must not be empty")
+		}
+		if _, duplicate := seen[scenario.ID]; duplicate {
+			t.Fatalf("duplicate corpus scenario id %q", scenario.ID)
+		}
+		seen[scenario.ID] = struct{}{}
+		ids = append(ids, scenario.ID)
+	}
+	if !reflect.DeepEqual(ids, manifest.ScenarioIDs) {
+		t.Fatalf("corpus scenario ids = %#v, want frozen %#v", ids, manifest.ScenarioIDs)
+	}
+	return corpus, manifest
 }
 
 func decodeAdmissionV3JSON(t *testing.T, path string, target any) {
@@ -167,6 +223,18 @@ func decodeAdmissionV3JSON(t *testing.T, path string, target any) {
 	}
 	defer file.Close()
 	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		t.Fatalf("%s contains trailing JSON: %v", path, err)
+	}
+}
+
+func decodeAdmissionV3JSONBytes(t *testing.T, path string, encoded []byte, target any) {
+	t.Helper()
+	decoder := json.NewDecoder(strings.NewReader(string(encoded)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		t.Fatalf("decode %s: %v", path, err)

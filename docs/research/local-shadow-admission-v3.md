@@ -149,6 +149,32 @@ content hashes, label schema, provenance/consent status, and corpus version.
   threshold change after evaluation requires a new held-out version.
 - Never mix calibration and held-out rows in reported metrics.
 
+The executable manifest contract is `admission-corpus-manifest-v1`. Hashes cover
+the exact corpus file bytes; ordered scenario IDs make additions, removals, and
+reordering review-visible. A held-out manifest also freezes the implementation
+commit, evidence/generator/policy versions, `admission-v3-metrics-v1`, and all
+numeric thresholds. Calibration and already-observed regression cases run normally:
+
+```bash
+go test ./internal/memoryops \
+  -run '^(TestAdmissionV3CalibrationCorpus|TestAdmissionV3ObservedRegressionCorpus)$' \
+  -count=1
+```
+
+Held-out evaluation is deliberately absent from `go test ./...` and must be invoked
+after its manifest commit is frozen:
+
+```bash
+go test -tags admission_heldout ./internal/memoryops \
+  -run '^TestAdmissionV4HeldOutCorpusMeetsPredeclaredThresholds$' -count=1
+```
+
+The V3 cases formerly named held-out were committed together with their policy and
+thresholds in `635b6ad`, so they cannot demonstrate prior predeclaration and are now
+named `observed_regression`. V4 uses a manifest-only freeze commit followed by a
+separate corpus commit. Any later policy, metric, threshold, ID, or content change
+requires a new corpus version rather than editing V4 in place.
+
 Using test data to make model choices leaks evaluation information and produces
 optimistic estimates
 ([scikit-learn's official leakage guidance](https://scikit-learn.org/stable/common_pitfalls.html#data-leakage)).
@@ -156,8 +182,8 @@ NIST's AI RMF similarly calls for documented test sets and metrics, evaluation u
 deployment-like conditions, privacy measurement, and user feedback/appeal paths
 ([AI RMF Core](https://airc.nist.gov/airmf-resources/airmf/5-sec-core/)).
 
-The present synthetic V1 scenarios are deterministic regression/calibration
-fixtures, not an independent release corpus. A future release claim needs real,
+The present synthetic scenarios are deterministic regression/calibration fixtures,
+not an independent release corpus. A future release claim needs real,
 consented, redacted coding sessions labeled independently; a temporal holdout
 collected only after policy freeze is preferable when a truly blind checked-in
 fixture is impossible.

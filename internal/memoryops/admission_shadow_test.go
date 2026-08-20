@@ -124,7 +124,7 @@ func TestAdmissionReviewListMarkAndMetrics(t *testing.T) {
 		ProposalID:  shadow.Proposals[1].ID,
 		Verdict:     AdmissionReject,
 		Note:        "Unsupported in the source.",
-		Unsupported: true,
+		Unsupported: admissionBool(true),
 	}); err != nil {
 		t.Fatalf("mark unsupported review: %v", err)
 	}
@@ -156,6 +156,10 @@ func TestAdmissionReviewListMarkAndMetrics(t *testing.T) {
 	if metrics.ByPolicyVersion[AdmissionPolicyVersion] != 2 {
 		t.Fatalf("proposals by policy version = %#v", metrics.ByPolicyVersion)
 	}
+}
+
+func admissionBool(value bool) *bool {
+	return &value
 }
 
 func TestAdmissionShadowOperationsValidateInputs(t *testing.T) {

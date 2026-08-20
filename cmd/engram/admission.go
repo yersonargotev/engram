@@ -15,6 +15,19 @@ import (
 
 const maxAdmissionInputBytes = 1 << 20
 
+type admissionFlagOptions struct {
+	Project bool
+	Input   bool
+	Session bool
+}
+
+type admissionFlags struct {
+	Project   string
+	InputPath string
+	SessionID string
+	JSONMode  bool
+}
+
 func cmdAdmission(cfg store.Config) {
 	jsonMode := hasArg("--json")
 	if len(os.Args) < 3 {
@@ -38,76 +51,14 @@ func cmdAdmission(cfg store.Config) {
 }
 
 func cmdAdmissionPreview(cfg store.Config, jsonMode bool) {
-	project := ""
-	inputPath := ""
-	sessionID := ""
-	seenProject := false
-	seenInput := false
-	seenSession := false
-	for index := 3; index < len(os.Args); index++ {
-		switch os.Args[index] {
-		case "--json":
-			jsonMode = true
-		case "--project":
-			if seenProject {
-				failCLI(jsonMode, "invalid_arguments", "--project may only be provided once", nil)
-				return
-			}
-			seenProject = true
-			if index+1 >= len(os.Args) || strings.HasPrefix(os.Args[index+1], "--") {
-				failCLI(jsonMode, "invalid_arguments", "--project requires a non-empty value", nil)
-				return
-			}
-			project = strings.TrimSpace(os.Args[index+1])
-			index++
-			if project == "" {
-				failCLI(jsonMode, "invalid_arguments", "--project requires a non-empty value", nil)
-				return
-			}
-		case "--input":
-			if seenInput {
-				failCLI(jsonMode, "invalid_arguments", "--input may only be provided once", nil)
-				return
-			}
-			seenInput = true
-			if index+1 >= len(os.Args) || strings.HasPrefix(os.Args[index+1], "--") {
-				failCLI(jsonMode, "invalid_arguments", "--input requires a file path or - for stdin", nil)
-				return
-			}
-			inputPath = strings.TrimSpace(os.Args[index+1])
-			index++
-			if inputPath == "" {
-				failCLI(jsonMode, "invalid_arguments", "--input requires a file path or - for stdin", nil)
-				return
-			}
-		case "--session":
-			if seenSession {
-				failCLI(jsonMode, "invalid_arguments", "--session may only be provided once", nil)
-				return
-			}
-			seenSession = true
-			if index+1 >= len(os.Args) || strings.HasPrefix(os.Args[index+1], "--") {
-				failCLI(jsonMode, "invalid_arguments", "--session requires a non-empty session ID", nil)
-				return
-			}
-			sessionID = strings.TrimSpace(os.Args[index+1])
-			index++
-			if sessionID == "" {
-				failCLI(jsonMode, "invalid_arguments", "--session requires a non-empty session ID", nil)
-				return
-			}
-		case "help", "--help", "-h":
-			printAdmissionUsage()
-			return
-		default:
-			if strings.HasPrefix(os.Args[index], "--") {
-				failCLI(jsonMode, "unknown_flag", fmt.Sprintf("unknown flag %s", os.Args[index]), nil)
-			} else {
-				failCLI(jsonMode, "invalid_arguments", fmt.Sprintf("unexpected admission preview argument %q", os.Args[index]), nil)
-			}
-			return
-		}
+	flags, proceed := parseAdmissionFlags(3, jsonMode, admissionFlagOptions{Project: true, Input: true, Session: true})
+	if !proceed {
+		return
 	}
+	project := flags.Project
+	inputPath := flags.InputPath
+	sessionID := flags.SessionID
+	jsonMode = flags.JSONMode
 	if project == "" {
 		failCLI(jsonMode, "invalid_arguments", "admission preview requires --project", nil)
 		return
@@ -186,6 +137,56 @@ func cmdAdmissionPreview(cfg store.Config, jsonMode bool) {
 	renderAdmissionPreview(result)
 }
 
+func parseAdmissionFlags(start int, jsonMode bool, options admissionFlagOptions) (admissionFlags, bool) {
+	flags := admissionFlags{JSONMode: jsonMode}
+	seen := map[string]bool{}
+	for index := start; index < len(os.Args); index++ {
+		argument := os.Args[index]
+		switch argument {
+		case "--json":
+			flags.JSONMode = true
+		case "--project", "--input", "--session":
+			allowed := (argument == "--project" && options.Project) ||
+				(argument == "--input" && options.Input) ||
+				(argument == "--session" && options.Session)
+			if !allowed {
+				admissionUnknownArgument(flags.JSONMode, argument)
+				return admissionFlags{}, false
+			}
+			if seen[argument] {
+				failCLI(flags.JSONMode, "invalid_arguments", argument+" may only be provided once", nil)
+				return admissionFlags{}, false
+			}
+			seen[argument] = true
+			if index+1 >= len(os.Args) || strings.HasPrefix(os.Args[index+1], "--") || strings.TrimSpace(os.Args[index+1]) == "" {
+				message := argument + " requires a non-empty value"
+				if argument == "--input" {
+					message = "--input requires a file path or - for stdin"
+				}
+				failCLI(flags.JSONMode, "invalid_arguments", message, nil)
+				return admissionFlags{}, false
+			}
+			value := strings.TrimSpace(os.Args[index+1])
+			index++
+			switch argument {
+			case "--project":
+				flags.Project = value
+			case "--input":
+				flags.InputPath = value
+			case "--session":
+				flags.SessionID = value
+			}
+		case "help", "--help", "-h":
+			printAdmissionUsage()
+			return admissionFlags{}, false
+		default:
+			admissionUnknownArgument(flags.JSONMode, argument)
+			return admissionFlags{}, false
+		}
+	}
+	return flags, true
+}
+
 func readAdmissionEvidenceBundle(path string) (memoryops.EvidenceBundle, error) {
 	var reader io.Reader
 	var file *os.File
@@ -261,7 +262,7 @@ func printAdmissionUsage() {
 	fmt.Fprintln(os.Stdout, "usage: engram admission preview --project PROJECT (--input FILE|- | --session SESSION_ID) [--json]")
 	fmt.Fprintln(os.Stdout, "       engram admission shadow --project PROJECT --session SESSION_ID [--json]")
 	fmt.Fprintln(os.Stdout, "       engram admission review list --project PROJECT [--json]")
-	fmt.Fprintln(os.Stdout, "       engram admission review mark PROPOSAL_ID --verdict admit|review|reject [--note TEXT] [--unsupported] [--privacy-leak] [--json]")
+	fmt.Fprintln(os.Stdout, "       engram admission review mark PROPOSAL_ID --verdict admit|review|reject [--note TEXT] [--unsupported|--clear-unsupported] [--privacy-leak|--clear-privacy-leak] [--json]")
 	fmt.Fprintln(os.Stdout, "       engram admission metrics --project PROJECT [--json]")
 	fmt.Fprintln(os.Stdout, "Preview never persists; shadow retains derived local snapshots for review and metrics.")
 }

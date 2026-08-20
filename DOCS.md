@@ -86,7 +86,7 @@ engram projects merge --from SOURCE [--from SOURCE...] --to TARGET [--dry-run] [
 engram admission preview --project PROJECT (--input FILE|- | --session SESSION_ID) [--json]
 engram admission shadow --project PROJECT --session SESSION_ID [--json]
 engram admission review list --project PROJECT [--json]
-engram admission review mark PROPOSAL_ID --verdict admit|review|reject [--note TEXT] [--unsupported] [--privacy-leak] [--json]
+engram admission review mark PROPOSAL_ID --verdict admit|review|reject [--note TEXT] [--unsupported|--clear-unsupported] [--privacy-leak|--clear-privacy-leak] [--json]
 engram admission metrics --project PROJECT [--json]
 ```
 
@@ -122,9 +122,11 @@ lifecycle hooks.
 `admission review list` shows pending proposals for one project. `admission review
 mark` appends a human correction with a stable per-proposal ordinal; identical
 retries are idempotent and later changes remain auditable. Optional `--unsupported`
-and `--privacy-leak` findings feed the
-safety gates reported by `admission metrics`. Notes are bounded to 4,096 Unicode
-characters and must not contain raw evidence or secrets.
+and `--privacy-leak` findings feed the safety gates reported by `admission metrics`.
+Omitting either flag preserves its latest value. An explicit
+`--clear-unsupported` or `--clear-privacy-leak` appends a retraction; positive and
+clear forms for the same finding cannot be combined. Notes are bounded to 4,096
+Unicode characters and must not contain raw evidence or secrets.
 
 The shadow tables are excluded from Memory search/context, normal export/import,
 sync, cloud, and promotion. `delete project` removes the project's retained shadow

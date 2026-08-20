@@ -537,6 +537,7 @@ engram admission shadow --project engram --session SESSION_ID
 engram admission review list --project engram
 engram admission review mark PROPOSAL_ID --verdict admit --note "Confirmed"
 engram admission review mark PROPOSAL_ID --verdict reject --unsupported
+engram admission review mark PROPOSAL_ID --verdict review --clear-unsupported
 engram admission metrics --project engram
 ```
 
@@ -544,8 +545,11 @@ Add `--json` to any command. `review list` returns only proposals without a huma
 correction. `review mark` accepts `admit`, `review`, or `reject`; an identical retry
 returns the latest correction without duplicating it, while a later changed verdict
 appends a new audit event. `--unsupported` and `--privacy-leak` record explicit
-safety findings. Notes are truncated to 4,096 Unicode characters; do not paste raw
-evidence or secrets into them.
+safety findings. Omitted safety flags preserve their latest values so an unrelated
+verdict or note change cannot silently reopen a gate. Retract a finding explicitly
+with `--clear-unsupported` or `--clear-privacy-leak`; positive and clear forms for
+the same finding are mutually exclusive. Notes are truncated to 4,096 Unicode
+characters; do not paste raw evidence or secrets into them.
 
 Shadow tables retain the selected session ID, distinct evidence/generator/policy
 versions, acquisition counts and diagnostic codes, redacted proposal and assessment
@@ -566,10 +570,13 @@ blocks the automatic-reject readiness gate. Protected false rejects are also bro
 down by proposal category and original assessment reason code. These gates are
 measurement signals only—V3 performs no automatic promotion or rejection.
 
-The checked-in V3 calibration and held-out fixtures are separate deterministic
-regression corpora with predeclared thresholds. They are synthetic and do not
-establish production readiness; that requires a consented, independently labeled
-real-session corpus.
+V3 calibration and the formerly co-developed V3 evaluation cases are now named and
+executed as synthetic observed regression evidence. A separate V4 held-out manifest
+freezes the exact corpus hash and IDs, implementation/policy/metric versions, and
+thresholds before the corpus is added or executed. Held-out evaluation is excluded
+from ordinary `go test ./...` and runs only through the explicit
+`admission_heldout` test tag. Synthetic fixtures do not establish production
+readiness; that requires a consented, independently labeled real-session corpus.
 
 ### Key Environment Variables
 

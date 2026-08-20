@@ -70,6 +70,16 @@ func TestCmdAdmissionShadowReviewAndMetricsJSON(t *testing.T) {
 		t.Fatalf("second review = %#v", secondReview)
 	}
 
+	withArgs(t, "engram", "admission", "review", "mark", secondID, "--verdict", "review", "--note", "Updated verdict only.", "--json")
+	stdout, stderr = captureOutput(t, func() { cmdAdmission(cfg) })
+	if stderr != "" {
+		t.Fatalf("updated review stderr = %q", stderr)
+	}
+	updatedReview := decodeCLIJSON(t, stdout)["review"].(map[string]any)
+	if updatedReview["unsupported"] != true || updatedReview["privacy_leak"] != true {
+		t.Fatalf("omitted safety flags were not preserved: %#v", updatedReview)
+	}
+
 	withArgs(t, "engram", "admission", "metrics", "--project", "engram", "--json")
 	stdout, stderr = captureOutput(t, func() { cmdAdmission(cfg) })
 	if stderr != "" {
@@ -87,6 +97,36 @@ func TestCmdAdmissionShadowReviewAndMetricsJSON(t *testing.T) {
 	}
 	if _, ok := metrics["protected_false_rejects_by_reason_code"].(map[string]any); !ok {
 		t.Fatalf("missing protected false reject reason breakdown: %#v", metrics)
+	}
+
+	withArgs(t, "engram", "admission", "review", "mark", secondID, "--verdict", "review", "--clear-unsupported", "--json")
+	stdout, stderr = captureOutput(t, func() { cmdAdmission(cfg) })
+	if stderr != "" {
+		t.Fatalf("clear unsupported stderr = %q", stderr)
+	}
+	clearedUnsupported := decodeCLIJSON(t, stdout)["review"].(map[string]any)
+	if clearedUnsupported["unsupported"] != false || clearedUnsupported["privacy_leak"] != true {
+		t.Fatalf("explicit unsupported retraction = %#v", clearedUnsupported)
+	}
+
+	withArgs(t, "engram", "admission", "review", "mark", secondID, "--verdict", "review", "--clear-privacy-leak", "--json")
+	stdout, stderr = captureOutput(t, func() { cmdAdmission(cfg) })
+	if stderr != "" {
+		t.Fatalf("clear privacy leak stderr = %q", stderr)
+	}
+	clearedPrivacyLeak := decodeCLIJSON(t, stdout)["review"].(map[string]any)
+	if clearedPrivacyLeak["unsupported"] != false || clearedPrivacyLeak["privacy_leak"] != false {
+		t.Fatalf("explicit privacy-leak retraction = %#v", clearedPrivacyLeak)
+	}
+
+	withArgs(t, "engram", "admission", "metrics", "--project", "engram", "--json")
+	stdout, stderr = captureOutput(t, func() { cmdAdmission(cfg) })
+	if stderr != "" {
+		t.Fatalf("metrics after explicit retraction stderr = %q", stderr)
+	}
+	metrics = decodeCLIJSON(t, stdout)
+	if metrics["automatic_promotion_gate_blocked"] != false || metrics["unsupported_count"] != float64(0) || metrics["privacy_leak_count"] != float64(0) {
+		t.Fatalf("metrics after explicit retraction = %#v", metrics)
 	}
 }
 
@@ -176,6 +216,8 @@ func TestCmdAdmissionShadowStrictErrorsAreJSON(t *testing.T) {
 		{name: "review list missing project", args: []string{"engram", "admission", "review", "list", "--json"}, code: "invalid_arguments"},
 		{name: "review mark invalid verdict", args: []string{"engram", "admission", "review", "mark", "proposal", "--verdict", "maybe", "--json"}, code: "invalid_arguments"},
 		{name: "review mark unknown proposal", args: []string{"engram", "admission", "review", "mark", "missing", "--verdict", "admit", "--json"}, code: "unknown_admission_proposal"},
+		{name: "review mark conflicting unsupported flags", args: []string{"engram", "admission", "review", "mark", "proposal", "--verdict", "admit", "--unsupported", "--clear-unsupported", "--json"}, code: "invalid_arguments"},
+		{name: "review mark conflicting privacy flags", args: []string{"engram", "admission", "review", "mark", "proposal", "--verdict", "admit", "--privacy-leak", "--clear-privacy-leak", "--json"}, code: "invalid_arguments"},
 		{name: "metrics missing project", args: []string{"engram", "admission", "metrics", "--json"}, code: "invalid_arguments"},
 		{name: "shadow unknown flag", args: []string{"engram", "admission", "shadow", "--project", "engram", "--session", "missing", "--typo", "--json"}, code: "unknown_flag"},
 	}

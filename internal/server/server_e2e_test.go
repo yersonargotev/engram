@@ -343,6 +343,41 @@ func TestDeleteSessionPropagatesForCloudEnrolledProjectE2E(t *testing.T) {
 	}
 }
 
+func TestMigrateProjectMovesShadowOnlyProjectE2E(t *testing.T) {
+	st, ts := newE2EServer(t)
+	run, err := st.CreateAdmissionShadowRun(store.CreateAdmissionShadowRunParams{
+		Project:          "shadow-old",
+		Mode:             "session",
+		EvidenceVersion:  "v1",
+		GeneratorVersion: "v1",
+		PolicyVersion:    "v1",
+	})
+	if err != nil {
+		t.Fatalf("create admission shadow run: %v", err)
+	}
+
+	response := postJSON(t, ts.Client(), ts.URL+"/projects/migrate", map[string]any{
+		"old_project": "shadow-old",
+		"new_project": "shadow-new",
+	})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 migrating shadow-only project, got %d", response.StatusCode)
+	}
+	body := decodeJSON[map[string]any](t, response)
+	if body["status"] != "migrated" || body["admission_shadow_runs"] != float64(1) {
+		t.Fatalf("migration response = %#v", body)
+	}
+
+	runs, err := st.ListAdmissionShadowRuns("shadow-new")
+	if err != nil || len(runs) != 1 || runs[0].ID != run.ID {
+		t.Fatalf("migrated shadow runs = %#v, err=%v", runs, err)
+	}
+	oldRuns, err := st.ListAdmissionShadowRuns("shadow-old")
+	if err != nil || len(oldRuns) != 0 {
+		t.Fatalf("old shadow runs = %#v, err=%v", oldRuns, err)
+	}
+}
+
 func TestCoreReadHandlersAndHelpersE2E(t *testing.T) {
 	_, ts := newE2EServer(t)
 	client := ts.Client()

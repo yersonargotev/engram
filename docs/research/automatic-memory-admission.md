@@ -1,4 +1,4 @@
-# Automatic memory candidate generation and admission
+# Automatic Memory proposal generation and admission
 
 Date: 2026-08-18
 
@@ -11,10 +11,10 @@ Date: 2026-08-18
 
 Engram should test two separate capabilities:
 
-1. **Candidate generation** from bounded session evidence, to find durable facts that
+1. **Memory proposal generation** from bounded session evidence, to find durable facts that
    the agent did not explicitly save.
-2. **Admission advice** that labels a candidate `admit`, `review`, or `reject` and
-   records reasons, to reduce noise before a candidate becomes durable memory.
+2. **Admission advice** that labels a Memory proposal `admit`, `review`, or `reject`
+   and records reasons, to reduce noise before a proposal becomes a Memory.
 
 The first production increment should be deterministic, explicitly invoked, and
 shadow-only. It should report Memory proposals and Admission assessments through the
@@ -50,8 +50,8 @@ independent failure modes:
 - **Noise:** `memoryops.Service.Save` checks session and non-empty content, persists
   first, and only then searches for relation candidates; relation-candidate failure
   never rolls back the save
-  ([`Service.Save`](../../internal/memoryops/memoryops.go#L67)). Existing candidate
-  detection is therefore conflict/relationship discovery, not admission.
+  ([`Service.Save`](../../internal/memoryops/memoryops.go#L67)). Existing relation-
+  candidate detection is therefore conflict/relationship discovery, not admission.
 
 Engram already has partial safety nets, but none closes both gaps:
 
@@ -110,7 +110,7 @@ Generative Agents likewise stores observations, derives higher-level reflections
 and retrieves memories using recency, importance, and relevance. Its ablations show
 that observation, reflection, and planning each contributed to its evaluated agent
 behavior ([Generative Agents paper](https://arxiv.org/abs/2304.03442)). This supports
-generating candidates and keeping provenance, but its goal—believable simulated
+generating Memory proposals and keeping provenance, but its goal—believable simulated
 behavior—is different from preserving exact engineering decisions.
 
 ### An LLM verdict is useful evidence, not a safe deletion oracle
@@ -119,7 +119,7 @@ LLM judges exhibit systematic position bias that varies by judge and task, even 
 large controlled comparison study
 ([Shi et al., 2024](https://arxiv.org/abs/2406.07791)). Engram's own semantic-conflict
 feature already treats model execution as a bounded, optional layer above
-deterministic FTS5 candidates, records model attribution and reasoning, and isolates
+deterministic FTS5 relation candidates, records model attribution and reasoning, and isolates
 shell-out failures rather than replacing the local path
 ([semantic conflict design](../../openspec/changes/memory-conflict-semantic/design.md),
 [`AgentRunner`](../../internal/llm/runner.go#L20),
@@ -153,28 +153,28 @@ number accepted at face value.
 
 ## Capability decisions
 
-### 1. Candidate generation: experiment now
+### 1. Memory proposal generation: experiment now
 
-Candidate generation addresses omissions; admission alone cannot. The experiment
+Memory proposal generation addresses omissions; admission alone cannot. The experiment
 should consume a **bounded evidence bundle**, not silently record an entire session:
 
 - available user prompts already captured for the session;
 - the session summary, when present;
 - bounded repository change signals (file paths and compact diff-derived facts, not
   raw unrestricted diffs);
-- explicit candidate submissions from agent adapters; and
+- explicit Memory proposal submissions from agent adapters; and
 - provenance for every source fragment.
 
-The generator should output zero or more structured candidates with `title`, `type`,
+The generator should output zero or more structured Memory proposals with `title`, `type`,
 `content`, `scope`, source references, and a reason the fact appears durable. It must
-not write directly to `observations`. Candidate generation should be independently
+not write directly to `observations`. Memory proposal generation should be independently
 measurable for recall: *of the durable gold facts in a session, how many were
 proposed?*
 
 Do not require plugins to classify content. Different adapters have different
 session-event access, and putting policy there would duplicate behavior and violate
 the thin-plugin boundary. Adapters should only send normalized, bounded evidence or
-candidate proposals to a Go-owned contract.
+Memory proposals to a Go-owned contract.
 
 ### 2. Admission: deterministic advice now; no automatic rejection
 
@@ -192,14 +192,14 @@ Apply deterministic rules first:
   evidence references.
 
 Initially these verdicts are observational only. A `reject` verdict must not delete a
-candidate or block an explicit save. Shadow results create the error corpus needed to
+Memory proposal or block an explicit save. Shadow results create the error corpus needed to
 decide whether any deterministic rule is safe to enforce.
 
 ### 3. Optional LLM: only for the ambiguous middle
 
-After deterministic rules, an LLM may advise on `review` candidates only. Send the
-candidate, minimal provenance excerpts, rule results, and a compact list of nearby
-memories. Do not send the whole transcript by default. Bound candidates per session,
+After deterministic rules, an LLM may advise on `review` proposals only. Send the
+Memory proposal, minimal provenance excerpts, rule results, and a compact list of nearby
+Memories. Do not send the whole transcript by default. Bound proposals per session,
 tokens, concurrency, and timeout; attribute the model/prompt version and preserve its
 reasoning. On unavailable CLI, timeout, malformed output, or unknown verdict, retain
 `review` and continue without blocking the save/session-close path.
@@ -215,14 +215,14 @@ The durable seam should be a transport-neutral service next to the existing memo
 domain operations, conceptually:
 
 ```go
-type AdmissionDecision string // admit | review | reject
+type AdmissionRecommendation string // admit | review | reject
 
-type CandidateGenerator interface {
-    Generate(context.Context, EvidenceBundle) ([]Candidate, error)
+type MemoryProposalGenerator interface {
+    Generate(context.Context, EvidenceBundle) ([]MemoryProposal, error)
 }
 
 type AdmissionPolicy interface {
-    Evaluate(context.Context, Candidate) (Verdict, error)
+    Assess(context.Context, MemoryProposal) (AdmissionAssessment, error)
 }
 ```
 
@@ -233,10 +233,10 @@ only. `internal/llm` should own external model execution/parsing if the optional
 is added. MCP/CLI/plugins should translate inputs and render outputs; cloud should
 only replicate durable state after local promotion.
 
-Do **not** insert generated candidates into `observations` and later mark them
+Do **not** insert generated Memory proposals into `observations` and later mark them
 rejected: that pollutes search and sync before admission. During the first experiment,
 write results to a versioned fixture/report outside the user's memory database. Add a
-local candidate table only if an interactive review workflow is approved; it should
+local proposal table only if an interactive review workflow is approved; it should
 be separate from observations and excluded from sync by default until its semantics
 are explicitly designed.
 
@@ -244,8 +244,8 @@ are explicitly designed.
 
 ### Phase 0 — corpus before runtime behavior
 
-Build a versioned set of real, consented, redacted coding sessions. Label each
-candidate independently by at least two reviewers, adjudicating disagreements. Gold
+Build a versioned set of real, consented, redacted coding sessions. Label each Memory
+proposal independently by at least two reviewers, adjudicating disagreements. Gold
 labels must include:
 
 - durable memory category: decision, root cause/bugfix, invariant/constraint,
@@ -261,13 +261,13 @@ otherwise a classifier can appear accurate by rejecting almost everything.
 
 ### Phase 1 — offline deterministic baseline
 
-Measure candidate-generation recall separately from admission:
+Measure Memory-proposal generation recall separately from admission:
 
-- durable-fact candidate recall by category;
+- durable-fact proposal recall by category;
 - admitted-memory precision;
 - durable-fact false-reject rate (overall and by category);
 - duplicate admission rate;
-- unsupported/hallucinated candidate rate;
+- unsupported/hallucinated proposal rate;
 - secret/privacy leakage rate;
 - reason-code coverage and reviewer agreement; and
 - wall time and incremental bytes/tokens per useful admitted memory.
@@ -277,14 +277,14 @@ Measure candidate-generation recall separately from admission:
 Run only with explicit opt-in. Existing saves remain authoritative. Show proposed
 verdicts in a report or review queue, let users correct them, and log no raw evidence
 beyond the configured retention boundary. Compare deterministic-only and
-deterministic-plus-LLM arms on the same labeled candidates.
+deterministic-plus-LLM arms on the same labeled proposals.
 
 ### Go/no-go gates
 
 Set numerical thresholds from the corpus before implementation; do not tune them
 after seeing shadow results. At minimum:
 
-- **No-go for automatic candidate promotion** if generated unsupported facts or
+- **No-go for automatic promotion** if generated unsupported facts or
   privacy leakage are non-zero in release evaluation.
 - **No-go for automatic rejection** if any protected category (explicit user memory,
   root cause, invariant, security/configuration constraint) has a false rejection, or
@@ -307,7 +307,7 @@ the proposed autonomous classifier as a product gate. Start with the corpus and
 offline generator, then shadow admission, then an optional LLM arm. Only after those
 stages should Engram decide whether any narrow automatic-admit rule is safe.
 
-This sequence directly attacks both weaknesses—candidate generation reduces omission
+This sequence directly attacks both weaknesses—Memory proposal generation reduces omission
 and admission reduces noise—while preserving the properties that distinguish Engram:
 local SQLite remains authoritative, explicit agent/user saves remain reliable, model
 use is optional and bounded, adapters stay thin, and every automated judgment is

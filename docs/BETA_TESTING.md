@@ -99,7 +99,12 @@ Expected: cloud status shows `configured=true`, server matches the beta URL.
 
 ### 5.1 Phase 1 baseline — conflict surfacing on save
 
-The CLI `save` syntax is positional: `engram save <title> <content> [flags]`.
+The CLI `save` command accepts equivalent positional and named forms:
+
+```text
+engram save <title> <content> [flags]
+engram save --title TITLE --content CONTENT [flags]
+```
 
 ```bash
 # First memory

@@ -382,7 +382,7 @@ Your production engram is fully untouched throughout.
 | `engram mcp [--tools=PROFILE] [--project NAME]` | Start MCP server (stdio transport)                         |
 | `engram tui`                               | Launch terminal UI                                              |
 | `engram search <query> [--json]`           | Search full memories; supports project scope and `all|any` matching |
-| `engram save <title> <msg> [--json]`       | Save a memory and surface pending conflict candidates           |
+| `engram save <title> <content> [flags]`    | Save a memory and surface pending conflict candidates; also accepts `--title TITLE --content CONTENT` |
 | `engram get <obs_id> [--json]`             | Retrieve one complete memory and its relations                  |
 | `engram update <obs_id> [fields]`          | Partially update a memory                                       |
 | `engram review list\|mark`                 | Review due memories and reset their local review cycle          |

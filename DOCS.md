@@ -72,6 +72,7 @@ Core curated-memory operations:
 ```text
 engram search <query> [--project P|--all-projects] [--match-mode all|any] [--json]
 engram save <title> <content> [--project P] [--topic-key K] [--json]
+engram save --title TITLE --content CONTENT [--project P] [--topic-key K] [--json]
 engram get <id> [--json]
 engram update <id> [--title V] [--content V] [--type V] [--scope V]
                    [--topic-key V|--clear-topic-key] [--json]

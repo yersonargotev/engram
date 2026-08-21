@@ -68,6 +68,37 @@ func TestCLIMemoryJSONWorkflow(t *testing.T) {
 	}
 }
 
+func TestCLISaveAcceptsNamedInputsJSON(t *testing.T) {
+	stubExitWithPanic(t)
+	cfg := testConfig(t)
+	withArgs(t,
+		"engram", "save",
+		"--title", "Named CLI contract",
+		"--content", "named durable content",
+		"--project", "Named Project",
+		"--type", "decision",
+		"--scope", "personal",
+		"--topic-key", "decision/named-save",
+		"--json",
+	)
+
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdSave(cfg) })
+	if recovered != nil || stderr != "" {
+		t.Fatalf("save panic=%v stderr=%q", recovered, stderr)
+	}
+	payload := decodeCLIJSON(t, stdout)
+	observation := payload["observation"].(map[string]any)
+	if observation["title"] != "Named CLI contract" || observation["content"] != "named durable content" {
+		t.Fatalf("observation=%v", observation)
+	}
+	if observation["type"] != "decision" || observation["scope"] != "personal" || observation["topic_key"] != "decision/named-save" {
+		t.Fatalf("observation metadata=%v", observation)
+	}
+	if payload["project"] != "named project" {
+		t.Fatalf("project=%v", payload["project"])
+	}
+}
+
 func TestCLIReadCommandsJSON(t *testing.T) {
 	cfg := testConfig(t)
 	id := mustSeedObservation(t, cfg, "json-session", "json-project", "decision", "JSON read", "full content", "project")

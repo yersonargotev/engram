@@ -256,7 +256,9 @@ engram serve [port]       Start HTTP API server (default: 7437)
 engram mcp                Start MCP server (stdio transport)
 engram tui                Launch interactive terminal UI
 engram search <query>     Search memories
-engram save <title> <msg> Save a memory
+engram save <title> <content>
+engram save --title TITLE --content CONTENT
+                          Save a memory using positional or named input
 engram get <obs_id>       Retrieve complete memory content, metadata, and relations [--json]
 engram update <obs_id>    Partially update title/content/type/scope/topic key [--json]
 engram review list|mark   List due memories or mark one reviewed (local-only) [--json]

@@ -832,6 +832,102 @@ func TestMainAdmissionHelpDoesNotCreateLocalDatabase(t *testing.T) {
 	}
 }
 
+func TestMainSaveRejectsMixedInputsBeforeStore(t *testing.T) {
+	stubRuntimeHooks(t)
+	stubExitWithPanic(t)
+	dataDir := filepath.Join(t.TempDir(), ".engram")
+	t.Setenv("ENGRAM_DATA_DIR", dataDir)
+	withArgs(t,
+		"engram", "save", "positional title", "positional content",
+		"--title", "named title", "--content", "named content",
+		"--project", "mixed-project", "--json",
+	)
+
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() { main() })
+	if stdout != "" {
+		t.Fatalf("stdout=%q", stdout)
+	}
+	if code, ok := recovered.(exitCode); !ok || code != 1 {
+		t.Fatalf("exit=%v stderr=%q", recovered, stderr)
+	}
+	envelope := decodeCLIJSON(t, stderr)
+	if envelope["code"] != "invalid_arguments" || !strings.Contains(envelope["message"].(string), "cannot mix") {
+		t.Fatalf("error=%v", envelope)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "engram.db")); !os.IsNotExist(err) {
+		t.Fatalf("mixed input must not create the store, stat err=%v", err)
+	}
+}
+
+func TestMainSaveHelpAliasesDoNotCreateLocalDatabase(t *testing.T) {
+	for _, helpArg := range []string{"-h", "--help"} {
+		t.Run(helpArg, func(t *testing.T) {
+			stubRuntimeHooks(t)
+			stubExitWithPanic(t)
+			dataDir := filepath.Join(t.TempDir(), ".engram")
+			t.Setenv("ENGRAM_DATA_DIR", dataDir)
+			withArgs(t, "engram", "save", helpArg)
+
+			stdout, stderr, recovered := captureOutputAndRecover(t, func() { main() })
+			if recovered != nil || stderr != "" {
+				t.Fatalf("save help should return cleanly, panic=%v stderr=%q stdout=%q", recovered, stderr, stdout)
+			}
+			for _, want := range []string{
+				"Usage:",
+				"engram save <title> <content> [flags]",
+				"engram save --title TITLE --content CONTENT [flags]",
+				"--topic-key KEY",
+			} {
+				if !strings.Contains(stdout, want) {
+					t.Fatalf("save help missing %q: %q", want, stdout)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(dataDir, "engram.db")); !os.IsNotExist(err) {
+				t.Fatalf("save help must not create the store, stat err=%v", err)
+			}
+		})
+	}
+}
+
+func TestMainSaveInputErrorsAreStructuredBeforeStore(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		code string
+	}{
+		{name: "missing positional content", args: []string{"engram", "save", "title", "--json"}, code: "invalid_arguments"},
+		{name: "missing named title", args: []string{"engram", "save", "--content", "content", "--json"}, code: "invalid_arguments"},
+		{name: "missing named content", args: []string{"engram", "save", "--title", "title", "--json"}, code: "invalid_arguments"},
+		{name: "partial named input", args: []string{"engram", "save", "--title", "diagnostic-only", "--project", "isolated", "--json"}, code: "invalid_arguments"},
+		{name: "missing flag value", args: []string{"engram", "save", "--title", "title", "--content", "content", "--project", "--json"}, code: "missing_flag_value"},
+		{name: "unknown flag", args: []string{"engram", "save", "--title", "title", "--content", "content", "--unknown", "--json"}, code: "unknown_flag"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stubRuntimeHooks(t)
+			stubExitWithPanic(t)
+			dataDir := filepath.Join(t.TempDir(), ".engram")
+			t.Setenv("ENGRAM_DATA_DIR", dataDir)
+			withArgs(t, tc.args...)
+
+			stdout, stderr, recovered := captureOutputAndRecover(t, func() { main() })
+			if stdout != "" {
+				t.Fatalf("stdout=%q", stdout)
+			}
+			if code, ok := recovered.(exitCode); !ok || code != 1 {
+				t.Fatalf("exit=%v stderr=%q", recovered, stderr)
+			}
+			if envelope := decodeCLIJSON(t, stderr); envelope["code"] != tc.code {
+				t.Fatalf("error=%v, want code %q", envelope, tc.code)
+			}
+			if _, err := os.Stat(filepath.Join(dataDir, "engram.db")); !os.IsNotExist(err) {
+				t.Fatalf("invalid save input must not create the store, stat err=%v", err)
+			}
+		})
+	}
+}
+
 func TestCmdCloudStatusDistinguishesAuthAndSyncReadiness(t *testing.T) {
 	stubExitWithPanic(t)
 	stubRuntimeHooks(t)

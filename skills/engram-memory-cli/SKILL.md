@@ -71,7 +71,7 @@ observation for one durable subject; split only genuinely independent subjects.
 2. Write structured content with `What`, `Why`, and `Where`:
 
    ```bash
-   engram save "<concise title>" "What: <durable result>
+   engram save --title "<concise title>" --content "What: <durable result>
    Why: <future value>
    Where: <subsystem or path>" --project "<project>" --json
    ```

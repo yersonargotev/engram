@@ -727,6 +727,11 @@ func handleConfigFreeCommand(args []string) bool {
 	case "help", "--help", "-h":
 		printUsage()
 		return true
+	case "save":
+		if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
+			printSaveUsage()
+			return true
+		}
 	case "cloud":
 		if len(args) >= 2 {
 			subcommand := strings.ToLower(strings.TrimSpace(args[1]))
@@ -1115,50 +1120,98 @@ func cmdSearch(cfg store.Config) {
 	}
 }
 
-func cmdSave(cfg store.Config) {
-	jsonMode := hasArg("--json")
-	if len(os.Args) < 4 {
-		failCLI(jsonMode, "invalid_arguments", "usage: engram save <title> <content> [--type TYPE] [--project PROJECT] [--scope SCOPE] [--topic-key TOPIC_KEY] [--json]", nil)
-		return
-	}
+type saveOptions struct {
+	Title    string
+	Content  string
+	Type     string
+	Project  string
+	Scope    string
+	TopicKey string
+	JSONMode bool
+}
 
-	title := os.Args[2]
-	content := os.Args[3]
-	if strings.TrimSpace(content) == "" {
-		failCLI(jsonMode, "invalid_arguments", "content is required", nil)
-		return
-	}
-	typ := "manual"
-	project := ""
-	scope := "project"
-	topicKey := ""
+type saveArgumentError struct {
+	Code    string
+	Message string
+}
 
-	for i := 4; i < len(os.Args); i++ {
-		arg := os.Args[i]
+const (
+	savePositionalUsage = "engram save <title> <content> [flags]"
+	saveNamedUsage      = "engram save --title TITLE --content CONTENT [flags]"
+)
+
+func parseSaveArgs(args []string) (saveOptions, *saveArgumentError) {
+	opts := saveOptions{Type: "manual", Scope: "project"}
+	positionals := make([]string, 0, 2)
+	titleSet, contentSet := false, false
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "--json" {
+			opts.JSONMode = true
 			continue
 		}
-		if arg != "--type" && arg != "--project" && arg != "--scope" && arg != "--topic" && arg != "--topic-key" {
-			failCLI(jsonMode, "unknown_flag", fmt.Sprintf("unknown flag %s", arg), nil)
-			return
+		if arg != "--title" && arg != "--content" && arg != "--type" && arg != "--project" && arg != "--scope" && arg != "--topic" && arg != "--topic-key" {
+			if strings.HasPrefix(arg, "--") {
+				return opts, &saveArgumentError{Code: "unknown_flag", Message: fmt.Sprintf("unknown flag %s", arg)}
+			}
+			positionals = append(positionals, arg)
+			continue
 		}
-		if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
-			failCLI(jsonMode, "missing_flag_value", fmt.Sprintf("%s requires a value", arg), nil)
-			return
+		if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
+			return opts, &saveArgumentError{Code: "missing_flag_value", Message: fmt.Sprintf("%s requires a value", arg)}
 		}
-		value := os.Args[i+1]
+		value := args[i+1]
 		i++
 		switch arg {
+		case "--title":
+			opts.Title, titleSet = value, true
+		case "--content":
+			opts.Content, contentSet = value, true
 		case "--type":
-			typ = value
+			opts.Type = value
 		case "--project":
-			project = value
+			opts.Project = value
 		case "--scope":
-			scope = value
+			opts.Scope = value
 		case "--topic", "--topic-key":
-			topicKey = value
+			opts.TopicKey = value
 		}
 	}
+
+	if titleSet || contentSet {
+		if len(positionals) > 0 {
+			return opts, &saveArgumentError{Code: "invalid_arguments", Message: "cannot mix positional title/content with --title or --content"}
+		}
+		if !titleSet || !contentSet {
+			return opts, &saveArgumentError{Code: "invalid_arguments", Message: "named save requires both --title and --content"}
+		}
+	} else {
+		if len(positionals) != 2 {
+			return opts, &saveArgumentError{Code: "invalid_arguments", Message: fmt.Sprintf("usage: %s or %s", savePositionalUsage, saveNamedUsage)}
+		}
+		opts.Title, opts.Content = positionals[0], positionals[1]
+	}
+	if strings.TrimSpace(opts.Content) == "" {
+		return opts, &saveArgumentError{Code: "invalid_arguments", Message: "content is required"}
+	}
+	return opts, nil
+}
+
+func cmdSave(cfg store.Config) {
+	opts, argErr := parseSaveArgs(os.Args[2:])
+	if argErr != nil {
+		failCLI(opts.JSONMode || hasArg("--json"), argErr.Code, argErr.Message, nil)
+		return
+	}
+
+	title := opts.Title
+	content := opts.Content
+	typ := opts.Type
+	project := opts.Project
+	scope := opts.Scope
+	topicKey := opts.TopicKey
+	jsonMode := opts.JSONMode
 	projectSource, projectPath := "explicit", ""
 	if project != "" {
 		project, _ = store.NormalizeProject(project)
@@ -3069,6 +3122,24 @@ func printNextSteps(steps []string) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+func printSaveUsage() {
+	fmt.Printf(`Usage:
+  %s
+  %s
+
+Save a memory and surface pending conflict candidates.
+
+Flags:
+  --title TITLE       Memory title (named form)
+  --content CONTENT   Memory content (named form)
+  --type TYPE         Memory type (default: manual)
+  --project PROJECT   Project name (defaults to current project detection)
+  --scope SCOPE       Memory scope (default: project)
+  --topic-key KEY     Stable topic key (--topic is an alias)
+  --json              Write structured JSON output
+`, savePositionalUsage, saveNamedUsage)
+}
+
 func printUsage() {
 	fmt.Printf(`engram v%s — Persistent memory for AI coding agents
 
@@ -3087,8 +3158,11 @@ Commands:
   tui                Launch interactive terminal UI
   search <query>     Search memories [--type TYPE] [--project PROJECT] [--scope SCOPE] [--limit N]
                        [--all-projects] [--match-mode all|any] [--json]
-  save <title> <msg> Save a memory [--type TYPE] [--project PROJECT] [--scope SCOPE]
+  save <title> <content>
+                     Save a memory [--type TYPE] [--project PROJECT] [--scope SCOPE]
                        [--topic-key KEY] [--json]
+  save --title TITLE --content CONTENT
+                     Equivalent named-input form with the same flags
   get <obs_id>       Get one complete memory [--json]
   update <obs_id>    Partially update a memory [--title V] [--content V] [--type V]
                        [--scope V] [--topic-key V|--clear-topic-key] [--json]

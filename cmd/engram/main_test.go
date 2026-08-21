@@ -189,6 +189,9 @@ func TestPrintUsage(t *testing.T) {
 	if !strings.Contains(stdout, "search <query>") || !strings.Contains(stdout, "setup [agent]") {
 		t.Fatalf("usage missing expected commands: %q", stdout)
 	}
+	if !strings.Contains(stdout, "save <title> <content>") || !strings.Contains(stdout, "save --title TITLE --content CONTENT") {
+		t.Fatalf("usage missing save input forms: %q", stdout)
+	}
 	if !strings.Contains(stdout, "--brief [--task INTENT] [--base REF]") || !strings.Contains(stdout, "--limit 1..5") {
 		t.Fatalf("usage missing task briefing flags: %q", stdout)
 	}

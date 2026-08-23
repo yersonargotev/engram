@@ -23,7 +23,7 @@ Use this skill when:
 1. **GitHub's native policy permits PR creation only for invited repository collaborators**
 2. **Every PR MUST link an approved issue** — no exceptions
 3. **Every PR MUST have exactly one `type:*` label**, set by a maintainer or trusted automation
-4. **5 automated checks must pass** before merge is possible
+4. **The 5 branch-protection checks and Managed Pack validation must pass** before merge
 5. **Blank PRs without issue linkage will be blocked** by GitHub Actions
 
 ---
@@ -37,7 +37,7 @@ Use this skill when:
 4. Run tests locally (unit + e2e)
 5. Open PR using the template
 6. As a maintainer, add exactly one type:* label
-7. Wait for 5 automated checks to pass
+7. Wait for every automated check to pass
 ```
 
 ---
@@ -128,7 +128,7 @@ All boxes must be checked:
 
 ---
 
-## Automated Checks (all 5 must pass)
+## Automated Checks (all must pass)
 
 | Check | Job name | What it verifies |
 |-------|----------|-----------------|
@@ -137,6 +137,7 @@ All boxes must be checked:
 | PR Validation | `Check PR Has type:* Label` | PR has exactly one `type:*` label |
 | CI | `Unit Tests` | `go test ./...` passes |
 | CI | `E2E Tests` | `go test -tags e2e ./internal/server/...` passes |
+| Managed Pack | `Validate Engram Managed Pack` | Pinned Packy preflight passes schema, closure, materialization, and runtime fitness |
 
 ---
 

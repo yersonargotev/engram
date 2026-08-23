@@ -95,7 +95,7 @@ For every PR, answer:
 ```
 1. Does it link a status:approved issue? → if not → CLOSE (process violation)
 2. Does it have exactly one type:* label? → if not → REQUEST CHANGES
-3. Do all 5 CI checks pass? → if not → REQUEST CHANGES (list failures)
+3. Do all automated checks, including Managed Pack validation, pass? → if not → REQUEST CHANGES (list failures)
 4. Is the scope tight (one issue, minimal diff)? → if sprawling → REQUEST CHANGES
 5. Does it follow conventional commits + branch naming? → if not → REQUEST CHANGES
 6. Is the change correct and well-tested? → if yes → MERGE

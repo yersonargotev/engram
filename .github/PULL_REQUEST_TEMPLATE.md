@@ -4,7 +4,7 @@
   Only invited repository collaborators may open PRs. Every PR must:
   1. Link an approved issue (with status:approved label)
   2. Have exactly one type:* label, applied by a maintainer or trusted automation
-  3. Pass all 5 automated checks
+  3. Pass all automated checks
   
   See CONTRIBUTING.md for the full workflow.
 -->
@@ -70,6 +70,7 @@ These run automatically and **all must pass** before merge:
 | **Check PR Has type:\* Label** | PR has exactly one `type:*` label | ⏳ |
 | **Unit Tests** | `go test ./...` passes | ⏳ |
 | **E2E Tests** | `go test -tags e2e ./internal/server/...` passes | ⏳ |
+| **Validate Engram Managed Pack** | Pinned Packy preflight passes | ⏳ |
 
 ---
 

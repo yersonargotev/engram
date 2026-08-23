@@ -1,0 +1,18 @@
+name: Managed Pack validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  validate:
+    name: Validate Engram Managed Pack
+    uses: yersonargotev/packy/.github/workflows/managed-pack-validation.yml@4871225dba1a6f443dd71377a966d245b05684a1
+    with:
+      packy_ref: 4871225dba1a6f443dd71377a966d245b05684a1
+    permissions:
+      contents: read

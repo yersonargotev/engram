@@ -397,9 +397,11 @@ Your production engram is fully untouched throughout.
 | `engram timeline <obs_id>`                 | Chronological context                                           |
 | `engram context [project]`                 | Recent session context; add `--brief` for task selection         |
 | `engram admission preview`                 | Preview deterministic Memory proposals and assessments without persisting them |
-| `engram admission shadow`                  | Explicitly retain one local shadow run from an existing session |
-| `engram admission review list\|mark`       | Review pending shadow proposals and append human corrections |
-| `engram admission metrics`                 | Report project-local shadow evaluation metrics and safety gates |
+| `engram admission study freeze\|cleanup`   | Freeze or explicitly remove one attributable local study version |
+| `engram admission shadow`                  | Retain a legacy project run or an attributable study run from an existing session |
+| `engram admission review list\|mark`       | List pending proposals and append reviewer-attributed corrections |
+| `engram admission omission record`         | Append a reviewer-attributed omission to one study run |
+| `engram admission metrics`                 | Report legacy project metrics or aggregate-only study metrics and gates |
 | `engram checkpoint record [flags]`         | Record an idempotent local root-turn checkpoint              |
 | `engram checkpoint status [flags]`         | Inspect one exact local root-turn checkpoint                 |
 | `engram stats`                             | Memory statistics                                               |
@@ -544,6 +546,83 @@ engram admission review mark PROPOSAL_ID --verdict review --clear-unsupported
 engram admission metrics --project engram
 ```
 
+This legacy `--project` workflow remains supported. It does not require a study
+contract or reviewer ID, and its review queue and metrics retain their existing
+project-local semantics. Do not mix selectors: `review list` and `metrics` accept
+either their legacy `--project` form or their attributable study form.
+
+For real-session evidence, freeze the attributable study before collecting any
+runs. The strict JSON `admission-study-v1` contract fixes both cohort kinds
+(`calibration` and `held_out`), their non-overlapping session manifests, minimum
+sample sizes, supported adapters, project types and session shapes, review and
+omission labels, thresholds, consent attestation, retention, and the exact
+aggregate output sections:
+
+```json
+{
+  "contract_version": "admission-study-v1",
+  "study_id": "real-session-v1",
+  "study_version": "v1",
+  "metrics_version": "admission-study-metrics-v1",
+  "cohorts": [
+    {"id":"calibration","kind":"calibration","session_ids":["session-cal-01","session-cal-02"],"minimum_runs":2,"minimum_proposals":40,"minimum_independent_reviewed_proposals":20},
+    {"id":"held-out","kind":"held_out","session_ids":["session-held-01","session-held-02"],"minimum_runs":2,"minimum_proposals":40,"minimum_independent_reviewed_proposals":20}
+  ],
+  "adapters": ["codex", "claude-code"],
+  "project_types": ["cli", "library"],
+  "session_shapes": ["feature", "bugfix"],
+  "label_schema": {
+    "version": "admission-study-labels-v1",
+    "verdicts": ["admit", "review", "reject"],
+    "omission_categories": ["decision", "root_cause", "invariant", "constraint", "preference"],
+    "reason_codes": ["not_proposed", "wrong_category", "insufficient_evidence"]
+  },
+  "thresholds": {
+    "minimum_promotion_precision": 0.9,
+    "maximum_review_rate": 0.5,
+    "minimum_review_coverage": 1,
+    "minimum_inter_reviewer_agreement": 0.8,
+    "maximum_protected_false_rejects": 0,
+    "maximum_unsupported_proposals": 0,
+    "maximum_privacy_leaks": 0
+  },
+  "consent": {"required": true, "attestation": "consent-v1"},
+  "retention": {"days": 30, "cleanup": "explicit_study_cleanup"},
+  "allowed_aggregate_outputs": ["counts", "distributions", "quality", "uncertainty", "sufficiency", "gates"]
+}
+```
+
+Freeze from a file or stdin, then attribute every run with values declared in
+that frozen contract:
+
+```bash
+engram admission study freeze --input study.json --json
+engram admission shadow --project engram --session SESSION_ID \
+  --study real-session-v1 --study-version v1 --cohort calibration \
+  --adapter codex --project-type cli --session-shape feature \
+  --consent-attestation consent-v1 --independent-review-required --json
+engram admission review list --study real-session-v1 --study-version v1 \
+  --reviewer reviewer-a --json
+engram admission review mark PROPOSAL_ID --reviewer reviewer-a \
+  --verdict admit --note "Confirmed" --json
+engram admission omission record RUN_ID --reviewer reviewer-a \
+  --category decision --reason-code not_proposed \
+  --annotation "Missed durable decision." --json
+engram admission metrics --study real-session-v1 --study-version v1 --json
+engram admission study cleanup --study real-session-v1 --study-version v1 --yes --json
+```
+
+The freeze is immutable by `(study_id, study_version)`: an identical retry is
+idempotent, while changed JSON requires a new version. Each cohort freezes its
+session manifest, and a session can appear in only one cohort in a study version.
+Study review queues are reviewer-specific;
+`review mark --reviewer` creates an independent append-only stream, and omission
+category/reason values must come from the frozen schema. Consent is mandatory and
+the run's attestation must match the contract. Retention is declarative in v1:
+Engram does not delete on a timer, so the explicit `cleanup --yes` command enforces
+the stated cleanup mode and removes the study plus its runs, proposals, reviews,
+and omissions.
+
 Add `--json` to any command. `review list` returns only proposals without a human
 correction. `review mark` accepts `admit`, `review`, or `reject`; an identical retry
 returns the latest correction without duplicating it, while a later changed verdict
@@ -572,6 +651,19 @@ proposal blocks the automatic-promotion readiness gate; any protected false reje
 blocks the automatic-reject readiness gate. Protected false rejects are also broken
 down by proposal category and original assessment reason code. These gates are
 measurement signals only—V3 performs no automatic promotion or rejection.
+
+Study metrics are separate and aggregate-only: they contain counts;
+distributions by cohort, policy, adapter, project type, session shape,
+recommendation, verdict, category, reason, and omission label; quality
+proportions; 95% Wilson score intervals; per-cohort sample sufficiency; and the
+frozen gates. Pairwise reviewer agreement is descriptive; its uncertainty uses
+proposal-level reviewer unanimity so correlated pairs are not treated as
+independent samples. Metrics omit proposal content, session and run IDs,
+reviewer identity, Evidence references, notes, and omission annotations. `gates.go` is only an
+evaluation disposition: it requires every declared adapter, project type, and
+session shape to be represented, complete review coverage, and zero protected
+false rejects, unsupported proposals, and privacy leaks, while
+`automatic_admission_enabled` is always `false`.
 
 V3 calibration and the formerly co-developed V3 evaluation cases are now named and
 executed as synthetic observed regression evidence. A separate V4 held-out manifest

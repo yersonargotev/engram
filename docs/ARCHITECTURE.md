@@ -284,9 +284,11 @@ engram context [project]  Recent context from previous sessions
 engram admission preview  Generate and assess Memory proposals without persisting them
                           --project PROJECT (--input FILE|- | --session SESSION_ID) [--json]
 engram admission shadow   Explicitly retain derived local snapshots from one session
-                          --project PROJECT --session SESSION_ID [--json]
-engram admission review   List pending snapshots or append a human correction
-engram admission metrics  Report project-local evaluation metrics and safety gates
+                          --project PROJECT --session SESSION_ID [study attribution flags] [--json]
+engram admission study    Freeze a v1 study contract or explicitly clean up one version
+engram admission review   List legacy/project or study/reviewer queues; append corrections
+engram admission omission Append a reviewer-attributed omission to one study run
+engram admission metrics  Report legacy/project metrics or aggregate-only study metrics
 engram stats              Memory statistics
 engram export [file]      Export all memories to JSON
 engram import <file>      Import memories from JSON
@@ -317,6 +319,56 @@ engram projects prune     Remove projects with 0 observations [--dry-run]
 engram obsidian-export    Export memories to Obsidian vault (beta)
 engram version            Show version
 ```
+
+### Attributable Admission study boundary
+
+Attributable evaluation extends the explicit local Shadow path; it does not
+create a second Admission policy or an automatic lifecycle. The CLI freezes a
+strict `admission-study-v1` JSON contract with `admission study freeze --input
+FILE|-`. The Store owns its immutable `(study_id, study_version)` identity and
+SHA-256 contract hash. The frozen contract declares exactly one `calibration`
+and one `held_out` cohort, their non-overlapping session manifests and sampling
+minima, allowed adapter/project/session dimensions, verdict and omission schemas,
+thresholds, required consent attestation, positive retention days with
+`explicit_study_cleanup`, and the six
+aggregate sections: counts, distributions, quality, uncertainty, sufficiency,
+and gates. A valid contract fixes review coverage at 100% and all safety count
+thresholds at zero, so incomplete labeling or any safety finding prevents a
+`go` disposition.
+
+An attributed run still starts from an existing local session and project:
+
+```text
+engram admission shadow --project PROJECT --session SESSION_ID \
+  --study ID --study-version VERSION --cohort COHORT --adapter ADAPTER \
+  --project-type TYPE --session-shape SHAPE --consent-attestation ID \
+  [--independent-review-required] [--json]
+```
+
+The Store rejects partial or undeclared dimensions, a consent mismatch, a
+changed contract hash, an undeclared session, or moving the same session into
+another cohort of the same study version. Reviewer identity owns independent
+append-only review and omission streams. `review list --study ID --study-version VERSION --reviewer R`
+returns only that reviewer's pending proposals; `review mark PROPOSAL_ID
+--reviewer R ...` labels one; and `omission record RUN_ID --reviewer R ...`
+uses category/reason labels frozen in the contract.
+
+All study contracts, attributed runs, reviews, and omissions remain in local
+SQLite. They have no Memory search/context, normal export/import, sync, cloud,
+Obsidian, Promotion, or lifecycle-hook path. Study metrics expose only aggregate
+counts and distributions, quality proportions, 95% Wilson score intervals,
+per-cohort and declared-dimension sufficiency, and frozen gates; inter-reviewer
+agreement includes every pair of latest labels in the independent subset, while
+its Wilson interval uses proposal-level reviewer unanimity as the independent
+unit. The result type contains no proposal content, row IDs, reviewer identities,
+Evidence references, notes, or omission annotations. `gates.go` never activates behavior:
+`automatic_admission_enabled` is always `false`.
+
+Retention is explicit rather than scheduled. `admission study cleanup --study
+ID --study-version VERSION --yes` deletes the contract and cascades through its
+attributed rows. The established `--project` shadow/review/metrics flow remains
+available with its prior project-local contracts and does not require study or
+reviewer metadata.
 
 Local server auth:
 

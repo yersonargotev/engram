@@ -198,6 +198,9 @@ func TestPrintUsage(t *testing.T) {
 	if !strings.Contains(stdout, "admission preview") || !strings.Contains(stdout, "--project PROJECT (--input FILE|- | --session SESSION_ID)") {
 		t.Fatalf("usage missing admission preview command: %q", stdout)
 	}
+	if !strings.Contains(stdout, "admission study") || !strings.Contains(stdout, "admission omission") || !strings.Contains(stdout, "--study-version VERSION") {
+		t.Fatalf("usage missing admission study commands: %q", stdout)
+	}
 	for _, agent := range []string{"opencode", "pi", "claude-code", "gemini-cli", "codex", "antigravity-cli", "windsurf", "qwen", "kiro", "cursor", "vscode-copilot", "kilocode"} {
 		if !strings.Contains(stdout, agent) {
 			t.Fatalf("usage missing setup agent %q: %q", agent, stdout)

@@ -12,7 +12,7 @@ import (
 )
 
 func cmdAdmissionShadow(cfg store.Config, jsonMode bool) {
-	flags, proceed := parseAdmissionFlags(3, jsonMode, admissionFlagOptions{Project: true, Session: true})
+	flags, proceed := parseAdmissionFlags(3, jsonMode, admissionFlagOptions{Project: true, Session: true, StudyRun: true})
 	if !proceed {
 		return
 	}
@@ -24,14 +24,42 @@ func cmdAdmissionShadow(cfg store.Config, jsonMode bool) {
 		return
 	}
 	project, _ = store.NormalizeProject(project)
+	studyFields := []string{flags.StudyID, flags.StudyVersion, flags.Cohort, flags.Adapter, flags.ProjectType, flags.SessionShape, flags.ConsentAttestation}
+	studyFieldCount := 0
+	for _, value := range studyFields {
+		if value != "" {
+			studyFieldCount++
+		}
+	}
+	if studyFieldCount != 0 && studyFieldCount != len(studyFields) {
+		failCLI(jsonMode, "invalid_arguments", "study shadow requires --study, --study-version, --cohort, --adapter, --project-type, --session-shape, and --consent-attestation together", nil)
+		return
+	}
+	if flags.IndependentReviewRequired && studyFieldCount == 0 {
+		failCLI(jsonMode, "invalid_arguments", "--independent-review-required requires study metadata", nil)
+		return
+	}
 	memoryStore := openAdmissionProjectStore(cfg, project, jsonMode)
 	if memoryStore == nil {
 		return
 	}
 	defer memoryStore.Close()
 
-	result, err := memoryops.New(memoryStore).RunAdmissionShadow(memoryops.AdmissionShadowInput{Project: project, SessionID: sessionID})
+	input := memoryops.AdmissionShadowInput{Project: project, SessionID: sessionID}
+	if studyFieldCount > 0 {
+		input.Study = &store.AdmissionStudyRunMetadata{
+			StudyID: flags.StudyID, StudyVersion: flags.StudyVersion, Cohort: flags.Cohort,
+			Adapter: flags.Adapter, ProjectType: flags.ProjectType, SessionShape: flags.SessionShape,
+			ConsentAttestation:        flags.ConsentAttestation,
+			IndependentReviewRequired: flags.IndependentReviewRequired,
+		}
+	}
+	result, err := memoryops.New(memoryStore).RunAdmissionShadow(input)
 	if err != nil {
+		if errors.Is(err, store.ErrAdmissionStudyMetadataMismatch) || errors.Is(err, store.ErrAdmissionStudyContractChanged) {
+			failCLI(jsonMode, "invalid_study_metadata", err.Error(), nil)
+			return
+		}
 		failAdmissionSessionOperation(jsonMode, err, sessionID, project, "admission_shadow_failed")
 		return
 	}
@@ -62,14 +90,38 @@ func cmdAdmissionReview(cfg store.Config, jsonMode bool) {
 }
 
 func cmdAdmissionReviewList(cfg store.Config, jsonMode bool) {
-	flags, proceed := parseAdmissionFlags(4, jsonMode, admissionFlagOptions{Project: true})
+	flags, proceed := parseAdmissionFlags(4, jsonMode, admissionFlagOptions{Project: true, StudySelector: true, Reviewer: true})
 	if !proceed {
 		return
 	}
 	project := flags.Project
 	jsonMode = flags.JSONMode
-	if project == "" {
-		failCLI(jsonMode, "invalid_arguments", "admission review list requires --project", nil)
+	studySelected := flags.StudyID != "" || flags.StudyVersion != "" || flags.ReviewerID != ""
+	if (project == "") == !studySelected || (studySelected && (flags.StudyID == "" || flags.StudyVersion == "" || flags.ReviewerID == "")) {
+		failCLI(jsonMode, "invalid_arguments", "admission review list requires either --project or --study, --study-version, and --reviewer", nil)
+		return
+	}
+	if studySelected {
+		memoryStore, err := storeNew(cfg)
+		if err != nil {
+			failCLI(jsonMode, "store_error", err.Error(), nil)
+			return
+		}
+		defer memoryStore.Close()
+		result, err := memoryops.New(memoryStore).ListAdmissionStudyReviews(memoryops.AdmissionStudyReviewListInput{
+			StudyID: flags.StudyID, StudyVersion: flags.StudyVersion, ReviewerID: flags.ReviewerID,
+		})
+		if err != nil {
+			failAdmissionStudyOperation(jsonMode, err, "admission_study_review_list_failed")
+			return
+		}
+		if jsonMode {
+			if err := writeCLIJSON(result); err != nil {
+				failCLI(true, "output_error", err.Error(), nil)
+			}
+			return
+		}
+		renderAdmissionStudyReviewList(result)
 		return
 	}
 	project, _ = store.NormalizeProject(project)
@@ -104,6 +156,7 @@ func cmdAdmissionReviewMark(cfg store.Config, jsonMode bool) {
 	proposalID := strings.TrimSpace(os.Args[4])
 	verdict := ""
 	note := ""
+	reviewerID := ""
 	var unsupported *bool
 	var privacyLeak *bool
 	unsupportedSet := false
@@ -112,6 +165,7 @@ func cmdAdmissionReviewMark(cfg store.Config, jsonMode bool) {
 	privacyLeakCleared := false
 	seenVerdict := false
 	seenNote := false
+	seenReviewer := false
 	for index := 5; index < len(os.Args); index++ {
 		switch os.Args[index] {
 		case "--json":
@@ -131,6 +185,14 @@ func cmdAdmissionReviewMark(cfg store.Config, jsonMode bool) {
 			}
 			seenNote = true
 			note = os.Args[index+1]
+			index++
+		case "--reviewer":
+			if seenReviewer || index+1 >= len(os.Args) || strings.HasPrefix(os.Args[index+1], "--") {
+				failCLI(jsonMode, "invalid_arguments", "--reviewer requires one value", nil)
+				return
+			}
+			seenReviewer = true
+			reviewerID = strings.TrimSpace(os.Args[index+1])
 			index++
 		case "--unsupported":
 			if unsupportedCleared {
@@ -184,6 +246,7 @@ func cmdAdmissionReviewMark(cfg store.Config, jsonMode bool) {
 	defer memoryStore.Close()
 	result, err := memoryops.New(memoryStore).MarkAdmissionReview(memoryops.AdmissionReviewMarkInput{
 		ProposalID:  proposalID,
+		ReviewerID:  reviewerID,
 		Verdict:     memoryops.AdmissionRecommendation(verdict),
 		Note:        note,
 		Unsupported: unsupported,
@@ -211,14 +274,38 @@ func cmdAdmissionReviewMark(cfg store.Config, jsonMode bool) {
 }
 
 func cmdAdmissionMetrics(cfg store.Config, jsonMode bool) {
-	flags, proceed := parseAdmissionFlags(3, jsonMode, admissionFlagOptions{Project: true})
+	flags, proceed := parseAdmissionFlags(3, jsonMode, admissionFlagOptions{Project: true, StudySelector: true})
 	if !proceed {
 		return
 	}
 	project := flags.Project
 	jsonMode = flags.JSONMode
-	if project == "" {
-		failCLI(jsonMode, "invalid_arguments", "admission metrics requires --project", nil)
+	studySelected := flags.StudyID != "" || flags.StudyVersion != ""
+	if (project == "") == !studySelected || (studySelected && (flags.StudyID == "" || flags.StudyVersion == "")) {
+		failCLI(jsonMode, "invalid_arguments", "admission metrics requires either --project or --study and --study-version", nil)
+		return
+	}
+	if studySelected {
+		memoryStore, err := storeNew(cfg)
+		if err != nil {
+			failCLI(jsonMode, "store_error", err.Error(), nil)
+			return
+		}
+		defer memoryStore.Close()
+		result, err := memoryops.New(memoryStore).AdmissionStudyMetrics(memoryops.AdmissionStudyMetricsInput{
+			StudyID: flags.StudyID, StudyVersion: flags.StudyVersion,
+		})
+		if err != nil {
+			failAdmissionStudyOperation(jsonMode, err, "admission_study_metrics_failed")
+			return
+		}
+		if jsonMode {
+			if err := writeCLIJSON(result); err != nil {
+				failCLI(true, "output_error", err.Error(), nil)
+			}
+			return
+		}
+		renderAdmissionStudyMetrics(result)
 		return
 	}
 	project, _ = store.NormalizeProject(project)

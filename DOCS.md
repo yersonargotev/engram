@@ -87,9 +87,13 @@ engram conflicts compare <id-a> <id-b> --relation R --confidence N --reasoning T
 engram projects merge --from SOURCE [--from SOURCE...] --to TARGET [--dry-run] [--yes] [--json]
 engram admission preview --project PROJECT (--input FILE|- | --session SESSION_ID) [--json]
 engram admission shadow --project PROJECT --session SESSION_ID [--json]
-engram admission review list --project PROJECT [--json]
-engram admission review mark PROPOSAL_ID --verdict admit|review|reject [--note TEXT] [--unsupported|--clear-unsupported] [--privacy-leak|--clear-privacy-leak] [--json]
-engram admission metrics --project PROJECT [--json]
+engram admission study freeze --input FILE|- [--json]
+engram admission shadow --project PROJECT --session SESSION_ID --study ID --study-version VERSION --cohort COHORT --adapter ADAPTER --project-type TYPE --session-shape SHAPE --consent-attestation ID [--independent-review-required] [--json]
+engram admission review list (--project PROJECT | --study ID --study-version VERSION --reviewer REVIEWER) [--json]
+engram admission review mark PROPOSAL_ID [--reviewer REVIEWER] --verdict admit|review|reject [--note TEXT] [--unsupported|--clear-unsupported] [--privacy-leak|--clear-privacy-leak] [--json]
+engram admission omission record RUN_ID --reviewer REVIEWER --category CATEGORY --reason-code CODE --annotation TEXT [--json]
+engram admission metrics (--project PROJECT | --study ID --study-version VERSION) [--json]
+engram admission study cleanup --study ID --study-version VERSION --yes [--json]
 engram checkpoint record --host HOST --session-id ID --root-turn-id ID
                          --disposition skipped --reason no_durable_knowledge [--json]
 engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
@@ -128,14 +132,50 @@ and source text are never copied into those references. It never retains raw
 Evidence, creates a Memory, or changes `save`/`mem_save`. It is not run from
 lifecycle hooks.
 
-`admission review list` shows pending proposals for one project. `admission review
-mark` appends a human correction with a stable per-proposal ordinal; identical
+The `--project` shadow, review, and metrics forms remain the compatible legacy
+workflow: no study contract or reviewer identity is required, and the existing
+project-local result shapes are unchanged. The attributable workflow is selected
+only by `--study` plus `--study-version`; project and study selectors cannot be
+combined for `review list` or `metrics`.
+
+Before collecting real-session evidence, `admission study freeze --input` accepts
+one strict JSON object with `contract_version: "admission-study-v1"`. Unknown
+fields and multiple JSON values are rejected. The contract freezes its identity
+and metrics version; exactly one `calibration` and one `held_out` cohort with a
+non-overlapping frozen session manifest plus minimum run, proposal, and
+independently reviewed proposal counts; allowed
+adapters, project types, and session shapes; the `admit|review|reject` verdicts,
+omission categories, and reason codes; promotion/review/agreement thresholds;
+complete review coverage; zero-tolerance protected false reject, unsupported
+proposal, and privacy leak gates; required consent attestation; positive
+retention days with `cleanup: "explicit_study_cleanup"`; and exactly `counts`, `distributions`,
+`quality`, `uncertainty`, `sufficiency`, and `gates` as aggregate outputs. An
+identical freeze is idempotent; changing an existing study version fails and
+requires a new version.
+
+An attributable `admission shadow` requires all study flags shown above together.
+Every dimension and the consent attestation must be declared by the frozen
+contract. A session must be listed in exactly one frozen cohort manifest. Add
+`--independent-review-required` when the run belongs to the independently reviewed
+subset used for agreement and sufficiency.
+
+`admission review list --project` shows pending proposals for one legacy project.
+The study form requires `--study`, `--study-version`, and `--reviewer` together and
+returns proposals that reviewer has not labeled. `admission review mark` appends a
+human correction with a stable per-proposal ordinal; attributed proposals require
+`--reviewer`, giving each reviewer an independent append-only stream. Identical
 retries are idempotent and later changes remain auditable. Optional `--unsupported`
 and `--privacy-leak` findings feed the safety gates reported by `admission metrics`.
 Omitting either flag preserves its latest value. An explicit
 `--clear-unsupported` or `--clear-privacy-leak` appends a retraction; positive and
 clear forms for the same finding cannot be combined. Notes are bounded to 4,096
 Unicode characters and must not contain raw evidence or secrets.
+
+`admission omission record` attaches a missed durable item to an attributed run.
+Reviewer, category, reason code, and a non-empty annotation are required; labels
+must come from the frozen contract. Identical retries are idempotent and changed
+annotations append the next reviewer-specific ordinal. Annotations are local-only
+and bounded to 1,024 Unicode characters.
 
 The shadow tables are excluded from Memory search/context, normal export/import,
 sync, cloud, and promotion. `delete project` removes the project's retained shadow
@@ -145,6 +185,21 @@ creating sync mutations for shadow data. Metrics use the latest correction per
 proposal and report raw project-local counts, including protected false rejects
 broken down by category and original assessment reason code; they do not enable
 automatic admission behavior.
+
+`admission metrics --study ID --study-version VERSION` emits aggregate material
+only: counts; cohort/policy/adapter/project/session/recommendation/verdict/label
+distributions; quality proportions; 95% Wilson score intervals; per-cohort sample
+sufficiency and coverage of every declared adapter, project type, and session
+shape; and threshold gates. Inter-reviewer agreement includes every pair of
+latest reviewer labels in the declared independent subset. Its pairwise value is
+descriptive; the Wilson interval uses proposal-level reviewer unanimity as the
+independent unit. The report excludes row-level proposal content, session and run
+IDs, reviewer identity, Evidence references, notes, and omission annotations. A
+true `gates.go` is an evaluation result only;
+it requires complete review coverage and all zero-tolerance safety gates to pass.
+`automatic_admission_enabled` remains `false`. Retention is not timer-driven in
+v1. `admission study cleanup ... --yes` explicitly deletes the frozen study and
+its attributed runs, proposals, reviews, and omissions; without `--yes` it fails.
 
 ## HTTP API Endpoints
 

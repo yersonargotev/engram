@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -72,6 +73,111 @@ func TestCheckpointCLIAndMCPParityForLeadingDashIdentities(t *testing.T) {
 	assertCheckpointParity(t, "leading-dash status", cliStatus, mcpStatus)
 }
 
+func TestCheckpointCLIAndMCPParityForSavedExistingMemories(t *testing.T) {
+	cfg := testConfig(t)
+	memoryIDs := seedCheckpointParityMemories(t, cfg, "engram", 2)
+	cliIdentity := checkpointParityIdentity{"codex", "session-cli-saved", "turn-cli-saved"}
+	mcpIdentity := checkpointParityIdentity{"codex", "session-mcp-saved", "turn-mcp-saved"}
+
+	cliCreated := runCheckpointCLIRecordSaved(t, cfg, cliIdentity, "engram", memoryIDs)
+	s := openCheckpointParityStore(t, cfg)
+	mcpRecord := engrammcp.CheckpointToolHandler(s)
+	mcpCreated := callCheckpointMCP(t, mcpRecord, checkpointParitySavedArguments(mcpIdentity, "engram", memoryIDs), false)
+	assertCheckpointParity(t, "saved created", cliCreated, mcpCreated)
+
+	cliReplayed := runCheckpointCLIRecordSaved(t, cfg, cliIdentity, "engram", memoryIDs)
+	mcpReplayed := callCheckpointMCP(t, mcpRecord, checkpointParitySavedArguments(mcpIdentity, "engram", memoryIDs), false)
+	assertCheckpointParity(t, "saved replayed", cliReplayed, mcpReplayed)
+
+	cliStatus := runCheckpointCLIStatus(t, cfg, cliIdentity)
+	mcpStatus := callCheckpointMCP(t, engrammcp.CheckpointStatusToolHandler(s), checkpointParityIdentityArguments(mcpIdentity), false)
+	assertCheckpointParity(t, "saved status", cliStatus, mcpStatus)
+}
+
+func TestCheckpointCLIAndMCPParityForAtomicallyCreatedMemories(t *testing.T) {
+	cfg := testConfig(t)
+	memories := []map[string]any{
+		{"type": "decision", "title": "Created parity decision", "content": "Create this decision atomically."},
+		{"type": "discovery", "title": "Created parity discovery", "content": "Create this discovery atomically."},
+	}
+	cliIdentity := checkpointParityIdentity{"codex", "session-cli-created", "turn-cli-created"}
+	mcpIdentity := checkpointParityIdentity{"codex", "session-mcp-created", "turn-mcp-created"}
+
+	cliCreated := runCheckpointCLIRecordCreated(t, cfg, cliIdentity, "engram", memories)
+	s := openCheckpointParityStore(t, cfg)
+	mcpRecord := engrammcp.CheckpointToolHandler(s)
+	mcpArguments := checkpointParityIdentityArguments(mcpIdentity)
+	mcpArguments["disposition"] = store.CheckpointDispositionSaved
+	mcpArguments["project"] = "engram"
+	mcpArguments["memories"] = memories
+	mcpCreated := callCheckpointMCP(t, mcpRecord, mcpArguments, false)
+	if got, want := normalizedCreatedCheckpointEnvelope(cliCreated), normalizedCreatedCheckpointEnvelope(mcpCreated); !reflect.DeepEqual(got, want) {
+		t.Fatalf("created Memory envelopes differ\nCLI=%#v\nMCP=%#v", got, want)
+	}
+
+	var memoriesBeforeReplay int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM observations`).Scan(&memoriesBeforeReplay); err != nil {
+		t.Fatalf("count created Memories: %v", err)
+	}
+	cliReplayed := runCheckpointCLIRecordCreated(t, cfg, cliIdentity, "engram", memories)
+	mcpReplayed := callCheckpointMCP(t, mcpRecord, mcpArguments, false)
+	if got, want := normalizedCreatedCheckpointEnvelope(cliReplayed), normalizedCreatedCheckpointEnvelope(mcpReplayed); !reflect.DeepEqual(got, want) {
+		t.Fatalf("created Memory replay envelopes differ\nCLI=%#v\nMCP=%#v", got, want)
+	}
+	var memoriesAfterReplay int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM observations`).Scan(&memoriesAfterReplay); err != nil {
+		t.Fatalf("count Memories after replay: %v", err)
+	}
+	if memoriesAfterReplay != memoriesBeforeReplay {
+		t.Fatalf("replay created duplicate Memories: %d -> %d", memoriesBeforeReplay, memoriesAfterReplay)
+	}
+}
+
+func TestCheckpointCLIAndMCPParityForInvalidSavedReferences(t *testing.T) {
+	cfg := testConfig(t)
+	cliIdentity := checkpointParityIdentity{"codex", "session-cli-invalid-saved", "turn-cli-invalid-saved"}
+	mcpIdentity := checkpointParityIdentity{"codex", "session-mcp-invalid-saved", "turn-mcp-invalid-saved"}
+
+	cliError := runCheckpointCLIRecordSavedError(t, cfg, cliIdentity, "engram", []int64{9999})
+	s := openCheckpointParityStore(t, cfg)
+	mcpError := callCheckpointMCP(t, engrammcp.CheckpointToolHandler(s), checkpointParitySavedArguments(mcpIdentity, "engram", []int64{9999}), true)
+	if !reflect.DeepEqual(cliError, mcpError) {
+		t.Fatalf("saved reference errors differ\nCLI=%#v\nMCP=%#v", cliError, mcpError)
+	}
+}
+
+func TestCheckpointCLIAndMCPParityForMalformedSavedReferences(t *testing.T) {
+	cfg := testConfig(t)
+	s := openCheckpointParityStore(t, cfg)
+	mcpRecord := engrammcp.CheckpointToolHandler(s)
+	tests := []struct {
+		name         string
+		cliFlag      string
+		mcpField     string
+		mcpValue     any
+		identityBase string
+	}{
+		{name: "non-integer Memory ID", cliFlag: "--memory-id=abc", mcpField: "memory_ids", mcpValue: []any{"abc"}, identityBase: "bad-id"},
+		{name: "malformed inline Memory", cliFlag: "--memory-json=not-json", mcpField: "memories", mcpValue: "not-an-array", identityBase: "bad-memory"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cliIdentity := checkpointParityIdentity{"codex", "session-cli-" + tt.identityBase, "turn-cli-" + tt.identityBase}
+			mcpIdentity := checkpointParityIdentity{"codex", "session-mcp-" + tt.identityBase, "turn-mcp-" + tt.identityBase}
+			cliError := runCheckpointCLIArgumentError(t, cfg, cliIdentity, tt.cliFlag)
+			mcpArguments := checkpointParityIdentityArguments(mcpIdentity)
+			mcpArguments["disposition"] = store.CheckpointDispositionSaved
+			mcpArguments["project"] = "engram"
+			mcpArguments[tt.mcpField] = tt.mcpValue
+			mcpError := callCheckpointMCP(t, mcpRecord, mcpArguments, true)
+			if !reflect.DeepEqual(cliError, mcpError) {
+				t.Fatalf("malformed reference errors differ\nCLI=%#v\nMCP=%#v", cliError, mcpError)
+			}
+		})
+	}
+}
+
 type checkpointParityIdentity struct {
 	host       string
 	sessionID  string
@@ -93,6 +199,103 @@ func runCheckpointCLIRecord(t *testing.T, cfg store.Config, identity checkpointP
 		t.Fatalf("CLI record stderr = %q", stderr)
 	}
 	return decodeCLIJSON(t, stdout)
+}
+
+func runCheckpointCLIRecordSaved(t *testing.T, cfg store.Config, identity checkpointParityIdentity, project string, memoryIDs []int64) map[string]any {
+	t.Helper()
+	args := []string{
+		"engram", "checkpoint", "record",
+		"--host=" + identity.host,
+		"--session-id=" + identity.sessionID,
+		"--root-turn-id=" + identity.rootTurnID,
+		"--disposition=" + store.CheckpointDispositionSaved,
+		"--project=" + project,
+	}
+	for _, memoryID := range memoryIDs {
+		args = append(args, fmt.Sprintf("--memory-id=%d", memoryID))
+	}
+	args = append(args, "--json")
+	withArgs(t, args...)
+	stdout, stderr := captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("CLI saved record stderr = %q", stderr)
+	}
+	return decodeCLIJSON(t, stdout)
+}
+
+func runCheckpointCLIRecordCreated(t *testing.T, cfg store.Config, identity checkpointParityIdentity, project string, memories []map[string]any) map[string]any {
+	t.Helper()
+	args := []string{
+		"engram", "checkpoint", "record",
+		"--host=" + identity.host,
+		"--session-id=" + identity.sessionID,
+		"--root-turn-id=" + identity.rootTurnID,
+		"--disposition=" + store.CheckpointDispositionSaved,
+		"--project=" + project,
+	}
+	for _, memory := range memories {
+		encoded, err := json.Marshal(memory)
+		if err != nil {
+			t.Fatalf("encode inline Memory: %v", err)
+		}
+		args = append(args, "--memory-json="+string(encoded))
+	}
+	args = append(args, "--json")
+	withArgs(t, args...)
+	stdout, stderr := captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("CLI created record stderr = %q", stderr)
+	}
+	return decodeCLIJSON(t, stdout)
+}
+
+func runCheckpointCLIRecordSavedError(t *testing.T, cfg store.Config, identity checkpointParityIdentity, project string, memoryIDs []int64) map[string]any {
+	t.Helper()
+	stubExitWithPanic(t)
+	args := []string{
+		"engram", "checkpoint", "record",
+		"--host=" + identity.host,
+		"--session-id=" + identity.sessionID,
+		"--root-turn-id=" + identity.rootTurnID,
+		"--disposition=" + store.CheckpointDispositionSaved,
+		"--project=" + project,
+	}
+	for _, memoryID := range memoryIDs {
+		args = append(args, fmt.Sprintf("--memory-id=%d", memoryID))
+	}
+	args = append(args, "--json")
+	withArgs(t, args...)
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdCheckpoint(cfg) })
+	if stdout != "" {
+		t.Fatalf("CLI saved error stdout = %q", stdout)
+	}
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("CLI saved error exit = %v", recovered)
+	}
+	return decodeCLIJSON(t, stderr)
+}
+
+func runCheckpointCLIArgumentError(t *testing.T, cfg store.Config, identity checkpointParityIdentity, malformedFlag string) map[string]any {
+	t.Helper()
+	stubExitWithPanic(t)
+	withArgs(t,
+		"engram", "checkpoint", "record",
+		"--host="+identity.host,
+		"--session-id="+identity.sessionID,
+		"--root-turn-id="+identity.rootTurnID,
+		"--disposition="+store.CheckpointDispositionSaved,
+		"--project=engram",
+		malformedFlag,
+		"--json",
+	)
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdCheckpoint(cfg) })
+	if stdout != "" {
+		t.Fatalf("CLI malformed reference stdout = %q", stdout)
+	}
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("CLI malformed reference exit = %v", recovered)
+	}
+	return decodeCLIJSON(t, stderr)
 }
 
 func runCheckpointCLIStatus(t *testing.T, cfg store.Config, identity checkpointParityIdentity) map[string]any {
@@ -167,6 +370,18 @@ func checkpointParityRecordArguments(identity checkpointParityIdentity, reason s
 	return arguments
 }
 
+func checkpointParitySavedArguments(identity checkpointParityIdentity, project string, memoryIDs []int64) map[string]any {
+	arguments := checkpointParityIdentityArguments(identity)
+	arguments["disposition"] = store.CheckpointDispositionSaved
+	arguments["project"] = project
+	values := make([]any, 0, len(memoryIDs))
+	for _, memoryID := range memoryIDs {
+		values = append(values, float64(memoryID))
+	}
+	arguments["memory_ids"] = values
+	return arguments
+}
+
 func checkpointParityIdentityArguments(identity checkpointParityIdentity) map[string]any {
 	return map[string]any{
 		"host":         identity.host,
@@ -212,6 +427,54 @@ func normalizedCheckpointEnvelope(envelope map[string]any) map[string]any {
 		"disposition":    checkpoint["disposition"],
 		"reason_code":    checkpoint["reason_code"],
 		"reason_version": checkpoint["reason_version"],
+		"references":     checkpoint["references"],
 	}
 	return normalized
+}
+
+func normalizedCreatedCheckpointEnvelope(envelope map[string]any) map[string]any {
+	normalized := normalizedCheckpointEnvelope(envelope)
+	checkpoint := normalized["checkpoint"].(map[string]any)
+	references, _ := checkpoint["references"].([]any)
+	semantics := make([]map[string]any, 0, len(references))
+	for _, rawReference := range references {
+		reference, _ := rawReference.(map[string]any)
+		semantics = append(semantics, map[string]any{
+			"kind":    reference["kind"],
+			"project": reference["project"],
+		})
+	}
+	checkpoint["references"] = semantics
+	return normalized
+}
+
+func seedCheckpointParityMemories(t *testing.T, cfg store.Config, project string, count int) []int64 {
+	t.Helper()
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("open seed store: %v", err)
+	}
+	if err := s.CreateSession("session-parity-memories", project, "/work/"+project); err != nil {
+		_ = s.Close()
+		t.Fatalf("create seed session: %v", err)
+	}
+	ids := make([]int64, 0, count)
+	for index := 0; index < count; index++ {
+		id, err := s.AddObservation(store.AddObservationParams{
+			SessionID: "session-parity-memories",
+			Project:   project,
+			Type:      "decision",
+			Title:     fmt.Sprintf("Parity Memory %d", index+1),
+			Content:   fmt.Sprintf("Durable parity content %d", index+1),
+		})
+		if err != nil {
+			_ = s.Close()
+			t.Fatalf("save seed Memory: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
+	return ids
 }

@@ -402,7 +402,7 @@ Your production engram is fully untouched throughout.
 | `engram admission review list\|mark`       | List pending proposals and append reviewer-attributed corrections |
 | `engram admission omission record`         | Append a reviewer-attributed omission to one study run |
 | `engram admission metrics`                 | Report legacy project metrics or aggregate-only study metrics and gates |
-| `engram checkpoint record [flags]`         | Record an idempotent local root-turn checkpoint              |
+| `engram checkpoint record [flags]`         | Record an idempotent local `saved` or `skipped` root-turn checkpoint |
 | `engram checkpoint status [flags]`         | Inspect one exact local root-turn checkpoint                 |
 | `engram stats`                             | Memory statistics                                               |
 | `engram export [file]`                     | Export to JSON                                                  |

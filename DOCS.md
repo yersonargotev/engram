@@ -51,6 +51,7 @@ For other docs:
 - **memory_relations** — stores conflict-surfacing verdicts from `mem_judge`; columns include `id` (INTEGER PK AUTOINCREMENT), `sync_id` (TEXT UNIQUE), `source_id`, `target_id`, `relation`, `judgment_status` (`pending` | `judged` | `orphaned` | `ignored`), `reason`, `evidence`, `confidence`, `marked_by_actor`, `marked_by_kind`, `marked_by_model`, `session_id`. The SQLite table does not store a `project` column; project is carried in relation sync payloads and derived from joined observations for project-scoped listing. Syncs across machines via local chunks and via cloud autosync when the project is enrolled.
 - **sync_apply_deferred** — holds pulled mutations that could not be applied locally due to a missing FK dependency (e.g. relation references an observation not yet present); columns: `sync_id` (TEXT PK), `entity`, `payload`, `apply_status` (`deferred` | `applied` | `dead`), `retry_count`, `last_error`, `last_attempted_at`, `first_seen_at`. Rows with `apply_status='dead'` have exceeded the retry cap (5 attempts) and will not be retried automatically.
 - **memory_checkpoints** — local-only root-turn dispositions keyed by unique `(host, session_id, root_turn_id)`. Stores only opaque identity, `disposition`, the versioned `reason_code`, `reason_version`, and timestamps. It has no Memory FTS or sync triggers and is excluded from Memory search, context, counts, JSON/project/chunk exports, pending mutations, cloud materialization, and Obsidian output. The v1 skip vocabulary contains only `no_durable_knowledge`; integration or processing failures are validation errors, never semantic skips.
+- **memory_checkpoint_references** — ordered, typed local-only references from a checkpoint to the immutable ID, sync ID, and project identity of every attached Memory. The table has no sync triggers and is excluded from normal Memory and replication surfaces.
 
 ### SQLite Configuration
 
@@ -96,12 +97,22 @@ engram admission metrics (--project PROJECT | --study ID --study-version VERSION
 engram admission study cleanup --study ID --study-version VERSION --yes [--json]
 engram checkpoint record --host HOST --session-id ID --root-turn-id ID
                          --disposition skipped --reason no_durable_knowledge [--json]
+engram checkpoint record --host HOST --session-id ID --root-turn-id ID
+                         --disposition saved --project PROJECT
+                         [--memory-id ID ...] [--memory-json JSON ...] [--json]
 engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
 ```
 
 Checkpoint identity values are opaque. If one begins with a hyphen, use the inline
 forms `--host=VALUE`, `--session-id=VALUE`, or `--root-turn-id=VALUE` to avoid
 ambiguity with CLI options.
+
+For `saved`, repeat `--memory-id` to attach Memories already saved during the
+turn. Repeat `--memory-json` to create and attach Memories during finalization;
+each JSON object accepts `title`, `content`, and the optional `type`, `tool_name`,
+`scope`, and `topic_key` fields. Both forms may be combined. All Memories must
+belong to `--project`. Creation of the session provenance, Memories, sync
+mutations, references, and terminal checkpoint is one transaction.
 
 `save` exits successfully after the memory is persisted even when its response
 contains `judgment_required: true`; callers can resolve each returned candidate
@@ -906,7 +917,7 @@ Exceptions:
 
 - `mem_current_project` returns detection fields directly (`project`, `project_source`, `project_path`, `cwd`, `available_projects`, optional `warning` / `error_hint`) and does not wrap them in `result`.
 - `mem_doctor` returns the same JSON report shape as `engram doctor --json`; it uses read-project resolution before running diagnostics but does not wrap the report in the common MCP envelope.
-- `mem_checkpoint` and `mem_checkpoint_status` use opaque host/session/root-turn identity instead of project resolution. Their JSON success and error envelopes match the corresponding CLI commands; tool errors set MCP `isError=true`.
+- `mem_checkpoint` and `mem_checkpoint_status` use opaque host/session/root-turn identity instead of automatic project resolution. A `saved` write requires an explicit `project`; `skipped` and status do not. Their JSON success and error envelopes match the corresponding CLI commands; tool errors set MCP `isError=true`.
 
 ### Write tools (explicit/session/cwd project resolution)
 
@@ -965,9 +976,14 @@ Returns success even when cwd is ambiguous — empty `project` + non-empty `avai
 
 ### mem_checkpoint
 
-Record the terminal Memory checkpoint for one settled root user turn. Required parameters are `host`, `session_id`, `root_turn_id`, `disposition`, and `reason`. The current vocabulary accepts only `disposition: "skipped"` with `reason: "no_durable_knowledge"`.
+Record the terminal Memory checkpoint for one settled root user turn. `host`, `session_id`, `root_turn_id`, and `disposition` are always required.
 
-The first call returns `idempotency: "created"`; an exact replay returns `idempotency: "already_recorded"` with the original checkpoint and timestamps. Unknown reasons, including integration and processing failure labels, return a structured `invalid_checkpoint_reason` error and create no row.
+- `disposition: "skipped"` requires `reason: "no_durable_knowledge"` and accepts no Memory references.
+- `disposition: "saved"` requires an explicit `project` plus at least one existing `memory_ids` entry or inline `memories` object. The two arrays may be combined. Each inline Memory accepts required `title` and `content`, plus optional `type`, `tool_name`, `scope`, and `topic_key`.
+
+A saved result exposes an ordered `references` array containing `kind: "memory"`, `memory_id`, `memory_sync_id`, and `project`. Every referenced Memory must exist, remain active, and belong to the same normalized project. Inline Memories, their sync mutations, all references, and the checkpoint commit atomically.
+
+The first call returns `idempotency: "created"`; replaying the same root-turn identity and disposition returns `idempotency: "already_recorded"` with the original checkpoint, references, and timestamps without creating Memories or mutations again. Invalid or empty sets fail without changing state. Stable saved-validation codes are `invalid_checkpoint_references`, `checkpoint_memory_not_found`, and `checkpoint_project_mismatch`; terminal changes return `checkpoint_conflict`. Unknown skip reasons, including integration and processing failure labels, return `invalid_checkpoint_reason`.
 
 ### mem_checkpoint_status
 

@@ -24,6 +24,7 @@ Important points:
 
 - `mem_current_project` is the recommended first call to confirm detection.
 - Normal writes should not pass `project` as an arbitrary override.
+- `mem_checkpoint` is the exception for a `saved` disposition: it requires one explicit project so the core can reject cross-project references atomically.
 - `ambiguous_project` recovery requires the user to choose an exact project.
 - If `mem_save` returns conflict candidates, the agent must judge with `mem_judge` or ask when the relationship is sensitive.
 

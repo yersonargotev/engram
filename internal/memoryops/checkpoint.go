@@ -3,6 +3,7 @@ package memoryops
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/yersonargotev/engram/internal/store"
 )
@@ -14,6 +15,9 @@ const (
 	CheckpointErrorCodeInvalidDisposition = "invalid_checkpoint_disposition"
 	CheckpointErrorCodeInvalidIdentity    = "invalid_checkpoint_identity"
 	CheckpointErrorCodeInvalidReason      = "invalid_checkpoint_reason"
+	CheckpointErrorCodeInvalidReferences  = "invalid_checkpoint_references"
+	CheckpointErrorCodeMemoryNotFound     = "checkpoint_memory_not_found"
+	CheckpointErrorCodeProjectMismatch    = "checkpoint_project_mismatch"
 	CheckpointErrorCodeConflict           = "checkpoint_conflict"
 	CheckpointErrorCodeNotFound           = "checkpoint_not_found"
 	CheckpointErrorCodeFailed             = "checkpoint_failed"
@@ -26,11 +30,26 @@ var ErrCheckpointInvalidDisposition = errors.New("invalid checkpoint disposition
 // shared interface compatible with the other terminal states defined by the
 // accepted checkpoint contract.
 type CheckpointRecordInput struct {
-	Host        string `json:"host"`
-	SessionID   string `json:"session_id"`
-	RootTurnID  string `json:"root_turn_id"`
-	Disposition string `json:"disposition"`
-	ReasonCode  string `json:"reason_code"`
+	Host        string                  `json:"host"`
+	SessionID   string                  `json:"session_id"`
+	RootTurnID  string                  `json:"root_turn_id"`
+	Disposition string                  `json:"disposition"`
+	ReasonCode  string                  `json:"reason_code"`
+	Project     string                  `json:"project,omitempty"`
+	MemoryIDs   []int64                 `json:"memory_ids,omitempty"`
+	Memories    []CheckpointMemoryInput `json:"memories,omitempty"`
+	CWD         string                  `json:"-"`
+}
+
+// CheckpointMemoryInput is one Memory to create as part of an atomic saved
+// checkpoint. Project and session provenance come from the enclosing operation.
+type CheckpointMemoryInput struct {
+	Type     string `json:"type,omitempty"`
+	Title    string `json:"title"`
+	Content  string `json:"content"`
+	ToolName string `json:"tool_name,omitempty"`
+	Scope    string `json:"scope,omitempty"`
+	TopicKey string `json:"topic_key,omitempty"`
 }
 
 type CheckpointRecordResult struct {
@@ -54,17 +73,48 @@ func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointReco
 	if err := s.requireStore(); err != nil {
 		return nil, err
 	}
-	if input.Disposition != store.CheckpointDispositionSkipped {
+	identity := store.CheckpointIdentity{
+		Host:       input.Host,
+		SessionID:  input.SessionID,
+		RootTurnID: input.RootTurnID,
+	}
+	var checkpoint *store.MemoryCheckpoint
+	var alreadyRecorded bool
+	var err error
+	switch input.Disposition {
+	case store.CheckpointDispositionSkipped:
+		if input.Project != "" || len(input.MemoryIDs) > 0 || len(input.Memories) > 0 {
+			return nil, store.ErrCheckpointInvalidReferences
+		}
+		checkpoint, alreadyRecorded, err = s.store.RecordSkippedCheckpoint(store.RecordSkippedCheckpointParams{
+			Identity: identity, ReasonCode: input.ReasonCode,
+		})
+	case store.CheckpointDispositionSaved:
+		if input.ReasonCode != "" {
+			return nil, store.ErrCheckpointInvalidReason
+		}
+		memories := make([]store.AddObservationParams, 0, len(input.Memories))
+		for _, memory := range input.Memories {
+			typ := memory.Type
+			if strings.TrimSpace(typ) == "" {
+				typ = "manual"
+			}
+			memories = append(memories, store.AddObservationParams{
+				Type:     typ,
+				Title:    memory.Title,
+				Content:  memory.Content,
+				ToolName: memory.ToolName,
+				Scope:    memory.Scope,
+				TopicKey: memory.TopicKey,
+			})
+		}
+		checkpoint, alreadyRecorded, err = s.store.RecordSavedCheckpoint(store.RecordSavedCheckpointParams{
+			Identity: identity, Project: input.Project, Directory: input.CWD,
+			MemoryIDs: input.MemoryIDs, Memories: memories,
+		})
+	default:
 		return nil, ErrCheckpointInvalidDisposition
 	}
-	checkpoint, alreadyRecorded, err := s.store.RecordSkippedCheckpoint(store.RecordSkippedCheckpointParams{
-		Identity: store.CheckpointIdentity{
-			Host:       input.Host,
-			SessionID:  input.SessionID,
-			RootTurnID: input.RootTurnID,
-		},
-		ReasonCode: input.ReasonCode,
-	})
 	if err != nil {
 		return nil, fmt.Errorf("record checkpoint: %w", err)
 	}
@@ -102,6 +152,12 @@ func CheckpointErrorCode(err error) string {
 		return CheckpointErrorCodeInvalidIdentity
 	case errors.Is(err, store.ErrCheckpointInvalidReason):
 		return CheckpointErrorCodeInvalidReason
+	case errors.Is(err, store.ErrCheckpointInvalidReferences):
+		return CheckpointErrorCodeInvalidReferences
+	case errors.Is(err, store.ErrCheckpointMemoryNotFound):
+		return CheckpointErrorCodeMemoryNotFound
+	case errors.Is(err, store.ErrCheckpointProjectMismatch):
+		return CheckpointErrorCodeProjectMismatch
 	case errors.Is(err, store.ErrCheckpointConflict):
 		return CheckpointErrorCodeConflict
 	case errors.Is(err, store.ErrCheckpointNotFound):

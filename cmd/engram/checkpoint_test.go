@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/yersonargotev/engram/internal/memoryops"
@@ -67,6 +69,34 @@ func TestCmdCheckpointRecordReplayAndStatusJSON(t *testing.T) {
 	}
 	if !reflect.DeepEqual(status.Checkpoint, created.Checkpoint) {
 		t.Fatalf("status checkpoint = %#v, want %#v", status.Checkpoint, created.Checkpoint)
+	}
+}
+
+func TestCmdCheckpointStatusHumanOutputExposesSavedReferences(t *testing.T) {
+	cfg := testConfig(t)
+	memoryIDs := seedCheckpointParityMemories(t, cfg, "engram", 1)
+	identity := checkpointParityIdentity{"codex", "session-human-saved", "turn-human-saved"}
+	runCheckpointCLIRecordSaved(t, cfg, identity, "engram", memoryIDs)
+
+	withArgs(t,
+		"engram", "checkpoint", "status",
+		"--host", identity.host,
+		"--session-id", identity.sessionID,
+		"--root-turn-id", identity.rootTurnID,
+	)
+	stdout, stderr := captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("status stderr = %q", stderr)
+	}
+	for _, want := range []string{
+		"Memory checkpoint: saved (1 Memories)",
+		fmt.Sprintf("Memory #%d", memoryIDs[0]),
+		"project engram",
+		"obs-",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("status output %q does not contain %q", stdout, want)
+		}
 	}
 }
 

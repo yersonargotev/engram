@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/yersonargotev/engram/internal/memoryops"
@@ -16,11 +18,15 @@ type checkpointCLIOptions struct {
 	RootTurnID  string
 	Disposition string
 	ReasonCode  string
+	Project     string
+	MemoryIDs   []int64
+	Memories    []memoryops.CheckpointMemoryInput
 	JSONMode    bool
 	Help        bool
 }
 
 type checkpointArgumentError struct {
+	Code    string
 	Message string
 }
 
@@ -29,7 +35,11 @@ func (e *checkpointArgumentError) Error() string { return e.Message }
 func cmdCheckpoint(cfg store.Config) {
 	opts, err := parseCheckpointArgs(os.Args[2:])
 	if err != nil {
-		failCLI(opts.JSONMode || hasArg("--json"), "invalid_arguments", err.Error(), nil)
+		code := err.Code
+		if code == "" {
+			code = "invalid_arguments"
+		}
+		failCLI(opts.JSONMode || hasArg("--json"), code, err.Error(), nil)
 		return
 	}
 	if opts.Help {
@@ -37,9 +47,9 @@ func cmdCheckpoint(cfg store.Config) {
 		return
 	}
 
-	s, err := storeNew(cfg)
-	if err != nil {
-		failCLI(opts.JSONMode, "store_error", err.Error(), nil)
+	s, storeErr := storeNew(cfg)
+	if storeErr != nil {
+		failCLI(opts.JSONMode, "store_error", storeErr.Error(), nil)
 		return
 	}
 	defer s.Close()
@@ -53,6 +63,10 @@ func cmdCheckpoint(cfg store.Config) {
 			RootTurnID:  opts.RootTurnID,
 			Disposition: opts.Disposition,
 			ReasonCode:  opts.ReasonCode,
+			Project:     opts.Project,
+			MemoryIDs:   opts.MemoryIDs,
+			Memories:    opts.Memories,
+			CWD:         currentCWD(),
 		})
 		if recordErr != nil {
 			failCLI(opts.JSONMode, memoryops.CheckpointErrorCode(recordErr), recordErr.Error(), nil)
@@ -62,7 +76,11 @@ func cmdCheckpoint(cfg store.Config) {
 			_ = writeCLIJSON(result)
 			return
 		}
-		fmt.Printf("Memory checkpoint %s: %s (%s)\n", result.Idempotency, result.Checkpoint.Disposition, result.Checkpoint.ReasonCode)
+		if result.Checkpoint.Disposition == store.CheckpointDispositionSaved {
+			fmt.Printf("Memory checkpoint %s: saved (%d Memories)\n", result.Idempotency, len(result.Checkpoint.References))
+		} else {
+			fmt.Printf("Memory checkpoint %s: %s (%s)\n", result.Idempotency, result.Checkpoint.Disposition, result.Checkpoint.ReasonCode)
+		}
 	case "status":
 		result, statusErr := service.CheckpointStatus(memoryops.CheckpointStatusInput{
 			Host:       opts.Host,
@@ -77,11 +95,18 @@ func cmdCheckpoint(cfg store.Config) {
 			_ = writeCLIJSON(result)
 			return
 		}
-		fmt.Printf("Memory checkpoint: %s (%s)\n", result.Checkpoint.Disposition, result.Checkpoint.ReasonCode)
+		if result.Checkpoint.Disposition == store.CheckpointDispositionSaved {
+			fmt.Printf("Memory checkpoint: saved (%d Memories)\n", len(result.Checkpoint.References))
+			for _, reference := range result.Checkpoint.References {
+				fmt.Printf("  Memory #%d (%s, project %s)\n", reference.MemoryID, reference.MemorySyncID, reference.Project)
+			}
+		} else {
+			fmt.Printf("Memory checkpoint: %s (%s)\n", result.Checkpoint.Disposition, result.Checkpoint.ReasonCode)
+		}
 	}
 }
 
-func parseCheckpointArgs(args []string) (checkpointCLIOptions, error) {
+func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgumentError) {
 	opts := checkpointCLIOptions{}
 	if len(args) == 0 {
 		return opts, &checkpointArgumentError{Message: "usage: engram checkpoint record|status [flags]"}
@@ -132,19 +157,42 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, error) {
 			opts.Disposition = value
 		case "--reason":
 			opts.ReasonCode = value
+		case "--project":
+			opts.Project = value
+		case "--memory-id":
+			memoryID, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return opts, &checkpointArgumentError{
+					Code:    memoryops.CheckpointErrorCodeInvalidReferences,
+					Message: "invalid checkpoint references: memory_ids must contain integers",
+				}
+			}
+			opts.MemoryIDs = append(opts.MemoryIDs, memoryID)
+		case "--memory-json":
+			var memory memoryops.CheckpointMemoryInput
+			if err := json.Unmarshal([]byte(value), &memory); err != nil {
+				return opts, &checkpointArgumentError{
+					Code:    memoryops.CheckpointErrorCodeInvalidReferences,
+					Message: "invalid checkpoint references: memories must be an array of Memory objects",
+				}
+			}
+			opts.Memories = append(opts.Memories, memory)
 		default:
 			return opts, &checkpointArgumentError{Message: fmt.Sprintf("unknown checkpoint flag %s", arg)}
 		}
 	}
-	if opts.Action == "status" && (opts.Disposition != "" || opts.ReasonCode != "") {
-		return opts, &checkpointArgumentError{Message: "checkpoint status does not accept --disposition or --reason"}
+	if opts.Action == "status" && (opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0) {
+		return opts, &checkpointArgumentError{Message: "checkpoint status accepts only identity flags"}
 	}
 	return opts, nil
 }
 
 func printCheckpointUsage() {
 	fmt.Println(`Usage:
-  engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
-    --disposition skipped --reason no_durable_knowledge [--json]
-  engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]`)
+	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
+	  --disposition skipped --reason no_durable_knowledge [--json]
+	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
+	  --disposition saved --project PROJECT \
+	  [--memory-id ID ...] [--memory-json JSON ...] [--json]
+	engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]`)
 }

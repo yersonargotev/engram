@@ -267,7 +267,7 @@ engram review list|mark   List due memories or mark one reviewed (local-only) [-
 engram pin|unpin <obs_id> Change local-only context priority [--json]
 engram current-project    Inspect project resolution and ambiguity [--json]
 engram suggest-topic-key  Suggest a stable topic key without writing [--json]
-engram checkpoint record Record a skipped root-turn checkpoint [--json]
+engram checkpoint record Record a saved or skipped root-turn checkpoint [--json]
 engram checkpoint status Inspect one exact root-turn checkpoint [--json]
 engram delete <obs_id>    Delete an observation [--hard] (soft-delete by default; --hard removes permanently)
 engram delete session <id>

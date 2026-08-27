@@ -2282,13 +2282,25 @@ func (s *Store) LatestSessionObservationByType(sessionID, typ string) (*Observat
 // ─── Observations ────────────────────────────────────────────────────────────
 
 func (s *Store) AddObservation(p AddObservationParams) (int64, error) {
-	// Normalize project name (lowercase + trim) before any persistence
-	p.Project, _ = NormalizeProject(p.Project)
+	var observationID int64
+	err := s.withTx(func(tx *sql.Tx) error {
+		observation, err := s.addObservationTx(tx, p)
+		if err != nil {
+			return err
+		}
+		observationID = observation.ID
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return observationID, nil
+}
 
-	// Strip <private>...</private> tags before persisting ANYTHING
+func (s *Store) addObservationTx(tx *sql.Tx, p AddObservationParams) (*Observation, error) {
+	p.Project, _ = NormalizeProject(p.Project)
 	title := stripPrivateTags(p.Title)
 	content := stripPrivateTags(p.Content)
-
 	if len(content) > s.cfg.MaxObservationLength {
 		content = content[:s.cfg.MaxObservationLength] + "... [truncated]"
 	}
@@ -2296,131 +2308,108 @@ func (s *Store) AddObservation(p AddObservationParams) (int64, error) {
 	normHash := hashNormalized(content)
 	topicKey := normalizeTopicKey(p.TopicKey)
 
-	var observationID int64
-	err := s.withTx(func(tx *sql.Tx) error {
-		var obs *Observation
-		if topicKey != "" {
-			var existingID int64
-			err := tx.QueryRow(
-				`SELECT id FROM observations
-				 WHERE topic_key = ?
-				   AND ifnull(project, '') = ifnull(?, '')
-				   AND scope = ?
-				   AND deleted_at IS NULL
-				 ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
-				 LIMIT 1`,
-				topicKey, nullableString(p.Project), scope,
-			).Scan(&existingID)
-			if err == nil {
-				if _, err := s.execHook(tx,
-					`UPDATE observations
-					 SET type = ?,
-					     title = ?,
-					     content = ?,
-					     tool_name = ?,
-					     topic_key = ?,
-					     normalized_hash = ?,
-					     revision_count = revision_count + 1,
-					     last_seen_at = datetime('now'),
-					     updated_at = datetime('now')
-					 WHERE id = ?`,
-					p.Type,
-					title,
-					content,
-					nullableString(p.ToolName),
-					nullableString(topicKey),
-					normHash,
-					existingID,
-				); err != nil {
-					return err
-				}
-				obs, err = s.getObservationTx(tx, existingID)
-				if err != nil {
-					return err
-				}
-				observationID = existingID
-				return s.enqueueSyncMutationTx(tx, SyncEntityObservation, obs.SyncID, SyncOpUpsert, observationPayloadFromObservation(obs))
-			}
-			if err != sql.ErrNoRows {
-				return err
-			}
-		}
-
-		window := dedupeWindowExpression(s.cfg.DedupeWindow)
+	if topicKey != "" {
 		var existingID int64
 		err := tx.QueryRow(
 			`SELECT id FROM observations
-			 WHERE normalized_hash = ?
+			 WHERE topic_key = ?
 			   AND ifnull(project, '') = ifnull(?, '')
 			   AND scope = ?
-			   AND type = ?
-			   AND title = ?
 			   AND deleted_at IS NULL
-			   AND datetime(created_at) >= datetime('now', ?)
-			 ORDER BY created_at DESC
+			 ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
 			 LIMIT 1`,
-			normHash, nullableString(p.Project), scope, p.Type, title, window,
+			topicKey, nullableString(p.Project), scope,
 		).Scan(&existingID)
 		if err == nil {
 			if _, err := s.execHook(tx,
 				`UPDATE observations
-				 SET duplicate_count = duplicate_count + 1,
-				     last_seen_at = datetime('now'),
-				     updated_at = datetime('now')
+				 SET type = ?, title = ?, content = ?, tool_name = ?, topic_key = ?,
+				     normalized_hash = ?, revision_count = revision_count + 1,
+				     last_seen_at = datetime('now'), updated_at = datetime('now')
 				 WHERE id = ?`,
-				existingID,
+				p.Type, title, content, nullableString(p.ToolName), nullableString(topicKey), normHash, existingID,
 			); err != nil {
-				return err
+				return nil, err
 			}
-			obs, err = s.getObservationTx(tx, existingID)
+			observation, err := s.getObservationTx(tx, existingID)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			observationID = existingID
-			return s.enqueueSyncMutationTx(tx, SyncEntityObservation, obs.SyncID, SyncOpUpsert, observationPayloadFromObservation(obs))
+			if err := s.enqueueSyncMutationTx(tx, SyncEntityObservation, observation.SyncID, SyncOpUpsert, observationPayloadFromObservation(observation)); err != nil {
+				return nil, err
+			}
+			return observation, nil
 		}
 		if err != sql.ErrNoRows {
-			return err
+			return nil, err
 		}
-
-		syncID := newSyncID("obs")
-		res, err := s.execHook(tx,
-			`INSERT INTO observations (sync_id, session_id, type, title, content, tool_name, project, scope, topic_key, normalized_hash, revision_count, duplicate_count, last_seen_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, datetime('now'), datetime('now'))`,
-			syncID, p.SessionID, p.Type, title, content,
-			nullableString(p.ToolName), nullableString(p.Project), scope, nullableString(topicKey), normHash,
-		)
-		if err != nil {
-			return err
-		}
-		observationID, err = res.LastInsertId()
-		if err != nil {
-			return err
-		}
-
-		// Populate review_after for types that have a configured decay offset.
-		// expires_at is intentionally NULL for all types in Phase 1.
-		// This UPDATE runs only for NEW inserts (not topic_key revisions or deduplication).
-		if months, ok := decayReviewAfterMonths[p.Type]; ok {
-			reviewAfter := time.Now().UTC().AddDate(0, months, 0).Format("2006-01-02 15:04:05")
-			if _, err := s.execHook(tx,
-				`UPDATE observations SET review_after = ? WHERE id = ?`,
-				reviewAfter, observationID,
-			); err != nil {
-				return fmt.Errorf("set review_after: %w", err)
-			}
-		}
-
-		obs, err = s.getObservationTx(tx, observationID)
-		if err != nil {
-			return err
-		}
-		return s.enqueueSyncMutationTx(tx, SyncEntityObservation, obs.SyncID, SyncOpUpsert, observationPayloadFromObservation(obs))
-	})
-	if err != nil {
-		return 0, err
 	}
-	return observationID, nil
+
+	window := dedupeWindowExpression(s.cfg.DedupeWindow)
+	var existingID int64
+	err := tx.QueryRow(
+		`SELECT id FROM observations
+		 WHERE normalized_hash = ?
+		   AND ifnull(project, '') = ifnull(?, '')
+		   AND scope = ?
+		   AND type = ?
+		   AND title = ?
+		   AND deleted_at IS NULL
+		   AND datetime(created_at) >= datetime('now', ?)
+		 ORDER BY created_at DESC
+		 LIMIT 1`,
+		normHash, nullableString(p.Project), scope, p.Type, title, window,
+	).Scan(&existingID)
+	if err == nil {
+		if _, err := s.execHook(tx,
+			`UPDATE observations
+			 SET duplicate_count = duplicate_count + 1,
+			     last_seen_at = datetime('now'), updated_at = datetime('now')
+			 WHERE id = ?`, existingID,
+		); err != nil {
+			return nil, err
+		}
+		observation, err := s.getObservationTx(tx, existingID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.enqueueSyncMutationTx(tx, SyncEntityObservation, observation.SyncID, SyncOpUpsert, observationPayloadFromObservation(observation)); err != nil {
+			return nil, err
+		}
+		return observation, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	syncID := newSyncID("obs")
+	result, err := s.execHook(tx,
+		`INSERT INTO observations (sync_id, session_id, type, title, content, tool_name, project, scope, topic_key, normalized_hash, revision_count, duplicate_count, last_seen_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, datetime('now'), datetime('now'))`,
+		syncID, p.SessionID, p.Type, title, content,
+		nullableString(p.ToolName), nullableString(p.Project), scope, nullableString(topicKey), normHash,
+	)
+	if err != nil {
+		return nil, err
+	}
+	observationID, err := result.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	if months, ok := decayReviewAfterMonths[p.Type]; ok {
+		reviewAfter := time.Now().UTC().AddDate(0, months, 0).Format("2006-01-02 15:04:05")
+		if _, err := s.execHook(tx, `UPDATE observations SET review_after = ? WHERE id = ?`, reviewAfter, observationID); err != nil {
+			return nil, fmt.Errorf("set review_after: %w", err)
+		}
+	}
+	observation, err := s.getObservationTx(tx, observationID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.enqueueSyncMutationTx(tx, SyncEntityObservation, observation.SyncID, SyncOpUpsert, observationPayloadFromObservation(observation)); err != nil {
+		return nil, err
+	}
+	return observation, nil
 }
 
 func (s *Store) RecentObservations(project, scope string, limit int) ([]Observation, error) {

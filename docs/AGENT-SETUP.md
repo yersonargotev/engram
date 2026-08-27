@@ -406,10 +406,30 @@ The command reports four independent capabilities:
 
 - `plugin`: the marketplace authority, release commit, and installed plugin identity are verified.
 - `mcp`: both the plugin MCP manifest and `[mcp_servers.engram]` are valid. Homebrew installs use the stable `bin/engram` symlink instead of a versioned Cellar or Caskroom path.
-- `activation-cue`: the installed plugin provides a verifiable canonical model-visible cue. Until that capability is present, this check remains `missing`; legacy instruction activation stays in place.
+- `activation-cue`: the installed plugin contains the complete canonical checkpoint skill, projects its single short cue through model-visible `SessionStart.additionalContext`, and covers `startup`, `resume`, `clear`, and `compact` exactly once.
 - `verifier`: the installed plugin provides a non-empty `Stop` verifier.
 
 Setup is complete only when all four checks are `ready`. If the Codex CLI, plugin, MCP manifest, activation cue, or verifier is absent, the command reports an incomplete result instead of claiming success.
+
+### Checkpoint activation contract
+
+The detailed `saved`, `skipped(no_durable_knowledge)`, and `needs_review`
+rubric lives only in the installed `engram-memory` skill. The cue is a marked
+short paragraph inside that same file; `SessionStart` hooks extract it instead
+of carrying another protocol copy. Hook output uses
+`hookSpecificOutput.additionalContext`, so the cue reaches the model rather than
+appearing only as a UI warning.
+
+On every actual user prompt, `UserPromptSubmit` forwards Codex's opaque
+`session_id` and `turn_id` as the checkpoint identity
+`(host=codex, session_id, root_turn_id)`. The hook captures the prompt
+best-effort but never selects a disposition or creates a checkpoint. Tool calls,
+subagents, compaction events, and continuations remain within the original root
+user turn; the root agent applies the canonical skill and finalizes once.
+
+This provides verifiable activation and identity transport. The blocking
+checkpoint guarantee remains unavailable until the separate `Stop` verifier is
+installed and its capability check reports `ready`.
 
 ### Ownership and reruns
 

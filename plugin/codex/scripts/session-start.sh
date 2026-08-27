@@ -4,7 +4,7 @@
 # 1. Ensures the engram server is running
 # 2. Creates a session in engram
 # 3. Auto-imports git-synced chunks if .engram/manifest.json exists
-# 4. Injects Memory Protocol instructions + memory context
+# 4. Injects the canonical checkpoint cue + memory context
 
 ENGRAM_PORT="${ENGRAM_PORT:-7437}"
 ENGRAM_URL="http://127.0.0.1:${ENGRAM_PORT}"
@@ -15,6 +15,7 @@ LOCK_METADATA_STALE_SECS=$((LOCK_TTL_SECS * 5))
 # Load shared helpers
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/_helpers.sh"
+source "${SCRIPT_DIR}/_checkpoint.sh"
 
 # Read hook input from stdin
 INPUT=$(cat)
@@ -137,46 +138,8 @@ fi
 ENCODED_PROJECT=$(printf '%s' "$PROJECT" | jq -sRr @uri)
 CONTEXT=$(curl -sf "${ENGRAM_URL}/context?project=${ENCODED_PROJECT}" --max-time 3 2>/dev/null | jq -r '.context // empty')
 
-# Inject Memory Protocol + context — stdout is returned to Codex as additionalContext
-cat <<'PROTOCOL'
-## Engram Persistent Memory — ACTIVE PROTOCOL
-
-You have engram memory tools. This protocol is MANDATORY and ALWAYS ACTIVE.
-
-### CORE TOOLS — always available, no ToolSearch needed
-mem_save, mem_search, mem_context, mem_session_summary, mem_get_observation, mem_save_prompt
-
-Use ToolSearch for other tools: mem_update, mem_review, mem_pin, mem_unpin, mem_suggest_topic_key, mem_session_start, mem_session_end, mem_capture_passive, mem_judge, mem_compare, mem_doctor, mem_stats, mem_delete, mem_timeline, mem_merge_projects
-
-### PROACTIVE SAVE — do NOT wait for user to ask
-Call `mem_save` IMMEDIATELY after ANY of these:
-- Decision made (architecture, convention, workflow, tool choice)
-- Bug fixed (include root cause)
-- Convention or workflow documented/updated
-- Notion/Jira/GitHub artifact created or updated with significant content
-- Non-obvious discovery, gotcha, or edge case found
-- Pattern established (naming, structure, approach)
-- User preference or constraint learned
-- Feature implemented with non-obvious approach
-- User confirms your recommendation ("go with that", "sounds good", or the equivalent in the user's language)
-- User rejects an approach or expresses a preference ("no, better X", "I prefer X", or the equivalent in the user's language)
-- Discussion concludes with a clear direction chosen
-
-**Self-check after EVERY task**: "Did I or the user just make a decision, confirm a recommendation, express a preference, fix a bug, learn something, or establish a convention? If yes → mem_save NOW."
-
-### SEARCH MEMORY when:
-- User asks to recall anything ("remember", "what did we do", or the equivalent in the user's language)
-- Starting work on something that might have been done before
-- User mentions a topic you have no context on
-- User's FIRST message references the project, a feature, or a problem — call `mem_search` with keywords from their message to check for prior work before responding
-
-### SESSION CLOSE — before saying "done":
-Call `mem_session_summary` with: Goal, Discoveries, Accomplished, Next Steps, Relevant Files.
-PROTOCOL
-
-# Inject memory context if available
-if [ -n "$CONTEXT" ]; then
-  printf "\n%s\n" "$CONTEXT"
-fi
+# Return valid model-visible SessionStart.additionalContext. The cue is read
+# from the installed skill so this script owns no independent Memory semantics.
+emit_session_start_context "$CONTEXT"
 
 exit 0

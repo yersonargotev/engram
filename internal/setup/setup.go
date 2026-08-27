@@ -2047,6 +2047,7 @@ func verifyInstalledCodexPlugin(output []byte, verifiedPluginAssets map[string]c
 			var stopHooks []json.RawMessage
 			stopRaw, ok := hooksManifest.Hooks["Stop"]
 			capabilities.VerifierReady = ok && json.Unmarshal(stopRaw, &stopHooks) == nil && len(stopHooks) > 0
+			capabilities.ActivationCueReady = verifyInstalledCodexActivation(installed.InstalledPath, hooksRaw)
 		}
 	}
 	return capabilities, nil

@@ -47,6 +47,7 @@ var (
 		return exec.Command(name, args...).CombinedOutput()
 	}
 	linkFileFn   = os.Link
+	renameFileFn = os.Rename
 	removeFileFn = os.Remove
 	gitStatusFn  = func(root string) ([]byte, error) {
 		return exec.Command("git", "-C", root, "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "--", ".agents/plugins/marketplace.json", "plugin/codex").CombinedOutput()
@@ -1882,20 +1883,34 @@ func restoreInterruptedCodexLegacyActivation(configPath string) ([]string, error
 	content := string(data)
 	var preserved []string
 	for _, setting := range codexLegacySettings() {
-		stagePath := codexLegacyRetirementPath(setting.path)
-		if _, err := os.Lstat(stagePath); os.IsNotExist(err) {
+		stageStatus, stageErr := codexLegacyStageStatus(setting)
+		if stageStatus == "missing" {
 			continue
-		} else if err != nil {
+		}
+		if stageErr != nil {
 			preserved = append(preserved, setting.key)
-			return preserved, fmt.Errorf("inspect interrupted Codex legacy retirement %s: %w", setting.key, err)
+			return preserved, fmt.Errorf("inspect interrupted Codex legacy retirement %s: %w", setting.key, stageErr)
 		}
 		value, found, valid := topLevelTOMLString(content, setting.key)
+		if stageStatus == "empty" {
+			_, originalErr := os.Lstat(setting.path)
+			canDiscard := !found || (valid && value == setting.path && countTopLevelTOMLKey(content, setting.key) == 1 && originalErr == nil)
+			if !canDiscard {
+				preserved = append(preserved, setting.key)
+				return preserved, fmt.Errorf("empty staged state for %s was preserved because the original path is unavailable", setting.key)
+			}
+			if err := removeFileFn(codexLegacyRetirementDir(setting.path)); err != nil {
+				return preserved, fmt.Errorf("remove empty Codex legacy stage %s: %w", setting.key, err)
+			}
+			continue
+		}
+		stagePath := codexLegacyRetirementPath(setting.path)
 		if !found {
 			if known, _, _ := codexLegacyFileOwned(stagePath, setting.content); !known {
 				preserved = append(preserved, setting.key)
 				return preserved, fmt.Errorf("unrecognized post-publish stage for %s was preserved byte-for-byte", setting.key)
 			}
-			if err := removeFileFn(stagePath); err != nil && !os.IsNotExist(err) {
+			if err := removeCodexLegacyStage(setting); err != nil {
 				return preserved, fmt.Errorf("complete interrupted Codex legacy retirement %s: %w", setting.key, err)
 			}
 			continue
@@ -1924,10 +1939,16 @@ func retireCodexLegacyActivation(configPath string) ([]string, error) {
 
 	for _, setting := range codexLegacySettings() {
 		stagePath := codexLegacyRetirementPath(setting.path)
-		staged, readErr := readFileFn(stagePath)
-		if os.IsNotExist(readErr) {
+		stageStatus, stageErr := codexLegacyStageStatus(setting)
+		if stageStatus == "missing" {
 			continue
 		}
+		if stageErr != nil || stageStatus != "ready" {
+			preserved = append(preserved, setting.key)
+			blocked[setting.key] = true
+			continue
+		}
+		staged, readErr := readFileFn(stagePath)
 		info, statErr := os.Lstat(stagePath)
 		if readErr != nil || statErr != nil || !info.Mode().IsRegular() || string(staged) != setting.content {
 			preserved = append(preserved, setting.key)
@@ -1939,7 +1960,7 @@ func retireCodexLegacyActivation(configPath string) ([]string, error) {
 		_, originalErr := os.Lstat(setting.path)
 		switch {
 		case !found && os.IsNotExist(originalErr):
-			if err := removeFileFn(stagePath); err != nil && !os.IsNotExist(err) {
+			if err := removeCodexLegacyStage(setting); err != nil {
 				return preserved, fmt.Errorf("complete Codex legacy retirement %s: %w", setting.key, err)
 			}
 		case found && valid && value == setting.path && countTopLevelTOMLKey(content, setting.key) == 1 && os.IsNotExist(originalErr):
@@ -2000,7 +2021,14 @@ func retireCodexLegacyActivation(configPath string) ([]string, error) {
 			return preserved, fmt.Errorf("retire Codex legacy activation %s: ownership changed before staging", setting.key)
 		}
 		stagePath := codexLegacyRetirementPath(setting.path)
-		if err := linkFileFn(setting.path, stagePath); err != nil {
+		if err := os.Mkdir(codexLegacyRetirementDir(setting.path), 0o700); err != nil {
+			if restoreErr := restoreStaged(); restoreErr != nil {
+				return preserved, fmt.Errorf("create Codex legacy stage %s: %w; rollback failed: %v", setting.key, err, restoreErr)
+			}
+			return preserved, fmt.Errorf("create Codex legacy stage %s: %w", setting.key, err)
+		}
+		if err := renameFileFn(setting.path, stagePath); err != nil {
+			_ = removeFileFn(codexLegacyRetirementDir(setting.path))
 			if restoreErr := restoreStaged(); restoreErr != nil {
 				return preserved, fmt.Errorf("stage Codex legacy activation %s: %w; rollback failed: %v", setting.key, err, restoreErr)
 			}
@@ -2012,12 +2040,6 @@ func retireCodexLegacyActivation(configPath string) ([]string, error) {
 				return preserved, fmt.Errorf("retire Codex legacy activation %s: staged content changed; rollback failed: %v", setting.key, restoreErr)
 			}
 			return preserved, fmt.Errorf("retire Codex legacy activation %s: staged content changed and was preserved", setting.key)
-		}
-		if err := removeFileFn(setting.path); err != nil {
-			if restoreErr := restoreStaged(); restoreErr != nil {
-				return preserved, fmt.Errorf("stage Codex legacy activation %s: remove original: %w; rollback failed: %v", setting.key, err, restoreErr)
-			}
-			return preserved, fmt.Errorf("stage Codex legacy activation %s: remove original: %w", setting.key, err)
 		}
 	}
 
@@ -2053,15 +2075,54 @@ func retireCodexLegacyActivation(configPath string) ([]string, error) {
 		if known, _, _ := codexLegacyFileOwned(stagePath, setting.content); !known {
 			return preserved, fmt.Errorf("retire Codex legacy activation %s: staged content changed after publish and was preserved at %s", setting.key, stagePath)
 		}
-		if err := removeFileFn(stagePath); err != nil && !os.IsNotExist(err) {
+		if err := removeCodexLegacyStage(setting); err != nil {
 			return preserved, fmt.Errorf("retire Codex legacy activation %s: %w", setting.key, err)
 		}
 	}
 	return preserved, nil
 }
 
-func codexLegacyRetirementPath(path string) string {
+func codexLegacyRetirementDir(path string) string {
 	return path + ".engram-retiring"
+}
+
+func codexLegacyRetirementPath(path string) string {
+	return filepath.Join(codexLegacyRetirementDir(path), "payload")
+}
+
+func codexLegacyStageStatus(setting codexLegacySetting) (string, error) {
+	dir := codexLegacyRetirementDir(setting.path)
+	info, err := os.Lstat(dir)
+	if os.IsNotExist(err) {
+		return "missing", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("staging path is not a directory")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
+	if len(entries) == 0 {
+		return "empty", nil
+	}
+	if len(entries) != 1 || entries[0].Name() != "payload" {
+		return "", fmt.Errorf("staging directory contains unrecognized state")
+	}
+	return "ready", nil
+}
+
+func removeCodexLegacyStage(setting codexLegacySetting) error {
+	if err := removeFileFn(codexLegacyRetirementPath(setting.path)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := removeFileFn(codexLegacyRetirementDir(setting.path)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func restoreCodexLegacyStage(setting codexLegacySetting) error {
@@ -2076,10 +2137,10 @@ func restoreCodexLegacyStage(setting codexLegacySetting) error {
 	originalInfo, originalErr := os.Lstat(setting.path)
 	if originalErr == nil {
 		if os.SameFile(stageInfo, originalInfo) {
-			return removeFileFn(stagePath)
+			return removeCodexLegacyStage(setting)
 		}
 		if known, _, _ := codexLegacyFileOwned(stagePath, setting.content); known {
-			return removeFileFn(stagePath)
+			return removeCodexLegacyStage(setting)
 		}
 		return fmt.Errorf("original and staged paths both contain unrecognized state")
 	}
@@ -2089,7 +2150,7 @@ func restoreCodexLegacyStage(setting codexLegacySetting) error {
 	if err := linkFileFn(stagePath, setting.path); err != nil {
 		return err
 	}
-	if err := removeFileFn(stagePath); err != nil {
+	if err := removeCodexLegacyStage(setting); err != nil {
 		return fmt.Errorf("remove restored stage: %w", err)
 	}
 	return nil

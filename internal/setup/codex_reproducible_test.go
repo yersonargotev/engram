@@ -599,6 +599,9 @@ func TestInstallCodexRestoresPrePublishStageBeforeReplacementChecks(t *testing.T
 	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
 		t.Fatalf("write owned legacy Codex config: %v", err)
 	}
+	if err := os.Mkdir(codexLegacyRetirementDir(codexInstructionsPath()), 0o700); err != nil {
+		t.Fatalf("create simulated pre-publish stage: %v", err)
+	}
 	if err := os.WriteFile(codexLegacyRetirementPath(codexInstructionsPath()), []byte(memoryProtocolMarkdown), 0o644); err != nil {
 		t.Fatalf("write simulated pre-publish stage: %v", err)
 	}
@@ -635,6 +638,9 @@ func TestInstallCodexCompletesPostPublishCleanupBeforeReplacementChecks(t *testi
 		t.Fatalf("write post-publish Codex config: %v", err)
 	}
 	stagePath := codexLegacyRetirementPath(codexInstructionsPath())
+	if err := os.Mkdir(codexLegacyRetirementDir(codexInstructionsPath()), 0o700); err != nil {
+		t.Fatalf("create simulated post-publish stage: %v", err)
+	}
 	if err := os.WriteFile(stagePath, []byte(memoryProtocolMarkdown), 0o644); err != nil {
 		t.Fatalf("write simulated post-publish stage: %v", err)
 	}
@@ -678,20 +684,23 @@ func TestInstallCodexPreservesLegacyFileChangedDuringRetirement(t *testing.T) {
 		t.Fatalf("write owned legacy compact prompt: %v", err)
 	}
 
-	realRemove := removeFileFn
+	realRename := renameFileFn
 	modified := []byte(memoryProtocolMarkdown + "\nConcurrent user change.\n")
 	changed := false
-	removeFileFn = func(path string) error {
-		if !changed && path == codexInstructionsPath() {
-			if err := realRemove(path); err != nil {
+	renameFileFn = func(oldPath, newPath string) error {
+		if !changed && oldPath == codexInstructionsPath() {
+			changed = true
+			replacement := oldPath + ".user-replacement"
+			if err := os.WriteFile(replacement, modified, 0o644); err != nil {
 				return err
 			}
-			changed = true
-			return os.WriteFile(path, modified, 0o644)
+			if err := os.Rename(replacement, oldPath); err != nil {
+				return err
+			}
 		}
-		return realRemove(path)
+		return realRename(oldPath, newPath)
 	}
-	if _, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit}); err == nil || !strings.Contains(err.Error(), "original path was recreated") {
+	if _, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit}); err == nil || !strings.Contains(err.Error(), "staged content changed") {
 		t.Fatalf("concurrent modification error = %v", err)
 	}
 	assertFileBytes(t, codexInstructionsPath(), modified)

@@ -16,16 +16,30 @@ import (
 const maxAdmissionInputBytes = 1 << 20
 
 type admissionFlagOptions struct {
-	Project bool
-	Input   bool
-	Session bool
+	Project       bool
+	Input         bool
+	Session       bool
+	StudySelector bool
+	StudyRun      bool
+	Reviewer      bool
+	Yes           bool
 }
 
 type admissionFlags struct {
-	Project   string
-	InputPath string
-	SessionID string
-	JSONMode  bool
+	Project                   string
+	InputPath                 string
+	SessionID                 string
+	StudyID                   string
+	StudyVersion              string
+	Cohort                    string
+	Adapter                   string
+	ProjectType               string
+	SessionShape              string
+	ConsentAttestation        string
+	ReviewerID                string
+	IndependentReviewRequired bool
+	Yes                       bool
+	JSONMode                  bool
 }
 
 func cmdAdmission(cfg store.Config) {
@@ -43,6 +57,10 @@ func cmdAdmission(cfg store.Config) {
 		cmdAdmissionReview(cfg, jsonMode)
 	case "metrics":
 		cmdAdmissionMetrics(cfg, jsonMode)
+	case "study":
+		cmdAdmissionStudy(cfg, jsonMode)
+	case "omission":
+		cmdAdmissionOmission(cfg, jsonMode)
 	case "help", "--help", "-h":
 		printAdmissionUsage()
 	default:
@@ -145,10 +163,35 @@ func parseAdmissionFlags(start int, jsonMode bool, options admissionFlagOptions)
 		switch argument {
 		case "--json":
 			flags.JSONMode = true
-		case "--project", "--input", "--session":
+		case "--independent-review-required":
+			if !options.StudyRun || seen[argument] {
+				if seen[argument] {
+					failCLI(flags.JSONMode, "invalid_arguments", argument+" may only be provided once", nil)
+				} else {
+					admissionUnknownArgument(flags.JSONMode, argument)
+				}
+				return admissionFlags{}, false
+			}
+			seen[argument] = true
+			flags.IndependentReviewRequired = true
+		case "--yes":
+			if !options.Yes || seen[argument] {
+				if seen[argument] {
+					failCLI(flags.JSONMode, "invalid_arguments", argument+" may only be provided once", nil)
+				} else {
+					admissionUnknownArgument(flags.JSONMode, argument)
+				}
+				return admissionFlags{}, false
+			}
+			seen[argument] = true
+			flags.Yes = true
+		case "--project", "--input", "--session", "--study", "--study-version", "--cohort", "--adapter", "--project-type", "--session-shape", "--consent-attestation", "--reviewer":
 			allowed := (argument == "--project" && options.Project) ||
 				(argument == "--input" && options.Input) ||
-				(argument == "--session" && options.Session)
+				(argument == "--session" && options.Session) ||
+				((argument == "--study" || argument == "--study-version") && (options.StudySelector || options.StudyRun)) ||
+				((argument == "--cohort" || argument == "--adapter" || argument == "--project-type" || argument == "--session-shape" || argument == "--consent-attestation") && options.StudyRun) ||
+				(argument == "--reviewer" && options.Reviewer)
 			if !allowed {
 				admissionUnknownArgument(flags.JSONMode, argument)
 				return admissionFlags{}, false
@@ -175,6 +218,22 @@ func parseAdmissionFlags(start int, jsonMode bool, options admissionFlagOptions)
 				flags.InputPath = value
 			case "--session":
 				flags.SessionID = value
+			case "--study":
+				flags.StudyID = value
+			case "--study-version":
+				flags.StudyVersion = value
+			case "--cohort":
+				flags.Cohort = value
+			case "--adapter":
+				flags.Adapter = value
+			case "--project-type":
+				flags.ProjectType = value
+			case "--session-shape":
+				flags.SessionShape = value
+			case "--consent-attestation":
+				flags.ConsentAttestation = value
+			case "--reviewer":
+				flags.ReviewerID = value
 			}
 		case "help", "--help", "-h":
 			printAdmissionUsage()
@@ -261,8 +320,12 @@ func renderAdmissionPreview(result *memoryops.AdmissionPreviewResult) {
 func printAdmissionUsage() {
 	fmt.Fprintln(os.Stdout, "usage: engram admission preview --project PROJECT (--input FILE|- | --session SESSION_ID) [--json]")
 	fmt.Fprintln(os.Stdout, "       engram admission shadow --project PROJECT --session SESSION_ID [--json]")
-	fmt.Fprintln(os.Stdout, "       engram admission review list --project PROJECT [--json]")
-	fmt.Fprintln(os.Stdout, "       engram admission review mark PROPOSAL_ID --verdict admit|review|reject [--note TEXT] [--unsupported|--clear-unsupported] [--privacy-leak|--clear-privacy-leak] [--json]")
-	fmt.Fprintln(os.Stdout, "       engram admission metrics --project PROJECT [--json]")
+	fmt.Fprintln(os.Stdout, "       engram admission shadow --project PROJECT --session SESSION_ID --study ID --study-version VERSION --cohort COHORT --adapter ADAPTER --project-type TYPE --session-shape SHAPE --consent-attestation ID [--independent-review-required] [--json]")
+	fmt.Fprintln(os.Stdout, "       engram admission study freeze --input FILE|- [--json]")
+	fmt.Fprintln(os.Stdout, "       engram admission study cleanup --study ID --study-version VERSION --yes [--json]")
+	fmt.Fprintln(os.Stdout, "       engram admission review list (--project PROJECT | --study ID --study-version VERSION --reviewer REVIEWER) [--json]")
+	fmt.Fprintln(os.Stdout, "       engram admission review mark PROPOSAL_ID [--reviewer REVIEWER] --verdict admit|review|reject [--note TEXT] [--unsupported|--clear-unsupported] [--privacy-leak|--clear-privacy-leak] [--json]")
+	fmt.Fprintln(os.Stdout, "       engram admission omission record RUN_ID --reviewer REVIEWER --category CATEGORY --reason-code CODE --annotation TEXT [--json]")
+	fmt.Fprintln(os.Stdout, "       engram admission metrics (--project PROJECT | --study ID --study-version VERSION) [--json]")
 	fmt.Fprintln(os.Stdout, "Preview never persists; shadow retains derived local snapshots for review and metrics.")
 }

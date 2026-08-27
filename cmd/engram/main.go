@@ -776,6 +776,11 @@ func handleConfigFreeCommand(args []string) bool {
 				cmdAdmission(store.Config{})
 				return true
 			}
+			if (subcommand == "study" || subcommand == "omission") &&
+				((len(args) >= 3 && isHelp(args[2])) || (len(args) >= 4 && isHelp(args[3]))) {
+				cmdAdmission(store.Config{})
+				return true
+			}
 		}
 	}
 	return false
@@ -3208,8 +3213,16 @@ Commands:
                        --project PROJECT (--input FILE|- | --session SESSION_ID) [--json]
   admission shadow   Retain one explicit local shadow run for later review
                        --project PROJECT --session SESSION_ID [--json]
+                       Add frozen study attribution with --study ID --study-version VERSION
+                       --cohort COHORT --adapter ADAPTER --project-type TYPE
+                       --session-shape SHAPE --consent-attestation ID
+                       [--independent-review-required]
+  admission study    Freeze a versioned study contract or clean up one exact version
+                       freeze --input FILE|- [--json]
+                       cleanup --study ID --study-version VERSION --yes [--json]
   admission review   List or correct retained Memory proposals
-  admission metrics  Report project-local shadow evaluation metrics
+  admission omission Record a bounded, redacted omission for an attributed run
+  admission metrics  Report project-local or aggregate study evaluation metrics
   checkpoint record  Record a root-turn Memory checkpoint
                        --host HOST --session-id ID --root-turn-id ID
                        --disposition skipped --reason no_durable_knowledge [--json]

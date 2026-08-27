@@ -10,13 +10,15 @@ import (
 type AdmissionShadowInput struct {
 	Project   string
 	SessionID string
+	Study     *store.AdmissionStudyRunMetadata
 }
 
 type AdmissionShadowResult struct {
-	Run         store.AdmissionShadowRun        `json:"run"`
-	Proposals   []store.AdmissionShadowProposal `json:"proposals"`
-	Acquisition *AdmissionAcquisition           `json:"acquisition"`
-	Diagnostics []AdmissionDiagnostic           `json:"diagnostics"`
+	Run             store.AdmissionShadowRun        `json:"run"`
+	Proposals       []store.AdmissionShadowProposal `json:"proposals"`
+	Acquisition     *AdmissionAcquisition           `json:"acquisition"`
+	Diagnostics     []AdmissionDiagnostic           `json:"diagnostics"`
+	AlreadyRecorded *bool                           `json:"already_recorded,omitempty"`
 }
 
 type AdmissionReviewListInput struct {
@@ -31,6 +33,7 @@ type AdmissionReviewListResult struct {
 
 type AdmissionReviewMarkInput struct {
 	ProposalID  string
+	ReviewerID  string
 	Verdict     AdmissionRecommendation
 	Note        string
 	Unsupported *bool
@@ -85,6 +88,14 @@ func (s *Service) RunAdmissionShadow(input AdmissionShadowInput) (*AdmissionShad
 	if sessionID == "" {
 		return nil, fmt.Errorf("session id is required")
 	}
+	var studyMetadata *store.AdmissionStudyRunMetadata
+	if input.Study != nil {
+		normalized, _, err := s.store.ValidateAdmissionStudyRunMetadata(*input.Study, sessionID)
+		if err != nil {
+			return nil, fmt.Errorf("validate admission study run: %w", err)
+		}
+		studyMetadata = normalized
+	}
 
 	preview, err := s.PreviewAdmission(AdmissionPreviewInput{Project: project, SessionID: sessionID})
 	if err != nil {
@@ -112,28 +123,41 @@ func (s *Service) RunAdmissionShadow(input AdmissionShadowInput) (*AdmissionShad
 	for _, diagnostic := range preview.Diagnostics {
 		diagnosticCodes = append(diagnosticCodes, diagnostic.Code)
 	}
-	run, err := s.store.CreateAdmissionShadowRun(store.CreateAdmissionShadowRunParams{
+	createParams := store.CreateAdmissionShadowRunParams{
 		Project:              project,
 		SessionID:            sessionID,
 		Mode:                 preview.Acquisition.Mode,
 		EvidenceVersion:      preview.Acquisition.EvidenceVersion,
 		GeneratorVersion:     AdmissionGeneratorVersion,
 		PolicyVersion:        AdmissionPolicyVersion,
+		Study:                studyMetadata,
 		DiagnosticCodes:      diagnosticCodes,
 		IncludedItems:        preview.Acquisition.IncludedItems,
 		IncludedContentBytes: preview.Acquisition.IncludedContentBytes,
 		Proposals:            proposalInputs,
-	})
+	}
+	var run *store.AdmissionShadowRun
+	alreadyRecorded := false
+	if studyMetadata != nil {
+		run, alreadyRecorded, err = s.store.CreateAdmissionStudyShadowRun(createParams)
+	} else {
+		run, err = s.store.CreateAdmissionShadowRun(createParams)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("persist admission shadow run: %w", err)
 	}
 	proposals := run.Proposals
 	run.Proposals = nil
+	var alreadyRecordedResult *bool
+	if studyMetadata != nil {
+		alreadyRecordedResult = &alreadyRecorded
+	}
 	return &AdmissionShadowResult{
-		Run:         *run,
-		Proposals:   proposals,
-		Acquisition: preview.Acquisition,
-		Diagnostics: preview.Diagnostics,
+		Run:             *run,
+		Proposals:       proposals,
+		Acquisition:     preview.Acquisition,
+		Diagnostics:     preview.Diagnostics,
+		AlreadyRecorded: alreadyRecordedResult,
 	}, nil
 }
 
@@ -155,17 +179,30 @@ func (s *Service) ListAdmissionReviews(input AdmissionReviewListInput) (*Admissi
 	if err != nil {
 		return nil, fmt.Errorf("list admission review runs: %w", err)
 	}
+	legacyRunIDs := make(map[string]struct{}, len(runs))
+	legacyRuns := make([]store.AdmissionShadowRun, 0, len(runs))
+	for _, run := range runs {
+		if run.StudyID == "" {
+			legacyRunIDs[run.ID] = struct{}{}
+			legacyRuns = append(legacyRuns, run)
+		}
+	}
+	legacyProposals := make([]store.AdmissionShadowProposal, 0, len(proposals))
 	pendingRunIDs := make(map[string]struct{}, len(proposals))
 	for _, proposal := range proposals {
+		if _, legacy := legacyRunIDs[proposal.RunID]; !legacy {
+			continue
+		}
+		legacyProposals = append(legacyProposals, proposal)
 		pendingRunIDs[proposal.RunID] = struct{}{}
 	}
 	pendingRuns := make([]store.AdmissionShadowRun, 0, len(pendingRunIDs))
-	for _, run := range runs {
+	for _, run := range legacyRuns {
 		if _, pending := pendingRunIDs[run.ID]; pending {
 			pendingRuns = append(pendingRuns, run)
 		}
 	}
-	return &AdmissionReviewListResult{Project: project, Runs: pendingRuns, Proposals: proposals}, nil
+	return &AdmissionReviewListResult{Project: project, Runs: pendingRuns, Proposals: legacyProposals}, nil
 }
 
 // MarkAdmissionReview appends one explicit human correction. It never promotes
@@ -183,6 +220,7 @@ func (s *Service) MarkAdmissionReview(input AdmissionReviewMarkInput) (*Admissio
 	}
 	review, alreadyRecorded, err := s.store.AddAdmissionShadowReview(store.AddAdmissionShadowReviewParams{
 		ProposalID:  proposalID,
+		ReviewerID:  input.ReviewerID,
 		Verdict:     string(input.Verdict),
 		Note:        input.Note,
 		Unsupported: input.Unsupported,
@@ -213,10 +251,24 @@ func (s *Service) AdmissionMetrics(input AdmissionMetricsInput) (*AdmissionMetri
 	if err != nil {
 		return nil, fmt.Errorf("list admission shadow proposals: %w", err)
 	}
+	legacyRunIDs := make(map[string]struct{}, len(runs))
+	legacyRuns := make([]store.AdmissionShadowRun, 0, len(runs))
+	for _, run := range runs {
+		if run.StudyID == "" {
+			legacyRunIDs[run.ID] = struct{}{}
+			legacyRuns = append(legacyRuns, run)
+		}
+	}
+	legacyProposals := make([]store.AdmissionShadowProposal, 0, len(proposals))
+	for _, proposal := range proposals {
+		if _, legacy := legacyRunIDs[proposal.RunID]; legacy {
+			legacyProposals = append(legacyProposals, proposal)
+		}
+	}
 	metrics := &AdmissionMetricsResult{
 		Project:                           project,
-		RunCount:                          len(runs),
-		ProposalCount:                     len(proposals),
+		RunCount:                          len(legacyRuns),
+		ProposalCount:                     len(legacyProposals),
 		ByPolicyVersion:                   map[string]int{},
 		ByRecommendation:                  map[string]int{},
 		ByCategory:                        map[string]int{},
@@ -225,11 +277,11 @@ func (s *Service) AdmissionMetrics(input AdmissionMetricsInput) (*AdmissionMetri
 		ProtectedFalseRejectsByCategory:   map[string]int{},
 		ProtectedFalseRejectsByReasonCode: map[string]int{},
 	}
-	policyVersionsByRun := make(map[string]string, len(runs))
-	for _, run := range runs {
+	policyVersionsByRun := make(map[string]string, len(legacyRuns))
+	for _, run := range legacyRuns {
 		policyVersionsByRun[run.ID] = run.PolicyVersion
 	}
-	for _, proposal := range proposals {
+	for _, proposal := range legacyProposals {
 		metrics.ByPolicyVersion[policyVersionsByRun[proposal.RunID]]++
 		metrics.ByRecommendation[proposal.Recommendation]++
 		metrics.ByCategory[proposal.Category]++

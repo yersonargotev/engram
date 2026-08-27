@@ -38,10 +38,25 @@ Admission assessments for later correction and measurement without promoting
 them to Memories.
 _Avoid_: Session capture, automatic admission
 
+**Admission study**:
+A frozen, versioned protocol that attributes explicit Shadow admission runs to
+separate cohorts and permits only declared aggregate evaluation outputs.
+_Avoid_: Session collection, admission experiment
+
+**Study cohort**:
+A predeclared calibration or held-out partition within one Admission study.
+_Avoid_: Dataset split, run group
+
 **Admission correction**:
-An append-only human verdict about one retained Memory proposal. It supplies
-evaluation evidence and does not itself promote, reject, or delete a Memory.
+An append-only human verdict about one retained Memory proposal, attributed to
+a pseudonymous reviewer when it belongs to a study. It supplies evaluation
+evidence and does not itself promote, reject, or delete a Memory.
 _Avoid_: Memory review, approval
+
+**Omission annotation**:
+A bounded, redacted reviewer statement that an Admission assessment failed to
+propose a durable decision, root cause, invariant, constraint, or preference.
+_Avoid_: Missing Memory, raw evidence note
 
 **Promotion**:
 The explicit acceptance of a Memory proposal as a Memory.

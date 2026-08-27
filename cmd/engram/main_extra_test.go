@@ -801,6 +801,9 @@ func TestMainAdmissionHelpDoesNotCreateLocalDatabase(t *testing.T) {
 		{"engram", "admission", "review", "list", "--help"},
 		{"engram", "admission", "review", "mark", "--help"},
 		{"engram", "admission", "metrics", "--help"},
+		{"engram", "admission", "study", "freeze", "--help"},
+		{"engram", "admission", "study", "cleanup", "--help"},
+		{"engram", "admission", "omission", "record", "--help"},
 	} {
 		t.Run(strings.Join(args[2:], "_"), func(t *testing.T) {
 			stubRuntimeHooks(t)
@@ -818,6 +821,8 @@ func TestMainAdmissionHelpDoesNotCreateLocalDatabase(t *testing.T) {
 				"engram admission review list",
 				"engram admission review mark",
 				"engram admission metrics",
+				"engram admission study freeze",
+				"engram admission omission record",
 				"--session SESSION_ID",
 				"shadow retains derived local snapshots",
 			} {

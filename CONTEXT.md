@@ -57,6 +57,42 @@ A selective workflow in which a human, skill, or agent recalls relevant project
 knowledge and preserves only durable findings.
 _Avoid_: Session capture, activity logging
 
+**Memory checkpoint**:
+A root-user-turn assessment that records whether durable knowledge was saved,
+skipped with an explicit reason, or left for review. It guarantees a disposition,
+not that every turn creates a Memory.
+_Avoid_: Automatic save, mandatory memory
+
+**Root user turn**:
+The causal unit that begins with one user message and ends when all agent,
+tool, subagent, and continuation work caused by that message has settled.
+_Avoid_: Model turn, tool turn, session
+
+**Checkpoint verifier**:
+A host capability that detects a missing terminal Memory checkpoint for a root
+user turn without deciding what knowledge is durable.
+_Avoid_: Admission hook, memory judge, automatic save
+
+**Checkpoint guarantee**:
+The promise that a host cannot complete a root user turn without a terminal
+Memory checkpoint. Hosts without a reliable continuation capability are
+best-effort and must not claim this guarantee.
+_Avoid_: Universal support, eventual capture
+
+**Activation cue**:
+A short, always-delivered host instruction that states the Memory checkpoint
+invariant and points to the canonical skill for the detailed rubric. It does not
+repeat the full memory protocol or decide the checkpoint outcome.
+_Avoid_: Full protocol, admission policy
+
+**Distribution authority**:
+The canonical source that identifies, versions, and publishes Engram setup and
+integration artifacts. `yersonargotev/engram` is Engram's sole distribution
+authority; host registries, caches, and upstream repositories are delivery or
+source relationships rather than competing authorities. Stable setup identifies
+a release and exact source revision rather than following a moving branch.
+_Avoid_: Install location, upstream relationship
+
 **Task briefing**:
 A selection of durable project memories intended to help an agent perform its
 current task. Transient work signals may guide selection but are not part of the

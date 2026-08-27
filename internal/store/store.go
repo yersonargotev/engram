@@ -1100,6 +1100,9 @@ func (s *Store) migrate() error {
 	if err := s.migrateAdmissionShadow(); err != nil {
 		return err
 	}
+	if err := s.migrateMemoryCheckpoints(); err != nil {
+		return err
+	}
 
 	return nil
 }

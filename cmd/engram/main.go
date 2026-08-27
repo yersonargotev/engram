@@ -668,6 +668,8 @@ func main() {
 		cmdContext(cfg)
 	case "admission":
 		cmdAdmission(cfg)
+	case "checkpoint":
+		cmdCheckpoint(cfg)
 	case "stats":
 		cmdStats(cfg)
 	case "export":
@@ -730,6 +732,12 @@ func handleConfigFreeCommand(args []string) bool {
 	case "save":
 		if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
 			printSaveUsage()
+			return true
+		}
+	case "checkpoint":
+		opts, _ := parseCheckpointArgs(args[1:])
+		if opts.Help {
+			printCheckpointUsage()
 			return true
 		}
 	case "cloud":
@@ -3150,7 +3158,7 @@ Commands:
   serve [port]       Start HTTP API server (default: 7437)
   mcp [--tools=PROFILE] [--project NAME]
                      Start MCP server (stdio transport, for any AI agent)
-                       Profiles: agent (15 tools), admin (4 tools), all (default, 19)
+                       Profiles: agent (20 tools), admin (4 tools), all (default, 24)
                        Combine: --tools=agent,admin or pick individual tools
                        Example: engram mcp --tools=agent
                        --project NAME  Set process-level default project (overrides cwd detection).
@@ -3202,6 +3210,11 @@ Commands:
                        --project PROJECT --session SESSION_ID [--json]
   admission review   List or correct retained Memory proposals
   admission metrics  Report project-local shadow evaluation metrics
+  checkpoint record  Record a root-turn Memory checkpoint
+                       --host HOST --session-id ID --root-turn-id ID
+                       --disposition skipped --reason no_durable_knowledge [--json]
+  checkpoint status  Inspect one exact root-turn Memory checkpoint
+                       --host HOST --session-id ID --root-turn-id ID [--json]
   stats              Show memory system statistics
   export [file]      Export all memories to JSON (default: engram-export.json)
   import <file>      Import memories from a JSON export file

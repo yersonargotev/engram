@@ -6,8 +6,8 @@
 //
 // Tool profiles allow agents to load only the tools they need:
 //
-//	engram mcp                    → all 22 tools (default)
-//	engram mcp --tools=agent      → 18 agent-facing tools (per skill files)
+//	engram mcp                    → all 24 tools (default)
+//	engram mcp --tools=agent      → 20 agent-facing tools (per skill files)
 //	engram mcp --tools=admin      → 4 tools for TUI/CLI (delete, stats, timeline, merge)
 //	engram mcp --tools=agent,admin → combine profiles
 //	engram mcp --tools=mem_save,mem_search → individual tool names
@@ -88,6 +88,7 @@ func ensureImplicitSessionWithCWD(s *store.Store, sessionID, project string) err
 //   mem_session_start, mem_session_end, mem_get_observation,
 //   mem_suggest_topic_key, mem_capture_passive, mem_save_prompt,
 //   mem_update, mem_current_project, mem_judge, mem_compare, mem_doctor,
+//   mem_checkpoint, mem_checkpoint_status,
 //   mem_review, mem_pin, mem_unpin
 //
 // "admin" — tools for manual curation, TUI, and dashboards:
@@ -114,6 +115,8 @@ var ProfileAgent = map[string]bool{
 	"mem_judge":             true, // record verdict on a pending memory conflict (REQ-003, Phase D)
 	"mem_compare":           true, // persist an agent-judged semantic verdict via JudgeBySemantic (REQ-011, Phase G)
 	"mem_doctor":            true, // read-only operational diagnostics for agents
+	"mem_checkpoint":        true, // finalize one root user turn
+	"mem_checkpoint_status": true, // inspect one root-turn checkpoint
 	"mem_review":            true, // list/mark observations whose review_after lifecycle is stale
 	"mem_pin":               true, // local pin for context priority
 	"mem_unpin":             true, // local unpin for context priority
@@ -174,7 +177,7 @@ func NewServer(s *store.Store) *server.MCPServer {
 }
 
 // serverInstructions tells MCP clients when to use Engram's tools.
-// 7 core tools are eager (always in context). The rest are deferred
+// 9 core tools are eager (always in context). The rest are deferred
 // and require ToolSearch to load.
 const serverInstructions = `Engram provides persistent memory that survives across sessions and compactions.
 
@@ -186,11 +189,13 @@ CORE TOOLS (always available — use without ToolSearch):
   mem_get_observation — get full untruncated content of a search result by ID
   mem_save_prompt — save user prompt for context
   mem_current_project — detect current project from cwd (recommended first call)
+  mem_checkpoint — record a terminal Memory checkpoint for one settled root turn
+  mem_checkpoint_status — inspect one exact root-turn checkpoint
 
 DEFERRED TOOLS (use ToolSearch when needed):
   mem_update, mem_review, mem_pin, mem_unpin, mem_suggest_topic_key, mem_session_start, mem_session_end,
-  mem_capture_passive, mem_judge, mem_compare, mem_doctor,
-  mem_stats, mem_delete, mem_timeline, mem_merge_projects
+  mem_capture_passive, mem_judge, mem_compare, mem_doctor, mem_stats, mem_delete, mem_timeline,
+  mem_merge_projects
 
 PROACTIVE SAVE RULE: Call mem_save immediately after ANY decision, bug fix, discovery, or convention — not just when asked.
 
@@ -261,6 +266,42 @@ func shouldRegister(name string, allowlist map[string]bool) bool {
 // registerTools registers all enabled MCP tools on the given server.
 func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowlist map[string]bool, activity *SessionActivity) {
 	writeQueue := newWriteQueue(defaultMCPWriteQueueSize)
+
+	// ─── Memory checkpoint (profile: agent, core) ───────────────────────
+	if shouldRegister("mem_checkpoint", allowlist) {
+		srv.AddTool(
+			mcp.NewTool("mem_checkpoint",
+				mcp.WithDescription("Record the terminal Memory checkpoint for one settled root user turn. The current vocabulary accepts only disposition=skipped with reason=no_durable_knowledge."),
+				mcp.WithTitleAnnotation("Record Memory Checkpoint"),
+				mcp.WithReadOnlyHintAnnotation(false),
+				mcp.WithDestructiveHintAnnotation(false),
+				mcp.WithIdempotentHintAnnotation(true),
+				mcp.WithOpenWorldHintAnnotation(false),
+				mcp.WithString("host", mcp.Required(), mcp.Description("Host adapter identifier, for example codex")),
+				mcp.WithString("session_id", mcp.Required(), mcp.Description("Opaque host session identifier")),
+				mcp.WithString("root_turn_id", mcp.Required(), mcp.Description("Opaque root user turn identifier retained across continuations")),
+				mcp.WithString("disposition", mcp.Required(), mcp.Description("Terminal disposition; currently skipped")),
+				mcp.WithString("reason", mcp.Required(), mcp.Description("Versioned semantic skip reason; currently no_durable_knowledge")),
+			),
+			queuedCheckpointToolHandler(writeQueue, CheckpointToolHandler(s)),
+		)
+	}
+	if shouldRegister("mem_checkpoint_status", allowlist) {
+		srv.AddTool(
+			mcp.NewTool("mem_checkpoint_status",
+				mcp.WithDescription("Inspect the terminal Memory checkpoint for one exact root user turn."),
+				mcp.WithTitleAnnotation("Inspect Memory Checkpoint"),
+				mcp.WithReadOnlyHintAnnotation(true),
+				mcp.WithDestructiveHintAnnotation(false),
+				mcp.WithIdempotentHintAnnotation(true),
+				mcp.WithOpenWorldHintAnnotation(false),
+				mcp.WithString("host", mcp.Required(), mcp.Description("Host adapter identifier, for example codex")),
+				mcp.WithString("session_id", mcp.Required(), mcp.Description("Opaque host session identifier")),
+				mcp.WithString("root_turn_id", mcp.Required(), mcp.Description("Opaque root user turn identifier")),
+			),
+			CheckpointStatusToolHandler(s),
+		)
+	}
 
 	// ─── mem_search (profile: agent, core — always in context) ─────────
 	if shouldRegister("mem_search", allowlist) {

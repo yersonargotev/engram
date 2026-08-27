@@ -37,6 +37,7 @@ The memory flow does not start in the database. It starts with the agent decidin
 | `memory_relations` | Relationships/judgments between memories for semantic conflict surfacing. | `internal/store/relations.go`, `internal/mcp/mcp_judge_test.go` |
 | `sync_mutations` | Queue of changes for sync/autosync. | `internal/store/store.go`, `internal/sync/sync.go`, `internal/cloud/autosync/manager.go` |
 | `sync_apply_deferred` | Pull mutations deferred because dependencies are missing. | `internal/store/sync_apply_test.go`, `internal/server/server.go` |
+| `memory_checkpoints` | Local-only root-turn dispositions, excluded from every durable-Memory and replication surface. | `internal/store/checkpoint.go`, `internal/memoryops/checkpoint.go` |
 
 For schema details, use [DOCS.md — Database Schema](../../DOCS.md#database-schema).
 

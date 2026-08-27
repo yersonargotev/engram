@@ -21,6 +21,10 @@ Breaking changes are always marked with a `type:breaking-change` label and docum
 
 <!-- Changes that are merged but not yet released are tracked here until the next tag. -->
 
+### Memory checkpoints
+
+- **feat(memory):** add a local-only, idempotent checkpoint ledger plus equivalent CLI and MCP record/status surfaces for semantic `skipped` outcomes; checkpoint data is excluded from Memory search, context, counts, export, sync, cloud materialization, and Obsidian export.
+
 ### Cloud sync
 
 - **fix(cloud):** make chunk and mutation push payload limits configurable with `ENGRAM_CLOUD_MAX_PUSH_BYTES` while preserving the 8 MiB default.

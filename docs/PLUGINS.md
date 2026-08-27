@@ -187,7 +187,8 @@ plugin/codex/
 │   ├── _checkpoint.sh             # Extracts and renders the canonical cue
 │   ├── session-start.sh           # startup, resume, and clear
 │   ├── post-compaction.sh         # compact
-│   └── user-prompt-submit.sh      # Prompt capture + opaque root identity
+│   ├── user-prompt-submit.sh      # Prompt capture + opaque root identity
+│   └── stop.sh                    # Synchronous exact-checkpoint verifier
 └── skills/memory/SKILL.md         # Canonical cue and complete rubric
 ```
 
@@ -202,12 +203,21 @@ policy. Codex runs them exactly once for each supported source: `startup`,
 the session ID. It does not finalize a checkpoint. This preserves one root-turn
 identity for the root agent while tools and subagents remain internal activity.
 
+`Stop` queries `engram checkpoint status` for that exact identity. A terminal
+`saved`, `skipped`, or `needs_review` checkpoint completes with no continuation.
+Only `checkpoint_not_found` can request one recovery continuation, which carries
+the original identity and tells the root agent not to checkpoint the
+continuation itself. Codex's `stop_hook_active` prevents a second continuation.
+Executable, transport, malformed-response, identity, and unexpected-disposition
+failures are surfaced as integration failures and never become `skipped`; the
+adapter reports its own two-second status timeout before Codex's three-second
+hook deadline.
+
 `engram setup codex` verifies the immutable plugin tree, MCP manifest, canonical
-skill, cue, and lifecycle coverage before reporting `activation-cue: ready`.
-It preserves user-owned settings and never adds protocol prose to shared
-`AGENTS.md` or `CLAUDE.md` files. Activation alone is not the blocking
-Checkpoint guarantee: setup remains incomplete until the separate `Stop`
-verifier also reports `ready`.
+skill, cue, lifecycle coverage, exact synchronous `Stop` command, timeout, and
+executable verifier asset. It preserves user-owned settings and never adds
+protocol prose to shared `AGENTS.md` or `CLAUDE.md` files. Setup reports complete
+only when both activation and checkpoint verification are ready.
 
 ---
 

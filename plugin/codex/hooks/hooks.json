@@ -47,6 +47,18 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/scripts/stop.sh\"",
+            "timeout": 3,
+            "statusMessage": "Verifying engram memory checkpoint..."
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [

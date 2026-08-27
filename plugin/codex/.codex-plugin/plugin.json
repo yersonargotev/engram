@@ -1,9 +1,9 @@
 {
   "name": "engram",
   "displayName": "Engram Persistent Memory",
-  "version": "0.1.4",
-  "description": "Persistent memory with canonical root-turn checkpoint activation for Codex.",
-  "shortDescription": "Persistent memory with auditable checkpoint activation.",
+  "version": "0.1.5",
+  "description": "Persistent memory with canonical root-turn checkpoint activation and Stop verification for Codex.",
+  "shortDescription": "Persistent memory with enforced root-turn checkpoints.",
   "author": {
     "name": "yersonargotev"
   },

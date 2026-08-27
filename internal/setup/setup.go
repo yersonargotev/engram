@@ -2044,13 +2044,38 @@ func verifyInstalledCodexPlugin(output []byte, verifiedPluginAssets map[string]c
 			Hooks map[string]json.RawMessage `json:"hooks"`
 		}
 		if json.Unmarshal(hooksRaw, &hooksManifest) == nil {
-			var stopHooks []json.RawMessage
-			stopRaw, ok := hooksManifest.Hooks["Stop"]
-			capabilities.VerifierReady = ok && json.Unmarshal(stopRaw, &stopHooks) == nil && len(stopHooks) > 0
+			capabilities.VerifierReady = verifyInstalledCodexStopVerifier(hooksRaw, verifiedPluginAssets)
 			capabilities.ActivationCueReady = verifyInstalledCodexActivation(installed.InstalledPath, hooksRaw)
 		}
 	}
 	return capabilities, nil
+}
+
+func verifyInstalledCodexStopVerifier(hooksRaw []byte, verifiedPluginAssets map[string]codexPluginTreeEntry) bool {
+	var manifest struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+				Timeout int    `json:"timeout"`
+				Async   bool   `json:"async"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if json.Unmarshal(hooksRaw, &manifest) != nil {
+		return false
+	}
+	groups := manifest.Hooks["Stop"]
+	if len(groups) != 1 || groups[0].Matcher != "" || len(groups[0].Hooks) != 1 {
+		return false
+	}
+	hook := groups[0].Hooks[0]
+	if hook.Type != "command" || hook.Command != `"${PLUGIN_ROOT}/scripts/stop.sh"` || hook.Timeout != 3 || hook.Async {
+		return false
+	}
+	asset, ok := verifiedPluginAssets["scripts/stop.sh"]
+	return ok && asset.mode.IsRegular() && asset.mode.Perm()&0o111 != 0 && strings.HasPrefix(string(asset.data), "#!/bin/bash\n")
 }
 
 func inspectInstalledCodexPluginLocation(codexBin, configPath string) (codexInstalledPluginLocation, error) {

@@ -263,7 +263,7 @@ func TestInstallCodexReportsIndependentCapabilities(t *testing.T) {
 	}
 }
 
-func TestInstallCodexReportsCanonicalSkillAndCueReadyWithoutSharedInstructions(t *testing.T) {
+func TestInstallCodexReportsCanonicalCheckpointCapabilitiesWithoutSharedInstructions(t *testing.T) {
 	resetSetupSeams(t)
 	home := useTestHome(t)
 	osExecutable = func() (string, error) { return "/usr/local/bin/engram", nil }
@@ -285,7 +285,7 @@ func TestInstallCodexReportsCanonicalSkillAndCueReadyWithoutSharedInstructions(t
 		case len(args) >= 4 && slices.Equal(args[:4], []string{"plugin", "marketplace", "add", codexMarketplace}):
 			return []byte(fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)), nil
 		case len(args) >= 3 && slices.Equal(args[:3], []string{"plugin", "add", "engram@engram"}):
-			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.4","installedPath":%q}`, installedPlugin)), nil
+			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.5","installedPath":%q}`, installedPlugin)), nil
 		default:
 			return nil, fmt.Errorf("unexpected codex command: %v", args)
 		}
@@ -300,8 +300,8 @@ func TestInstallCodexReportsCanonicalSkillAndCueReadyWithoutSharedInstructions(t
 		t.Fatalf("activation-cue check = %+v, want ready for installed canonical skill and cue", activation)
 	}
 	verifier, ok := result.Check("verifier")
-	if !ok || verifier.Status != CheckMissing || result.Complete {
-		t.Fatalf("verifier check = %+v complete=%v, want missing and incomplete until issue #47", verifier, result.Complete)
+	if !ok || verifier.Status != CheckReady || !result.Complete {
+		t.Fatalf("verifier check = %+v complete=%v, want ready for the installed canonical Stop verifier", verifier, result.Complete)
 	}
 
 	for _, shared := range []string{"AGENTS.md", "CLAUDE.md"} {
@@ -343,7 +343,7 @@ func TestInstallCodexDoesNotReportActivationReadyForIncompleteCanonicalSkill(t *
 		case len(args) >= 4 && slices.Equal(args[:4], []string{"plugin", "marketplace", "add", codexMarketplace}):
 			return []byte(fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)), nil
 		case len(args) >= 3 && slices.Equal(args[:3], []string{"plugin", "add", "engram@engram"}):
-			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.4","installedPath":%q}`, installedPlugin)), nil
+			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.5","installedPath":%q}`, installedPlugin)), nil
 		default:
 			return nil, fmt.Errorf("unexpected codex command: %v", args)
 		}
@@ -369,6 +369,7 @@ func writeCanonicalCodexActivationFixture(t *testing.T, destination string) {
 		"scripts/_checkpoint.sh",
 		"scripts/session-start.sh",
 		"scripts/post-compaction.sh",
+		"scripts/stop.sh",
 		"skills/memory/SKILL.md",
 	}
 	for _, relative := range paths {
@@ -470,6 +471,25 @@ func writeInstalledCodexPlugin(t *testing.T, root, marketplaceRoot string, inclu
 	t.Helper()
 	writeCodexPluginFixture(t, root, includeStop)
 	writeCodexPluginFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"), includeStop)
+}
+
+func TestVerifyInstalledCodexPluginRejectsStubStopHook(t *testing.T) {
+	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.3")
+	marketplaceRoot := t.TempDir()
+	writeInstalledCodexPlugin(t, installedPlugin, marketplaceRoot, true)
+	assets, err := snapshotCodexPluginTree(filepath.Join(marketplaceRoot, "plugin", "codex"))
+	if err != nil {
+		t.Fatalf("snapshot stub Codex plugin: %v", err)
+	}
+	output := []byte(fmt.Sprintf(`{"name":"engram","marketplaceName":"engram","version":"0.1.3","installedPath":%q}`, installedPlugin))
+
+	verified, err := verifyInstalledCodexPlugin(output, assets)
+	if err != nil {
+		t.Fatalf("verify installed stub plugin: %v", err)
+	}
+	if verified.VerifierReady {
+		t.Fatal("stub Stop entry without the canonical command and executable asset reported verifier ready")
+	}
 }
 
 func writeCodexPluginFixture(t *testing.T, root string, includeStop bool) {

@@ -19,7 +19,7 @@
 |---|---|
 | OpenCode | TypeScript plugin plus MCP registration via `engram setup opencode`. |
 | Claude Code | Marketplace/bundled plugin plus best-effort durable user MCP config via `engram setup claude-code`. |
-| Codex | Codex plugin assets under `plugin/codex/`; `engram setup codex` best-effort installs the marketplace plugin and writes MCP/instruction config. |
+| Codex | Codex plugin assets under `plugin/codex/`; `engram setup codex` pins the binary's release tag and commit, preserves unrecognized state, and reports plugin, MCP, activation-cue, and verifier readiness separately. |
 | Pi | Pi package under `plugin/pi/` exposes Pi-native HTTP memory tools and configures MCP through `pi-mcp-adapter`. |
 
 ---

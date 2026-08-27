@@ -17,13 +17,13 @@ func agentAdapters() []agentAdapter {
 		{
 			slug:        "opencode",
 			description: "OpenCode — TypeScript plugin with session tracking, compaction recovery, and Memory Protocol",
-			custom:      installOpenCode,
+			custom:      func(InstallOptions) (*Result, error) { return installOpenCode() },
 			installDir:  openCodePluginDir,
 		},
 		{
 			slug:        "pi",
 			description: "Pi — gentle-engram package plus pi-mcp-adapter MCP tools",
-			custom:      installPi,
+			custom:      func(InstallOptions) (*Result, error) { return installPi() },
 			installDir:  piAgentDir,
 			postInstall: []string{
 				"Restart Pi so packages and MCP config are reloaded",
@@ -33,13 +33,13 @@ func agentAdapters() []agentAdapter {
 		{
 			slug:        "claude-code",
 			description: "Claude Code — Native plugin via marketplace (hooks, skills, MCP, compaction recovery)",
-			custom:      installClaudeCode,
+			custom:      func(InstallOptions) (*Result, error) { return installClaudeCode() },
 			installDir:  func() string { return "managed by claude plugin system" },
 		},
 		{
 			slug:        "gemini-cli",
 			description: "Gemini CLI — MCP registration plus system prompt compaction recovery",
-			custom:      installGeminiCLI,
+			custom:      func(InstallOptions) (*Result, error) { return installGeminiCLI() },
 			installDir:  geminiConfigPath,
 			postInstall: []string{
 				"Restart Gemini CLI so MCP config is reloaded",
@@ -49,15 +49,13 @@ func agentAdapters() []agentAdapter {
 		},
 		{
 			slug:        "codex",
-			description: "Codex — MCP registration, model/compaction instruction files, and plugin (hooks)",
-			custom:      installCodex,
+			description: "Codex — verified release plugin, stable MCP registration, and ownership-aware activation",
+			custom:      installCodexWithOptions,
 			installDir:  codexConfigPath,
 			postInstall: []string{
-				"Restart Codex so MCP config and plugin are reloaded",
-				"Verify ~/.codex/config.toml has [mcp_servers.engram]",
-				"Verify model_instructions_file + experimental_compact_prompt_file are set",
-				"Verify plugin is installed with: codex plugin list",
-				"If codex CLI was absent during setup, install manually: codex plugin marketplace add yersonargotev/engram --ref main && codex plugin add engram@engram",
+				"Review the reported plugin, MCP, activation-cue, and verifier checks",
+				"Resolve every missing, failed, or preserved capability before treating setup as complete",
+				"Restart Codex after all required checks are ready",
 			},
 		},
 		{

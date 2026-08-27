@@ -271,7 +271,7 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 	if shouldRegister("mem_checkpoint", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_checkpoint",
-				mcp.WithDescription("Record the terminal Memory checkpoint for one settled root user turn. Use saved with one or more existing memory_ids or inline memories, or skipped with reason=no_durable_knowledge."),
+				mcp.WithDescription("Record the terminal Memory checkpoint for one settled root user turn. Use saved with one or more existing memory_ids or inline memories, needs_review with exactly one existing proposal_id or inline proposal, or skipped with reason=no_durable_knowledge."),
 				mcp.WithTitleAnnotation("Record Memory Checkpoint"),
 				mcp.WithReadOnlyHintAnnotation(false),
 				mcp.WithDestructiveHintAnnotation(false),
@@ -280,9 +280,9 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 				mcp.WithString("host", mcp.Required(), mcp.Description("Host adapter identifier, for example codex")),
 				mcp.WithString("session_id", mcp.Required(), mcp.Description("Opaque host session identifier")),
 				mcp.WithString("root_turn_id", mcp.Required(), mcp.Description("Opaque root user turn identifier retained across continuations")),
-				mcp.WithString("disposition", mcp.Required(), mcp.Description("Terminal disposition: saved or skipped")),
+				mcp.WithString("disposition", mcp.Required(), mcp.Description("Terminal disposition: saved, needs_review, or skipped")),
 				mcp.WithString("reason", mcp.Description("Required only for skipped; currently no_durable_knowledge")),
-				mcp.WithString("project", mcp.Description("Required for saved; every referenced or created Memory must belong to this project")),
+				mcp.WithString("project", mcp.Description("Required for saved and needs_review; every referenced or created Memory or proposal must belong to this project")),
 				mcp.WithArray("memory_ids",
 					mcp.Description("Existing Memory IDs to attach to a saved checkpoint"),
 					mcp.Items(map[string]any{"type": "integer", "minimum": 1}),
@@ -303,6 +303,21 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 						"required":             []string{"title", "content"},
 						"additionalProperties": false,
 					}),
+				),
+				mcp.WithString("proposal_id", mcp.Description("Existing local Memory proposal ID to attach to a needs_review checkpoint")),
+				mcp.WithObject("proposal",
+					mcp.Description("One local Memory proposal to create and attach atomically to a needs_review checkpoint"),
+					mcp.Properties(map[string]any{
+						"type":          map[string]any{"type": "string"},
+						"title":         map[string]any{"type": "string"},
+						"content":       map[string]any{"type": "string"},
+						"scope":         map[string]any{"type": "string"},
+						"category":      map[string]any{"type": "string"},
+						"protected":     map[string]any{"type": "boolean"},
+						"evidence_refs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"reason_codes":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					}),
+					mcp.AdditionalProperties(false),
 				),
 			),
 			queuedCheckpointToolHandler(writeQueue, CheckpointToolHandler(s)),
@@ -2248,6 +2263,7 @@ func handleMergeProjects(s *store.Store) server.ToolHandlerFunc {
 		msg += fmt.Sprintf("  Sessions moved:     %d\n", result.SessionsUpdated)
 		msg += fmt.Sprintf("  Prompts moved:      %d\n", result.PromptsUpdated)
 		msg += fmt.Sprintf("  Admission shadow runs moved: %d\n", result.AdmissionShadowRunsUpdated)
+		msg += fmt.Sprintf("  Memory proposals moved: %d\n", result.MemoryProposalsUpdated)
 
 		return mcp.NewToolResultText(msg), nil
 	}

@@ -25,6 +25,7 @@ Breaking changes are always marked with a `type:breaking-change` label and docum
 
 - **feat(memory):** add a local-only, idempotent checkpoint ledger plus equivalent CLI and MCP record/status surfaces for semantic `skipped` outcomes; checkpoint data is excluded from Memory search, context, counts, export, sync, cloud materialization, and Obsidian export.
 - **feat(memory):** complete the `saved` disposition with same-project Memory references, attachment of existing Memories, atomic inline Memory creation, replay without duplicates, and equivalent CLI/MCP contracts.
+- **feat(memory):** complete the `needs_review` disposition with one same-project local Memory proposal, atomic inline creation, replay-safe references, CLI/MCP parity, and no automatic Admission or Promotion.
 
 ### Cloud sync
 

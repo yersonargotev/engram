@@ -959,10 +959,10 @@ func (s *Server) handleMigrateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[engram] migrated project %q → %q (obs: %d, sessions: %d, prompts: %d, shadow runs: %d)",
+	log.Printf("[engram] migrated project %q → %q (obs: %d, sessions: %d, prompts: %d, shadow runs: %d, proposals: %d)",
 		body.OldProject, body.NewProject,
 		result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated,
-		result.AdmissionShadowRunsUpdated)
+		result.AdmissionShadowRunsUpdated, result.MemoryProposalsUpdated)
 
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"status":                "migrated",
@@ -972,6 +972,7 @@ func (s *Server) handleMigrateProject(w http.ResponseWriter, r *http.Request) {
 		"sessions":              result.SessionsUpdated,
 		"prompts":               result.PromptsUpdated,
 		"admission_shadow_runs": result.AdmissionShadowRunsUpdated,
+		"memory_proposals":      result.MemoryProposalsUpdated,
 	})
 }
 

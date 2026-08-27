@@ -5,22 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 )
 
 const (
 	MaxAdmissionShadowReviewNoteLength       = 4096
-	MaxAdmissionShadowEvidenceReferences     = 32
-	MaxAdmissionShadowEvidenceReferenceBytes = 64
+	MaxAdmissionShadowEvidenceReferences     = MaxLocalEvidenceReferences
+	MaxAdmissionShadowEvidenceReferenceBytes = MaxLocalEvidenceReferenceBytes
 )
 
 var (
 	ErrAdmissionShadowProposalNotFound = errors.New("admission shadow proposal not found")
 	ErrAdmissionShadowRunNotFound      = errors.New("admission shadow run not found")
 )
-
-var admissionShadowEvidenceReferencePattern = regexp.MustCompile(`^(?:prompt|summary):[1-9][0-9]*$`)
 
 type AdmissionShadowRun struct {
 	ID                        string                    `json:"id"`
@@ -595,7 +592,7 @@ func normalizeAdmissionShadowProposalInput(input AdmissionShadowProposalInput) (
 	input.ProposalReasonCodes = redactAdmissionShadowStrings(input.ProposalReasonCodes)
 	input.AssessmentReasonCodes = redactAdmissionShadowStrings(input.AssessmentReasonCodes)
 	var err error
-	input.EvidenceRefs, err = normalizeAdmissionShadowEvidenceReferences(input.EvidenceRefs)
+	input.EvidenceRefs, err = normalizeLocalEvidenceReferences(input.EvidenceRefs, "admission shadow proposal")
 	if err != nil {
 		return input, err
 	}
@@ -632,22 +629,6 @@ func redactAdmissionShadowStrings(values []string) []string {
 		result = append(result, RedactPrivateBlocks(value))
 	}
 	return result
-}
-
-func normalizeAdmissionShadowEvidenceReferences(values []string) ([]string, error) {
-	if len(values) > MaxAdmissionShadowEvidenceReferences {
-		return nil, fmt.Errorf("admission shadow proposal has %d evidence references: maximum is %d", len(values), MaxAdmissionShadowEvidenceReferences)
-	}
-	result := make([]string, 0, len(values))
-	for index, raw := range values {
-		value := strings.TrimSpace(raw)
-		if len([]byte(value)) > MaxAdmissionShadowEvidenceReferenceBytes ||
-			(value != "session-summary" && !admissionShadowEvidenceReferencePattern.MatchString(value)) {
-			return nil, fmt.Errorf("invalid evidence reference at index %d", index)
-		}
-		result = append(result, value)
-	}
-	return result, nil
 }
 
 func marshalAdmissionShadowStrings(values []string) (string, error) {

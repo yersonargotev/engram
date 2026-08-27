@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	mcppkg "github.com/mark3labs/mcp-go/mcp"
@@ -101,8 +102,12 @@ func TestRegisteredCheckpointWriteReturnsJSONForQueueCancellation(t *testing.T) 
 		"host":         identity.Host,
 		"session_id":   identity.SessionID,
 		"root_turn_id": identity.RootTurnID,
-		"disposition":  store.CheckpointDispositionSkipped,
-		"reason":       store.CheckpointSkipReasonNoDurableKnowledge,
+		"disposition":  store.CheckpointDispositionNeedsReview,
+		"project":      "engram",
+		"proposal": map[string]any{
+			"type": "decision", "title": "Canceled proposal", "content": "This must not persist.",
+			"scope": "project", "category": "decision",
+		},
 	}}})
 	if err != nil || !response.IsError {
 		t.Fatalf("canceled response = %#v, err = %v", response, err)
@@ -116,5 +121,64 @@ func TestRegisteredCheckpointWriteReturnsJSONForQueueCancellation(t *testing.T) 
 	}
 	if _, err := s.GetMemoryCheckpoint(identity); !errors.Is(err, store.ErrCheckpointNotFound) {
 		t.Fatalf("canceled write persisted checkpoint: %v", err)
+	}
+	var proposals int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM memory_proposals`).Scan(&proposals); err != nil {
+		t.Fatalf("count proposals after canceled write: %v", err)
+	}
+	if proposals != 0 {
+		t.Fatalf("canceled write persisted %d proposals", proposals)
+	}
+}
+
+func TestCheckpointToolCreatesNeedsReviewProposalAndExposesReference(t *testing.T) {
+	s := newMCPTestStore(t)
+	record := CheckpointToolHandler(s)
+	arguments := map[string]any{
+		"host":         "codex",
+		"session_id":   "session-mcp-needs-review",
+		"root_turn_id": "turn-mcp-needs-review",
+		"disposition":  store.CheckpointDispositionNeedsReview,
+		"project":      "engram",
+		"proposal": map[string]any{
+			"type":          "decision",
+			"title":         "Review MCP proposal",
+			"content":       "This proposal must remain local until review.",
+			"scope":         "project",
+			"category":      string(memoryops.ProposalDecision),
+			"protected":     true,
+			"evidence_refs": []any{"session-summary"},
+			"reason_codes":  []any{memoryops.ReasonRequiresReview},
+		},
+	}
+
+	response, err := record(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: arguments}})
+	if err != nil || response.IsError {
+		t.Fatalf("record response = %#v, err = %v", response, err)
+	}
+	var created memoryops.CheckpointRecordResult
+	if err := json.Unmarshal([]byte(callResultText(t, response)), &created); err != nil {
+		t.Fatalf("decode record response: %v", err)
+	}
+	if created.Checkpoint == nil || len(created.Checkpoint.References) != 1 ||
+		created.Checkpoint.References[0].Kind != store.CheckpointReferenceKindProposal ||
+		created.Checkpoint.References[0].ProposalID == "" {
+		t.Fatalf("created result = %#v", created)
+	}
+}
+
+func TestCheckpointToolSchemaExposesNeedsReviewProposalInputs(t *testing.T) {
+	s := newMCPTestStore(t)
+	tool := NewServerWithTools(s, map[string]bool{"mem_checkpoint": true}).GetTool("mem_checkpoint")
+	if tool == nil {
+		t.Fatal("mem_checkpoint not registered")
+	}
+	for _, field := range []string{"proposal_id", "proposal"} {
+		if _, ok := tool.Tool.InputSchema.Properties[field]; !ok {
+			t.Fatalf("mem_checkpoint schema missing %q", field)
+		}
+	}
+	if !strings.Contains(tool.Tool.Description, store.CheckpointDispositionNeedsReview) {
+		t.Fatalf("mem_checkpoint description = %q", tool.Tool.Description)
 	}
 }

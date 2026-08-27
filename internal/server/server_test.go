@@ -2204,3 +2204,36 @@ func TestMigrateProjectMovesShadowOnlyProject(t *testing.T) {
 		t.Fatalf("migrated shadow runs = %#v, err=%v", runs, err)
 	}
 }
+
+func TestMigrateProjectMovesProposalOnlyProject(t *testing.T) {
+	st := newServerTestStore(t)
+	h := New(st, 0).Handler()
+	proposal, err := st.CreateMemoryProposal("proposal-old", store.MemoryProposalInput{
+		Type: "decision", Title: "migrate proposal", Content: "migrate proposal content",
+		Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
+	})
+	if err != nil {
+		t.Fatalf("create Memory proposal: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/projects/migrate", strings.NewReader(
+		`{"old_project":"proposal-old","new_project":"proposal-new"}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["status"] != "migrated" || response["memory_proposals"] != float64(1) {
+		t.Fatalf("migration response = %#v", response)
+	}
+	moved, err := st.GetMemoryProposal(proposal.ID)
+	if err != nil || moved.Project != "proposal-new" {
+		t.Fatalf("migrated proposal = %#v, err=%v", moved, err)
+	}
+}

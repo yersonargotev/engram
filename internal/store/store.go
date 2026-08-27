@@ -3355,7 +3355,7 @@ func (s *Store) Stats() (*Stats, error) {
 // ─── Project Existence ───────────────────────────────────────────────────────
 
 // ProjectExists returns true if the named project has at least one record in
-// any of observations, sessions, prompts, enrollment, or local shadow tables.
+// any of observations, sessions, prompts, enrollment, or local review tables.
 // Uses a single UNION ALL LIMIT 1 query for efficiency (REQ-315).
 // The sync_enrolled_projects branch ensures a project enrolled via EnrollProject()
 // without any other data is still recognized (JC1).
@@ -3375,9 +3375,11 @@ SELECT 1 FROM (
   SELECT project FROM sync_enrolled_projects WHERE LOWER(project) = ?
   UNION ALL
   SELECT project FROM admission_shadow_runs WHERE LOWER(project) = ?
+  UNION ALL
+  SELECT project FROM memory_proposals WHERE LOWER(project) = ?
 ) LIMIT 1`
 	var dummy int
-	err := s.db.QueryRow(query, name, name, name, name, name).Scan(&dummy)
+	err := s.db.QueryRow(query, name, name, name, name, name, name).Scan(&dummy)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
@@ -4541,6 +4543,7 @@ type MigrateResult struct {
 	SessionsUpdated            int64 `json:"sessions_updated"`
 	PromptsUpdated             int64 `json:"prompts_updated"`
 	AdmissionShadowRunsUpdated int64 `json:"admission_shadow_runs_updated"`
+	MemoryProposalsUpdated     int64 `json:"memory_proposals_updated"`
 }
 
 func (s *Store) MigrateProject(oldName, newName string) (*MigrateResult, error) {
@@ -4559,7 +4562,9 @@ func (s *Store) MigrateProject(oldName, newName string) (*MigrateResult, error) 
 			SELECT 1 FROM user_prompts WHERE project = ?
 			UNION ALL
 			SELECT 1 FROM admission_shadow_runs WHERE project = ?
-		)`, oldName, oldName, oldName, oldName,
+			UNION ALL
+			SELECT 1 FROM memory_proposals WHERE project = ?
+		)`, oldName, oldName, oldName, oldName, oldName,
 	).Scan(&exists)
 	if err != nil {
 		return nil, fmt.Errorf("check old project: %w", err)
@@ -4595,6 +4600,15 @@ func (s *Store) MigrateProject(oldName, newName string) (*MigrateResult, error) 
 			return fmt.Errorf("migrate admission shadow runs: %w", err)
 		}
 		result.AdmissionShadowRunsUpdated, _ = res.RowsAffected()
+
+		if _, err := s.execHook(tx, `UPDATE memory_checkpoint_proposal_references SET project = ? WHERE project = ?`, newName, oldName); err != nil {
+			return fmt.Errorf("migrate Memory proposal references: %w", err)
+		}
+		res, err = s.execHook(tx, `UPDATE memory_proposals SET project = ? WHERE project = ?`, newName, oldName)
+		if err != nil {
+			return fmt.Errorf("migrate Memory proposals: %w", err)
+		}
+		result.MemoryProposalsUpdated, _ = res.RowsAffected()
 
 		// Enqueue sync mutations so cloud sync picks up the migrated records.
 		// Same pattern used by EnrollProject and MergeProjects.
@@ -4784,6 +4798,7 @@ type MergeResult struct {
 	SessionsUpdated            int64    `json:"sessions_updated"`
 	PromptsUpdated             int64    `json:"prompts_updated"`
 	AdmissionShadowRunsUpdated int64    `json:"admission_shadow_runs_updated"`
+	MemoryProposalsUpdated     int64    `json:"memory_proposals_updated"`
 }
 
 // PreviewMergeProjects reports the rows that MergeProjects would update without
@@ -4814,7 +4829,7 @@ func (s *Store) PreviewMergeProjects(sources []string, canonical string) (*Merge
 		for i, v := range variants {
 			args[i] = v
 		}
-		var observations, sessions, prompts, shadowRuns int64
+		var observations, sessions, prompts, shadowRuns, proposals int64
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM observations WHERE project IN (`+placeholders+`)`, args...).Scan(&observations); err != nil {
 			return nil, err
 		}
@@ -4827,13 +4842,17 @@ func (s *Store) PreviewMergeProjects(sources []string, canonical string) (*Merge
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM admission_shadow_runs WHERE project IN (`+placeholders+`)`, args...).Scan(&shadowRuns); err != nil {
 			return nil, err
 		}
-		if observations+sessions+prompts+shadowRuns > 0 {
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM memory_proposals WHERE project IN (`+placeholders+`)`, args...).Scan(&proposals); err != nil {
+			return nil, err
+		}
+		if observations+sessions+prompts+shadowRuns+proposals > 0 {
 			result.SourcesMerged = append(result.SourcesMerged, normalized)
 		}
 		result.ObservationsUpdated += observations
 		result.SessionsUpdated += sessions
 		result.PromptsUpdated += prompts
 		result.AdmissionShadowRunsUpdated += shadowRuns
+		result.MemoryProposalsUpdated += proposals
 	}
 	return result, nil
 }
@@ -4905,6 +4924,17 @@ func (s *Store) MergeProjects(sources []string, canonical string) (*MergeResult,
 			}
 			n, _ = res.RowsAffected()
 			result.AdmissionShadowRunsUpdated += n
+			sourceRowsUpdated += n
+
+			if _, err := s.execHook(tx, `UPDATE memory_checkpoint_proposal_references SET project = ? WHERE project IN (`+placeholders+`)`, args...); err != nil {
+				return fmt.Errorf("merge Memory proposal references %q → %q: %w", srcNormalized, canonical, err)
+			}
+			res, err = s.execHook(tx, `UPDATE memory_proposals SET project = ? WHERE project IN (`+placeholders+`)`, args...)
+			if err != nil {
+				return fmt.Errorf("merge Memory proposals %q → %q: %w", srcNormalized, canonical, err)
+			}
+			n, _ = res.RowsAffected()
+			result.MemoryProposalsUpdated += n
 			sourceRowsUpdated += n
 
 			if sourceRowsUpdated > 0 {
@@ -5020,6 +5050,8 @@ type DeleteProjectResult struct {
 	PromptsDeleted             int64  `json:"prompts_deleted"`
 	SessionsDeleted            int64  `json:"sessions_deleted"`
 	AdmissionShadowRunsDeleted int64  `json:"admission_shadow_runs_deleted"`
+	MemoryProposalsDeleted     int64  `json:"memory_proposals_deleted"`
+	MemoryCheckpointsDeleted   int64  `json:"memory_checkpoints_deleted"`
 	HardDelete                 bool   `json:"hard_delete"`
 }
 
@@ -5037,8 +5069,8 @@ type DeleteProjectResult struct {
 // constraint. The session rows remain and can be cleaned up with
 // engram delete session <id> once the observations are purged.
 //
-// Returns ErrProjectNotFound when no sessions or observations exist for the
-// given project name.
+// Returns ErrProjectNotFound when no durable, lifecycle, or local review rows
+// exist for the given project name.
 func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectResult, error) {
 	project = strings.TrimSpace(project)
 	if project == "" {
@@ -5062,7 +5094,11 @@ func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectRe
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM admission_shadow_runs WHERE project = ?`, project).Scan(&shadowRunCount); err != nil {
 			return fmt.Errorf("delete project: count admission shadow runs: %w", err)
 		}
-		if sessionCount == 0 && obsCount == 0 && shadowRunCount == 0 {
+		var proposalCount int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM memory_proposals WHERE project = ?`, project).Scan(&proposalCount); err != nil {
+			return fmt.Errorf("delete project: count Memory proposals: %w", err)
+		}
+		if sessionCount == 0 && obsCount == 0 && shadowRunCount == 0 && proposalCount == 0 {
 			return fmt.Errorf("%w: %q", ErrProjectNotFound, project)
 		}
 
@@ -5111,7 +5147,28 @@ func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectRe
 		}
 		result.AdmissionShadowRunsDeleted, _ = res.RowsAffected()
 
-		// 4. Delete sessions — only when hard-deleting, because observation rows
+		// 4. Remove terminal checkpoints that own proposal references for this
+		//    project, then remove both referenced and standalone local proposals.
+		res, err = s.execHook(tx, `
+			DELETE FROM memory_checkpoints
+			WHERE id IN (
+				SELECT r.checkpoint_id
+				FROM memory_checkpoint_proposal_references r
+				JOIN memory_proposals p ON p.id = r.proposal_id
+				WHERE p.project = ?
+			)`, project)
+		if err != nil {
+			return fmt.Errorf("delete project: delete Memory proposal checkpoints: %w", err)
+		}
+		result.MemoryCheckpointsDeleted, _ = res.RowsAffected()
+
+		res, err = s.execHook(tx, `DELETE FROM memory_proposals WHERE project = ?`, project)
+		if err != nil {
+			return fmt.Errorf("delete project: delete Memory proposals: %w", err)
+		}
+		result.MemoryProposalsDeleted, _ = res.RowsAffected()
+
+		// 5. Delete sessions — only when hard-deleting, because observation rows
 		//    reference sessions via a NOT NULL FK and soft-deleted rows are still
 		//    present in the table.
 		if hardDelete {

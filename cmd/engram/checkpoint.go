@@ -21,6 +21,8 @@ type checkpointCLIOptions struct {
 	Project     string
 	MemoryIDs   []int64
 	Memories    []memoryops.CheckpointMemoryInput
+	ProposalID  string
+	Proposal    *memoryops.CheckpointProposalInput
 	JSONMode    bool
 	Help        bool
 }
@@ -66,6 +68,8 @@ func cmdCheckpoint(cfg store.Config) {
 			Project:     opts.Project,
 			MemoryIDs:   opts.MemoryIDs,
 			Memories:    opts.Memories,
+			ProposalID:  opts.ProposalID,
+			Proposal:    opts.Proposal,
 			CWD:         currentCWD(),
 		})
 		if recordErr != nil {
@@ -76,9 +80,12 @@ func cmdCheckpoint(cfg store.Config) {
 			_ = writeCLIJSON(result)
 			return
 		}
-		if result.Checkpoint.Disposition == store.CheckpointDispositionSaved {
+		switch result.Checkpoint.Disposition {
+		case store.CheckpointDispositionSaved:
 			fmt.Printf("Memory checkpoint %s: saved (%d Memories)\n", result.Idempotency, len(result.Checkpoint.References))
-		} else {
+		case store.CheckpointDispositionNeedsReview:
+			fmt.Printf("Memory checkpoint %s: needs_review (proposal %s)\n", result.Idempotency, result.Checkpoint.References[0].ProposalID)
+		default:
 			fmt.Printf("Memory checkpoint %s: %s (%s)\n", result.Idempotency, result.Checkpoint.Disposition, result.Checkpoint.ReasonCode)
 		}
 	case "status":
@@ -95,12 +102,16 @@ func cmdCheckpoint(cfg store.Config) {
 			_ = writeCLIJSON(result)
 			return
 		}
-		if result.Checkpoint.Disposition == store.CheckpointDispositionSaved {
+		switch result.Checkpoint.Disposition {
+		case store.CheckpointDispositionSaved:
 			fmt.Printf("Memory checkpoint: saved (%d Memories)\n", len(result.Checkpoint.References))
 			for _, reference := range result.Checkpoint.References {
 				fmt.Printf("  Memory #%d (%s, project %s)\n", reference.MemoryID, reference.MemorySyncID, reference.Project)
 			}
-		} else {
+		case store.CheckpointDispositionNeedsReview:
+			fmt.Printf("Memory checkpoint: needs_review (proposal %s, project %s)\n",
+				result.Checkpoint.References[0].ProposalID, result.Checkpoint.References[0].Project)
+		default:
 			fmt.Printf("Memory checkpoint: %s (%s)\n", result.Checkpoint.Disposition, result.Checkpoint.ReasonCode)
 		}
 	}
@@ -177,11 +188,32 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 				}
 			}
 			opts.Memories = append(opts.Memories, memory)
+		case "--proposal-id":
+			if opts.ProposalID != "" {
+				return opts, &checkpointArgumentError{
+					Code: memoryops.CheckpointErrorCodeInvalidReferences, Message: "invalid checkpoint references: proposal_id may be provided once",
+				}
+			}
+			opts.ProposalID = value
+		case "--proposal-json":
+			if opts.Proposal != nil {
+				return opts, &checkpointArgumentError{
+					Code: memoryops.CheckpointErrorCodeInvalidReferences, Message: "invalid checkpoint references: proposal may be provided once",
+				}
+			}
+			var proposal memoryops.CheckpointProposalInput
+			if err := json.Unmarshal([]byte(value), &proposal); err != nil {
+				return opts, &checkpointArgumentError{
+					Code:    memoryops.CheckpointErrorCodeInvalidReferences,
+					Message: "invalid checkpoint references: proposal must be a Memory proposal object",
+				}
+			}
+			opts.Proposal = &proposal
 		default:
 			return opts, &checkpointArgumentError{Message: fmt.Sprintf("unknown checkpoint flag %s", arg)}
 		}
 	}
-	if opts.Action == "status" && (opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0) {
+	if opts.Action == "status" && (opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.ProposalID != "" || opts.Proposal != nil) {
 		return opts, &checkpointArgumentError{Message: "checkpoint status accepts only identity flags"}
 	}
 	return opts, nil
@@ -194,5 +226,8 @@ func printCheckpointUsage() {
 	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
 	  --disposition saved --project PROJECT \
 	  [--memory-id ID ...] [--memory-json JSON ...] [--json]
+	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
+	  --disposition needs_review --project PROJECT \
+	  (--proposal-id ID | --proposal-json JSON) [--json]
 	engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]`)
 }

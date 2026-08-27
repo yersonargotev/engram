@@ -19,11 +19,24 @@ func TestGenerateExcludesMemoryCheckpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record checkpoint: %v", err)
 	}
+	_, _, err = s.RecordNeedsReviewCheckpoint(store.RecordNeedsReviewCheckpointParams{
+		Identity: store.CheckpointIdentity{
+			Host: "codex-proposal-canary", SessionID: "session-proposal-canary", RootTurnID: "turn-proposal-canary",
+		},
+		Project: "engram",
+		Proposal: &store.MemoryProposalInput{
+			Type: "decision", Title: "Proposal briefing canary", Content: "proposal briefing canary",
+			Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("record needs-review checkpoint: %v", err)
+	}
 
 	result, err := New(s).Generate(Input{
 		Project:    "engram",
 		Scope:      "project",
-		TaskIntent: "checkpoint canary",
+		TaskIntent: "checkpoint proposal briefing canary",
 		Limit:      5,
 	})
 	if err != nil {

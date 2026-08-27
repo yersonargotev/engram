@@ -23,6 +23,10 @@ func CheckpointToolHandler(s *store.Store) server.ToolHandlerFunc {
 		if err != nil {
 			return checkpointToolError(err), nil
 		}
+		proposal, err := checkpointProposalArg(req, "proposal")
+		if err != nil {
+			return checkpointToolError(err), nil
+		}
 		result, err := memoryops.New(s).RecordCheckpoint(memoryops.CheckpointRecordInput{
 			Host:        checkpointStringArg(req, "host"),
 			SessionID:   checkpointStringArg(req, "session_id"),
@@ -32,6 +36,8 @@ func CheckpointToolHandler(s *store.Store) server.ToolHandlerFunc {
 			Project:     checkpointStringArg(req, "project"),
 			MemoryIDs:   memoryIDs,
 			Memories:    memories,
+			ProposalID:  checkpointStringArg(req, "proposal_id"),
+			Proposal:    proposal,
 			CWD:         currentWorkingDirectory(),
 		})
 		if err != nil {
@@ -144,4 +150,20 @@ func checkpointMemoriesArg(req mcppkg.CallToolRequest, key string) ([]memoryops.
 		return nil, fmt.Errorf("%w: memories must be an array of Memory objects", store.ErrCheckpointInvalidReferences)
 	}
 	return memories, nil
+}
+
+func checkpointProposalArg(req mcppkg.CallToolRequest, key string) (*memoryops.CheckpointProposalInput, error) {
+	value, exists := req.GetArguments()[key]
+	if !exists || value == nil {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("%w: encode proposal", store.ErrCheckpointInvalidReferences)
+	}
+	var proposal memoryops.CheckpointProposalInput
+	if err := json.Unmarshal(encoded, &proposal); err != nil {
+		return nil, fmt.Errorf("%w: proposal must be a Memory proposal object", store.ErrCheckpointInvalidReferences)
+	}
+	return &proposal, nil
 }

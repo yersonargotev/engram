@@ -52,6 +52,8 @@ For other docs:
 - **sync_apply_deferred** — holds pulled mutations that could not be applied locally due to a missing FK dependency (e.g. relation references an observation not yet present); columns: `sync_id` (TEXT PK), `entity`, `payload`, `apply_status` (`deferred` | `applied` | `dead`), `retry_count`, `last_error`, `last_attempted_at`, `first_seen_at`. Rows with `apply_status='dead'` have exceeded the retry cap (5 attempts) and will not be retried automatically.
 - **memory_checkpoints** — local-only root-turn dispositions keyed by unique `(host, session_id, root_turn_id)`. Stores only opaque identity, `disposition`, the versioned `reason_code`, `reason_version`, and timestamps. It has no Memory FTS or sync triggers and is excluded from Memory search, context, counts, JSON/project/chunk exports, pending mutations, cloud materialization, and Obsidian output. The v1 skip vocabulary contains only `no_durable_knowledge`; integration or processing failures are validation errors, never semantic skips.
 - **memory_checkpoint_references** — ordered, typed local-only references from a checkpoint to the immutable ID, sync ID, and project identity of every attached Memory. The table has no sync triggers and is excluded from normal Memory and replication surfaces.
+- **memory_proposals** — local-only, redacted potential Memories retained for explicit review. Stores a local ID, normalized project, `type`, `title`, `content`, `scope`, `category`, protected flag, bounded local Evidence references, bounded reason codes, and creation time. It is separate from both `observations` and experimental `admission_shadow_*` rows, has no FTS or sync triggers, and never enters Memory search, context, counts, export/import, sync, cloud, Obsidian, or automatic Admission/Promotion. Project rename, merge, and delete operations update or remove it together with its checkpoint reference.
+- **memory_checkpoint_proposal_references** — one local proposal reference per `needs_review` checkpoint. Stores only checkpoint ID, proposal ID, and normalized project; it is excluded from all Memory and replication surfaces.
 
 ### SQLite Configuration
 
@@ -100,6 +102,9 @@ engram checkpoint record --host HOST --session-id ID --root-turn-id ID
 engram checkpoint record --host HOST --session-id ID --root-turn-id ID
                          --disposition saved --project PROJECT
                          [--memory-id ID ...] [--memory-json JSON ...] [--json]
+engram checkpoint record --host HOST --session-id ID --root-turn-id ID
+                         --disposition needs_review --project PROJECT
+                         (--proposal-id ID | --proposal-json JSON) [--json]
 engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
 ```
 
@@ -113,6 +118,23 @@ each JSON object accepts `title`, `content`, and the optional `type`, `tool_name
 `scope`, and `topic_key` fields. Both forms may be combined. All Memories must
 belong to `--project`. Creation of the session provenance, Memories, sync
 mutations, references, and terminal checkpoint is one transaction.
+
+For `needs_review`, provide exactly one `--proposal-id` for an existing local
+Memory proposal or one `--proposal-json` object to create it during finalization.
+The object requires `type`, `title`, `content`, `scope`, and `category`; optional
+fields are `protected`, `evidence_refs`, and `reason_codes`. Evidence references
+are bounded local identifiers (`prompt:<id>`, `summary:<id>`, or
+`session-summary`), and reason codes are bounded identifiers rather than free-form
+rationale. Valid types are `manual`, `decision`, `bugfix`, `architecture`,
+`policy`, `preference`, and `discovery`; valid scopes are `project`, `personal`,
+and `global`; valid categories are `explicit_request`, `decision`, `root_cause`,
+`invariant`, `constraint`, `preference`, and `learning`. Reason codes use the
+Admission proposal vocabulary: `explicit_user_request`, `structured_section`,
+`protected_proposal`, `empty_content`, `normalized_exact_duplicate`,
+`redacted_only`, or `requires_review`. Proposal fields are rejected for `saved`
+and `skipped`. The proposal, proposal reference, and checkpoint commit in one
+transaction. This disposition creates no Memory, Shadow admission run, assessment,
+review event, sync mutation, or Promotion.
 
 `save` exits successfully after the memory is persisted even when its response
 contains `judgment_required: true`; callers can resolve each returned candidate
@@ -348,7 +370,7 @@ Engram is local-first: local SQLite is authoritative; cloud features are optiona
 
 - `GET /project/current` — Detect the current project. Query: `?cwd=/path/to/repo`
   - Always returns a success envelope with `{project, project_source, project_path, cwd, available_projects}` plus optional `warning`/`error_hint`
-- `POST /projects/migrate` — Atomically migrate observations, sessions, prompts, and local shadow-admission runs between project names. Body: `{old_project, new_project}`. The response reports each moved count, including `admission_shadow_runs`.
+- `POST /projects/migrate` — Atomically migrate observations, sessions, prompts, local shadow-admission runs, and local Memory proposals between project names. Body: `{old_project, new_project}`. The response reports each moved count, including `admission_shadow_runs` and `memory_proposals`.
 
 ### Conflict Audit (admin — local runtime only)
 
@@ -917,7 +939,7 @@ Exceptions:
 
 - `mem_current_project` returns detection fields directly (`project`, `project_source`, `project_path`, `cwd`, `available_projects`, optional `warning` / `error_hint`) and does not wrap them in `result`.
 - `mem_doctor` returns the same JSON report shape as `engram doctor --json`; it uses read-project resolution before running diagnostics but does not wrap the report in the common MCP envelope.
-- `mem_checkpoint` and `mem_checkpoint_status` use opaque host/session/root-turn identity instead of automatic project resolution. A `saved` write requires an explicit `project`; `skipped` and status do not. Their JSON success and error envelopes match the corresponding CLI commands; tool errors set MCP `isError=true`.
+- `mem_checkpoint` and `mem_checkpoint_status` use opaque host/session/root-turn identity instead of automatic project resolution. `saved` and `needs_review` writes require an explicit `project`; `skipped` and status do not. Their JSON success and error envelopes match the corresponding CLI commands; tool errors set MCP `isError=true`.
 
 ### Write tools (explicit/session/cwd project resolution)
 
@@ -980,10 +1002,17 @@ Record the terminal Memory checkpoint for one settled root user turn. `host`, `s
 
 - `disposition: "skipped"` requires `reason: "no_durable_knowledge"` and accepts no Memory references.
 - `disposition: "saved"` requires an explicit `project` plus at least one existing `memory_ids` entry or inline `memories` object. The two arrays may be combined. Each inline Memory accepts required `title` and `content`, plus optional `type`, `tool_name`, `scope`, and `topic_key`.
+- `disposition: "needs_review"` requires an explicit `project` plus exactly one existing `proposal_id` or inline `proposal` object. The proposal shape and bounds match the CLI contract above.
 
 A saved result exposes an ordered `references` array containing `kind: "memory"`, `memory_id`, `memory_sync_id`, and `project`. Every referenced Memory must exist, remain active, and belong to the same normalized project. Inline Memories, their sync mutations, all references, and the checkpoint commit atomically.
 
-The first call returns `idempotency: "created"`; replaying the same root-turn identity and disposition returns `idempotency: "already_recorded"` with the original checkpoint, references, and timestamps without creating Memories or mutations again. Invalid or empty sets fail without changing state. Stable saved-validation codes are `invalid_checkpoint_references`, `checkpoint_memory_not_found`, and `checkpoint_project_mismatch`; terminal changes return `checkpoint_conflict`. Unknown skip reasons, including integration and processing failure labels, return `invalid_checkpoint_reason`.
+A needs-review result exposes exactly one reference containing `kind: "proposal"`,
+`proposal_id`, and `project`. The referenced proposal must exist in the local
+proposal store and belong to the same normalized project. Inline proposal creation,
+the reference, and the checkpoint commit atomically; no Admission recommendation
+or Promotion runs implicitly.
+
+The first call returns `idempotency: "created"`; replaying the same root-turn identity and disposition returns `idempotency: "already_recorded"` with the original checkpoint, references, and timestamps without creating Memories, proposals, or mutations again. Once the identity and disposition match, replay payload fields are ignored rather than revalidated, so retries cannot replace the original references or depend on payload availability. Invalid or empty sets on first finalization fail without changing state. Stable reference-validation codes are `invalid_checkpoint_references`, `checkpoint_memory_not_found`, `checkpoint_proposal_not_found`, and `checkpoint_project_mismatch`; terminal changes return `checkpoint_conflict`. Unknown skip reasons, including integration and processing failure labels, return `invalid_checkpoint_reason`.
 
 ### mem_checkpoint_status
 

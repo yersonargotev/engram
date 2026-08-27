@@ -100,6 +100,34 @@ func TestCmdCheckpointStatusHumanOutputExposesSavedReferences(t *testing.T) {
 	}
 }
 
+func TestCmdCheckpointStatusHumanOutputExposesProposalReference(t *testing.T) {
+	cfg := testConfig(t)
+	identity := checkpointParityIdentity{"codex", "session-human-needs-review", "turn-human-needs-review"}
+	created := runCheckpointCLIRecordProposal(t, cfg, identity, "engram", "", map[string]any{
+		"type": "decision", "title": "Human review proposal", "content": "Review this proposal.",
+		"scope": "project", "category": "decision",
+	})
+	checkpoint := created["checkpoint"].(map[string]any)
+	references := checkpoint["references"].([]any)
+	proposalID := references[0].(map[string]any)["proposal_id"].(string)
+
+	withArgs(t,
+		"engram", "checkpoint", "status",
+		"--host", identity.host,
+		"--session-id", identity.sessionID,
+		"--root-turn-id", identity.rootTurnID,
+	)
+	stdout, stderr := captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("status stderr = %q", stderr)
+	}
+	for _, want := range []string{"Memory checkpoint: needs_review", proposalID, "project engram"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("status output %q does not contain %q", stdout, want)
+		}
+	}
+}
+
 func TestCheckpointCLIProcessJSONContract(t *testing.T) {
 	if testing.CoverMode() != "" {
 		t.Skip("expected non-zero helper subprocess exits corrupt Go coverage output")
@@ -150,6 +178,15 @@ func TestCheckpointCLIProcessJSONContract(t *testing.T) {
 	if stderr != "" || decodeCLIJSON(t, stdout)["idempotency"] != memoryops.CheckpointIdempotencyCreated {
 		t.Fatalf("leading-dash stdout=%q stderr=%q", stdout, stderr)
 	}
+	stdout, stderr = run(t, "needs-review", 0)
+	if stderr != "" {
+		t.Fatalf("needs-review stdout=%q stderr=%q", stdout, stderr)
+	}
+	checkpoint, _ := decodeCLIJSON(t, stdout)["checkpoint"].(map[string]any)
+	references, _ := checkpoint["references"].([]any)
+	if checkpoint["disposition"] != store.CheckpointDispositionNeedsReview || len(references) != 1 {
+		t.Fatalf("needs-review checkpoint=%#v", checkpoint)
+	}
 }
 
 func TestCheckpointProcessHelper(t *testing.T) {
@@ -185,6 +222,17 @@ func TestCheckpointProcessHelper(t *testing.T) {
 			"--root-turn-id=-h",
 			"--disposition=skipped",
 			"--reason=no_durable_knowledge",
+			"--json",
+		}
+	case "needs-review":
+		os.Args = []string{
+			"engram", "checkpoint", "record",
+			"--host=codex",
+			"--session-id=session-process-needs-review",
+			"--root-turn-id=turn-process-needs-review",
+			"--disposition=needs_review",
+			"--project=engram",
+			`--proposal-json={"type":"decision","title":"Review process proposal","content":"Keep this local until review.","scope":"project","category":"decision","reason_codes":["requires_review"]}`,
 			"--json",
 		}
 	default:
@@ -259,5 +307,23 @@ func TestMainCheckpointHelpDoesNotCreateLocalDatabase(t *testing.T) {
 				t.Fatalf("checkpoint help created store: %v", err)
 			}
 		})
+	}
+}
+
+func TestCheckpointHelpDocumentsAllTerminalDispositions(t *testing.T) {
+	stdout, stderr := captureOutput(t, printCheckpointUsage)
+	if stderr != "" {
+		t.Fatalf("checkpoint help stderr = %q", stderr)
+	}
+	for _, want := range []string{
+		store.CheckpointDispositionSaved,
+		store.CheckpointDispositionSkipped,
+		store.CheckpointDispositionNeedsReview,
+		"--proposal-id",
+		"--proposal-json",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("checkpoint help %q does not contain %q", stdout, want)
+		}
 	}
 }

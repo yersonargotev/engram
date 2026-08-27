@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -521,6 +522,32 @@ func TestVerifyInstalledCodexStopVerifierRejectsModifiedLaunchers(t *testing.T) 
 				t.Fatalf("modified %s reported verifier ready", relative)
 			}
 		})
+	}
+}
+
+func TestVerifyInstalledCodexStopVerifierAcceptsWindowsCheckout(t *testing.T) {
+	root := t.TempDir()
+	writeCanonicalCodexActivationFixture(t, root)
+	hooksRaw, err := os.ReadFile(filepath.Join(root, "hooks", "hooks.json"))
+	if err != nil {
+		t.Fatalf("read canonical hooks: %v", err)
+	}
+	assets, err := snapshotCodexPluginTree(root)
+	if err != nil {
+		t.Fatalf("snapshot canonical plugin: %v", err)
+	}
+	for _, relative := range []string{"scripts/stop.sh", "scripts/stop.ps1"} {
+		entry := assets[relative]
+		entry.mode = 0o666
+		entry.data = bytes.ReplaceAll(entry.data, []byte("\n"), []byte("\r\n"))
+		assets[relative] = entry
+	}
+	originalGOOS := runtimeGOOS
+	runtimeGOOS = "windows"
+	t.Cleanup(func() { runtimeGOOS = originalGOOS })
+
+	if !verifyInstalledCodexStopVerifier(hooksRaw, assets) {
+		t.Fatal("canonical Windows checkout without POSIX mode bits did not report verifier ready")
 	}
 }
 

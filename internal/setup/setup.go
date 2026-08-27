@@ -2082,8 +2082,14 @@ func verifyInstalledCodexStopVerifier(hooksRaw []byte, verifiedPluginAssets map[
 	}
 	unixAsset, unixOK := verifiedPluginAssets["scripts/stop.sh"]
 	windowsAsset, windowsOK := verifiedPluginAssets["scripts/stop.ps1"]
+	unixData := unixAsset.data
+	unixModeReady := unixAsset.mode.IsRegular() && unixAsset.mode.Perm()&0o111 != 0
+	if runtimeGOOS == "windows" {
+		unixData = bytes.ReplaceAll(unixData, []byte("\r\n"), []byte("\n"))
+		unixModeReady = unixAsset.mode.IsRegular()
+	}
 	windowsData := bytes.ReplaceAll(windowsAsset.data, []byte("\r\n"), []byte("\n"))
-	return unixOK && unixAsset.mode.IsRegular() && unixAsset.mode.Perm()&0o111 != 0 && bytes.Equal(unixAsset.data, []byte(unixAdapter)) &&
+	return unixOK && unixModeReady && bytes.Equal(unixData, []byte(unixAdapter)) &&
 		windowsOK && windowsAsset.mode.IsRegular() && bytes.Equal(windowsData, []byte(windowsAdapter))
 }
 

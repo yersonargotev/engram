@@ -41,7 +41,7 @@ Once the issue is approved, a maintainer:
 
 ### Step 4: Automated PR Checks
 
-Six checks run automatically on every PR:
+Seven checks run automatically on every PR:
 
 #### PR Validation
 
@@ -57,6 +57,7 @@ Six checks run automatically on every PR:
 |-------|-------------|
 | **Unit Tests** | `go test ./...` — all tests except those tagged with `//go:build e2e` |
 | **E2E Tests** | `go test -tags e2e ./internal/server/...` — end-to-end integration tests |
+| **Codex Stop (Windows)** | Runtime PowerShell adapter and Windows setup-verifier tests on `windows-latest` |
 
 #### Managed Pack Validation
 
@@ -64,9 +65,9 @@ Six checks run automatically on every PR:
 |-------|-------------|
 | **Validate Engram Managed Pack** | Packy's pinned schema, Declared Pack Closure, materialization, and runtime-fitness preflight |
 
-All six checks must pass before a PR can be merged. Branch protection on `main` also requires a pull request, an up-to-date branch, and resolved review conversations; force-pushes and branch deletion are disabled.
+All seven checks must pass before a PR can be merged. Branch protection on `main` also requires a pull request, an up-to-date branch, and resolved review conversations; force-pushes and branch deletion are disabled.
 
-The five PR-validation and CI job names listed above are required branch-protection contexts. Managed Pack validation is an additional repository-policy gate.
+The three PR-validation checks plus Unit Tests and E2E Tests are the five required branch-protection contexts. Codex Stop (Windows) and Managed Pack validation are additional repository-policy gates.
 
 ---
 

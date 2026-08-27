@@ -54,3 +54,6 @@ jobs:
 
       - name: Run Windows Stop adapter tests
         run: go test ./plugin -run '^TestCodexWindowsStopVerifierRuntime$'
+
+      - name: Run Windows setup verifier tests
+        run: go test ./internal/setup -run '^TestVerifyInstalledCodexStopVerifierAcceptsWindowsCheckout$'

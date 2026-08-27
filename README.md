@@ -132,7 +132,7 @@ Full details on session lifecycle, topic keys, and memory hygiene → [docs/ARCH
 
 With `any`, a memory can match one or more query tokens instead of requiring all of them. This is useful when you remember related keywords but not the exact wording stored in Engram.
 
-## MCP Tools (22)
+## MCP Tools (24)
 
 | Category               | Tools                                                                                                            |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -142,9 +142,10 @@ With `any`, a memory can match one or more query tokens instead of requiring all
 | **Conflict Surfacing** | `mem_judge`, `mem_compare`                                                                                       |
 | **Lifecycle Review**   | `mem_review`                                                                                                      |
 | **Context Priority**   | `mem_pin`, `mem_unpin` (local-only; not synced)                                                                  |
+| **Memory Checkpoint**  | `mem_checkpoint`, `mem_checkpoint_status` (local-only root-turn dispositions)                                    |
 | **Utilities**          | `mem_save_prompt`, `mem_stats`, `mem_capture_passive`, `mem_merge_projects`, `mem_current_project`, `mem_doctor` |
 
-Full tool reference with parameters → [DOCS.md#mcp-tools-22-tools](DOCS.md#mcp-tools-22-tools)
+Full tool reference with parameters → [DOCS.md#mcp-tools-24-tools](DOCS.md#mcp-tools-24-tools)
 
 ## Terminal UI
 
@@ -399,6 +400,8 @@ Your production engram is fully untouched throughout.
 | `engram admission shadow`                  | Explicitly retain one local shadow run from an existing session |
 | `engram admission review list\|mark`       | Review pending shadow proposals and append human corrections |
 | `engram admission metrics`                 | Report project-local shadow evaluation metrics and safety gates |
+| `engram checkpoint record [flags]`         | Record an idempotent local root-turn checkpoint              |
+| `engram checkpoint status [flags]`         | Inspect one exact local root-turn checkpoint                 |
 | `engram stats`                             | Memory statistics                                               |
 | `engram export [file]`                     | Export to JSON                                                  |
 | `engram import <file>`                     | Import from JSON                                                |

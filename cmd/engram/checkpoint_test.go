@@ -1,0 +1,233 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"testing"
+
+	"github.com/yersonargotev/engram/internal/memoryops"
+	"github.com/yersonargotev/engram/internal/store"
+)
+
+func TestCmdCheckpointRecordReplayAndStatusJSON(t *testing.T) {
+	cfg := testConfig(t)
+	identityArgs := []string{
+		"--host", "codex",
+		"--session-id", "session-cli-123",
+		"--root-turn-id", "turn-cli-456",
+	}
+
+	recordArgs := append([]string{"engram", "checkpoint", "record"}, identityArgs...)
+	recordArgs = append(recordArgs,
+		"--disposition", store.CheckpointDispositionSkipped,
+		"--reason", store.CheckpointSkipReasonNoDurableKnowledge,
+		"--json",
+	)
+	withArgs(t, recordArgs...)
+	stdout, stderr := captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("record stderr = %q", stderr)
+	}
+	var created memoryops.CheckpointRecordResult
+	if err := json.Unmarshal([]byte(stdout), &created); err != nil {
+		t.Fatalf("decode record JSON: %v\n%s", err, stdout)
+	}
+	if created.Idempotency != memoryops.CheckpointIdempotencyCreated || created.Checkpoint == nil {
+		t.Fatalf("created result = %#v", created)
+	}
+
+	withArgs(t, recordArgs...)
+	stdout, stderr = captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("replay stderr = %q", stderr)
+	}
+	var replayed memoryops.CheckpointRecordResult
+	if err := json.Unmarshal([]byte(stdout), &replayed); err != nil {
+		t.Fatalf("decode replay JSON: %v\n%s", err, stdout)
+	}
+	if replayed.Idempotency != memoryops.CheckpointIdempotencyAlreadyRecorded ||
+		!reflect.DeepEqual(replayed.Checkpoint, created.Checkpoint) {
+		t.Fatalf("replayed result = %#v, want checkpoint %#v", replayed, created.Checkpoint)
+	}
+
+	statusArgs := append([]string{"engram", "checkpoint", "status"}, identityArgs...)
+	statusArgs = append(statusArgs, "--json")
+	withArgs(t, statusArgs...)
+	stdout, stderr = captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("status stderr = %q", stderr)
+	}
+	var status memoryops.CheckpointStatusResult
+	if err := json.Unmarshal([]byte(stdout), &status); err != nil {
+		t.Fatalf("decode status JSON: %v\n%s", err, stdout)
+	}
+	if !reflect.DeepEqual(status.Checkpoint, created.Checkpoint) {
+		t.Fatalf("status checkpoint = %#v, want %#v", status.Checkpoint, created.Checkpoint)
+	}
+}
+
+func TestCheckpointCLIProcessJSONContract(t *testing.T) {
+	if testing.CoverMode() != "" {
+		t.Skip("expected non-zero helper subprocess exits corrupt Go coverage output")
+	}
+	dataDir := t.TempDir()
+	run := func(t *testing.T, helperCase string, wantExit int) (string, string) {
+		t.Helper()
+		cmd := exec.Command(os.Args[0], "-test.run=^TestCheckpointProcessHelper$")
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_CHECKPOINT_PROCESS=1",
+			"CHECKPOINT_HELPER_CASE="+helperCase,
+			"ENGRAM_DATA_DIR="+dataDir,
+		)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		err := cmd.Run()
+		if wantExit == 0 {
+			if err != nil {
+				t.Fatalf("helper %s: %v, stderr=%q", helperCase, err, stderr.String())
+			}
+		} else {
+			exitErr, ok := err.(*exec.ExitError)
+			if !ok || exitErr.ExitCode() != wantExit {
+				t.Fatalf("helper %s exit = %v, want %d", helperCase, err, wantExit)
+			}
+		}
+		return stdout.String(), stderr.String()
+	}
+
+	stdout, stderr := run(t, "record", 0)
+	if stderr != "" || decodeCLIJSON(t, stdout)["idempotency"] != memoryops.CheckpointIdempotencyCreated {
+		t.Fatalf("record stdout=%q stderr=%q", stdout, stderr)
+	}
+	stdout, stderr = run(t, "record", 0)
+	if stderr != "" || decodeCLIJSON(t, stdout)["idempotency"] != memoryops.CheckpointIdempotencyAlreadyRecorded {
+		t.Fatalf("replay stdout=%q stderr=%q", stdout, stderr)
+	}
+	stdout, stderr = run(t, "status", 0)
+	if stderr != "" || decodeCLIJSON(t, stdout)["checkpoint"] == nil {
+		t.Fatalf("status stdout=%q stderr=%q", stdout, stderr)
+	}
+	stdout, stderr = run(t, "processing-failed", 1)
+	if stdout != "" || decodeCLIJSON(t, stderr)["code"] != memoryops.CheckpointErrorCodeInvalidReason {
+		t.Fatalf("invalid stdout=%q stderr=%q", stdout, stderr)
+	}
+	stdout, stderr = run(t, "leading-dash-identity", 0)
+	if stderr != "" || decodeCLIJSON(t, stdout)["idempotency"] != memoryops.CheckpointIdempotencyCreated {
+		t.Fatalf("leading-dash stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestCheckpointProcessHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_CHECKPOINT_PROCESS") != "1" {
+		return
+	}
+	os.Args = []string{
+		"engram", "checkpoint", "record",
+		"--host", "codex",
+		"--session-id", "session-process-123",
+		"--root-turn-id", "turn-process-456",
+		"--disposition", store.CheckpointDispositionSkipped,
+		"--reason", store.CheckpointSkipReasonNoDurableKnowledge,
+		"--json",
+	}
+	switch os.Getenv("CHECKPOINT_HELPER_CASE") {
+	case "record":
+	case "status":
+		os.Args = []string{
+			"engram", "checkpoint", "status",
+			"--host", "codex",
+			"--session-id", "session-process-123",
+			"--root-turn-id", "turn-process-456",
+			"--json",
+		}
+	case "processing-failed":
+		os.Args[len(os.Args)-2] = "processing_failed"
+	case "leading-dash-identity":
+		os.Args = []string{
+			"engram", "checkpoint", "record",
+			"--host=--codex",
+			"--session-id=--help",
+			"--root-turn-id=-h",
+			"--disposition=skipped",
+			"--reason=no_durable_knowledge",
+			"--json",
+		}
+	default:
+		t.Fatalf("unknown checkpoint helper case %q", os.Getenv("CHECKPOINT_HELPER_CASE"))
+	}
+	main()
+	os.Exit(0)
+}
+
+func TestCheckpointMissingValuePreservesJSONErrorContract(t *testing.T) {
+	stubExitWithPanic(t)
+	withArgs(t,
+		"engram", "checkpoint", "record",
+		"--host", "codex",
+		"--session-id", "session-missing-reason",
+		"--root-turn-id", "turn-missing-reason",
+		"--disposition", "skipped",
+		"--reason", "--json",
+	)
+
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdCheckpoint(testConfig(t)) })
+	if stdout != "" {
+		t.Fatalf("missing-value stdout = %q", stdout)
+	}
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("missing-value exit = %v", recovered)
+	}
+	if got := decodeCLIJSON(t, stderr)["code"]; got != "invalid_arguments" {
+		t.Fatalf("missing-value code = %#v, stderr=%q", got, stderr)
+	}
+}
+
+func TestParseCheckpointArgsAcceptsInlineLeadingDashIdentity(t *testing.T) {
+	opts, err := parseCheckpointArgs([]string{
+		"record",
+		"--host=--codex",
+		"--session-id=--help",
+		"--root-turn-id=-h",
+		"--disposition=skipped",
+		"--reason=no_durable_knowledge",
+		"--json",
+	})
+	if err != nil {
+		t.Fatalf("parse checkpoint args: %v", err)
+	}
+	if opts.Help || !opts.JSONMode || opts.Host != "--codex" || opts.SessionID != "--help" || opts.RootTurnID != "-h" {
+		t.Fatalf("parsed options = %#v", opts)
+	}
+}
+
+func TestMainCheckpointHelpDoesNotCreateLocalDatabase(t *testing.T) {
+	for _, args := range [][]string{
+		{"engram", "checkpoint", "--help"},
+		{"engram", "checkpoint", "record", "--help"},
+		{"engram", "checkpoint", "record", "--host", "codex", "--help"},
+		{"engram", "checkpoint", "record", "--reason", "--help"},
+		{"engram", "checkpoint", "status", "-h"},
+	} {
+		t.Run(args[len(args)-1], func(t *testing.T) {
+			stubRuntimeHooks(t)
+			dataDir := t.TempDir()
+			t.Setenv("ENGRAM_DATA_DIR", dataDir)
+			withArgs(t, args...)
+			stdout, stderr, recovered := captureOutputAndRecover(t, func() { main() })
+			if recovered != nil || stderr != "" {
+				t.Fatalf("help panic=%v stderr=%q", recovered, stderr)
+			}
+			if stdout == "" {
+				t.Fatal("checkpoint help was empty")
+			}
+			if _, err := os.Stat(filepath.Join(dataDir, "engram.db")); !os.IsNotExist(err) {
+				t.Fatalf("checkpoint help created store: %v", err)
+			}
+		})
+	}
+}

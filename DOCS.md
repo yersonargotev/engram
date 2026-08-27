@@ -14,7 +14,7 @@ This is the complete technical reference for Engram. For getting started, see th
 | --------------------------------------------------------- | ------------------------------------------------------------ |
 | [Database Schema](#database-schema)                       | Tables, FTS5, SQLite config                                  |
 | [HTTP API](#http-api-endpoints)                           | All REST endpoints with request/response details             |
-| [MCP Tools](#mcp-tools-22-tools)                          | Detailed reference for all 22 memory tools                   |
+| [MCP Tools](#mcp-tools-24-tools)                          | Detailed reference for all 24 memory tools                   |
 | [MCP Project Resolution](#mcp-project-resolution)         | Auto-detection algorithm, response envelope, tool categories |
 | [Memory Protocol](#memory-protocol)                       | When/how agents should use the tools                         |
 | [Project Name Normalization](#project-name-normalization) | Auto-detection, normalization, similar-project warnings      |
@@ -50,6 +50,7 @@ For other docs:
 - **sync_chunks** — `target_key` (TEXT), `chunk_id` (TEXT), `imported_at`; composite PK (`target_key`, `chunk_id`) for target-scoped chunk tracking
 - **memory_relations** — stores conflict-surfacing verdicts from `mem_judge`; columns include `id` (INTEGER PK AUTOINCREMENT), `sync_id` (TEXT UNIQUE), `source_id`, `target_id`, `relation`, `judgment_status` (`pending` | `judged` | `orphaned` | `ignored`), `reason`, `evidence`, `confidence`, `marked_by_actor`, `marked_by_kind`, `marked_by_model`, `session_id`. The SQLite table does not store a `project` column; project is carried in relation sync payloads and derived from joined observations for project-scoped listing. Syncs across machines via local chunks and via cloud autosync when the project is enrolled.
 - **sync_apply_deferred** — holds pulled mutations that could not be applied locally due to a missing FK dependency (e.g. relation references an observation not yet present); columns: `sync_id` (TEXT PK), `entity`, `payload`, `apply_status` (`deferred` | `applied` | `dead`), `retry_count`, `last_error`, `last_attempted_at`, `first_seen_at`. Rows with `apply_status='dead'` have exceeded the retry cap (5 attempts) and will not be retried automatically.
+- **memory_checkpoints** — local-only root-turn dispositions keyed by unique `(host, session_id, root_turn_id)`. Stores only opaque identity, `disposition`, the versioned `reason_code`, `reason_version`, and timestamps. It has no Memory FTS or sync triggers and is excluded from Memory search, context, counts, JSON/project/chunk exports, pending mutations, cloud materialization, and Obsidian output. The v1 skip vocabulary contains only `no_durable_knowledge`; integration or processing failures are validation errors, never semantic skips.
 
 ### SQLite Configuration
 
@@ -89,7 +90,14 @@ engram admission shadow --project PROJECT --session SESSION_ID [--json]
 engram admission review list --project PROJECT [--json]
 engram admission review mark PROPOSAL_ID --verdict admit|review|reject [--note TEXT] [--unsupported|--clear-unsupported] [--privacy-leak|--clear-privacy-leak] [--json]
 engram admission metrics --project PROJECT [--json]
+engram checkpoint record --host HOST --session-id ID --root-turn-id ID
+                         --disposition skipped --reason no_durable_knowledge [--json]
+engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
 ```
+
+Checkpoint identity values are opaque. If one begins with a hyphen, use the inline
+forms `--host=VALUE`, `--session-id=VALUE`, or `--root-turn-id=VALUE` to avoid
+ambiguity with CLI options.
 
 `save` exits successfully after the memory is persisted even when its response
 contains `judgment_required: true`; callers can resolve each returned candidate
@@ -843,6 +851,7 @@ Exceptions:
 
 - `mem_current_project` returns detection fields directly (`project`, `project_source`, `project_path`, `cwd`, `available_projects`, optional `warning` / `error_hint`) and does not wrap them in `result`.
 - `mem_doctor` returns the same JSON report shape as `engram doctor --json`; it uses read-project resolution before running diagnostics but does not wrap the report in the common MCP envelope.
+- `mem_checkpoint` and `mem_checkpoint_status` use opaque host/session/root-turn identity instead of project resolution. Their JSON success and error envelopes match the corresponding CLI commands; tool errors set MCP `isError=true`.
 
 ### Write tools (explicit/session/cwd project resolution)
 
@@ -897,7 +906,17 @@ Returns success even when cwd is ambiguous — empty `project` + non-empty `avai
 
 ---
 
-## MCP Tools (22 tools)
+## MCP Tools (24 tools)
+
+### mem_checkpoint
+
+Record the terminal Memory checkpoint for one settled root user turn. Required parameters are `host`, `session_id`, `root_turn_id`, `disposition`, and `reason`. The current vocabulary accepts only `disposition: "skipped"` with `reason: "no_durable_knowledge"`.
+
+The first call returns `idempotency: "created"`; an exact replay returns `idempotency: "already_recorded"` with the original checkpoint and timestamps. Unknown reasons, including integration and processing failure labels, return a structured `invalid_checkpoint_reason` error and create no row.
+
+### mem_checkpoint_status
+
+Inspect one exact checkpoint by `host`, `session_id`, and `root_turn_id`. Missing identity returns `invalid_checkpoint_identity`; an unknown but valid identity returns `checkpoint_not_found`. This operation reads the local checkpoint ledger directly and never queries Memory search or context.
 
 ### mem_search
 

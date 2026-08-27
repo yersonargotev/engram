@@ -70,6 +70,8 @@ Next session starts → Previous session context is injected automatically
 | `mem_merge_projects` | Merge project name variants into canonical name (admin) |
 | `mem_current_project` | Detect project from cwd — never errors, recommended first call |
 | `mem_doctor` | Run read-only operational diagnostics for project detection and store health |
+| `mem_checkpoint` | Record an idempotent terminal disposition for one root user turn |
+| `mem_checkpoint_status` | Inspect the local checkpoint for one exact root user turn |
 | `mem_review` | List observations whose `review_after` lifecycle is stale; `mark_reviewed` resets the local review cycle |
 | `mem_pin` | Pin a memory locally so it appears before recent observations in context; pins are not synced |
 | `mem_unpin` | Remove a local context pin; unpins are not synced |
@@ -214,7 +216,7 @@ engram/
 ├── internal/
 │   ├── store/store.go              # Core: SQLite + FTS5 + all data ops
 │   ├── server/server.go            # HTTP REST API (port 7437)
-│   ├── mcp/mcp.go                  # MCP stdio server (22 tools)
+│   ├── mcp/mcp.go                  # MCP stdio server (24 tools)
 │   ├── setup/setup.go              # Agent plugin installer (go:embed)
 │   ├── cloud/                       # Optional cloud runtime (Postgres + dashboard)
 │   │   ├── cloudserver/             # /sync API + dashboard mount + auth/session bridge
@@ -265,6 +267,8 @@ engram review list|mark   List due memories or mark one reviewed (local-only) [-
 engram pin|unpin <obs_id> Change local-only context priority [--json]
 engram current-project    Inspect project resolution and ambiguity [--json]
 engram suggest-topic-key  Suggest a stable topic key without writing [--json]
+engram checkpoint record Record a skipped root-turn checkpoint [--json]
+engram checkpoint status Inspect one exact root-turn checkpoint [--json]
 engram delete <obs_id>    Delete an observation [--hard] (soft-delete by default; --hard removes permanently)
 engram delete session <id>
                           Delete a session by ID (session must have no observations)

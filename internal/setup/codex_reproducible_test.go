@@ -540,7 +540,6 @@ func TestVerifyInstalledCodexStopVerifierAcceptsWindowsCheckout(t *testing.T) {
 		entry := assets[relative]
 		entry.mode = 0o666
 		// Simulate a Windows checkout that already materialized CRLF bytes.
-		entry.data = bytes.ReplaceAll(entry.data, []byte("\n"), []byte("\r\n"))
 		entry.data = bytes.ReplaceAll(entry.data, []byte("\r\n"), []byte("\n"))
 		entry.data = bytes.ReplaceAll(entry.data, []byte("\n"), []byte("\r\n"))
 		assets[relative] = entry

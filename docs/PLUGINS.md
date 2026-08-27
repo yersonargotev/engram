@@ -9,6 +9,7 @@
 - [Current plugin coverage](#current-plugin-coverage)
 - [OpenCode Plugin](#opencode-plugin)
 - [Claude Code Plugin](#claude-code-plugin)
+- [Codex Plugin](#codex-plugin)
 - [Privacy](#privacy)
 
 ---
@@ -169,6 +170,44 @@ PowerShell local override/testing example for locked-down Windows endpoints:
 - **When to search** memory (reactive + proactive)
 - **Session close protocol** — mandatory `mem_session_summary` before ending
 - **After compaction** — 3-step recovery: persist summary → load context → continue
+
+---
+
+## Codex Plugin
+
+The Codex plugin is a thin activation and identity adapter around the Go
+checkpoint core:
+
+```text
+plugin/codex/
+├── .codex-plugin/plugin.json
+├── .mcp.json
+├── hooks/hooks.json
+├── scripts/
+│   ├── _checkpoint.sh             # Extracts and renders the canonical cue
+│   ├── session-start.sh           # startup, resume, and clear
+│   ├── post-compaction.sh         # compact
+│   └── user-prompt-submit.sh      # Prompt capture + opaque root identity
+└── skills/memory/SKILL.md         # Canonical cue and complete rubric
+```
+
+The skill is the single source for both the minimal cue and the detailed
+`saved`, `skipped(no_durable_knowledge)`, and `needs_review` rubric. The two
+`SessionStart` scripts extract that cue and return it through
+`hookSpecificOutput.additionalContext`; they contain no independent Memory
+policy. Codex runs them exactly once for each supported source: `startup`,
+`resume`, `clear`, and `compact`.
+
+`UserPromptSubmit` forwards Codex's `turn_id` as Engram's `root_turn_id` beside
+the session ID. It does not finalize a checkpoint. This preserves one root-turn
+identity for the root agent while tools and subagents remain internal activity.
+
+`engram setup codex` verifies the immutable plugin tree, MCP manifest, canonical
+skill, cue, and lifecycle coverage before reporting `activation-cue: ready`.
+It preserves user-owned settings and never adds protocol prose to shared
+`AGENTS.md` or `CLAUDE.md` files. Activation alone is not the blocking
+Checkpoint guarantee: setup remains incomplete until the separate `Stop`
+verifier also reports `ready`.
 
 ---
 

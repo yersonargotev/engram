@@ -1,128 +1,137 @@
 ---
 name: engram-memory
-description: "ALWAYS ACTIVE — Persistent memory protocol. You MUST save decisions, conventions, bugs, and discoveries to engram proactively. Do NOT wait for the user to ask."
+description: "Checkpoint each settled root user turn as saved, skipped(no_durable_knowledge), or needs_review. Use when the Engram checkpoint cue or checkpoint identity appears, or when finalizing durable knowledge."
 ---
 
-# Engram Persistent Memory — Protocol
+# Engram Memory checkpoint protocol
 
-You have access to Engram, a persistent memory system that survives across sessions and compactions.
-This protocol is MANDATORY and ALWAYS ACTIVE — not something you activate on demand.
+<!-- engram:checkpoint-cue:start -->
+For every root user turn, use the engram-memory skill to finalize exactly one Engram checkpoint: `saved`, `skipped(no_durable_knowledge)`, or `needs_review`. Reuse the supplied Codex checkpoint identity across continuations; subagents do not create checkpoints.
+<!-- engram:checkpoint-cue:end -->
 
-## AVAILABLE TOOLS
+The cue above is the canonical model-visible activation text. Host adapters may
+extract and deliver it, but must not maintain their own Memory rubric.
 
-Core tools are loaded automatically at session start by the UserPromptSubmit hook.
-They are available immediately — no manual ToolSearch needed.
+## Workflow
 
-- `mem_save`, `mem_search`, `mem_context`, `mem_session_summary`
-- `mem_get_observation`, `mem_suggest_topic_key`, `mem_update`
-- `mem_session_start`, `mem_session_end`, `mem_save_prompt`
+1. Keep the supplied `(host, session_id, root_turn_id)` as the identity of the
+   original root user turn.
+2. Recall prior Memory only when it can change the work.
+3. After all causal work settles, apply the disposition rubric once.
+4. Finalize through `mem_checkpoint` or the equivalent CLI command.
 
-**Fallback**: If tools are unexpectedly unavailable, run `engram setup codex`
-again and restart Codex. Setup repairs the durable MCP config and
-permissions allowlist for the `mcp__engram__...` server ids.
+The protocol is complete when the exact identity returns `created` or
+`already_recorded` for one terminal disposition. An adapter or persistence
+failure leaves the checkpoint incomplete and must remain visible.
 
-Admin tools (deferred — use ToolSearch only if needed):
-- `mem_stats`, `mem_delete`, `mem_timeline`, `mem_capture_passive`
+## Root user turn boundary
 
-Local context curation (deferred — use ToolSearch only if needed):
-- `mem_pin` puts an observation before recent memories in context.
-- `mem_unpin` returns it to normal recency order.
-- Pins are local to this device and never sync.
+A root user turn starts with one actual user message and ends only after all
+agent, tool, subagent, compaction, and automatic-continuation work caused by
+that message has settled.
 
-## PROACTIVE SAVE TRIGGERS (mandatory — do NOT wait for user to ask)
+- Finalize one checkpoint for the root turn, not one per response or task.
+- Tool calls, subagents, compaction events, and verifier continuations never
+  create independent checkpoints.
+- Only the root agent finalizes the checkpoint.
+- Treat `host`, `session_id`, and `root_turn_id` from developer context as
+  opaque values. Never derive replacements from prompt text, process IDs, tool
+  IDs, or subagent IDs.
 
-Call `mem_save` IMMEDIATELY and WITHOUT BEING ASKED after any of these:
+## Recall when it can change the work
 
-### After decisions or conventions
-- Architecture or design decision made
-- Team convention documented or established
-- Workflow change agreed upon
-- Tool or library choice made with tradeoffs
+Before similar or history-dependent work, use `mem_context` and then a targeted
+`mem_search` if needed. Recall is selective: a routine self-contained turn does
+not require a search merely to satisfy the checkpoint protocol.
 
-### After completing work
-- Bug fix completed (include root cause)
-- Feature implemented with non-obvious approach
-- Notion/Jira/GitHub artifact created or updated with significant content
-- Configuration change or environment setup done
+## Choose a disposition
 
-### After discoveries
-- Non-obvious discovery about the codebase
-- Gotcha, edge case, or unexpected behavior found
-- Pattern established (naming, structure, convention)
-- User preference or constraint learned
+Assess the completed root turn once, after the causal work has settled.
 
-### After user confirmation or rejection
-- User confirms a recommendation you made ("go with that", "let's do that", "sounds good", "agreed", "perfect", or the equivalent in the user's language)
-- User rejects an option or approach ("no, better X", "not that one", or the equivalent in the user's language)
-- User expresses a preference ("I prefer X over Y", "always do it this way", or the equivalent in the user's language)
-- User makes a decision after you presented tradeoffs or options
-- A discussion concludes with a clear direction chosen — even if the agent proposed it
+### `saved`
 
-### Self-check — ask yourself after EVERY task:
-> "Did I or the user just make a decision, confirm a recommendation, express a preference, fix a bug, learn something non-obvious, or establish a convention? If yes, call mem_save NOW."
+Choose `saved` when the turn produced durable knowledge worth recalling in a
+future session, such as:
 
-Format for `mem_save`:
-- **title**: Verb + what — short, searchable (e.g. "Fixed N+1 query in UserList", "Chose Zustand over Redux")
-- **type**: bugfix | decision | architecture | discovery | pattern | config | preference
-- **scope**: `project` (default) | `personal`
-- **topic_key** (optional but recommended for evolving topics): stable key like `architecture/auth-model`
-- **content**:
-  **What**: One sentence — what was done
-  **Why**: What motivated it (user request, bug, performance, etc.)
-  **Where**: Files or paths affected
-  **Learned**: Gotchas, edge cases, things that surprised you (omit if none)
+- an architecture or implementation decision and its reason;
+- a bug's non-obvious root cause and verified fix;
+- a reusable codebase invariant, convention, workflow, or gotcha;
+- a durable configuration constraint or user preference;
+- a significant external artifact whose identity or result matters later.
 
-### Topic update rules (mandatory)
+Keep each Memory concise, safe to persist, and independently useful. Use an
+existing Memory reference when it already contains the durable result. When
+creating new Memories for the checkpoint, prefer the inline `memories` input so
+the core creates the Memories and checkpoint atomically. Do not save secrets,
+raw transcripts, or routine activity logs.
 
-- Different topics MUST NOT overwrite each other (example: architecture decision vs bugfix)
-- If the same topic evolves, call `mem_save` with the same `topic_key` so memory is updated (upsert) instead of creating a new observation
-- If unsure about the key, call `mem_suggest_topic_key` first, then reuse that key consistently
-- If you already know the exact ID to fix, use `mem_update`
+### `skipped(no_durable_knowledge)`
 
-## WHEN TO SEARCH MEMORY
+Choose `skipped` only after applying the saved and review rubrics and finding no
+durable knowledge. Examples include a simple explanation, status read, trivial
+formatting, or routine implementation whose result is already fully represented
+by maintained source and documentation.
 
-When the user asks to recall something — any variation of "remember", "recall", "what did we do",
-"how did we solve", or the equivalent in the user's language, or references to past work:
-1. First call `mem_context` — checks recent session history (fast, cheap)
-2. If not found, call `mem_search` with relevant keywords (FTS5 full-text search)
-3. If you find a match, use `mem_get_observation` for full untruncated content
+The only supported skip reason is `no_durable_knowledge`. A missing tool,
+invalid identity, timeout, persistence failure, or other integration problem is
+not a skip disposition and must not be disguised as one.
 
-Also search memory PROACTIVELY when:
-- Starting work on something that might have been done before
-- The user mentions a topic you have no context on — check if past sessions covered it
-- The user's FIRST message references the project, a feature, or a problem — call `mem_search` with keywords from their message to check for prior work before responding
+### `needs_review`
 
-## SESSION CLOSE PROTOCOL (mandatory)
+Choose `needs_review` when the turn surfaced potentially durable knowledge but
+it is too ambiguous, incomplete, conflicting, or sensitive to admit directly as
+a Memory. Retain one bounded, redacted Memory proposal that states the candidate
+knowledge and why review is needed.
 
-Before ending a session or saying "done" / "that's it", you MUST:
-1. Call `mem_session_summary` with this structure:
+Use an existing proposal reference when appropriate. Otherwise prefer the
+inline `proposal` input so the core creates the proposal and checkpoint
+atomically. `needs_review` is not a fallback for infrastructure failure and does
+not mean "decide later" when the saved or skipped rubric already gives a clear
+answer.
 
-## Goal
-[What we were working on this session]
+## Finalize idempotently
 
-## Instructions
-[User preferences or constraints discovered — skip if none]
+Use `mem_checkpoint` with the exact identity supplied for the original root
+user turn:
 
-## Discoveries
-- [Technical findings, gotchas, non-obvious learnings]
+```json
+{
+  "host": "codex",
+  "session_id": "<opaque session id>",
+  "root_turn_id": "<opaque original turn id>",
+  "disposition": "skipped",
+  "reason": "no_durable_knowledge"
+}
+```
 
-## Accomplished
-- [Completed items with key details]
+For `saved`, pass one or more `memory_ids` or inline `memories` and the exact
+project. For `needs_review`, pass exactly one `proposal_id` or inline `proposal`
+and the exact project. Do not attach Memory or proposal references to a skipped
+checkpoint.
 
-## Next Steps
-- [What remains to be done — for the next session]
+If MCP is unavailable, use the equivalent CLI adapter:
 
-## Relevant Files
-- path/to/file — [what it does or what changed]
+```bash
+engram checkpoint record \
+  --host codex \
+  --session-id '<opaque session id>' \
+  --root-turn-id '<opaque original turn id>' \
+  --disposition skipped \
+  --reason no_durable_knowledge \
+  --json
+```
 
-This is NOT optional. If you skip this, the next session starts blind.
+An `already_recorded` result is success: the original root turn was already
+finalized with the same terminal disposition. Never create a replacement
+identity on replay. A conflict means a different terminal result already exists;
+surface it instead of overwriting or recording a second checkpoint.
 
-## AFTER COMPACTION
+When a verifier continuation asks for a missing checkpoint, use the original
+identity carried in that continuation, finalize once, and then finish the same
+root user turn. Do not treat the continuation prompt as a new user turn.
 
-If you see a message about compaction or context reset:
-1. IMMEDIATELY call `mem_session_summary` with the compacted summary content — this persists what was done before compaction
-2. Then call `mem_context` to recover any additional context from previous sessions
-3. Only THEN continue working
+## After compaction
 
-Do not skip step 1. Without it, everything done before compaction is lost from memory.
-All core tools are loaded automatically by the hook at session start. If they are unexpectedly missing, rerun `engram setup codex` and restart Codex.
+The activation cue is delivered again after compaction. Recover only the context
+needed to continue, keep the original checkpoint identity supplied for the root
+turn, and finalize that same turn after its remaining work settles.

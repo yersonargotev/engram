@@ -52,7 +52,8 @@ Plugins may:
 - start or find `engram serve`,
 - create sessions,
 - import chunks,
-- inject the Memory Protocol,
+- deliver a host-native activation cue or protocol projection from its canonical source,
+- forward opaque host/session/root-turn identity to the agent,
 - persist summaries on compaction,
 - strip private tags,
 - register MCP.

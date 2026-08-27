@@ -263,6 +263,133 @@ func TestInstallCodexReportsIndependentCapabilities(t *testing.T) {
 	}
 }
 
+func TestInstallCodexReportsCanonicalSkillAndCueReadyWithoutSharedInstructions(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	osExecutable = func() (string, error) { return "/usr/local/bin/engram", nil }
+
+	marketplaceRoot := t.TempDir()
+	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
+	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.3")
+	writeCanonicalCodexActivationFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"))
+	writeCanonicalCodexActivationFixture(t, installedPlugin)
+
+	lookPathFn = func(file string) (string, error) {
+		if file == "codex" {
+			return "/usr/local/bin/codex", nil
+		}
+		return "", errors.New("not found")
+	}
+	runCommand = func(_ string, args ...string) ([]byte, error) {
+		switch {
+		case len(args) >= 4 && slices.Equal(args[:4], []string{"plugin", "marketplace", "add", codexMarketplace}):
+			return []byte(fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)), nil
+		case len(args) >= 3 && slices.Equal(args[:3], []string{"plugin", "add", "engram@engram"}):
+			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.4","installedPath":%q}`, installedPlugin)), nil
+		default:
+			return nil, fmt.Errorf("unexpected codex command: %v", args)
+		}
+	}
+
+	result, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err != nil {
+		t.Fatalf("InstallWithOptions(codex) failed: %v", err)
+	}
+	activation, ok := result.Check("activation-cue")
+	if !ok || activation.Status != CheckReady {
+		t.Fatalf("activation-cue check = %+v, want ready for installed canonical skill and cue", activation)
+	}
+	verifier, ok := result.Check("verifier")
+	if !ok || verifier.Status != CheckMissing || result.Complete {
+		t.Fatalf("verifier check = %+v complete=%v, want missing and incomplete until issue #47", verifier, result.Complete)
+	}
+
+	for _, shared := range []string{"AGENTS.md", "CLAUDE.md"} {
+		if _, err := os.Stat(filepath.Join(home, shared)); !os.IsNotExist(err) {
+			t.Fatalf("Codex setup created or modified shared instruction file %s: %v", shared, err)
+		}
+	}
+}
+
+func TestInstallCodexDoesNotReportActivationReadyForIncompleteCanonicalSkill(t *testing.T) {
+	resetSetupSeams(t)
+	useTestHome(t)
+	osExecutable = func() (string, error) { return "/usr/local/bin/engram", nil }
+
+	marketplaceRoot := t.TempDir()
+	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
+	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.3")
+	for _, root := range []string{filepath.Join(marketplaceRoot, "plugin", "codex"), installedPlugin} {
+		writeCanonicalCodexActivationFixture(t, root)
+		skillPath := filepath.Join(root, "skills", "memory", "SKILL.md")
+		raw, err := os.ReadFile(skillPath)
+		if err != nil {
+			t.Fatalf("read incomplete skill fixture: %v", err)
+		}
+		incomplete := strings.Replace(string(raw), "## Finalize idempotently", "## Finish", 1)
+		if err := os.WriteFile(skillPath, []byte(incomplete), 0o644); err != nil {
+			t.Fatalf("write incomplete skill fixture: %v", err)
+		}
+	}
+
+	lookPathFn = func(file string) (string, error) {
+		if file == "codex" {
+			return "/usr/local/bin/codex", nil
+		}
+		return "", errors.New("not found")
+	}
+	runCommand = func(_ string, args ...string) ([]byte, error) {
+		switch {
+		case len(args) >= 4 && slices.Equal(args[:4], []string{"plugin", "marketplace", "add", codexMarketplace}):
+			return []byte(fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)), nil
+		case len(args) >= 3 && slices.Equal(args[:3], []string{"plugin", "add", "engram@engram"}):
+			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.4","installedPath":%q}`, installedPlugin)), nil
+		default:
+			return nil, fmt.Errorf("unexpected codex command: %v", args)
+		}
+	}
+
+	result, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err != nil {
+		t.Fatalf("InstallWithOptions(codex) failed: %v", err)
+	}
+	activation, ok := result.Check("activation-cue")
+	if !ok || activation.Status != CheckMissing {
+		t.Fatalf("activation-cue check = %+v, want missing for incomplete rubric", activation)
+	}
+}
+
+func writeCanonicalCodexActivationFixture(t *testing.T, destination string) {
+	t.Helper()
+	source := filepath.Join("..", "..", "plugin", "codex")
+	paths := []string{
+		".codex-plugin/plugin.json",
+		".mcp.json",
+		"hooks/hooks.json",
+		"scripts/_checkpoint.sh",
+		"scripts/session-start.sh",
+		"scripts/post-compaction.sh",
+		"skills/memory/SKILL.md",
+	}
+	for _, relative := range paths {
+		raw, err := os.ReadFile(filepath.Join(source, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatalf("read canonical Codex fixture %s: %v", relative, err)
+		}
+		target := filepath.Join(destination, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatalf("create canonical Codex fixture directory: %v", err)
+		}
+		mode := os.FileMode(0o644)
+		if strings.HasPrefix(relative, "scripts/") {
+			mode = 0o755
+		}
+		if err := os.WriteFile(target, raw, mode); err != nil {
+			t.Fatalf("write canonical Codex fixture %s: %v", relative, err)
+		}
+	}
+}
+
 func writeMarketplaceIdentity(t *testing.T, root, commit string) {
 	t.Helper()
 	gitDir := filepath.Join(root, ".git")

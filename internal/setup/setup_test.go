@@ -18,7 +18,7 @@ func resetSetupSeams(t *testing.T) {
 	oldLookPathFn := lookPathFn
 	oldRunCommand := runCommand
 	oldRunCodexCheckpointProbeFn := runCodexCheckpointProbeFn
-	oldRenameFileFn := renameFileFn
+	oldLinkFileFn := linkFileFn
 	oldRemoveFileFn := removeFileFn
 	oldGitStatusFn := gitStatusFn
 	oldGitResolveRefFn := gitResolveRefFn
@@ -49,7 +49,7 @@ func resetSetupSeams(t *testing.T) {
 		lookPathFn = oldLookPathFn
 		runCommand = oldRunCommand
 		runCodexCheckpointProbeFn = oldRunCodexCheckpointProbeFn
-		renameFileFn = oldRenameFileFn
+		linkFileFn = oldLinkFileFn
 		removeFileFn = oldRemoveFileFn
 		gitStatusFn = oldGitStatusFn
 		gitResolveRefFn = oldGitResolveRefFn

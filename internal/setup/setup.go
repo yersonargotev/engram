@@ -46,7 +46,7 @@ var (
 	runCodexCheckpointProbeFn = func(name string, args ...string) ([]byte, error) {
 		return exec.Command(name, args...).CombinedOutput()
 	}
-	renameFileFn = os.Rename
+	linkFileFn   = os.Link
 	removeFileFn = os.Remove
 	gitStatusFn  = func(root string) ([]byte, error) {
 		return exec.Command("git", "-C", root, "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "--", ".agents/plugins/marketplace.json", "plugin/codex").CombinedOutput()
@@ -1228,10 +1228,19 @@ func installCodexWithOptions(options InstallOptions) (*Result, error) {
 	}
 	path := codexConfigPath()
 	beforeFiles := captureCodexSetupFiles()
+	recoveryPreserved, recoveryErr := restoreInterruptedCodexLegacyActivation(path)
 	result := &Result{
 		Agent:       "codex",
 		Destination: filepath.Dir(path),
-		Preserved:   codexPreservedLegacySettings(path),
+		Preserved:   appendUnique(recoveryPreserved, codexPreservedLegacySettings(path)...),
+	}
+	if recoveryErr != nil {
+		result.Checks = append(result.Checks, CapabilityCheck{
+			Capability: "plugin",
+			Status:     CheckPreserved,
+			Detail:     "interrupted legacy retirement requires attention: " + recoveryErr.Error(),
+		})
+		return finishIncompleteCodexSetup(result, beforeFiles), nil
 	}
 	mcpRegistrationPreserved := codexMCPRegistrationPreserved(path)
 	if mcpRegistrationPreserved {
@@ -1865,6 +1874,44 @@ func codexLegacySettings() []codexLegacySetting {
 	}
 }
 
+func restoreInterruptedCodexLegacyActivation(configPath string) ([]string, error) {
+	data, err := readFileFn(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read Codex config for interrupted retirement: %w", err)
+	}
+	content := string(data)
+	var preserved []string
+	for _, setting := range codexLegacySettings() {
+		stagePath := codexLegacyRetirementPath(setting.path)
+		if _, err := os.Lstat(stagePath); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			preserved = append(preserved, setting.key)
+			return preserved, fmt.Errorf("inspect interrupted Codex legacy retirement %s: %w", setting.key, err)
+		}
+		value, found, valid := topLevelTOMLString(content, setting.key)
+		if !found {
+			if known, _, _ := codexLegacyFileOwned(stagePath, setting.content); !known {
+				preserved = append(preserved, setting.key)
+				return preserved, fmt.Errorf("unrecognized post-publish stage for %s was preserved byte-for-byte", setting.key)
+			}
+			if err := removeFileFn(stagePath); err != nil && !os.IsNotExist(err) {
+				return preserved, fmt.Errorf("complete interrupted Codex legacy retirement %s: %w", setting.key, err)
+			}
+			continue
+		}
+		if !valid || value != setting.path || countTopLevelTOMLKey(content, setting.key) != 1 {
+			preserved = append(preserved, setting.key)
+			return preserved, fmt.Errorf("ambiguous staged state for %s was preserved byte-for-byte", setting.key)
+		}
+		if err := restoreCodexLegacyStage(setting); err != nil {
+			preserved = append(preserved, setting.key)
+			return preserved, fmt.Errorf("restore interrupted Codex legacy retirement %s: %w", setting.key, err)
+		}
+	}
+	return preserved, nil
+}
+
 func retireCodexLegacyActivation(configPath string) ([]string, error) {
 	data, err := readFileFn(configPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -1896,7 +1943,7 @@ func retireCodexLegacyActivation(configPath string) ([]string, error) {
 				return preserved, fmt.Errorf("complete Codex legacy retirement %s: %w", setting.key, err)
 			}
 		case found && valid && value == setting.path && countTopLevelTOMLKey(content, setting.key) == 1 && os.IsNotExist(originalErr):
-			if err := renameFileFn(stagePath, setting.path); err != nil {
+			if err := restoreCodexLegacyStage(setting); err != nil {
 				return preserved, fmt.Errorf("restore interrupted Codex legacy retirement %s: %w", setting.key, err)
 			}
 		default:
@@ -1939,7 +1986,7 @@ func retireCodexLegacyActivation(configPath string) ([]string, error) {
 	restoreStaged := func() error {
 		for index := len(staged) - 1; index >= 0; index-- {
 			setting := staged[index]
-			if err := renameFileFn(codexLegacyRetirementPath(setting.path), setting.path); err != nil {
+			if err := restoreCodexLegacyStage(setting); err != nil {
 				return fmt.Errorf("restore %s: %w", setting.key, err)
 			}
 		}
@@ -1953,7 +2000,7 @@ func retireCodexLegacyActivation(configPath string) ([]string, error) {
 			return preserved, fmt.Errorf("retire Codex legacy activation %s: ownership changed before staging", setting.key)
 		}
 		stagePath := codexLegacyRetirementPath(setting.path)
-		if err := renameFileFn(setting.path, stagePath); err != nil {
+		if err := linkFileFn(setting.path, stagePath); err != nil {
 			if restoreErr := restoreStaged(); restoreErr != nil {
 				return preserved, fmt.Errorf("stage Codex legacy activation %s: %w; rollback failed: %v", setting.key, err, restoreErr)
 			}
@@ -1965,6 +2012,12 @@ func retireCodexLegacyActivation(configPath string) ([]string, error) {
 				return preserved, fmt.Errorf("retire Codex legacy activation %s: staged content changed; rollback failed: %v", setting.key, restoreErr)
 			}
 			return preserved, fmt.Errorf("retire Codex legacy activation %s: staged content changed and was preserved", setting.key)
+		}
+		if err := removeFileFn(setting.path); err != nil {
+			if restoreErr := restoreStaged(); restoreErr != nil {
+				return preserved, fmt.Errorf("stage Codex legacy activation %s: remove original: %w; rollback failed: %v", setting.key, err, restoreErr)
+			}
+			return preserved, fmt.Errorf("stage Codex legacy activation %s: remove original: %w", setting.key, err)
 		}
 	}
 
@@ -1981,6 +2034,12 @@ func retireCodexLegacyActivation(configPath string) ([]string, error) {
 				return preserved, fmt.Errorf("retire Codex legacy activation %s: staged content changed; rollback failed: %v", setting.key, restoreErr)
 			}
 			return preserved, fmt.Errorf("retire Codex legacy activation %s: staged content changed before publish", setting.key)
+		}
+		if _, err := os.Lstat(setting.path); !os.IsNotExist(err) {
+			if restoreErr := restoreStaged(); restoreErr != nil {
+				return preserved, fmt.Errorf("retire Codex legacy activation %s: original path was recreated; rollback failed: %v", setting.key, restoreErr)
+			}
+			return preserved, fmt.Errorf("retire Codex legacy activation %s: original path was recreated and preserved", setting.key)
 		}
 	}
 	if err := atomicWriteFileFn(configPath, []byte(updated), 0644); err != nil {
@@ -2003,6 +2062,37 @@ func retireCodexLegacyActivation(configPath string) ([]string, error) {
 
 func codexLegacyRetirementPath(path string) string {
 	return path + ".engram-retiring"
+}
+
+func restoreCodexLegacyStage(setting codexLegacySetting) error {
+	stagePath := codexLegacyRetirementPath(setting.path)
+	stageInfo, stageErr := os.Lstat(stagePath)
+	if stageErr != nil {
+		return stageErr
+	}
+	if !stageInfo.Mode().IsRegular() {
+		return fmt.Errorf("staged path is not a regular file")
+	}
+	originalInfo, originalErr := os.Lstat(setting.path)
+	if originalErr == nil {
+		if os.SameFile(stageInfo, originalInfo) {
+			return removeFileFn(stagePath)
+		}
+		if known, _, _ := codexLegacyFileOwned(stagePath, setting.content); known {
+			return removeFileFn(stagePath)
+		}
+		return fmt.Errorf("original and staged paths both contain unrecognized state")
+	}
+	if !os.IsNotExist(originalErr) {
+		return originalErr
+	}
+	if err := linkFileFn(stagePath, setting.path); err != nil {
+		return err
+	}
+	if err := removeFileFn(stagePath); err != nil {
+		return fmt.Errorf("remove restored stage: %w", err)
+	}
+	return nil
 }
 
 func codexLegacyFileOwned(path, content string) (known bool, readErr, statErr error) {
@@ -2566,7 +2656,8 @@ func codexPreservedLegacySettings(configPath string) []string {
 			continue
 		}
 		generated, readErr := readFileFn(setting.path)
-		if !valid || value != setting.path || readErr != nil || string(generated) != setting.content {
+		info, statErr := os.Lstat(setting.path)
+		if !valid || value != setting.path || readErr != nil || statErr != nil || !info.Mode().IsRegular() || string(generated) != setting.content {
 			preserved = append(preserved, setting.key)
 		}
 	}

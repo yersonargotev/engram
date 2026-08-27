@@ -586,6 +586,76 @@ func TestInstallCodexResumesInterruptedLegacyRetirement(t *testing.T) {
 	assertFileBytes(t, configPath, baseline)
 }
 
+func TestInstallCodexRestoresPrePublishStageBeforeReplacementChecks(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("create Codex config directory: %v", err)
+	}
+	legacyConfig := fmt.Sprintf("model_instructions_file = %q\nexperimental_compact_prompt_file = %q\nmodel = \"gpt-user\"\n",
+		codexInstructionsPath(), codexCompactPromptPath())
+	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
+		t.Fatalf("write owned legacy Codex config: %v", err)
+	}
+	if err := os.WriteFile(codexLegacyRetirementPath(codexInstructionsPath()), []byte(memoryProtocolMarkdown), 0o644); err != nil {
+		t.Fatalf("write simulated pre-publish stage: %v", err)
+	}
+	if err := os.WriteFile(codexCompactPromptPath(), []byte(codexCompactPromptMarkdown), 0o644); err != nil {
+		t.Fatalf("write owned legacy compact prompt: %v", err)
+	}
+	lookPathFn = func(string) (string, error) { return "", errors.New("codex unavailable") }
+
+	result, err := InstallWithOptions("codex", InstallOptions{Development: true})
+	if err != nil {
+		t.Fatalf("setup with unavailable replacement: %v", err)
+	}
+	if result.Complete {
+		t.Fatalf("setup completed without Codex CLI: %+v", result.Checks)
+	}
+	assertFileBytes(t, configPath, []byte(legacyConfig))
+	assertFileBytes(t, codexInstructionsPath(), []byte(memoryProtocolMarkdown))
+	assertFileBytes(t, codexCompactPromptPath(), []byte(codexCompactPromptMarkdown))
+	if _, err := os.Stat(codexLegacyRetirementPath(codexInstructionsPath())); !os.IsNotExist(err) {
+		t.Fatalf("pre-publish recovery left staged instructions: %v", err)
+	}
+}
+
+func TestInstallCodexCompletesPostPublishCleanupBeforeReplacementChecks(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("create Codex config directory: %v", err)
+	}
+	config := []byte("model = \"gpt-user\"\n")
+	if err := os.WriteFile(configPath, config, 0o644); err != nil {
+		t.Fatalf("write post-publish Codex config: %v", err)
+	}
+	stagePath := codexLegacyRetirementPath(codexInstructionsPath())
+	if err := os.WriteFile(stagePath, []byte(memoryProtocolMarkdown), 0o644); err != nil {
+		t.Fatalf("write simulated post-publish stage: %v", err)
+	}
+	lookPathFn = func(string) (string, error) { return "", errors.New("codex unavailable") }
+
+	result, err := InstallWithOptions("codex", InstallOptions{Development: true})
+	if err != nil {
+		t.Fatalf("setup with unavailable replacement: %v", err)
+	}
+	if result.Complete {
+		t.Fatalf("setup completed without Codex CLI: %+v", result.Checks)
+	}
+	assertFileBytes(t, configPath, config)
+	if _, err := os.Stat(stagePath); !os.IsNotExist(err) {
+		t.Fatalf("post-publish recovery left staged instructions: %v", err)
+	}
+	if _, err := os.Stat(codexInstructionsPath()); !os.IsNotExist(err) {
+		t.Fatalf("post-publish recovery restored a retired original: %v", err)
+	}
+}
+
 func TestInstallCodexPreservesLegacyFileChangedDuringRetirement(t *testing.T) {
 	resetSetupSeams(t)
 	home := useTestHome(t)
@@ -608,19 +678,20 @@ func TestInstallCodexPreservesLegacyFileChangedDuringRetirement(t *testing.T) {
 		t.Fatalf("write owned legacy compact prompt: %v", err)
 	}
 
-	realRename := renameFileFn
+	realRemove := removeFileFn
 	modified := []byte(memoryProtocolMarkdown + "\nConcurrent user change.\n")
 	changed := false
-	renameFileFn = func(oldPath, newPath string) error {
-		if !changed && oldPath == codexInstructionsPath() {
-			changed = true
-			if err := os.WriteFile(oldPath, modified, 0o644); err != nil {
+	removeFileFn = func(path string) error {
+		if !changed && path == codexInstructionsPath() {
+			if err := realRemove(path); err != nil {
 				return err
 			}
+			changed = true
+			return os.WriteFile(path, modified, 0o644)
 		}
-		return realRename(oldPath, newPath)
+		return realRemove(path)
 	}
-	if _, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit}); err == nil || !strings.Contains(err.Error(), "staged content changed") {
+	if _, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit}); err == nil || !strings.Contains(err.Error(), "original path was recreated") {
 		t.Fatalf("concurrent modification error = %v", err)
 	}
 	assertFileBytes(t, codexInstructionsPath(), modified)

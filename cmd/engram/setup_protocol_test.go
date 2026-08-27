@@ -45,7 +45,7 @@ func TestCmdSetupProtocolEqualsFormPersistsSlim(t *testing.T) {
 	stubExitWithPanic(t)
 	cfg := testConfig(t)
 
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		return &setup.Result{Agent: agent, Destination: "/tmp/dest", Files: 2}, nil
 	}
 
@@ -65,7 +65,7 @@ func TestCmdSetupProtocolSpaceFormPersistsSlim(t *testing.T) {
 	stubExitWithPanic(t)
 	cfg := testConfig(t)
 
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		return &setup.Result{Agent: agent, Destination: "/tmp/dest", Files: 2}, nil
 	}
 
@@ -85,7 +85,7 @@ func TestCmdSetupProtocolFlagFirstThenSlug(t *testing.T) {
 	stubExitWithPanic(t)
 	cfg := testConfig(t)
 
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		return &setup.Result{Agent: agent, Destination: "/tmp/dest", Files: 2}, nil
 	}
 
@@ -111,7 +111,7 @@ func TestCmdSetupUnknownFlagFallbackForwardsParsedProtocolMode(t *testing.T) {
 	setupSupportedAgents = func() []setup.Agent {
 		return []setup.Agent{{Name: "opencode", Description: "OpenCode", InstallDir: "/tmp/opencode"}}
 	}
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		return &setup.Result{Agent: agent, Destination: "/tmp/opencode", Files: 1}, nil
 	}
 	scanInputLine = func(a ...any) (int, error) {
@@ -145,7 +145,7 @@ func TestCmdSetupUnknownFlagBeforeProtocolStillForwardsMode(t *testing.T) {
 	setupSupportedAgents = func() []setup.Agent {
 		return []setup.Agent{{Name: "opencode", Description: "OpenCode", InstallDir: "/tmp/opencode"}}
 	}
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		return &setup.Result{Agent: agent, Destination: "/tmp/opencode", Files: 1}, nil
 	}
 	scanInputLine = func(a ...any) (int, error) {
@@ -211,7 +211,7 @@ func TestCmdSetupUnknownProtocolValueDefaultsFullWithWarning(t *testing.T) {
 	stubExitWithPanic(t)
 	cfg := testConfig(t)
 
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		return &setup.Result{Agent: agent, Destination: "/tmp/dest", Files: 2}, nil
 	}
 
@@ -240,7 +240,7 @@ func TestCmdSetupProtocolDanglingFlagDefaultsFullWithWarning(t *testing.T) {
 	stubExitWithPanic(t)
 	cfg := testConfig(t)
 
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		return &setup.Result{Agent: agent, Destination: "/tmp/dest", Files: 2}, nil
 	}
 
@@ -267,7 +267,7 @@ func TestCmdSetupDuplicateProtocolFlagLastWins(t *testing.T) {
 	stubExitWithPanic(t)
 	cfg := testConfig(t)
 
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		return &setup.Result{Agent: agent, Destination: "/tmp/dest", Files: 2}, nil
 	}
 
@@ -293,7 +293,7 @@ func TestCmdSetupSlugThenUnknownFlagFallsBackToInteractive(t *testing.T) {
 		return []setup.Agent{{Name: "opencode", Description: "OpenCode", InstallDir: "/tmp/opencode"}}
 	}
 	installedAgent := ""
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		installedAgent = agent
 		return &setup.Result{Agent: agent, Destination: "/tmp/opencode", Files: 1}, nil
 	}
@@ -324,7 +324,7 @@ func TestCmdSetupNoSlugWithProtocolAppliesToSelectedAgent(t *testing.T) {
 	setupSupportedAgents = func() []setup.Agent {
 		return []setup.Agent{{Name: "opencode", Description: "OpenCode", InstallDir: "/tmp/opencode"}}
 	}
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		return &setup.Result{Agent: agent, Destination: "/tmp/opencode", Files: 1}, nil
 	}
 	scanInputLine = func(a ...any) (int, error) {
@@ -365,7 +365,7 @@ func TestCmdSetupWriteReadPathParityUnderEnvDataDir(t *testing.T) {
 		cfg.DataDir = dir
 	}
 
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		return &setup.Result{Agent: agent, Destination: "/tmp/dest", Files: 2}, nil
 	}
 

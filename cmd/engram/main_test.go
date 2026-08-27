@@ -264,7 +264,7 @@ func TestPrintPostInstall(t *testing.T) {
 		{
 			name:    "codex",
 			result:  &setup.Result{Agent: "codex"},
-			expects: []string{"Restart Codex", "~/.codex/config.toml"},
+			expects: []string{"Restart Codex", "plugin, MCP, activation-cue, and verifier checks"},
 		},
 		{
 			name:    "antigravity-cli",

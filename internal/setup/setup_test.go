@@ -17,20 +17,21 @@ func resetSetupSeams(t *testing.T) {
 	oldUserHomeDir := userHomeDir
 	oldLookPathFn := lookPathFn
 	oldRunCommand := runCommand
+	oldGitStatusFn := gitStatusFn
+	oldGitResolveRefFn := gitResolveRefFn
 	oldStatFn := statFn
 	oldOpenCodeReadFile := openCodeReadFile
 	oldOpenCodeWriteFileFn := openCodeWriteFileFn
 	oldReadFileFn := readFileFn
 	oldWriteFileFn := writeFileFn
+	oldAtomicWriteFileFn := atomicWriteFileFn
 	oldJSONMarshalFn := jsonMarshalFn
 	oldJSONMarshalIndentFn := jsonMarshalIndentFn
 	oldInjectOpenCodeMCPFn := injectOpenCodeMCPFn
 	oldInjectOpenCodeTUIPluginFn := injectOpenCodeTUIPluginFn
 	oldInjectGeminiMCPFn := injectGeminiMCPFn
 	oldWriteGeminiSystemPromptFn := writeGeminiSystemPromptFn
-	oldWriteCodexMemoryInstructionFilesFn := writeCodexMemoryInstructionFilesFn
 	oldInjectCodexMCPFn := injectCodexMCPFn
-	oldInjectCodexMemoryConfigFn := injectCodexMemoryConfigFn
 	oldAddClaudeCodeAllowlistFn := addClaudeCodeAllowlistFn
 	oldOsExecutable := osExecutable
 	oldWriteClaudeCodeUserMCPFn := writeClaudeCodeUserMCPFn
@@ -41,20 +42,21 @@ func resetSetupSeams(t *testing.T) {
 		userHomeDir = oldUserHomeDir
 		lookPathFn = oldLookPathFn
 		runCommand = oldRunCommand
+		gitStatusFn = oldGitStatusFn
+		gitResolveRefFn = oldGitResolveRefFn
 		statFn = oldStatFn
 		openCodeReadFile = oldOpenCodeReadFile
 		openCodeWriteFileFn = oldOpenCodeWriteFileFn
 		readFileFn = oldReadFileFn
 		writeFileFn = oldWriteFileFn
+		atomicWriteFileFn = oldAtomicWriteFileFn
 		jsonMarshalFn = oldJSONMarshalFn
 		jsonMarshalIndentFn = oldJSONMarshalIndentFn
 		injectOpenCodeMCPFn = oldInjectOpenCodeMCPFn
 		injectOpenCodeTUIPluginFn = oldInjectOpenCodeTUIPluginFn
 		injectGeminiMCPFn = oldInjectGeminiMCPFn
 		writeGeminiSystemPromptFn = oldWriteGeminiSystemPromptFn
-		writeCodexMemoryInstructionFilesFn = oldWriteCodexMemoryInstructionFilesFn
 		injectCodexMCPFn = oldInjectCodexMCPFn
-		injectCodexMemoryConfigFn = oldInjectCodexMemoryConfigFn
 		addClaudeCodeAllowlistFn = oldAddClaudeCodeAllowlistFn
 		osExecutable = oldOsExecutable
 		writeClaudeCodeUserMCPFn = oldWriteClaudeCodeUserMCPFn
@@ -204,14 +206,15 @@ func TestInstallCodexInjectsTOMLAndIsIdempotent(t *testing.T) {
 		"args = [\"x\"]",
 		"",
 		"[mcp_servers.engram]",
-		"command = \"wrong\"",
-		"args = [\"wrong\"]",
+		"command = \"engram\"",
+		"args = [\"mcp\", \"--tools=agent\"]",
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
 		t.Fatalf("write initial config: %v", err)
 	}
+	stubVerifiedCodexCLI(t, false)
 
-	result, err := Install("codex")
+	result, err := InstallWithOptions("codex", InstallOptions{Development: true})
 	if err != nil {
 		t.Fatalf("install codex: %v", err)
 	}
@@ -272,7 +275,7 @@ func TestInstallCodexInjectsTOMLAndIsIdempotent(t *testing.T) {
 
 	first := readAndAssert()
 
-	if _, err := Install("codex"); err != nil {
+	if _, err := InstallWithOptions("codex", InstallOptions{Development: true}); err != nil {
 		t.Fatalf("second install should be idempotent: %v", err)
 	}
 
@@ -299,25 +302,15 @@ func TestInstallCodexInjectsTOMLAndIsIdempotent(t *testing.T) {
 }
 
 // TestInstallCodexPluginCLIPresent verifies that when the codex CLI is in PATH,
-// installCodex() runs marketplace add + plugin add with the correct arguments.
+// the development installer runs marketplace add + plugin add with the correct arguments.
 func TestInstallCodexPluginCLIPresent(t *testing.T) {
 	resetSetupSeams(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	var commands [][]string
-	lookPathFn = func(file string) (string, error) {
-		if file == "codex" {
-			return "/usr/local/bin/codex", nil
-		}
-		return "", errors.New("not found")
-	}
-	runCommand = func(name string, args ...string) ([]byte, error) {
-		commands = append(commands, append([]string{name}, args...))
-		return []byte("ok"), nil
-	}
+	commandsRef := stubVerifiedCodexCLI(t, false)
 
-	result, err := Install("codex")
+	result, err := InstallWithOptions("codex", InstallOptions{Development: true})
 	if err != nil {
 		t.Fatalf("Install(codex) failed: %v", err)
 	}
@@ -327,6 +320,7 @@ func TestInstallCodexPluginCLIPresent(t *testing.T) {
 	if result.Files != 3 {
 		t.Fatalf("expected 3 files written, got %d", result.Files)
 	}
+	commands := *commandsRef
 
 	// Verify marketplace add was called with the right args.
 	var foundMarketplace bool
@@ -358,7 +352,7 @@ func TestInstallCodexPluginCLIPresent(t *testing.T) {
 }
 
 // TestInstallCodexPluginCLIAbsent verifies that when the codex CLI is not in
-// PATH, installCodex() does not fail — MCP config is still written and Files==3.
+// PATH, development setup reports a partial result without mutating Codex config.
 func TestInstallCodexPluginCLIAbsent(t *testing.T) {
 	resetSetupSeams(t)
 	home := t.TempDir()
@@ -372,65 +366,45 @@ func TestInstallCodexPluginCLIAbsent(t *testing.T) {
 		return nil, nil
 	}
 
-	result, err := Install("codex")
+	result, err := InstallWithOptions("codex", InstallOptions{Development: true})
 	if err != nil {
 		t.Fatalf("Install(codex) should succeed even without codex CLI, got: %v", err)
 	}
 	if result.Agent != "codex" {
 		t.Fatalf("unexpected agent: %q", result.Agent)
 	}
-	if result.Files != 3 {
-		t.Fatalf("expected 3 files written, got %d", result.Files)
+	if result.Files != 0 {
+		t.Fatalf("expected no files written before plugin verification, got %d", result.Files)
+	}
+	pluginCheck, ok := result.Check("plugin")
+	if !ok || pluginCheck.Status != CheckMissing {
+		t.Fatalf("plugin check = %+v, want missing", pluginCheck)
 	}
 
-	// Verify the TOML config was still written.
+	// Verify setup did not claim a local configuration without the required plugin.
 	configPath := filepath.Join(home, ".codex", "config.toml")
-	raw, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("expected config.toml to be written: %v", err)
-	}
-	if !strings.Contains(string(raw), "[mcp_servers.engram]") {
-		t.Fatalf("expected [mcp_servers.engram] in config, got:\n%s", raw)
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("unverified setup wrote config.toml: %v", err)
 	}
 }
 
-// TestInstallCodexPluginIdempotentAlreadyInOutput verifies that when
-// marketplace add or plugin add returns an error whose output contains "already",
-// the install is still treated as successful (idempotent).
-func TestInstallCodexPluginIdempotentAlreadyInOutput(t *testing.T) {
+// TestInstallCodexPluginIdempotentAlreadyAdded verifies the Codex JSON contract
+// used by byte-stable reruns of an already-configured marketplace.
+func TestInstallCodexPluginIdempotentAlreadyAdded(t *testing.T) {
 	resetSetupSeams(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	commands := stubVerifiedCodexCLI(t, false)
 
-	lookPathFn = func(file string) (string, error) {
-		if file == "codex" {
-			return "/usr/local/bin/codex", nil
-		}
-		return "", errors.New("not found")
-	}
-	calls := 0
-	runCommand = func(name string, args ...string) ([]byte, error) {
-		calls++
-		if calls == 1 {
-			// marketplace add returns "already exists" with a non-zero exit
-			return []byte("marketplace already added"), errors.New("exit 1")
-		}
-		if calls == 2 {
-			// plugin add returns "already installed" with a non-zero exit
-			return []byte("plugin already installed"), errors.New("exit 1")
-		}
-		return []byte("ok"), nil
-	}
-
-	result, err := Install("codex")
+	result, err := InstallWithOptions("codex", InstallOptions{Development: true})
 	if err != nil {
 		t.Fatalf("Install(codex) should succeed on already-installed outputs, got: %v", err)
 	}
 	if result.Files != 3 {
 		t.Fatalf("expected 3 files written, got %d", result.Files)
 	}
-	if calls < 2 {
-		t.Fatalf("expected at least 2 codex CLI calls, got %d", calls)
+	if len(*commands) != 2 {
+		t.Fatalf("expected exactly 2 codex CLI calls, got %d", len(*commands))
 	}
 }
 
@@ -1799,40 +1773,33 @@ func TestInstallGeminiCLIErrorPropagation(t *testing.T) {
 }
 
 func TestInstallCodexErrorPropagation(t *testing.T) {
-	t.Run("write instruction files fails", func(t *testing.T) {
+	t.Run("write legacy activation fails", func(t *testing.T) {
 		resetSetupSeams(t)
-		writeCodexMemoryInstructionFilesFn = func() (string, error) {
-			return "", errors.New("instructions failed")
+		useTestHome(t)
+		stubVerifiedCodexCLI(t, false)
+		injectCodexMCPFn = func(string) error { return nil }
+		atomicWriteFileFn = func(string, []byte, os.FileMode) error {
+			return errors.New("activation failed")
 		}
 
-		_, err := installCodex()
-		if err == nil || !strings.Contains(err.Error(), "instructions failed") {
-			t.Fatalf("expected instructions failure, got %v", err)
+		_, err := installCodexWithOptions(InstallOptions{Development: true})
+		if err == nil || !strings.Contains(err.Error(), "activation failed") {
+			t.Fatalf("expected activation failure, got %v", err)
 		}
 	})
 
 	t.Run("inject mcp fails", func(t *testing.T) {
 		resetSetupSeams(t)
-		writeCodexMemoryInstructionFilesFn = func() (string, error) { return "/tmp/instructions", nil }
+		useTestHome(t)
+		stubVerifiedCodexCLI(t, false)
 		injectCodexMCPFn = func(string) error { return errors.New("mcp failed") }
 
-		_, err := installCodex()
+		_, err := installCodexWithOptions(InstallOptions{Development: true})
 		if err == nil || !strings.Contains(err.Error(), "mcp failed") {
 			t.Fatalf("expected mcp failure, got %v", err)
 		}
 	})
 
-	t.Run("inject memory config fails", func(t *testing.T) {
-		resetSetupSeams(t)
-		writeCodexMemoryInstructionFilesFn = func() (string, error) { return "/tmp/instructions", nil }
-		injectCodexMCPFn = func(string) error { return nil }
-		injectCodexMemoryConfigFn = func(string, string, string) error { return errors.New("memory config failed") }
-
-		_, err := installCodex()
-		if err == nil || !strings.Contains(err.Error(), "memory config failed") {
-			t.Fatalf("expected memory config failure, got %v", err)
-		}
-	})
 }
 
 func TestGeminiAndCodexHelpersErrorPaths(t *testing.T) {
@@ -2046,53 +2013,7 @@ func TestGeminiAndCodexHelpersErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("injectCodexMemoryConfig read error", func(t *testing.T) {
-		configPath := filepath.Join(t.TempDir(), "config.toml")
-		if err := os.MkdirAll(configPath, 0755); err != nil {
-			t.Fatalf("make config path directory: %v", err)
-		}
-
-		err := injectCodexMemoryConfig(configPath, "/tmp/instructions.md", "/tmp/compact.md")
-		if err == nil || !strings.Contains(err.Error(), "read config") {
-			t.Fatalf("expected read config error, got %v", err)
-		}
-	})
-
-	t.Run("injectCodexMemoryConfig creates missing config", func(t *testing.T) {
-		configPath := filepath.Join(t.TempDir(), "config.toml")
-
-		err := injectCodexMemoryConfig(configPath, "/tmp/instructions.md", "/tmp/compact.md")
-		if err != nil {
-			t.Fatalf("injectCodexMemoryConfig failed: %v", err)
-		}
-
-		raw, err := os.ReadFile(configPath)
-		if err != nil {
-			t.Fatalf("read config: %v", err)
-		}
-		text := string(raw)
-		if !strings.Contains(text, "model_instructions_file = \"/tmp/instructions.md\"") {
-			t.Fatalf("expected model_instructions_file in config, got:\n%s", text)
-		}
-		if !strings.Contains(text, "experimental_compact_prompt_file = \"/tmp/compact.md\"") {
-			t.Fatalf("expected compact prompt file in config, got:\n%s", text)
-		}
-	})
-
-	t.Run("injectCodexMemoryConfig write error", func(t *testing.T) {
-		resetSetupSeams(t)
-		configPath := filepath.Join(t.TempDir(), "config.toml")
-		writeFileFn = func(string, []byte, os.FileMode) error {
-			return errors.New("write config boom")
-		}
-
-		err := injectCodexMemoryConfig(configPath, "/tmp/instructions.md", "/tmp/compact.md")
-		if err == nil || !strings.Contains(err.Error(), "write config") {
-			t.Fatalf("expected write config error, got %v", err)
-		}
-	})
-
-	t.Run("upsertCodexEngramBlock replaces section before another section", func(t *testing.T) {
+	t.Run("upsertCodexEngramBlock preserves an unrecognized section", func(t *testing.T) {
 		input := strings.Join([]string{
 			"[mcp_servers.engram]",
 			"command = \"wrong\"",
@@ -2103,11 +2024,8 @@ func TestGeminiAndCodexHelpersErrorPaths(t *testing.T) {
 		}, "\n")
 
 		output := upsertCodexEngramBlock(input)
-		if strings.Count(output, "[mcp_servers.engram]") != 1 {
-			t.Fatalf("expected one engram block, got:\n%s", output)
-		}
-		if !strings.Contains(output, "[mcp_servers.other]") {
-			t.Fatalf("expected other section preserved, got:\n%s", output)
+		if output != input {
+			t.Fatalf("unrecognized MCP state changed\ngot:\n%s\nwant:\n%s", output, input)
 		}
 	})
 
@@ -2119,6 +2037,24 @@ func TestGeminiAndCodexHelpersErrorPaths(t *testing.T) {
 		output := upsertCodexEngramBlock("\n\n")
 		if output != codexEngramBlock+"\n" {
 			t.Fatalf("unexpected output for empty content:\n%s", output)
+		}
+	})
+
+	t.Run("upsertCodexEngramBlock recognizes a table header with a comment", func(t *testing.T) {
+		input := "[mcp_servers.engram] # user note\ncommand = \"engram\"\nargs = [\"mcp\", \"--tools=agent\"]\n"
+		if output := upsertCodexEngramBlock(input); output != input {
+			t.Fatalf("commented MCP table changed or duplicated\ngot:  %q\nwant: %q", output, input)
+		}
+	})
+
+	t.Run("upsertTopLevelTOMLString does not replace a nested key", func(t *testing.T) {
+		input := "[profile]\nmodel_instructions_file = \"nested-user-value\"\n"
+		output := upsertTopLevelTOMLString(input, "model_instructions_file", "/tmp/engram.md")
+		if !strings.HasPrefix(output, "model_instructions_file = \"/tmp/engram.md\"\n\n[profile]") {
+			t.Fatalf("top-level key was not inserted before tables:\n%s", output)
+		}
+		if !strings.Contains(output, "model_instructions_file = \"nested-user-value\"") {
+			t.Fatalf("nested user key was replaced:\n%s", output)
 		}
 	})
 }
@@ -2202,45 +2138,13 @@ func TestAdditionalHelperBranches(t *testing.T) {
 	t.Run("injectCodexMCP write error", func(t *testing.T) {
 		resetSetupSeams(t)
 		configPath := filepath.Join(t.TempDir(), "codex", "config.toml")
-		writeFileFn = func(string, []byte, os.FileMode) error {
+		atomicWriteFileFn = func(string, []byte, os.FileMode) error {
 			return errors.New("write codex boom")
 		}
 
 		err := injectCodexMCP(configPath)
 		if err == nil || !strings.Contains(err.Error(), "write config") {
 			t.Fatalf("expected write config error, got %v", err)
-		}
-	})
-
-	t.Run("writeCodexMemoryInstructionFiles instructions write error", func(t *testing.T) {
-		resetSetupSeams(t)
-		home := useTestHome(t)
-		runtimeGOOS = "linux"
-
-		instructionsPath := filepath.Join(home, ".codex", "engram-instructions.md")
-		if err := os.MkdirAll(instructionsPath, 0755); err != nil {
-			t.Fatalf("create instructions path as dir: %v", err)
-		}
-
-		_, err := writeCodexMemoryInstructionFiles()
-		if err == nil || !strings.Contains(err.Error(), "write codex instructions") {
-			t.Fatalf("expected instructions write error, got %v", err)
-		}
-	})
-
-	t.Run("writeCodexMemoryInstructionFiles compact write error", func(t *testing.T) {
-		resetSetupSeams(t)
-		home := useTestHome(t)
-		runtimeGOOS = "linux"
-
-		compactPath := filepath.Join(home, ".codex", "engram-compact-prompt.md")
-		if err := os.MkdirAll(compactPath, 0755); err != nil {
-			t.Fatalf("create compact path as dir: %v", err)
-		}
-
-		_, err := writeCodexMemoryInstructionFiles()
-		if err == nil || !strings.Contains(err.Error(), "write codex compact prompt") {
-			t.Fatalf("expected compact prompt write error, got %v", err)
 		}
 	})
 
@@ -2272,20 +2176,6 @@ func TestAdditionalHelperBranches(t *testing.T) {
 		}
 	})
 
-	t.Run("writeCodexMemoryInstructionFiles create dir error", func(t *testing.T) {
-		resetSetupSeams(t)
-		blocked := filepath.Join(t.TempDir(), "home-as-file")
-		if err := os.WriteFile(blocked, []byte("x"), 0644); err != nil {
-			t.Fatalf("write home file: %v", err)
-		}
-		userHomeDir = func() (string, error) { return blocked, nil }
-		runtimeGOOS = "linux"
-
-		_, err := writeCodexMemoryInstructionFiles()
-		if err == nil || !strings.Contains(err.Error(), "create codex instructions dir") {
-			t.Fatalf("expected create instructions dir error, got %v", err)
-		}
-	})
 }
 
 func TestClaudeCodePermissionTools(t *testing.T) {

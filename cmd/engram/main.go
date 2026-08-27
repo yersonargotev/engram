@@ -53,13 +53,21 @@ import (
 // version is set via ldflags at build time by goreleaser.
 // Falls back to "dev" for local builds; init() tries Go module info first.
 var version = "dev"
+var commit = "dev"
 
 func init() {
-	if version != "dev" {
-		return
-	}
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		version = strings.TrimPrefix(info.Main.Version, "v")
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if version == "dev" && info.Main.Version != "" && info.Main.Version != "(devel)" {
+			version = strings.TrimPrefix(info.Main.Version, "v")
+		}
+		if commit == "dev" {
+			for _, setting := range info.Settings {
+				if setting.Key == "vcs.revision" && setting.Value != "" {
+					commit = setting.Value
+					break
+				}
+			}
+		}
 	}
 }
 
@@ -97,7 +105,7 @@ var (
 	checkForUpdates = versioncheck.CheckLatest
 
 	setupSupportedAgents        = setup.SupportedAgents
-	setupInstallAgent           = setup.Install
+	setupInstallAgent           = setup.InstallWithOptions
 	setupAddClaudeCodeAllowlist = setup.AddClaudeCodeAllowlist
 	scanInputLine               = fmt.Scanln
 
@@ -2855,6 +2863,7 @@ func cmdSetup(cfg store.Config) {
 		slugSeen        bool
 		extraBareSeen   bool
 		unknownFlagSeen bool
+		development     bool
 	)
 
 	for i := 0; i < len(args); i++ {
@@ -2878,6 +2887,8 @@ func cmdSetup(cfg store.Config) {
 		case strings.HasPrefix(token, "--protocol="):
 			protocolRaw = strings.TrimPrefix(token, "--protocol=")
 			protocolFlag = true
+		case token == "--development":
+			development = true
 		case strings.HasPrefix(token, "-"):
 			// Unrecognized hyphen-prefixed token: record it but keep
 			// scanning so a --protocol appearing later is still parsed
@@ -2898,7 +2909,7 @@ func cmdSetup(cfg store.Config) {
 		printSetupUsage()
 		return
 	case extraBareSeen:
-		fmt.Fprintln(os.Stderr, "usage: engram setup [<agent>] [--protocol=slim|full]")
+		fmt.Fprintln(os.Stderr, "usage: engram setup [<agent>] [--protocol=slim|full] [--development]")
 		exitFunc(1)
 		return
 	case unknownFlagSeen:
@@ -2910,18 +2921,17 @@ func cmdSetup(cfg store.Config) {
 		if protocolFlag {
 			mode = resolveProtocolModeFlag(protocolRaw)
 		}
-		cmdSetupInteractive(cfg, mode)
+		cmdSetupInteractive(cfg, mode, setup.InstallOptions{Version: version, Commit: commit, Development: development})
 		return
 	case slugSeen:
-		result, err := setupInstallAgent(slug)
+		result, err := setupInstallAgent(slug, setup.InstallOptions{Version: version, Commit: commit, Development: development})
 		if err != nil {
 			fatal(err)
 		}
 		if protocolFlag {
 			applyProtocolMode(cfg, slug, resolveProtocolModeFlag(protocolRaw))
 		}
-		fmt.Printf("✓ Installed %s plugin (%d files)\n", result.Agent, result.Files)
-		fmt.Printf("  → %s\n", result.Destination)
+		printSetupResult(result)
 		printPostInstall(result)
 	default:
 		// No slug: interactive menu. Mode (if any) applies to whichever
@@ -2930,14 +2940,14 @@ func cmdSetup(cfg store.Config) {
 		if protocolFlag {
 			mode = resolveProtocolModeFlag(protocolRaw)
 		}
-		cmdSetupInteractive(cfg, mode)
+		cmdSetupInteractive(cfg, mode, setup.InstallOptions{Version: version, Commit: commit, Development: development})
 	}
 }
 
 // cmdSetupInteractive renders the agent picker and installs the chosen
 // agent. mode is the already-resolved --protocol value ("slim"/"full") from
 // a slug-less invocation, or "" when --protocol was not given at all.
-func cmdSetupInteractive(cfg store.Config, mode string) {
+func cmdSetupInteractive(cfg store.Config, mode string, options setup.InstallOptions) {
 	agents := setupSupportedAgents()
 
 	fmt.Println("engram setup — Install agent plugin")
@@ -2963,7 +2973,7 @@ func cmdSetupInteractive(cfg store.Config, mode string) {
 	selected := agents[choice-1]
 	fmt.Printf("\nInstalling %s plugin...\n", selected.Name)
 
-	result, err := setupInstallAgent(selected.Name)
+	result, err := setupInstallAgent(selected.Name, options)
 	if err != nil {
 		fatal(err)
 	}
@@ -2971,16 +2981,36 @@ func cmdSetupInteractive(cfg store.Config, mode string) {
 		applyProtocolMode(cfg, selected.Name, mode)
 	}
 
-	fmt.Printf("✓ Installed %s plugin (%d files)\n", result.Agent, result.Files)
-	fmt.Printf("  → %s\n", result.Destination)
+	printSetupResult(result)
 	printPostInstall(result)
+}
+
+func printSetupResult(result *setup.Result) {
+	if result.Agent != "codex" || len(result.Checks) == 0 {
+		fmt.Printf("✓ Installed %s plugin (%d files)\n", result.Agent, result.Files)
+		fmt.Printf("  → %s\n", result.Destination)
+		return
+	}
+
+	if result.Complete {
+		fmt.Printf("✓ Codex setup complete (%d files changed)\n", result.Files)
+	} else {
+		fmt.Printf("⚠ Codex setup incomplete (%d files changed)\n", result.Files)
+	}
+	fmt.Printf("  → %s\n", result.Destination)
+	for _, check := range result.Checks {
+		fmt.Printf("  - %s: %s — %s\n", check.Capability, check.Status, check.Detail)
+	}
+	if len(result.Preserved) > 0 {
+		fmt.Printf("  - preserved: %s\n", strings.Join(result.Preserved, ", "))
+	}
 }
 
 // printSetupUsage prints `engram setup --help` output. Its Flags section
 // MUST contain the literal "--protocol" (Guarantee 1); it must never read
 // stdin (Guarantee 2 — safe under a detached/non-TTY stdin).
 func printSetupUsage() {
-	fmt.Println("usage: engram setup [<agent>] [--protocol=slim|full]")
+	fmt.Println("usage: engram setup [<agent>] [--protocol=slim|full] [--development]")
 	fmt.Println()
 	fmt.Println("Install an agent plugin (claude-code, opencode, codex, ...).")
 	fmt.Println("Without <agent>, shows an interactive menu.")
@@ -2991,6 +3021,7 @@ func printSetupUsage() {
 	fmt.Println("                          missing values fall back to full with a warning.")
 	fmt.Println("                          slim currently only takes effect for claude-code,")
 	fmt.Println("                          and only when the installed engram is >= 1.4.0.")
+	fmt.Println("  --development           Allow Codex setup to follow the moving main branch.")
 	fmt.Println("  --help, -h              Show this help and exit.")
 }
 

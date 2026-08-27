@@ -357,7 +357,7 @@ Then reload your shell (`source ~/.bashrc`) and re-run the install.
 
 ## Gemini CLI
 
-Recommended: one command to set up MCP + compaction recovery instructions:
+Recommended: one command to set up Gemini MCP and compaction recovery:
 
 ```bash
 engram setup gemini-cli
@@ -394,22 +394,37 @@ gemini mcp add engram engram mcp
 
 ## Codex
 
-Recommended: one command to set up MCP + compaction recovery instructions:
+Recommended: use a released Engram binary to install and verify the matching Codex integration:
 
 ```bash
 engram setup codex
 ```
 
-`engram setup codex` now does four things:
+Stable setup is tied to the Engram binary that runs it. The command derives a release tag from the binary version, installs the marketplace from `https://github.com/yersonargotev/engram.git`, and verifies that the checked-out marketplace `HEAD` is the exact commit embedded in that binary. It never follows a moving branch in stable mode.
 
-- Registers `[mcp_servers.engram]` in `~/.codex/config.toml` (Windows: `%APPDATA%\codex\config.toml`)
-- Writes `~/.codex/engram-instructions.md` with the Engram Memory Protocol
-- Writes `~/.codex/engram-compact-prompt.md` and points `experimental_compact_prompt_file` to it, so compaction output includes a required memory-save instruction
-- Best-effort installs the Codex plugin with `codex plugin marketplace add yersonargotev/engram --ref main` and `codex plugin add engram@engram`
+The command reports four independent capabilities:
 
-> `engram setup codex` automatically writes the full Memory Protocol to `~/.codex/engram-instructions.md` and a compaction recovery prompt to `~/.codex/engram-compact-prompt.md`. No additional configuration needed.
+- `plugin`: the marketplace authority, release commit, and installed plugin identity are verified.
+- `mcp`: both the plugin MCP manifest and `[mcp_servers.engram]` are valid. Homebrew installs use the stable `bin/engram` symlink instead of a versioned Cellar or Caskroom path.
+- `activation-cue`: the installed plugin provides a verifiable canonical model-visible cue. Until that capability is present, this check remains `missing`; legacy instruction activation stays in place.
+- `verifier`: the installed plugin provides a non-empty `Stop` verifier.
 
-The Codex plugin marks the Engram session as ended only when Codex emits `SessionEnd`, not after each turn. The hook uses bounded, fail-open adapters on Unix and native Windows so an unavailable local server never blocks Codex shutdown.
+Setup is complete only when all four checks are `ready`. If the Codex CLI, plugin, MCP manifest, activation cue, or verifier is absent, the command reports an incomplete result instead of claiming success.
+
+### Ownership and reruns
+
+Engram changes Codex state only when it can attribute that state to its known generated value, expected path, and generated content. Custom or unrecognized marketplace, plugin, instruction, or compact-prompt state is preserved byte-for-byte and named in the result. Engram does not edit shared `AGENTS.md` or `CLAUDE.md` files, and this setup does not retire legacy activation files.
+
+Writes use atomic replacement. A successful rerun is byte-stable, does not create duplicate MCP blocks, and can recover after an interrupted first run.
+An owned transaction marker makes marketplace upgrades restartable across interruptions between the ref change, marketplace refresh, and plugin installation; Engram removes it only after the requested plugin tree is verified.
+
+For local plugin development only, explicitly opt into the moving `main` branch:
+
+```bash
+engram setup codex --development
+```
+
+Stable builds without a valid release version and exact commit refuse to mutate Codex state. If the Codex CLI is unavailable, no local Codex setup files are changed; install Codex and rerun the same stable command.
 
 Manual alternative: add to your `~/.codex/config.toml` (Windows: `%APPDATA%\codex\config.toml`):
 

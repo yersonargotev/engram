@@ -248,7 +248,7 @@ func stubRuntimeHooks(t *testing.T) {
 	newTeaProgram = func(tea.Model, ...tea.ProgramOption) *tea.Program { return &tea.Program{} }
 	runTeaProgram = func(*tea.Program) (tea.Model, error) { return nil, nil }
 	setupSupportedAgents = setup.SupportedAgents
-	setupInstallAgent = setup.Install
+	setupInstallAgent = setup.InstallWithOptions
 	scanInputLine = fmt.Scanln
 	storeTimeline = func(s *store.Store, observationID int64, before, after int) (*store.TimelineResult, error) {
 		return s.Timeline(observationID, before, after)
@@ -2630,7 +2630,7 @@ func TestCmdSetupDirectAndInteractive(t *testing.T) {
 	stubExitWithPanic(t)
 	cfg := testConfig(t)
 
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		if agent == "broken" {
 			return nil, errors.New("install failed")
 		}
@@ -2864,7 +2864,7 @@ func TestMainDispatchRemainingCommands(t *testing.T) {
 		t.Fatalf("write admission input: %v", err)
 	}
 
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		return &setup.Result{Agent: agent, Destination: "/tmp/dest", Files: 1}, nil
 	}
 
@@ -4006,7 +4006,7 @@ func TestCmdSetupHyphenArgFallsBackToInteractive(t *testing.T) {
 	setupSupportedAgents = func() []setup.Agent {
 		return []setup.Agent{{Name: "codex", Description: "Codex", InstallDir: "/tmp/codex"}}
 	}
-	setupInstallAgent = func(agent string) (*setup.Result, error) {
+	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		return &setup.Result{Agent: agent, Destination: "/tmp/codex", Files: 1}, nil
 	}
 	scanInputLine = func(a ...any) (int, error) {
@@ -4217,7 +4217,7 @@ func TestCommandErrorSeamsAndUncoveredBranches(t *testing.T) {
 			*p = "1"
 			return 1, nil
 		}
-		setupInstallAgent = func(string) (*setup.Result, error) {
+		setupInstallAgent = func(string, setup.InstallOptions) (*setup.Result, error) {
 			return nil, errors.New("forced setup error")
 		}
 

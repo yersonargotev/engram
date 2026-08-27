@@ -14,17 +14,25 @@
 package setup
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
+	atomicfile "github.com/natefinch/atomic"
 	"github.com/yersonargotev/engram/internal/mcp"
+	"golang.org/x/mod/module"
+	"golang.org/x/mod/semver"
 )
 
 var (
@@ -35,24 +43,29 @@ var (
 	runCommand   = func(name string, args ...string) ([]byte, error) {
 		return exec.Command(name, args...).CombinedOutput()
 	}
+	gitStatusFn = func(root string) ([]byte, error) {
+		return exec.Command("git", "-C", root, "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "--", ".agents/plugins/marketplace.json", "plugin/codex").CombinedOutput()
+	}
+	gitResolveRefFn = func(root, ref string) ([]byte, error) {
+		return exec.Command("git", "-C", root, "rev-parse", "--verify", ref+"^{commit}").CombinedOutput()
+	}
 	openCodeReadFile = func(path string) ([]byte, error) {
 		return openCodeFS.ReadFile(path)
 	}
-	statFn                             = os.Stat
-	openCodeWriteFileFn                = os.WriteFile
-	readFileFn                         = os.ReadFile
-	writeFileFn                        = os.WriteFile
-	jsonMarshalFn                      = json.Marshal
-	jsonMarshalIndentFn                = json.MarshalIndent
-	injectOpenCodeMCPFn                = injectOpenCodeMCP
-	injectOpenCodeTUIPluginFn          = injectOpenCodeTUIPlugin
-	injectGeminiMCPFn                  = injectGeminiMCP
-	writeGeminiSystemPromptFn          = writeGeminiSystemPrompt
-	writeCodexMemoryInstructionFilesFn = writeCodexMemoryInstructionFiles
-	injectCodexMCPFn                   = injectCodexMCP
-	injectCodexMemoryConfigFn          = injectCodexMemoryConfig
-	addClaudeCodeAllowlistFn           = AddClaudeCodeAllowlist
-	writeClaudeCodeUserMCPFn           = writeClaudeCodeUserMCP
+	statFn                    = os.Stat
+	openCodeWriteFileFn       = os.WriteFile
+	readFileFn                = os.ReadFile
+	writeFileFn               = os.WriteFile
+	atomicWriteFileFn         = writeFileAtomic
+	jsonMarshalFn             = json.Marshal
+	jsonMarshalIndentFn       = json.MarshalIndent
+	injectOpenCodeMCPFn       = injectOpenCodeMCP
+	injectOpenCodeTUIPluginFn = injectOpenCodeTUIPlugin
+	injectGeminiMCPFn         = injectGeminiMCP
+	writeGeminiSystemPromptFn = writeGeminiSystemPrompt
+	injectCodexMCPFn          = injectCodexMCP
+	addClaudeCodeAllowlistFn  = AddClaudeCodeAllowlist
+	writeClaudeCodeUserMCPFn  = writeClaudeCodeUserMCP
 
 	// resolveMiseNodeVersionFn resolves the active Node version managed by mise.
 	// It runs "mise current node" and returns the result as a "node@X.Y.Z" specifier.
@@ -76,6 +89,46 @@ type Result struct {
 	Destination      string
 	Files            int
 	TUIPluginEnabled bool
+	Complete         bool
+	Checks           []CapabilityCheck
+	Preserved        []string
+}
+
+// CheckStatus describes one independently observable setup capability.
+type CheckStatus string
+
+const (
+	CheckReady     CheckStatus = "ready"
+	CheckMissing   CheckStatus = "missing"
+	CheckPreserved CheckStatus = "preserved"
+	CheckFailed    CheckStatus = "failed"
+)
+
+// CapabilityCheck reports whether one setup capability is ready without
+// collapsing partial installation into a misleading success state.
+type CapabilityCheck struct {
+	Capability string
+	Status     CheckStatus
+	Detail     string
+}
+
+// Check returns the named capability check when the installer reported it.
+func (r *Result) Check(capability string) (CapabilityCheck, bool) {
+	for _, check := range r.Checks {
+		if check.Capability == capability {
+			return check, true
+		}
+	}
+	return CapabilityCheck{}, false
+}
+
+// InstallOptions describes the release identity used by setup adapters that
+// install Git-backed assets. Stable setup requires both Version and Commit;
+// Development explicitly opts into the moving main branch.
+type InstallOptions struct {
+	Version     string
+	Commit      string
+	Development bool
 }
 
 const claudeCodeMarketplace = "yersonargotev/engram"
@@ -256,9 +309,15 @@ func SupportedAgents() []Agent {
 // Install installs the plugin for the given agent by looking it up in the
 // registry and running its adapter (a bespoke installer or the generic driver).
 func Install(agentName string) (*Result, error) {
+	return InstallWithOptions(agentName, InstallOptions{})
+}
+
+// InstallWithOptions installs an agent integration using the supplied build
+// identity. Non-Git-backed adapters ignore the release-specific options.
+func InstallWithOptions(agentName string, options InstallOptions) (*Result, error) {
 	for _, a := range agentAdapters() {
 		if a.slug == agentName {
-			return installFromAdapter(a)
+			return installFromAdapter(a, options)
 		}
 	}
 	return nil, fmt.Errorf("unknown agent: %q (supported: %s)", agentName, strings.Join(supportedSlugs(), ", "))
@@ -1089,23 +1148,26 @@ func resolveEngramCommand() string {
 // derived stable symlink does not exist on disk it falls back to the bare
 // "engram" name so the command still resolves via PATH.
 func stableHomebrewEngramCommand(exe string) (string, bool) {
-	const marker = "/Cellar/engram/"
 	clean := filepath.ToSlash(filepath.Clean(exe))
-	idx := strings.Index(clean, marker)
-	if idx < 0 {
-		return "", false
-	}
 	base := strings.ToLower(filepath.Base(clean))
 	if base != "engram" && base != "engram.exe" {
 		return "", false
 	}
-	// Everything before "/Cellar/" is the brew prefix, e.g. /opt/homebrew or
-	// /home/linuxbrew/.linuxbrew. The bin symlink lives directly under it.
-	stable := clean[:idx] + "/bin/engram"
-	if _, err := statFn(stable); err == nil {
-		return filepath.FromSlash(stable), true
+
+	for _, marker := range []string{"/Cellar/engram/", "/Caskroom/engram/"} {
+		idx := strings.Index(clean, marker)
+		if idx < 0 {
+			continue
+		}
+		// Everything before the Cellar/Caskroom marker is the brew prefix,
+		// whose bin symlink survives package upgrades.
+		stable := clean[:idx] + "/bin/engram"
+		if _, err := statFn(stable); err == nil {
+			return filepath.FromSlash(stable), true
+		}
+		return "engram", true
 	}
-	return "engram", true
+	return "", false
 }
 
 func writeGeminiSystemPrompt() error {
@@ -1154,60 +1216,1306 @@ func removeGeminiEnvOverride() {
 
 // ─── Codex ───────────────────────────────────────────────────────────────────
 
-func installCodex() (*Result, error) {
-	path := codexConfigPath()
-
-	instructionsPath, err := writeCodexMemoryInstructionFilesFn()
+func installCodexWithOptions(options InstallOptions) (*Result, error) {
+	ref, err := codexInstallRef(options)
 	if err != nil {
 		return nil, err
 	}
+	path := codexConfigPath()
+	beforeFiles := captureCodexSetupFiles()
+	result := &Result{
+		Agent:       "codex",
+		Destination: filepath.Dir(path),
+		Preserved:   codexPreservedLegacySettings(path),
+	}
+	transaction, err := loadCodexSetupTransaction(path, ref, options)
+	if err != nil {
+		result.Preserved = appendUnique(result.Preserved, filepath.Base(codexSetupTransactionPath(path)))
+		result.Checks = append(result.Checks, CapabilityCheck{
+			Capability: "plugin",
+			Status:     CheckPreserved,
+			Detail:     "custom or unrecognized interrupted setup state was preserved byte-for-byte: " + err.Error(),
+		})
+		return finishIncompleteCodexSetup(result, beforeFiles), nil
+	}
+	marketplaceState, err := inspectCodexMarketplaceState(path)
+	if err != nil {
+		return nil, err
+	}
+	if marketplaceState.Preserved != "" {
+		interruptedInstallCache := transaction != nil && transaction.Kind == "install" &&
+			marketplaceState.Present && !marketplaceState.PluginPresent && marketplaceState.Ref == ref &&
+			marketplaceState.Preserved == `plugins."engram@engram"`
+		if interruptedInstallCache {
+			marketplaceState.Preserved = ""
+			marketplaceState.Detail = ""
+		} else {
+			result.Preserved = appendUnique(result.Preserved, marketplaceState.Preserved)
+			result.Checks = append(result.Checks, CapabilityCheck{
+				Capability: "plugin",
+				Status:     CheckPreserved,
+				Detail:     marketplaceState.Detail,
+			})
+			return finishIncompleteCodexSetup(result, beforeFiles), nil
+		}
+	}
+
+	// Install and verify the plugin before publishing local MCP or activation
+	// configuration. This keeps failed or interrupted source verification from
+	// leaving a misleading local setup behind.
+	codexBin, err := lookPathFn("codex")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: codex CLI not found in PATH — no Codex setup files were changed.\n")
+		fmt.Fprintf(os.Stderr, "  To install manually, run:\n")
+		fmt.Fprintf(os.Stderr, "    codex plugin marketplace add %s --ref %s --json\n", codexMarketplace, ref)
+		fmt.Fprintf(os.Stderr, "    codex plugin add engram@engram --json\n")
+		result.Checks = append(result.Checks, CapabilityCheck{
+			Capability: "plugin",
+			Status:     CheckMissing,
+			Detail:     "codex CLI not found in PATH",
+		})
+		return finishIncompleteCodexSetup(result, beforeFiles), nil
+	}
+	existingMarketplaceRoot := ""
+	if transaction != nil && transaction.Kind == "install" {
+		existingMarketplaceRoot, err = verifyInterruptedCodexPluginInstall(marketplaceState, transaction)
+	} else if marketplaceState.PluginPresent {
+		if transaction != nil {
+			existingMarketplaceRoot, err = verifyInterruptedCodexPluginState(codexBin, path, marketplaceState.Ref, transaction)
+		} else {
+			existingMarketplaceRoot, err = verifyExistingCodexPluginState(codexBin, path, marketplaceState.Ref)
+		}
+	}
+	if err != nil {
+		result.Preserved = appendUnique(result.Preserved, `plugins."engram@engram"`)
+		result.Checks = append(result.Checks, CapabilityCheck{
+			Capability: "plugin",
+			Status:     CheckPreserved,
+			Detail:     "existing plugin state could not be attributed byte-for-byte and was preserved: " + err.Error(),
+		})
+		return finishIncompleteCodexSetup(result, beforeFiles), nil
+	}
+	if marketplaceState.Present && marketplaceState.PluginPresent && marketplaceState.Ref != ref && transaction == nil {
+		transaction, err = beginCodexSetupTransaction(path, marketplaceState.Ref, ref, options, existingMarketplaceRoot)
+		if err != nil {
+			return nil, err
+		}
+	}
+	rollbackTransition := func() string {
+		if transaction == nil || transaction.Kind != "upgrade" {
+			return ""
+		}
+		if err := updateCodexMarketplaceRef(path, transaction.FromRef); err != nil {
+			return "; additionally failed to restore the previous marketplace ref: " + err.Error()
+		}
+		return ""
+	}
+
+	marketplaceRoot := ""
+	if marketplaceState.Present {
+		if marketplaceState.Ref != ref {
+			if err := updateCodexMarketplaceRef(path, ref); err != nil {
+				return nil, err
+			}
+		}
+		upgradeOut, upgradeErr := runCommand(codexBin, "plugin", "marketplace", "upgrade", "engram", "--json")
+		if upgradeErr != nil {
+			result.Checks = append(result.Checks, CapabilityCheck{
+				Capability: "plugin",
+				Status:     CheckFailed,
+				Detail:     "marketplace upgrade failed: " + strings.TrimSpace(string(upgradeOut)) + rollbackTransition(),
+			})
+			return finishIncompleteCodexSetup(result, beforeFiles), nil
+		}
+		marketplaceRoot, err = codexMarketplaceRootFromUpgrade(upgradeOut)
+	} else {
+		addOut, addErr := runCommand(codexBin, "plugin", "marketplace", "add", codexMarketplace, "--ref", ref, "--json")
+		if addErr != nil {
+			result.Checks = append(result.Checks, CapabilityCheck{
+				Capability: "plugin",
+				Status:     CheckFailed,
+				Detail:     "marketplace add failed: " + strings.TrimSpace(string(addOut)),
+			})
+			return finishIncompleteCodexSetup(result, beforeFiles), nil
+		}
+		marketplaceRoot, err = codexMarketplaceRootFromAdd(addOut)
+	}
+	if err != nil {
+		result.Checks = append(result.Checks, CapabilityCheck{
+			Capability: "plugin",
+			Status:     CheckFailed,
+			Detail:     err.Error() + rollbackTransition(),
+		})
+		return finishIncompleteCodexSetup(result, beforeFiles), nil
+	}
+
+	expectedCommit := options.Commit
+	if options.Development {
+		expectedCommit = ""
+	}
+	marketplaceIdentity, err := verifyCodexMarketplaceRoot(marketplaceRoot, expectedCommit)
+	if err != nil {
+		result.Checks = append(result.Checks, CapabilityCheck{
+			Capability: "plugin",
+			Status:     CheckFailed,
+			Detail:     err.Error() + rollbackTransition(),
+		})
+		return finishIncompleteCodexSetup(result, beforeFiles), nil
+	}
+	verifiedPluginAssets, err := snapshotVerifiedCodexMarketplacePlugin(marketplaceRoot, marketplaceIdentity.Commit)
+	if err != nil {
+		result.Checks = append(result.Checks, CapabilityCheck{
+			Capability: "plugin",
+			Status:     CheckFailed,
+			Detail:     err.Error() + rollbackTransition(),
+		})
+		return finishIncompleteCodexSetup(result, beforeFiles), nil
+	}
+	if transaction == nil && !marketplaceState.PluginPresent {
+		transaction, err = beginCodexPluginInstallTransaction(path, ref, options, marketplaceRoot, verifiedPluginAssets)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Step 2: install the plugin (idempotent — tolerate "already" in output).
+	pluginOut, err := runCommand(codexBin, "plugin", "add", "engram@engram", "--json")
+	pluginOutputStr := strings.TrimSpace(string(pluginOut))
+	if err != nil && !strings.Contains(strings.ToLower(pluginOutputStr), "already") {
+		result.Checks = append(result.Checks, CapabilityCheck{
+			Capability: "plugin",
+			Status:     CheckFailed,
+			Detail:     "plugin add failed: " + pluginOutputStr + rollbackTransition(),
+		})
+		return finishIncompleteCodexSetup(result, beforeFiles), nil
+	}
+
+	pluginCapabilities, err := verifyInstalledCodexPlugin(pluginOut, verifiedPluginAssets)
+	if err != nil {
+		result.Checks = append(result.Checks, CapabilityCheck{
+			Capability: "plugin",
+			Status:     CheckFailed,
+			Detail:     err.Error() + rollbackTransition(),
+		})
+		return finishIncompleteCodexSetup(result, beforeFiles), nil
+	}
+	if transaction != nil {
+		if err := os.Remove(codexSetupTransactionPath(path)); err != nil && !os.IsNotExist(err) {
+			result.Checks = append(result.Checks, CapabilityCheck{
+				Capability: "plugin",
+				Status:     CheckFailed,
+				Detail:     "remove completed setup transaction: " + err.Error(),
+			})
+			return finishIncompleteCodexSetup(result, beforeFiles), nil
+		}
+	}
+	result.Checks = append(result.Checks, CapabilityCheck{
+		Capability: "plugin",
+		Status:     CheckReady,
+		Detail:     fmt.Sprintf("verified %s at %s (%s)", marketplaceIdentity.Source, marketplaceIdentity.Commit, pluginCapabilities.Version),
+	})
 
 	if err := injectCodexMCPFn(path); err != nil {
 		return nil, err
 	}
-
-	compactPromptPath := codexCompactPromptPath()
-	if err := injectCodexMemoryConfigFn(path, instructionsPath, compactPromptPath); err != nil {
+	_, preserved, err := ensureCodexLegacyActivation(path)
+	if err != nil {
 		return nil, err
 	}
+	result.Preserved = appendUnique(result.Preserved, preserved...)
+	result.Files = countChangedCodexSetupFiles(beforeFiles)
 
-	// Best-effort: install the Codex plugin (hooks) via the Codex CLI.
-	// Failures here are non-fatal — the MCP TOML is already written and works
-	// without the plugin. The plugin adds hooks (compaction recovery, etc.).
-	codexBin, err := lookPathFn("codex")
+	if pluginCapabilities.MCPReady && codexMCPReady(path) {
+		result.Checks = append(result.Checks, CapabilityCheck{
+			Capability: "mcp",
+			Status:     CheckReady,
+			Detail:     "plugin MCP manifest and stable executable registration verified",
+		})
+	} else {
+		result.Checks = append(result.Checks, CapabilityCheck{
+			Capability: "mcp",
+			Status:     CheckFailed,
+			Detail:     "plugin MCP manifest or stable executable registration is invalid",
+		})
+	}
+
+	activationStatus := CheckMissing
+	activationDetail := "installed plugin does not provide a verifiable canonical activation cue"
+	if pluginCapabilities.ActivationCueReady {
+		activationStatus = CheckReady
+		activationDetail = "installed plugin canonical activation cue verified"
+	}
+	result.Checks = append(result.Checks, CapabilityCheck{
+		Capability: "activation-cue",
+		Status:     activationStatus,
+		Detail:     activationDetail,
+	})
+
+	verifierStatus := CheckMissing
+	verifierDetail := "installed plugin does not provide a Stop verifier"
+	if pluginCapabilities.VerifierReady {
+		verifierStatus = CheckReady
+		verifierDetail = "installed plugin Stop verifier verified"
+	}
+	result.Checks = append(result.Checks, CapabilityCheck{
+		Capability: "verifier",
+		Status:     verifierStatus,
+		Detail:     verifierDetail,
+	})
+	result.Complete = checksReady(result.Checks)
+	return result, nil
+}
+
+type setupFileSnapshot struct {
+	data   []byte
+	exists bool
+}
+
+func captureCodexSetupFiles() map[string]setupFileSnapshot {
+	paths := []string{codexConfigPath(), codexInstructionsPath(), codexCompactPromptPath()}
+	snapshots := make(map[string]setupFileSnapshot, len(paths))
+	for _, path := range paths {
+		data, err := readFileFn(path)
+		snapshots[path] = setupFileSnapshot{data: data, exists: err == nil}
+	}
+	return snapshots
+}
+
+func countChangedCodexSetupFiles(before map[string]setupFileSnapshot) int {
+	changed := 0
+	for path, previous := range before {
+		current, err := readFileFn(path)
+		exists := err == nil
+		if previous.exists != exists || (exists && !bytes.Equal(previous.data, current)) {
+			changed++
+		}
+	}
+	return changed
+}
+
+func codexInstallRef(options InstallOptions) (string, error) {
+	if options.Development {
+		return "main", nil
+	}
+
+	version := strings.TrimPrefix(strings.TrimSpace(options.Version), "v")
+	commit := strings.ToLower(strings.TrimSpace(options.Commit))
+	decodedCommit, err := hex.DecodeString(commit)
+	releaseVersion := "v" + version
+	if !semver.IsValid(releaseVersion) || module.IsPseudoVersion(releaseVersion) || strings.Contains(version, "+dirty") || err != nil || len(decodedCommit) != 20 {
+		return "", fmt.Errorf("stable Codex setup requires a release identity with a semantic version and exact 40-character commit; rerun from a release build or use explicit development mode")
+	}
+	return releaseVersion, nil
+}
+
+const codexSetupTransactionSchema = 1
+
+type codexSetupTransaction struct {
+	Schema              int    `json:"schema"`
+	Kind                string `json:"kind"`
+	Source              string `json:"source"`
+	FromRef             string `json:"from_ref"`
+	ToRef               string `json:"to_ref"`
+	FromCommit          string `json:"from_commit"`
+	ToCommit            string `json:"to_commit,omitempty"`
+	MarketplaceRoot     string `json:"marketplace_root"`
+	InstalledPath       string `json:"installed_path,omitempty"`
+	OldPluginTreeSHA256 string `json:"old_plugin_tree_sha256"`
+}
+
+func codexSetupTransactionPath(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), ".engram-setup-transaction.json")
+}
+
+func encodeCodexSetupTransaction(transaction codexSetupTransaction) ([]byte, error) {
+	data, err := json.MarshalIndent(transaction, "", "  ")
 	if err != nil {
-		// codex CLI not in PATH — warn and return success with files written so far.
-		fmt.Fprintf(os.Stderr, "warning: codex CLI not found in PATH — MCP config and instruction files were written,\n")
-		fmt.Fprintf(os.Stderr, "  but the Engram plugin (hooks) was not installed.\n")
-		fmt.Fprintf(os.Stderr, "  To install manually, run:\n")
-		fmt.Fprintf(os.Stderr, "    codex plugin marketplace add %s --ref main\n", codexMarketplace)
-		fmt.Fprintf(os.Stderr, "    codex plugin add engram@engram\n")
-		return &Result{
-			Agent:       "codex",
-			Destination: filepath.Dir(path),
-			Files:       3,
+		return nil, err
+	}
+	return append(data, '\n'), nil
+}
+
+func loadCodexSetupTransaction(configPath, targetRef string, options InstallOptions) (*codexSetupTransaction, error) {
+	path := codexSetupTransactionPath(configPath)
+	data, err := readFileFn(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read setup transaction: %w", err)
+	}
+	var transaction codexSetupTransaction
+	if err := json.Unmarshal(data, &transaction); err != nil {
+		return nil, fmt.Errorf("parse setup transaction: %w", err)
+	}
+	canonical, err := encodeCodexSetupTransaction(transaction)
+	if err != nil || !bytes.Equal(data, canonical) {
+		return nil, fmt.Errorf("setup transaction does not match Engram's generated format")
+	}
+	targetCommit := strings.ToLower(strings.TrimSpace(options.Commit))
+	if options.Development {
+		targetCommit = ""
+	}
+	if transaction.Schema != codexSetupTransactionSchema ||
+		transaction.Source != "https://github.com/yersonargotev/engram.git" ||
+		transaction.ToRef != targetRef || transaction.ToCommit != targetCommit ||
+		!filepath.IsAbs(transaction.MarketplaceRoot) {
+		return nil, fmt.Errorf("setup transaction identity does not match this requested transition")
+	}
+	switch transaction.Kind {
+	case "upgrade":
+		_, fromCommitErr := normalizeGitCommit(transaction.FromCommit)
+		oldDigest, digestErr := hex.DecodeString(transaction.OldPluginTreeSHA256)
+		if transaction.FromRef == "" || transaction.FromRef == transaction.ToRef ||
+			fromCommitErr != nil || digestErr != nil || len(oldDigest) != sha256.Size || transaction.InstalledPath != "" {
+			return nil, fmt.Errorf("upgrade transaction identity is incomplete")
+		}
+	case "install":
+		cacheRoot := filepath.Join(filepath.Dir(configPath), "plugins", "cache", "engram", "engram")
+		relative, relErr := filepath.Rel(cacheRoot, transaction.InstalledPath)
+		if transaction.FromRef != "" || transaction.FromCommit != "" || transaction.OldPluginTreeSHA256 != "" ||
+			!filepath.IsAbs(transaction.InstalledPath) || relErr != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("install transaction identity is incomplete")
+		}
+	default:
+		return nil, fmt.Errorf("setup transaction kind is not recognized")
+	}
+	return &transaction, nil
+}
+
+func beginCodexSetupTransaction(configPath, fromRef, toRef string, options InstallOptions, marketplaceRoot string) (*codexSetupTransaction, error) {
+	identity, err := verifyCodexMarketplaceRoot(marketplaceRoot, "")
+	if err != nil {
+		return nil, err
+	}
+	assets, err := snapshotVerifiedCodexMarketplacePlugin(marketplaceRoot, identity.Commit)
+	if err != nil {
+		return nil, err
+	}
+	toCommit := strings.ToLower(strings.TrimSpace(options.Commit))
+	if options.Development {
+		toCommit = ""
+	}
+	transaction := &codexSetupTransaction{
+		Schema:              codexSetupTransactionSchema,
+		Kind:                "upgrade",
+		Source:              identity.Source,
+		FromRef:             fromRef,
+		ToRef:               toRef,
+		FromCommit:          identity.Commit,
+		ToCommit:            toCommit,
+		MarketplaceRoot:     filepath.Clean(marketplaceRoot),
+		OldPluginTreeSHA256: codexPluginTreeSHA256(assets),
+	}
+	data, err := encodeCodexSetupTransaction(*transaction)
+	if err != nil {
+		return nil, fmt.Errorf("encode setup transaction: %w", err)
+	}
+	if err := atomicWriteFileFn(codexSetupTransactionPath(configPath), data, 0600); err != nil {
+		return nil, fmt.Errorf("write setup transaction: %w", err)
+	}
+	return transaction, nil
+}
+
+func beginCodexPluginInstallTransaction(configPath, targetRef string, options InstallOptions, marketplaceRoot string, assets map[string]codexPluginTreeEntry) (*codexSetupTransaction, error) {
+	identity, err := verifyCodexMarketplaceRoot(marketplaceRoot, "")
+	if err != nil {
+		return nil, err
+	}
+	version, err := codexPluginVersionFromSnapshot(assets)
+	if err != nil {
+		return nil, err
+	}
+	targetCommit := strings.ToLower(strings.TrimSpace(options.Commit))
+	if options.Development {
+		targetCommit = ""
+	}
+	transaction := &codexSetupTransaction{
+		Schema:          codexSetupTransactionSchema,
+		Kind:            "install",
+		Source:          identity.Source,
+		ToRef:           targetRef,
+		ToCommit:        targetCommit,
+		MarketplaceRoot: filepath.Clean(marketplaceRoot),
+		InstalledPath:   filepath.Join(filepath.Dir(configPath), "plugins", "cache", "engram", "engram", version),
+	}
+	data, err := encodeCodexSetupTransaction(*transaction)
+	if err != nil {
+		return nil, fmt.Errorf("encode setup transaction: %w", err)
+	}
+	if err := atomicWriteFileFn(codexSetupTransactionPath(configPath), data, 0600); err != nil {
+		return nil, fmt.Errorf("write setup transaction: %w", err)
+	}
+	return transaction, nil
+}
+
+type codexMarketplaceState struct {
+	Present       bool
+	PluginPresent bool
+	Ref           string
+	Preserved     string
+	Detail        string
+}
+
+func inspectCodexMarketplaceState(configPath string) (codexMarketplaceState, error) {
+	cachePresent, err := codexPluginCachePresent(configPath)
+	if err != nil {
+		return codexMarketplaceState{}, err
+	}
+	data, err := readFileFn(configPath)
+	if os.IsNotExist(err) {
+		if cachePresent {
+			return codexMarketplaceState{Preserved: `plugins."engram@engram"`, Detail: "plugin cache exists without attributable Codex plugin state and was preserved"}, nil
+		}
+		return codexMarketplaceState{}, nil
+	}
+	if err != nil {
+		return codexMarketplaceState{}, fmt.Errorf("read Codex marketplace config: %w", err)
+	}
+
+	marketplace, present, valid := codexTOMLTable(string(data), "marketplaces.engram")
+	plugin, pluginPresent, pluginValid := codexTOMLTable(string(data), `plugins."engram@engram"`)
+	if !present {
+		if pluginPresent {
+			return codexMarketplaceState{Preserved: `plugins."engram@engram"`, Detail: "plugin state exists without an attributable Engram marketplace and was preserved"}, nil
+		}
+		if cachePresent {
+			return codexMarketplaceState{Preserved: `plugins."engram@engram"`, Detail: "plugin cache exists without an attributable Engram marketplace and was preserved"}, nil
+		}
+		return codexMarketplaceState{}, nil
+	}
+
+	sourceType, sourceTypeOK := decodeTOMLString(marketplace["source_type"])
+	source, sourceOK := decodeTOMLString(marketplace["source"])
+	ref, refOK := decodeTOMLString(marketplace["ref"])
+	refKnown := ref == "main" || semver.IsValid(ref)
+	marketplaceOwned := valid && len(marketplace) == 3 && sourceTypeOK && sourceOK && refOK && refKnown &&
+		sourceType == "git" && source == "https://github.com/yersonargotev/engram.git"
+	pluginOwned := !pluginPresent || (pluginValid && len(plugin) == 1 && strings.TrimSpace(plugin["enabled"]) == "true")
+	if !marketplaceOwned || !pluginOwned {
+		return codexMarketplaceState{
+			Present:   true,
+			Ref:       ref,
+			Preserved: "marketplaces.engram",
+			Detail:    "custom or unrecognized marketplace/plugin state was preserved byte-for-byte",
 		}, nil
 	}
+	if !pluginPresent && cachePresent {
+		return codexMarketplaceState{
+			Present:   true,
+			Ref:       ref,
+			Preserved: `plugins."engram@engram"`,
+			Detail:    "plugin cache exists without attributable enabled plugin state and was preserved",
+		}, nil
+	}
+	return codexMarketplaceState{Present: true, PluginPresent: pluginPresent, Ref: ref}, nil
+}
 
-	// Step 1: add the marketplace (idempotent — tolerate "already" in output).
-	addOut, err := runCommand(codexBin, "plugin", "marketplace", "add", codexMarketplace, "--ref", "main")
-	addOutputStr := strings.TrimSpace(string(addOut))
-	if err != nil && !strings.Contains(strings.ToLower(addOutputStr), "already") {
-		fmt.Fprintf(os.Stderr, "warning: codex plugin marketplace add failed (non-fatal): %s\n", addOutputStr)
+func codexPluginCachePresent(configPath string) (bool, error) {
+	cacheRoot := filepath.Join(filepath.Dir(configPath), "plugins", "cache", "engram", "engram")
+	entries, err := os.ReadDir(cacheRoot)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect Codex plugin cache: %w", err)
+	}
+	return len(entries) > 0, nil
+}
+
+func codexTOMLTable(content, table string) (map[string]string, bool, bool) {
+	values := make(map[string]string)
+	inTable := false
+	present := false
+	valid := true
+	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if header, ok := tomlTableHeader(trimmed); ok {
+			if inTable {
+				break
+			}
+			inTable = header == table
+			present = present || inTable
+			continue
+		}
+		if !inTable || trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+			valid = false
+			continue
+		}
+		values[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+	}
+	return values, present, valid
+}
+
+func decodeTOMLString(raw string) (string, bool) {
+	value, err := strconv.Unquote(strings.TrimSpace(raw))
+	return value, err == nil
+}
+
+func updateCodexMarketplaceRef(configPath, ref string) error {
+	data, err := readFileFn(configPath)
+	if err != nil {
+		return fmt.Errorf("read owned Codex marketplace config: %w", err)
+	}
+	updated, ok := replaceTOMLTableString(string(data), "marketplaces.engram", "ref", ref)
+	if !ok {
+		return fmt.Errorf("owned Codex marketplace is missing its ref field")
+	}
+	if updated == string(data) {
+		return nil
+	}
+	if err := atomicWriteFileFn(configPath, []byte(updated), 0644); err != nil {
+		return fmt.Errorf("update owned Codex marketplace ref: %w", err)
+	}
+	return nil
+}
+
+func replaceTOMLTableString(content, table, key, value string) (string, bool) {
+	newline := "\n"
+	if strings.Contains(content, "\r\n") {
+		newline = "\r\n"
+	}
+	lines := strings.Split(content, newline)
+	inTable := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if header, ok := tomlTableHeader(trimmed); ok {
+			if inTable {
+				break
+			}
+			inTable = header == table
+			continue
+		}
+		if !inTable {
+			continue
+		}
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) == key {
+			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+			lines[i] = indent + key + " = " + strconv.Quote(value)
+			return strings.Join(lines, newline), true
+		}
+	}
+	return content, false
+}
+
+func completeCodexChecks(result *Result) *Result {
+	has := make(map[string]bool, len(result.Checks))
+	for _, check := range result.Checks {
+		has[check.Capability] = true
+	}
+	for _, capability := range []string{"plugin", "mcp", "activation-cue", "verifier"} {
+		if has[capability] {
+			continue
+		}
+		status := CheckMissing
+		detail := "not verified because a prerequisite capability is unavailable"
+		result.Checks = append(result.Checks, CapabilityCheck{Capability: capability, Status: status, Detail: detail})
+	}
+	result.Complete = checksReady(result.Checks)
+	return result
+}
+
+func finishIncompleteCodexSetup(result *Result, beforeFiles map[string]setupFileSnapshot) *Result {
+	result.Files = countChangedCodexSetupFiles(beforeFiles)
+	return completeCodexChecks(result)
+}
+
+type codexLegacySetting struct {
+	key     string
+	path    string
+	content string
+}
+
+func codexLegacySettings() []codexLegacySetting {
+	return []codexLegacySetting{
+		{key: "model_instructions_file", path: codexInstructionsPath(), content: memoryProtocolMarkdown},
+		{key: "experimental_compact_prompt_file", path: codexCompactPromptPath(), content: codexCompactPromptMarkdown},
+	}
+}
+
+func ensureCodexLegacyActivation(configPath string) (int, []string, error) {
+	data, err := readFileFn(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return 0, nil, fmt.Errorf("read Codex config: %w", err)
+	}
+	content := string(data)
+	configChanged := false
+	filesChanged := 0
+	var preserved []string
+
+	var createdSettings []codexLegacySetting
+	rollbackCreated := func() {
+		for _, setting := range createdSettings {
+			data, err := os.ReadFile(setting.path)
+			if err == nil && string(data) == setting.content {
+				_ = os.Remove(setting.path)
+			}
+		}
 	}
 
-	// Step 2: install the plugin (idempotent — tolerate "already" in output).
-	pluginOut, err := runCommand(codexBin, "plugin", "add", "engram@engram")
-	pluginOutputStr := strings.TrimSpace(string(pluginOut))
-	if err != nil && !strings.Contains(strings.ToLower(pluginOutputStr), "already") {
-		fmt.Fprintf(os.Stderr, "warning: codex plugin add failed (non-fatal): %s\n", pluginOutputStr)
+	for _, setting := range codexLegacySettings() {
+		value, found, valid := topLevelTOMLString(content, setting.key)
+		generated, readErr := readFileFn(setting.path)
+		generatedKnown := readErr == nil && string(generated) == setting.content
+		generatedMissing := os.IsNotExist(readErr)
+
+		if found {
+			if !valid || value != setting.path || !generatedKnown {
+				preserved = append(preserved, setting.key)
+			}
+			continue
+		}
+		if !generatedMissing {
+			preserved = append(preserved, setting.key)
+			continue
+		}
+		if generatedMissing {
+			if err := atomicWriteFileFn(setting.path, []byte(setting.content), 0644); err != nil {
+				rollbackCreated()
+				return filesChanged, preserved, fmt.Errorf("write Codex legacy activation %s: %w", setting.key, err)
+			}
+			createdSettings = append(createdSettings, setting)
+			filesChanged++
+		}
+		content = upsertTopLevelTOMLString(content, setting.key, setting.path)
+		configChanged = true
 	}
 
-	return &Result{
-		Agent:       "codex",
-		Destination: filepath.Dir(path),
-		Files:       3,
+	if configChanged {
+		content = upsertCodexEngramBlock(content)
+		if err := atomicWriteFileFn(configPath, []byte(content), 0644); err != nil {
+			rollbackCreated()
+			return filesChanged, preserved, fmt.Errorf("write Codex legacy activation config: %w", err)
+		}
+	}
+	return filesChanged, preserved, nil
+}
+
+func appendUnique(values []string, additions ...string) []string {
+	for _, addition := range additions {
+		found := false
+		for _, value := range values {
+			if value == addition {
+				found = true
+				break
+			}
+		}
+		if !found {
+			values = append(values, addition)
+		}
+	}
+	return values
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode()
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return atomicfile.ReplaceFile(tmpPath, path)
+}
+
+func checksReady(checks []CapabilityCheck) bool {
+	if len(checks) == 0 {
+		return false
+	}
+	for _, check := range checks {
+		if check.Status != CheckReady {
+			return false
+		}
+	}
+	return true
+}
+
+type codexPluginAddResult struct {
+	Name            string `json:"name"`
+	MarketplaceName string `json:"marketplaceName"`
+	Version         string `json:"version"`
+	InstalledPath   string `json:"installedPath"`
+}
+
+type codexPluginListResult struct {
+	Installed []codexListedPlugin `json:"installed"`
+}
+
+type codexListedPlugin struct {
+	PluginID        string `json:"pluginId"`
+	Name            string `json:"name"`
+	MarketplaceName string `json:"marketplaceName"`
+	Version         string `json:"version"`
+	Installed       bool   `json:"installed"`
+	Enabled         bool   `json:"enabled"`
+	Source          struct {
+		Source string `json:"source"`
+		Path   string `json:"path"`
+	} `json:"source"`
+	MarketplaceSource struct {
+		SourceType string `json:"sourceType"`
+		Source     string `json:"source"`
+	} `json:"marketplaceSource"`
+}
+
+type installedCodexPlugin struct {
+	Version            string
+	MCPReady           bool
+	ActivationCueReady bool
+	VerifierReady      bool
+}
+
+type codexInstalledPluginLocation struct {
+	MarketplaceRoot string
+	InstalledPath   string
+}
+
+func verifyInstalledCodexPlugin(output []byte, verifiedPluginAssets map[string]codexPluginTreeEntry) (installedCodexPlugin, error) {
+	var installed codexPluginAddResult
+	if err := json.Unmarshal(output, &installed); err != nil || strings.TrimSpace(installed.InstalledPath) == "" {
+		return installedCodexPlugin{}, fmt.Errorf("plugin add did not return an installed path")
+	}
+	if installed.Name != "engram" || installed.MarketplaceName != "engram" {
+		return installedCodexPlugin{}, fmt.Errorf("installed plugin identity is %s@%s, want engram@engram", installed.Name, installed.MarketplaceName)
+	}
+
+	manifestRaw, err := readFileFn(filepath.Join(installed.InstalledPath, ".codex-plugin", "plugin.json"))
+	if err != nil {
+		return installedCodexPlugin{}, fmt.Errorf("verify installed plugin manifest: %w", err)
+	}
+	var manifest struct {
+		Name       string `json:"name"`
+		Version    string `json:"version"`
+		Repository string `json:"repository"`
+	}
+	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
+		return installedCodexPlugin{}, fmt.Errorf("verify installed plugin manifest: %w", err)
+	}
+	if manifest.Name != "engram" || manifest.Repository != "https://github.com/yersonargotev/engram" || manifest.Version != installed.Version {
+		return installedCodexPlugin{}, fmt.Errorf("installed plugin manifest does not match Engram authority and version")
+	}
+	if err := compareCodexPluginTreeSnapshot(verifiedPluginAssets, installed.InstalledPath); err != nil {
+		return installedCodexPlugin{}, fmt.Errorf("installed plugin does not match the verified marketplace checkout: %w", err)
+	}
+
+	capabilities := installedCodexPlugin{Version: installed.Version}
+	mcpRaw, err := readFileFn(filepath.Join(installed.InstalledPath, ".mcp.json"))
+	if err == nil {
+		var mcpManifest struct {
+			MCPServers map[string]struct {
+				Command string   `json:"command"`
+				Args    []string `json:"args"`
+			} `json:"mcpServers"`
+		}
+		if json.Unmarshal(mcpRaw, &mcpManifest) == nil {
+			engram, ok := mcpManifest.MCPServers["engram"]
+			capabilities.MCPReady = ok && engram.Command == "engram" && slicesEqual(engram.Args, []string{"mcp", "--tools=agent"})
+		}
+	}
+
+	hooksRaw, err := readFileFn(filepath.Join(installed.InstalledPath, "hooks", "hooks.json"))
+	if err == nil {
+		var hooksManifest struct {
+			Hooks map[string]json.RawMessage `json:"hooks"`
+		}
+		if json.Unmarshal(hooksRaw, &hooksManifest) == nil {
+			var stopHooks []json.RawMessage
+			stopRaw, ok := hooksManifest.Hooks["Stop"]
+			capabilities.VerifierReady = ok && json.Unmarshal(stopRaw, &stopHooks) == nil && len(stopHooks) > 0
+		}
+	}
+	return capabilities, nil
+}
+
+func inspectInstalledCodexPluginLocation(codexBin, configPath string) (codexInstalledPluginLocation, error) {
+	output, err := runCommand(codexBin, "plugin", "list", "--json")
+	if err != nil {
+		return codexInstalledPluginLocation{}, fmt.Errorf("plugin list failed: %s", strings.TrimSpace(string(output)))
+	}
+	var listed codexPluginListResult
+	if err := json.Unmarshal(output, &listed); err != nil {
+		return codexInstalledPluginLocation{}, fmt.Errorf("parse plugin list: %w", err)
+	}
+	var match *codexListedPlugin
+	for i := range listed.Installed {
+		candidate := &listed.Installed[i]
+		if candidate.PluginID == "engram@engram" {
+			if match != nil {
+				return codexInstalledPluginLocation{}, fmt.Errorf("plugin list returned duplicate Engram installations")
+			}
+			match = candidate
+		}
+	}
+	if match == nil || match.Name != "engram" || match.MarketplaceName != "engram" || !match.Installed || !match.Enabled {
+		return codexInstalledPluginLocation{}, fmt.Errorf("plugin list does not contain one enabled engram@engram installation")
+	}
+	if match.Source.Source != "local" || !semver.IsValid("v"+match.Version) || match.MarketplaceSource.SourceType != "git" || match.MarketplaceSource.Source != "https://github.com/yersonargotev/engram.git" {
+		return codexInstalledPluginLocation{}, fmt.Errorf("plugin list source or version is not attributable to Engram")
+	}
+
+	sourcePath := filepath.Clean(match.Source.Path)
+	marketplaceRoot := filepath.Dir(filepath.Dir(sourcePath))
+	if sourcePath != filepath.Join(marketplaceRoot, "plugin", "codex") {
+		return codexInstalledPluginLocation{}, fmt.Errorf("plugin source path is outside the Engram marketplace layout")
+	}
+	return codexInstalledPluginLocation{
+		MarketplaceRoot: marketplaceRoot,
+		InstalledPath:   filepath.Join(filepath.Dir(configPath), "plugins", "cache", "engram", "engram", match.Version),
 	}, nil
+}
+
+func verifyExistingCodexPluginState(codexBin, configPath, configuredRef string) (string, error) {
+	location, err := inspectInstalledCodexPluginLocation(codexBin, configPath)
+	if err != nil {
+		return "", err
+	}
+	marketplaceRoot := location.MarketplaceRoot
+	refCommitRaw, err := gitResolveRefFn(marketplaceRoot, configuredRef)
+	if err != nil {
+		return "", fmt.Errorf("resolve configured marketplace ref %s: %s", configuredRef, strings.TrimSpace(string(refCommitRaw)))
+	}
+	refCommit, err := normalizeGitCommit(strings.TrimSpace(string(refCommitRaw)))
+	if err != nil {
+		return "", fmt.Errorf("resolve configured marketplace ref %s: %w", configuredRef, err)
+	}
+	if _, err := verifyCodexMarketplaceRoot(marketplaceRoot, refCommit); err != nil {
+		return "", err
+	}
+	verifiedPluginAssets, err := snapshotVerifiedCodexMarketplacePlugin(marketplaceRoot, refCommit)
+	if err != nil {
+		return "", err
+	}
+	if err := compareCodexPluginTreeSnapshot(verifiedPluginAssets, location.InstalledPath); err != nil {
+		return "", fmt.Errorf("existing installed plugin differs from its marketplace source: %w", err)
+	}
+	return marketplaceRoot, nil
+}
+
+func verifyInterruptedCodexPluginState(codexBin, configPath, configuredRef string, transaction *codexSetupTransaction) (string, error) {
+	if configuredRef != transaction.FromRef && configuredRef != transaction.ToRef {
+		return "", fmt.Errorf("marketplace ref %q is outside the interrupted transition", configuredRef)
+	}
+	location, err := inspectInstalledCodexPluginLocation(codexBin, configPath)
+	if err != nil {
+		return "", err
+	}
+	if filepath.Clean(location.MarketplaceRoot) != filepath.Clean(transaction.MarketplaceRoot) {
+		return "", fmt.Errorf("marketplace path changed during the interrupted transition")
+	}
+	identity, err := verifyCodexMarketplaceRoot(location.MarketplaceRoot, "")
+	if err != nil {
+		return "", err
+	}
+	targetCommit := transaction.ToCommit
+	if targetCommit == "" {
+		resolved, err := gitResolveRefFn(location.MarketplaceRoot, transaction.ToRef)
+		if err != nil {
+			return "", fmt.Errorf("resolve interrupted target ref %s: %s", transaction.ToRef, strings.TrimSpace(string(resolved)))
+		}
+		targetCommit, err = normalizeGitCommit(strings.TrimSpace(string(resolved)))
+		if err != nil {
+			return "", fmt.Errorf("resolve interrupted target ref %s: %w", transaction.ToRef, err)
+		}
+	}
+	if identity.Commit != transaction.FromCommit && identity.Commit != targetCommit {
+		return "", fmt.Errorf("marketplace checkout is neither the previous nor requested commit")
+	}
+	currentAssets, err := snapshotVerifiedCodexMarketplacePlugin(location.MarketplaceRoot, identity.Commit)
+	if err != nil {
+		return "", err
+	}
+	installedAssets, err := snapshotCodexPluginTree(location.InstalledPath)
+	if err != nil {
+		return "", fmt.Errorf("read interrupted installed plugin assets: %w", err)
+	}
+	if codexPluginTreeSHA256(installedAssets) != transaction.OldPluginTreeSHA256 {
+		if err := compareCodexPluginTreeSnapshot(currentAssets, location.InstalledPath); err != nil {
+			return "", fmt.Errorf("installed plugin is neither the previous nor requested generated tree: %w", err)
+		}
+	}
+	return location.MarketplaceRoot, nil
+}
+
+func verifyInterruptedCodexPluginInstall(marketplaceState codexMarketplaceState, transaction *codexSetupTransaction) (string, error) {
+	if !marketplaceState.Present || marketplaceState.Ref != transaction.ToRef {
+		return "", fmt.Errorf("marketplace config no longer matches the interrupted plugin installation")
+	}
+	targetCommit := transaction.ToCommit
+	if targetCommit == "" {
+		resolved, err := gitResolveRefFn(transaction.MarketplaceRoot, transaction.ToRef)
+		if err != nil {
+			return "", fmt.Errorf("resolve interrupted target ref %s: %s", transaction.ToRef, strings.TrimSpace(string(resolved)))
+		}
+		targetCommit, err = normalizeGitCommit(strings.TrimSpace(string(resolved)))
+		if err != nil {
+			return "", fmt.Errorf("resolve interrupted target ref %s: %w", transaction.ToRef, err)
+		}
+	}
+	assets, err := snapshotVerifiedCodexMarketplacePlugin(transaction.MarketplaceRoot, targetCommit)
+	if err != nil {
+		return "", err
+	}
+	installed, err := snapshotCodexPluginTree(transaction.InstalledPath)
+	if os.IsNotExist(err) {
+		return transaction.MarketplaceRoot, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read interrupted plugin cache: %w", err)
+	}
+	if err := codexPluginTreeSubset(assets, installed); err != nil {
+		return "", fmt.Errorf("interrupted plugin cache contains unattributable bytes: %w", err)
+	}
+	return transaction.MarketplaceRoot, nil
+}
+
+func verifyCodexMarketplaceAssets(root string) error {
+	status, err := gitStatusFn(root)
+	if err != nil {
+		return fmt.Errorf("verify marketplace asset tree: %s", strings.TrimSpace(string(status)))
+	}
+	if dirty := strings.TrimSpace(string(status)); dirty != "" {
+		return fmt.Errorf("marketplace asset tree differs from verified commit: %s", dirty)
+	}
+	return nil
+}
+
+func snapshotVerifiedCodexMarketplacePlugin(root, expectedCommit string) (map[string]codexPluginTreeEntry, error) {
+	if _, err := verifyCodexMarketplaceRoot(root, expectedCommit); err != nil {
+		return nil, err
+	}
+	if err := verifyCodexMarketplaceAssets(root); err != nil {
+		return nil, err
+	}
+	snapshot, err := snapshotCodexPluginTree(filepath.Join(root, "plugin", "codex"))
+	if err != nil {
+		return nil, fmt.Errorf("snapshot verified marketplace plugin assets: %w", err)
+	}
+	if _, err := verifyCodexMarketplaceRoot(root, expectedCommit); err != nil {
+		return nil, err
+	}
+	if err := verifyCodexMarketplaceAssets(root); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+type codexPluginTreeEntry struct {
+	mode os.FileMode
+	data []byte
+}
+
+func codexPluginTreeSHA256(entries map[string]codexPluginTreeEntry) string {
+	paths := make([]string, 0, len(entries))
+	for path := range entries {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	hash := sha256.New()
+	for _, path := range paths {
+		entry := entries[path]
+		fmt.Fprintf(hash, "%d:%s:%d:%d:", len(path), path, uint32(entry.mode), len(entry.data))
+		_, _ = hash.Write(entry.data)
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func codexPluginVersionFromSnapshot(entries map[string]codexPluginTreeEntry) (string, error) {
+	manifest, ok := entries[".codex-plugin/plugin.json"]
+	if !ok || !manifest.mode.IsRegular() {
+		return "", fmt.Errorf("verified plugin snapshot is missing its manifest")
+	}
+	var identity struct {
+		Name       string `json:"name"`
+		Version    string `json:"version"`
+		Repository string `json:"repository"`
+	}
+	if err := json.Unmarshal(manifest.data, &identity); err != nil {
+		return "", fmt.Errorf("parse verified plugin manifest: %w", err)
+	}
+	if identity.Name != "engram" || identity.Repository != "https://github.com/yersonargotev/engram" || !semver.IsValid("v"+identity.Version) {
+		return "", fmt.Errorf("verified plugin manifest identity is invalid")
+	}
+	return identity.Version, nil
+}
+
+func codexPluginTreeSubset(expected, actual map[string]codexPluginTreeEntry) error {
+	for path, entry := range actual {
+		want, ok := expected[path]
+		if !ok || entry.mode != want.mode || !bytes.Equal(entry.data, want.data) {
+			return fmt.Errorf("asset %s differs", path)
+		}
+	}
+	return nil
+}
+
+func compareCodexPluginTreeSnapshot(source map[string]codexPluginTreeEntry, installedRoot string) error {
+	installed, err := snapshotCodexPluginTree(installedRoot)
+	if err != nil {
+		return fmt.Errorf("read installed plugin assets: %w", err)
+	}
+	if len(source) != len(installed) {
+		return fmt.Errorf("asset count is %d, want %d", len(installed), len(source))
+	}
+	for path, expected := range source {
+		actual, ok := installed[path]
+		if !ok || actual.mode != expected.mode || !bytes.Equal(actual.data, expected.data) {
+			return fmt.Errorf("asset %s differs", path)
+		}
+	}
+	return nil
+}
+
+func snapshotCodexPluginTree(root string) (map[string]codexPluginTreeEntry, error) {
+	entries := make(map[string]codexPluginTreeEntry)
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == root {
+			return nil
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		mode := info.Mode().Type()
+		if entry.IsDir() {
+			entries[filepath.ToSlash(relative)] = codexPluginTreeEntry{mode: mode}
+			return nil
+		}
+		if info.Mode().IsRegular() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			entries[filepath.ToSlash(relative)] = codexPluginTreeEntry{mode: mode | info.Mode().Perm(), data: data}
+			return nil
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			entries[filepath.ToSlash(relative)] = codexPluginTreeEntry{mode: os.ModeSymlink, data: []byte(target)}
+			return nil
+		}
+		return fmt.Errorf("unsupported plugin asset type at %s", relative)
+	})
+	return entries, err
+}
+
+func slicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func codexMCPReady(configPath string) bool {
+	data, err := readFileFn(configPath)
+	if err != nil {
+		return false
+	}
+	start, end, found := tomlSectionBounds(string(data), "mcp_servers.engram")
+	if !found {
+		return false
+	}
+	values, present, valid := codexTOMLTable(string(data[start:end]), "mcp_servers.engram")
+	if !present || !valid || len(values) != 2 {
+		return false
+	}
+	command, commandOK := decodeTOMLString(values["command"])
+	var args []string
+	argsOK := json.Unmarshal([]byte(values["args"]), &args) == nil
+	return commandOK && argsOK && command == resolveEngramCommand() && slicesEqual(args, []string{"mcp", "--tools=agent"})
+}
+
+func codexPreservedLegacySettings(configPath string) []string {
+	data, err := readFileFn(configPath)
+	if err != nil {
+		return nil
+	}
+
+	var preserved []string
+	for _, setting := range codexLegacySettings() {
+		value, found, valid := topLevelTOMLString(string(data), setting.key)
+		if !found {
+			continue
+		}
+		generated, readErr := readFileFn(setting.path)
+		if !valid || value != setting.path || readErr != nil || string(generated) != setting.content {
+			preserved = append(preserved, setting.key)
+		}
+	}
+	return preserved
+}
+
+func topLevelTOMLString(content, key string) (value string, found, valid bool) {
+	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if _, ok := tomlTableHeader(trimmed); ok {
+			break
+		}
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) != key {
+			continue
+		}
+		decoded, err := strconv.Unquote(strings.TrimSpace(parts[1]))
+		if err != nil {
+			return "", true, false
+		}
+		return decoded, true, true
+	}
+	return "", false, false
+}
+
+type codexMarketplaceAddResult struct {
+	InstalledRoot string `json:"installedRoot"`
+}
+
+type codexMarketplaceUpgradeResult struct {
+	UpgradedRoots []string `json:"upgradedRoots"`
+	Errors        []string `json:"errors"`
+}
+
+type codexMarketplaceIdentity struct {
+	Source string
+	Commit string
+}
+
+func codexMarketplaceRootFromAdd(output []byte) (string, error) {
+	var added codexMarketplaceAddResult
+	if err := json.Unmarshal(output, &added); err != nil || strings.TrimSpace(added.InstalledRoot) == "" {
+		return "", fmt.Errorf("marketplace add did not return an installed root")
+	}
+	return added.InstalledRoot, nil
+}
+
+func codexMarketplaceRootFromUpgrade(output []byte) (string, error) {
+	var upgraded codexMarketplaceUpgradeResult
+	if err := json.Unmarshal(output, &upgraded); err != nil || len(upgraded.UpgradedRoots) != 1 || len(upgraded.Errors) > 0 || strings.TrimSpace(upgraded.UpgradedRoots[0]) == "" {
+		return "", fmt.Errorf("marketplace upgrade did not return one verified root")
+	}
+	return upgraded.UpgradedRoots[0], nil
+}
+
+func verifyCodexMarketplaceRoot(root, expectedCommit string) (codexMarketplaceIdentity, error) {
+	if strings.TrimSpace(root) == "" {
+		return codexMarketplaceIdentity{}, fmt.Errorf("marketplace verification requires an installed root")
+	}
+
+	actualCommit, err := gitHeadCommit(filepath.Join(root, ".git"))
+	if err != nil {
+		return codexMarketplaceIdentity{}, fmt.Errorf("verify marketplace commit: %w", err)
+	}
+
+	config, err := readFileFn(filepath.Join(root, ".git", "config"))
+	if err != nil {
+		return codexMarketplaceIdentity{}, fmt.Errorf("verify marketplace source: %w", err)
+	}
+	actualSource := gitRemoteOrigin(string(config))
+	const expectedSource = "https://github.com/yersonargotev/engram.git"
+	if actualSource != expectedSource {
+		return codexMarketplaceIdentity{}, fmt.Errorf("marketplace source %q does not match authority %q", actualSource, expectedSource)
+	}
+	if expected := strings.ToLower(strings.TrimSpace(expectedCommit)); expected != "" && actualCommit != expected {
+		return codexMarketplaceIdentity{}, fmt.Errorf("marketplace commit %s does not match expected commit %s", actualCommit, expected)
+	}
+
+	return codexMarketplaceIdentity{Source: actualSource, Commit: actualCommit}, nil
+}
+
+func gitHeadCommit(gitDir string) (string, error) {
+	headRaw, err := readFileFn(filepath.Join(gitDir, "HEAD"))
+	if err != nil {
+		return "", err
+	}
+	head := strings.TrimSpace(string(headRaw))
+	if !strings.HasPrefix(head, "ref:") {
+		return normalizeGitCommit(head)
+	}
+
+	ref := strings.TrimSpace(strings.TrimPrefix(head, "ref:"))
+	cleanRef := filepath.ToSlash(filepath.Clean(ref))
+	if !strings.HasPrefix(cleanRef, "refs/") || strings.Contains(cleanRef, "../") {
+		return "", fmt.Errorf("unexpected symbolic HEAD %q", head)
+	}
+	if refRaw, readErr := readFileFn(filepath.Join(gitDir, filepath.FromSlash(cleanRef))); readErr == nil {
+		return normalizeGitCommit(strings.TrimSpace(string(refRaw)))
+	}
+
+	packedRefs, packedErr := readFileFn(filepath.Join(gitDir, "packed-refs"))
+	if packedErr != nil {
+		return "", fmt.Errorf("resolve symbolic HEAD %q: %w", cleanRef, packedErr)
+	}
+	for _, line := range strings.Split(strings.ReplaceAll(string(packedRefs), "\r\n", "\n"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[1] == cleanRef {
+			return normalizeGitCommit(fields[0])
+		}
+	}
+	return "", fmt.Errorf("resolve symbolic HEAD %q: ref not found", cleanRef)
+}
+
+func normalizeGitCommit(commit string) (string, error) {
+	commit = strings.TrimSpace(commit)
+	decodedCommit, err := hex.DecodeString(commit)
+	if err != nil || len(decodedCommit) != 20 {
+		return "", fmt.Errorf("unexpected HEAD %q", commit)
+	}
+	return strings.ToLower(commit), nil
+}
+
+func gitRemoteOrigin(config string) string {
+	inOrigin := false
+	for _, line := range strings.Split(strings.ReplaceAll(config, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			inOrigin = trimmed == `[remote "origin"]`
+			continue
+		}
+		if inOrigin && strings.HasPrefix(trimmed, "url") {
+			parts := strings.SplitN(trimmed, "=", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
 }
 
 func injectCodexMCP(configPath string) error {
@@ -1221,46 +2529,10 @@ func injectCodexMCP(configPath string) error {
 	}
 
 	updated := upsertCodexEngramBlock(string(data))
-	if err := writeFileFn(configPath, []byte(updated), 0644); err != nil {
-		return fmt.Errorf("write config: %w", err)
+	if string(data) == updated {
+		return nil
 	}
-
-	return nil
-}
-
-func writeCodexMemoryInstructionFiles() (string, error) {
-	instructionsPath := codexInstructionsPath()
-	if err := os.MkdirAll(filepath.Dir(instructionsPath), 0755); err != nil {
-		return "", fmt.Errorf("create codex instructions dir: %w", err)
-	}
-
-	if err := os.WriteFile(instructionsPath, []byte(memoryProtocolMarkdown), 0644); err != nil {
-		return "", fmt.Errorf("write codex instructions: %w", err)
-	}
-
-	compactPath := codexCompactPromptPath()
-	if err := os.WriteFile(compactPath, []byte(codexCompactPromptMarkdown), 0644); err != nil {
-		return "", fmt.Errorf("write codex compact prompt: %w", err)
-	}
-
-	return instructionsPath, nil
-}
-
-func injectCodexMemoryConfig(configPath, instructionsPath, compactPromptPath string) error {
-	data, err := readFileFn(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			data = nil
-		} else {
-			return fmt.Errorf("read config: %w", err)
-		}
-	}
-
-	content := strings.ReplaceAll(string(data), "\r\n", "\n")
-	content = upsertTopLevelTOMLString(content, "model_instructions_file", instructionsPath)
-	content = upsertTopLevelTOMLString(content, "experimental_compact_prompt_file", compactPromptPath)
-
-	if err := writeFileFn(configPath, []byte(content), 0644); err != nil {
+	if err := atomicWriteFileFn(configPath, []byte(updated), 0644); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 
@@ -1268,66 +2540,153 @@ func injectCodexMemoryConfig(configPath, instructionsPath, compactPromptPath str
 }
 
 func upsertCodexEngramBlock(content string) string {
-	content = strings.ReplaceAll(content, "\r\n", "\n")
-	lines := strings.Split(content, "\n")
-
-	var kept []string
-	for i := 0; i < len(lines); {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "[mcp_servers.engram]" {
-			i++
-			for i < len(lines) {
-				next := strings.TrimSpace(lines[i])
-				if strings.HasPrefix(next, "[") && strings.HasSuffix(next, "]") {
-					break
-				}
-				i++
-			}
-			continue
-		}
-
-		kept = append(kept, lines[i])
-		i++
+	newline := "\n"
+	if strings.Contains(content, "\r\n") {
+		newline = "\r\n"
 	}
-
-	base := strings.TrimSpace(strings.Join(kept, "\n"))
 	block := codexEngramBlockStr()
-	if base == "" {
-		return block + "\n"
+	if newline != "\n" {
+		block = strings.ReplaceAll(block, "\n", newline)
 	}
 
-	return base + "\n\n" + block + "\n"
+	start, end, found := tomlSectionBounds(content, "mcp_servers.engram")
+	if found {
+		section := content[start:end]
+		if !codexMCPSectionOwned(section) {
+			return content
+		}
+		replacement := block + newline
+		if end < len(content) {
+			replacement += newline
+		}
+		if section == replacement {
+			return content
+		}
+		return content[:start] + replacement + content[end:]
+	}
+
+	if strings.TrimSpace(content) == "" {
+		return block + newline
+	}
+	separator := newline + newline
+	if strings.HasSuffix(content, newline+newline) {
+		separator = ""
+	} else if strings.HasSuffix(content, newline) {
+		separator = newline
+	}
+	return content + separator + block + newline
 }
 
 func upsertTopLevelTOMLString(content, key, value string) string {
-	content = strings.ReplaceAll(content, "\r\n", "\n")
-	lines := strings.Split(content, "\n")
+	newline := "\n"
+	if strings.Contains(content, "\r\n") {
+		newline = "\r\n"
+	}
+	lines := strings.Split(content, newline)
 	lineValue := fmt.Sprintf("%s = %q", key, value)
 
-	var cleaned []string
-	for _, line := range lines {
+	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, key+" ") || strings.HasPrefix(trimmed, key+"=") {
-			continue
+		if _, ok := tomlTableHeader(trimmed); ok {
+			break
 		}
-		cleaned = append(cleaned, line)
+		if strings.HasPrefix(trimmed, key+" ") || strings.HasPrefix(trimmed, key+"=") {
+			lines[i] = lineValue
+			return strings.Join(lines, newline)
+		}
 	}
 
-	insertAt := len(cleaned)
-	for i, line := range cleaned {
+	if strings.TrimSpace(content) == "" {
+		return lineValue + newline
+	}
+
+	headerAt := -1
+	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-			insertAt = i
+		if _, ok := tomlTableHeader(trimmed); ok {
+			headerAt = i
 			break
 		}
 	}
+	if headerAt == -1 {
+		if strings.HasSuffix(content, newline) {
+			return content + lineValue + newline
+		}
+		return content + newline + lineValue + newline
+	}
 
-	var out []string
-	out = append(out, cleaned[:insertAt]...)
+	insertAt := headerAt
+	for insertAt > 0 && strings.TrimSpace(lines[insertAt-1]) == "" {
+		insertAt--
+	}
+	out := append([]string(nil), lines[:insertAt]...)
 	out = append(out, lineValue)
-	out = append(out, cleaned[insertAt:]...)
+	if insertAt == headerAt {
+		out = append(out, "")
+	}
+	out = append(out, lines[insertAt:]...)
+	return strings.Join(out, newline)
+}
 
-	return strings.TrimSpace(strings.Join(out, "\n")) + "\n"
+func tomlSectionBounds(content, table string) (start, end int, found bool) {
+	for offset := 0; offset < len(content); {
+		lineStart := offset
+		newlineAt := strings.IndexByte(content[offset:], '\n')
+		if newlineAt == -1 {
+			offset = len(content)
+		} else {
+			offset += newlineAt + 1
+		}
+		line := strings.TrimSpace(content[lineStart:offset])
+		if current, ok := tomlTableHeader(line); ok {
+			if found {
+				return start, lineStart, true
+			}
+			if current == table {
+				start = lineStart
+				found = true
+			}
+		}
+	}
+	if found {
+		return start, len(content), true
+	}
+	return 0, 0, false
+}
+
+func codexMCPSectionOwned(section string) bool {
+	normalized := strings.TrimSpace(strings.ReplaceAll(section, "\r\n", "\n"))
+	lines := strings.Split(normalized, "\n")
+	if len(lines) != 3 || strings.TrimSpace(lines[0]) != "[mcp_servers.engram]" ||
+		!strings.HasPrefix(lines[1], "command = ") || lines[2] != `args = ["mcp", "--tools=agent"]` {
+		return false
+	}
+	values, present, valid := codexTOMLTable(section, "mcp_servers.engram")
+	if !present || !valid || len(values) != 2 {
+		return false
+	}
+	command, commandOK := decodeTOMLString(values["command"])
+	var args []string
+	argsOK := json.Unmarshal([]byte(values["args"]), &args) == nil
+	normalizedCommand := strings.ReplaceAll(command, "\\", "/")
+	base := strings.ToLower(filepath.Base(normalizedCommand))
+	return commandOK && argsOK && (base == "engram" || base == "engram.exe") && slicesEqual(args, []string{"mcp", "--tools=agent"})
+}
+
+func tomlTableHeader(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "[[") {
+		return "", false
+	}
+	closeAt := strings.IndexByte(trimmed, ']')
+	if closeAt <= 1 {
+		return "", false
+	}
+	tail := strings.TrimSpace(trimmed[closeAt+1:])
+	if tail != "" && !strings.HasPrefix(tail, "#") {
+		return "", false
+	}
+	return trimmed[1:closeAt], true
 }
 
 // ─── Platform paths ──────────────────────────────────────────────────────────

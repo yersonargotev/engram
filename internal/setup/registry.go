@@ -65,7 +65,7 @@ type agentAdapter struct {
 	mcpFormat    mcpFormat      // how the MCP entry is shaped (ignored when mcpPath is nil)
 	instructions []instrSurface // zero or more instruction surfaces to write
 	bootstrap    func() error   // optional post-setup hook (e.g. seed a sibling config)
-	custom       func() (*Result, error)
+	custom       func(InstallOptions) (*Result, error)
 	installDir   func() string // display path for SupportedAgents (defaults to mcpPath)
 	postInstall  []string      // "next steps" lines shown after install (nil = handled specially)
 }
@@ -236,9 +236,9 @@ func writeInstruction(ins instrSurface) error {
 // installFromAdapter runs a declarative adapter's install steps: MCP registration,
 // instruction surfaces, then an optional bootstrap hook. Bespoke adapters delegate
 // entirely to their custom installer.
-func installFromAdapter(a agentAdapter) (*Result, error) {
+func installFromAdapter(a agentAdapter, options InstallOptions) (*Result, error) {
 	if a.custom != nil {
-		return a.custom()
+		return a.custom(options)
 	}
 
 	// Declarative path helpers build their destinations from the user home dir.

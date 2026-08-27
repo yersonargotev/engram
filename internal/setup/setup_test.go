@@ -18,6 +18,8 @@ func resetSetupSeams(t *testing.T) {
 	oldLookPathFn := lookPathFn
 	oldRunCommand := runCommand
 	oldRunCodexCheckpointProbeFn := runCodexCheckpointProbeFn
+	oldRenameFileFn := renameFileFn
+	oldRemoveFileFn := removeFileFn
 	oldGitStatusFn := gitStatusFn
 	oldGitResolveRefFn := gitResolveRefFn
 	oldStatFn := statFn
@@ -47,6 +49,8 @@ func resetSetupSeams(t *testing.T) {
 		lookPathFn = oldLookPathFn
 		runCommand = oldRunCommand
 		runCodexCheckpointProbeFn = oldRunCodexCheckpointProbeFn
+		renameFileFn = oldRenameFileFn
+		removeFileFn = oldRemoveFileFn
 		gitStatusFn = oldGitStatusFn
 		gitResolveRefFn = oldGitResolveRefFn
 		statFn = oldStatFn
@@ -2032,16 +2036,6 @@ func TestGeminiAndCodexHelpersErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("upsertTopLevelTOMLString does not replace a nested key", func(t *testing.T) {
-		input := "[profile]\nmodel_instructions_file = \"nested-user-value\"\n"
-		output := upsertTopLevelTOMLString(input, "model_instructions_file", "/tmp/engram.md")
-		if !strings.HasPrefix(output, "model_instructions_file = \"/tmp/engram.md\"\n\n[profile]") {
-			t.Fatalf("top-level key was not inserted before tables:\n%s", output)
-		}
-		if !strings.Contains(output, "model_instructions_file = \"nested-user-value\"") {
-			t.Fatalf("nested user key was replaced:\n%s", output)
-		}
-	})
 }
 
 func TestInstallRoutesForOpenCodeAndClaude(t *testing.T) {

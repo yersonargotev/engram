@@ -65,7 +65,7 @@ Windows, Linux, and other install methods → [docs/INSTALLATION.md](docs/INSTAL
 
 Full per-agent config, Memory Protocol, and compaction survival → [docs/AGENT-SETUP.md](docs/AGENT-SETUP.md)
 
-**What `engram setup` does** — it writes MCP config and plugin files for the chosen agent. After a complete setup, restart your agent and it is ready. Codex reports plugin, MCP, activation-cue, and verifier readiness separately and does not claim completion while any required capability is unavailable. No server to start manually.
+**What `engram setup` does** — it writes MCP config and plugin files for the chosen agent. After a complete setup, restart your agent and it is ready. Codex reports plugin, checkpoint-capable CLI/MCP, activation-cue, and verifier readiness separately and does not claim completion while any required capability is unavailable. Once those replacements are verified, it retires only exact-owned legacy instruction and compaction activation; customized or ambiguous state is preserved and reported. No server to start manually.
 
 > **Do I need to run `engram serve` or `engram mcp` myself?**
 >

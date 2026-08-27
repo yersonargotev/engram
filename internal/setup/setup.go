@@ -43,7 +43,13 @@ var (
 	runCommand   = func(name string, args ...string) ([]byte, error) {
 		return exec.Command(name, args...).CombinedOutput()
 	}
-	gitStatusFn = func(root string) ([]byte, error) {
+	runCodexCheckpointProbeFn = func(name string, args ...string) ([]byte, error) {
+		return exec.Command(name, args...).CombinedOutput()
+	}
+	linkFileFn   = os.Link
+	renameFileFn = os.Rename
+	removeFileFn = os.Remove
+	gitStatusFn  = func(root string) ([]byte, error) {
 		return exec.Command("git", "-C", root, "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "--", ".agents/plugins/marketplace.json", "plugin/codex").CombinedOutput()
 	}
 	gitResolveRefFn = func(root, ref string) ([]byte, error) {
@@ -1223,10 +1229,23 @@ func installCodexWithOptions(options InstallOptions) (*Result, error) {
 	}
 	path := codexConfigPath()
 	beforeFiles := captureCodexSetupFiles()
+	recoveryPreserved, recoveryErr := restoreInterruptedCodexLegacyActivation(path)
 	result := &Result{
 		Agent:       "codex",
 		Destination: filepath.Dir(path),
-		Preserved:   codexPreservedLegacySettings(path),
+		Preserved:   appendUnique(recoveryPreserved, codexPreservedLegacySettings(path)...),
+	}
+	if recoveryErr != nil {
+		result.Checks = append(result.Checks, CapabilityCheck{
+			Capability: "plugin",
+			Status:     CheckPreserved,
+			Detail:     "interrupted legacy retirement requires attention: " + recoveryErr.Error(),
+		})
+		return finishIncompleteCodexSetup(result, beforeFiles), nil
+	}
+	mcpRegistrationPreserved := codexMCPRegistrationPreserved(path)
+	if mcpRegistrationPreserved {
+		result.Preserved = appendUnique(result.Preserved, "mcp_servers.engram")
 	}
 	transaction, err := loadCodexSetupTransaction(path, ref, options)
 	if err != nil {
@@ -1415,27 +1434,31 @@ func installCodexWithOptions(options InstallOptions) (*Result, error) {
 		Detail:     fmt.Sprintf("verified %s at %s (%s)", marketplaceIdentity.Source, marketplaceIdentity.Commit, pluginCapabilities.Version),
 	})
 
-	if err := injectCodexMCPFn(path); err != nil {
-		return nil, err
+	checkpointAdaptersReady, checkpointAdaptersDetail := codexCheckpointAdaptersReady()
+	if pluginCapabilities.MCPReady && checkpointAdaptersReady {
+		if err := injectCodexMCPFn(path); err != nil {
+			return nil, err
+		}
 	}
-	_, preserved, err := ensureCodexLegacyActivation(path)
-	if err != nil {
-		return nil, err
-	}
-	result.Preserved = appendUnique(result.Preserved, preserved...)
-	result.Files = countChangedCodexSetupFiles(beforeFiles)
-
-	if pluginCapabilities.MCPReady && codexMCPReady(path) {
+	if pluginCapabilities.MCPReady && checkpointAdaptersReady && codexMCPReady(path) {
 		result.Checks = append(result.Checks, CapabilityCheck{
 			Capability: "mcp",
 			Status:     CheckReady,
-			Detail:     "plugin MCP manifest and stable executable registration verified",
+			Detail:     "CLI and MCP checkpoint adapters plus stable executable registration verified",
 		})
 	} else {
+		detail := "plugin MCP manifest or stable executable registration is invalid"
+		status := CheckFailed
+		if mcpRegistrationPreserved {
+			status = CheckPreserved
+			detail = "custom or unrecognized mcp_servers.engram registration was preserved byte-for-byte"
+		} else if pluginCapabilities.MCPReady && !checkpointAdaptersReady {
+			detail = checkpointAdaptersDetail
+		}
 		result.Checks = append(result.Checks, CapabilityCheck{
 			Capability: "mcp",
-			Status:     CheckFailed,
-			Detail:     "plugin MCP manifest or stable executable registration is invalid",
+			Status:     status,
+			Detail:     detail,
 		})
 	}
 
@@ -1463,6 +1486,14 @@ func installCodexWithOptions(options InstallOptions) (*Result, error) {
 		Detail:     verifierDetail,
 	})
 	result.Complete = checksReady(result.Checks)
+	if result.Complete {
+		preserved, err := retireCodexLegacyActivation(path)
+		if err != nil {
+			return nil, err
+		}
+		result.Preserved = appendUnique(result.Preserved, preserved...)
+	}
+	result.Files = countChangedCodexSetupFiles(beforeFiles)
 	return result, nil
 }
 
@@ -1472,7 +1503,13 @@ type setupFileSnapshot struct {
 }
 
 func captureCodexSetupFiles() map[string]setupFileSnapshot {
-	paths := []string{codexConfigPath(), codexInstructionsPath(), codexCompactPromptPath()}
+	paths := []string{
+		codexConfigPath(),
+		codexInstructionsPath(),
+		codexLegacyRetirementPath(codexInstructionsPath()),
+		codexCompactPromptPath(),
+		codexLegacyRetirementPath(codexCompactPromptPath()),
+	}
 	snapshots := make(map[string]setupFileSnapshot, len(paths))
 	for _, path := range paths {
 		data, err := readFileFn(path)
@@ -1838,62 +1875,291 @@ func codexLegacySettings() []codexLegacySetting {
 	}
 }
 
-func ensureCodexLegacyActivation(configPath string) (int, []string, error) {
+func restoreInterruptedCodexLegacyActivation(configPath string) ([]string, error) {
 	data, err := readFileFn(configPath)
 	if err != nil && !os.IsNotExist(err) {
-		return 0, nil, fmt.Errorf("read Codex config: %w", err)
+		return nil, fmt.Errorf("read Codex config for interrupted retirement: %w", err)
 	}
 	content := string(data)
-	configChanged := false
-	filesChanged := 0
 	var preserved []string
-
-	var createdSettings []codexLegacySetting
-	rollbackCreated := func() {
-		for _, setting := range createdSettings {
-			data, err := os.ReadFile(setting.path)
-			if err == nil && string(data) == setting.content {
-				_ = os.Remove(setting.path)
+	for _, setting := range codexLegacySettings() {
+		stageStatus, stageErr := codexLegacyStageStatus(setting)
+		if stageStatus == "missing" {
+			continue
+		}
+		if stageErr != nil {
+			preserved = append(preserved, setting.key)
+			return preserved, fmt.Errorf("inspect interrupted Codex legacy retirement %s: %w", setting.key, stageErr)
+		}
+		value, found, valid := topLevelTOMLString(content, setting.key)
+		if stageStatus == "empty" {
+			_, originalErr := os.Lstat(setting.path)
+			canDiscard := !found || (valid && value == setting.path && countTopLevelTOMLKey(content, setting.key) == 1 && originalErr == nil)
+			if !canDiscard {
+				preserved = append(preserved, setting.key)
+				return preserved, fmt.Errorf("empty staged state for %s was preserved because the original path is unavailable", setting.key)
 			}
+			if err := removeFileFn(codexLegacyRetirementDir(setting.path)); err != nil {
+				return preserved, fmt.Errorf("remove empty Codex legacy stage %s: %w", setting.key, err)
+			}
+			continue
+		}
+		stagePath := codexLegacyRetirementPath(setting.path)
+		if !found {
+			if known, _, _ := codexLegacyFileOwned(stagePath, setting.content); !known {
+				preserved = append(preserved, setting.key)
+				return preserved, fmt.Errorf("unrecognized post-publish stage for %s was preserved byte-for-byte", setting.key)
+			}
+			if err := removeCodexLegacyStage(setting); err != nil {
+				return preserved, fmt.Errorf("complete interrupted Codex legacy retirement %s: %w", setting.key, err)
+			}
+			continue
+		}
+		if !valid || value != setting.path || countTopLevelTOMLKey(content, setting.key) != 1 {
+			preserved = append(preserved, setting.key)
+			return preserved, fmt.Errorf("ambiguous staged state for %s was preserved byte-for-byte", setting.key)
+		}
+		if err := restoreCodexLegacyStage(setting); err != nil {
+			preserved = append(preserved, setting.key)
+			return preserved, fmt.Errorf("restore interrupted Codex legacy retirement %s: %w", setting.key, err)
+		}
+	}
+	return preserved, nil
+}
+
+func retireCodexLegacyActivation(configPath string) ([]string, error) {
+	data, err := readFileFn(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read Codex config: %w", err)
+	}
+	content := string(data)
+	var preserved []string
+	var owned []codexLegacySetting
+	blocked := make(map[string]bool)
+
+	for _, setting := range codexLegacySettings() {
+		stagePath := codexLegacyRetirementPath(setting.path)
+		stageStatus, stageErr := codexLegacyStageStatus(setting)
+		if stageStatus == "missing" {
+			continue
+		}
+		if stageErr != nil || stageStatus != "ready" {
+			preserved = append(preserved, setting.key)
+			blocked[setting.key] = true
+			continue
+		}
+		staged, readErr := readFileFn(stagePath)
+		info, statErr := os.Lstat(stagePath)
+		if readErr != nil || statErr != nil || !info.Mode().IsRegular() || string(staged) != setting.content {
+			preserved = append(preserved, setting.key)
+			blocked[setting.key] = true
+			continue
+		}
+
+		value, found, valid := topLevelTOMLString(content, setting.key)
+		_, originalErr := os.Lstat(setting.path)
+		switch {
+		case !found && os.IsNotExist(originalErr):
+			if err := removeCodexLegacyStage(setting); err != nil {
+				return preserved, fmt.Errorf("complete Codex legacy retirement %s: %w", setting.key, err)
+			}
+		case found && valid && value == setting.path && countTopLevelTOMLKey(content, setting.key) == 1 && os.IsNotExist(originalErr):
+			if err := restoreCodexLegacyStage(setting); err != nil {
+				return preserved, fmt.Errorf("restore interrupted Codex legacy retirement %s: %w", setting.key, err)
+			}
+		default:
+			preserved = append(preserved, setting.key)
+			blocked[setting.key] = true
 		}
 	}
 
 	for _, setting := range codexLegacySettings() {
+		if blocked[setting.key] {
+			continue
+		}
 		value, found, valid := topLevelTOMLString(content, setting.key)
-		generated, readErr := readFileFn(setting.path)
-		generatedKnown := readErr == nil && string(generated) == setting.content
+		generatedKnown, readErr, statErr := codexLegacyFileOwned(setting.path, setting.content)
 		generatedMissing := os.IsNotExist(readErr)
 
-		if found {
-			if !valid || value != setting.path || !generatedKnown {
-				preserved = append(preserved, setting.key)
-			}
+		if found && valid && value == setting.path && generatedKnown && countTopLevelTOMLKey(content, setting.key) == 1 {
+			owned = append(owned, setting)
 			continue
 		}
-		if !generatedMissing {
+		if found || !generatedMissing || (statErr != nil && !os.IsNotExist(statErr)) {
 			preserved = append(preserved, setting.key)
-			continue
 		}
-		if generatedMissing {
-			if err := atomicWriteFileFn(setting.path, []byte(setting.content), 0644); err != nil {
-				rollbackCreated()
-				return filesChanged, preserved, fmt.Errorf("write Codex legacy activation %s: %w", setting.key, err)
-			}
-			createdSettings = append(createdSettings, setting)
-			filesChanged++
-		}
-		content = upsertTopLevelTOMLString(content, setting.key, setting.path)
-		configChanged = true
 	}
 
-	if configChanged {
-		content = upsertCodexEngramBlock(content)
-		if err := atomicWriteFileFn(configPath, []byte(content), 0644); err != nil {
-			rollbackCreated()
-			return filesChanged, preserved, fmt.Errorf("write Codex legacy activation config: %w", err)
+	if len(owned) == 0 {
+		return preserved, nil
+	}
+
+	updated := content
+	for _, setting := range owned {
+		var removed bool
+		updated, removed = removeTopLevelTOMLString(updated, setting.key, setting.path)
+		if !removed {
+			return preserved, fmt.Errorf("retire Codex legacy activation %s: ownership changed during migration", setting.key)
 		}
 	}
-	return filesChanged, preserved, nil
+
+	staged := make([]codexLegacySetting, 0, len(owned))
+	restoreStaged := func() error {
+		for index := len(staged) - 1; index >= 0; index-- {
+			setting := staged[index]
+			if err := restoreCodexLegacyStage(setting); err != nil {
+				return fmt.Errorf("restore %s: %w", setting.key, err)
+			}
+		}
+		return nil
+	}
+	for _, setting := range owned {
+		if known, _, _ := codexLegacyFileOwned(setting.path, setting.content); !known {
+			if restoreErr := restoreStaged(); restoreErr != nil {
+				return preserved, fmt.Errorf("retire Codex legacy activation %s: ownership changed; rollback failed: %v", setting.key, restoreErr)
+			}
+			return preserved, fmt.Errorf("retire Codex legacy activation %s: ownership changed before staging", setting.key)
+		}
+		stagePath := codexLegacyRetirementPath(setting.path)
+		if err := os.Mkdir(codexLegacyRetirementDir(setting.path), 0o700); err != nil {
+			if restoreErr := restoreStaged(); restoreErr != nil {
+				return preserved, fmt.Errorf("create Codex legacy stage %s: %w; rollback failed: %v", setting.key, err, restoreErr)
+			}
+			return preserved, fmt.Errorf("create Codex legacy stage %s: %w", setting.key, err)
+		}
+		if err := renameFileFn(setting.path, stagePath); err != nil {
+			_ = removeFileFn(codexLegacyRetirementDir(setting.path))
+			if restoreErr := restoreStaged(); restoreErr != nil {
+				return preserved, fmt.Errorf("stage Codex legacy activation %s: %w; rollback failed: %v", setting.key, err, restoreErr)
+			}
+			return preserved, fmt.Errorf("stage Codex legacy activation %s: %w", setting.key, err)
+		}
+		staged = append(staged, setting)
+		if known, _, _ := codexLegacyFileOwned(stagePath, setting.content); !known {
+			if restoreErr := restoreStaged(); restoreErr != nil {
+				return preserved, fmt.Errorf("retire Codex legacy activation %s: staged content changed; rollback failed: %v", setting.key, restoreErr)
+			}
+			return preserved, fmt.Errorf("retire Codex legacy activation %s: staged content changed and was preserved", setting.key)
+		}
+	}
+
+	current, readErr := readFileFn(configPath)
+	if readErr != nil || string(current) != content {
+		if restoreErr := restoreStaged(); restoreErr != nil {
+			return preserved, fmt.Errorf("retire Codex legacy activation: config ownership changed; rollback failed: %v", restoreErr)
+		}
+		return preserved, fmt.Errorf("retire Codex legacy activation: config ownership changed before publish")
+	}
+	for _, setting := range staged {
+		if known, _, _ := codexLegacyFileOwned(codexLegacyRetirementPath(setting.path), setting.content); !known {
+			if restoreErr := restoreStaged(); restoreErr != nil {
+				return preserved, fmt.Errorf("retire Codex legacy activation %s: staged content changed; rollback failed: %v", setting.key, restoreErr)
+			}
+			return preserved, fmt.Errorf("retire Codex legacy activation %s: staged content changed before publish", setting.key)
+		}
+		if _, err := os.Lstat(setting.path); !os.IsNotExist(err) {
+			if restoreErr := restoreStaged(); restoreErr != nil {
+				return preserved, fmt.Errorf("retire Codex legacy activation %s: original path was recreated; rollback failed: %v", setting.key, restoreErr)
+			}
+			return preserved, fmt.Errorf("retire Codex legacy activation %s: original path was recreated and preserved", setting.key)
+		}
+	}
+	if err := atomicWriteFileFn(configPath, []byte(updated), 0644); err != nil {
+		if restoreErr := restoreStaged(); restoreErr != nil {
+			return preserved, fmt.Errorf("retire Codex legacy activation config: %w; rollback failed: %v", err, restoreErr)
+		}
+		return preserved, fmt.Errorf("retire Codex legacy activation config: %w", err)
+	}
+	for _, setting := range staged {
+		stagePath := codexLegacyRetirementPath(setting.path)
+		if known, _, _ := codexLegacyFileOwned(stagePath, setting.content); !known {
+			return preserved, fmt.Errorf("retire Codex legacy activation %s: staged content changed after publish and was preserved at %s", setting.key, stagePath)
+		}
+		if err := removeCodexLegacyStage(setting); err != nil {
+			return preserved, fmt.Errorf("retire Codex legacy activation %s: %w", setting.key, err)
+		}
+	}
+	return preserved, nil
+}
+
+func codexLegacyRetirementDir(path string) string {
+	return path + ".engram-retiring"
+}
+
+func codexLegacyRetirementPath(path string) string {
+	return filepath.Join(codexLegacyRetirementDir(path), "payload")
+}
+
+func codexLegacyStageStatus(setting codexLegacySetting) (string, error) {
+	dir := codexLegacyRetirementDir(setting.path)
+	info, err := os.Lstat(dir)
+	if os.IsNotExist(err) {
+		return "missing", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("staging path is not a directory")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", err
+	}
+	if len(entries) == 0 {
+		return "empty", nil
+	}
+	if len(entries) != 1 || entries[0].Name() != "payload" {
+		return "", fmt.Errorf("staging directory contains unrecognized state")
+	}
+	return "ready", nil
+}
+
+func removeCodexLegacyStage(setting codexLegacySetting) error {
+	if err := removeFileFn(codexLegacyRetirementPath(setting.path)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := removeFileFn(codexLegacyRetirementDir(setting.path)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func restoreCodexLegacyStage(setting codexLegacySetting) error {
+	stagePath := codexLegacyRetirementPath(setting.path)
+	stageInfo, stageErr := os.Lstat(stagePath)
+	if stageErr != nil {
+		return stageErr
+	}
+	if !stageInfo.Mode().IsRegular() {
+		return fmt.Errorf("staged path is not a regular file")
+	}
+	originalInfo, originalErr := os.Lstat(setting.path)
+	if originalErr == nil {
+		if os.SameFile(stageInfo, originalInfo) {
+			return removeCodexLegacyStage(setting)
+		}
+		if known, _, _ := codexLegacyFileOwned(stagePath, setting.content); known {
+			return removeCodexLegacyStage(setting)
+		}
+		return fmt.Errorf("original and staged paths both contain unrecognized state")
+	}
+	if !os.IsNotExist(originalErr) {
+		return originalErr
+	}
+	if err := linkFileFn(stagePath, setting.path); err != nil {
+		return err
+	}
+	if err := removeCodexLegacyStage(setting); err != nil {
+		return fmt.Errorf("remove restored stage: %w", err)
+	}
+	return nil
+}
+
+func codexLegacyFileOwned(path, content string) (known bool, readErr, statErr error) {
+	data, readErr := readFileFn(path)
+	info, statErr := os.Lstat(path)
+	return readErr == nil && statErr == nil && info.Mode().IsRegular() && string(data) == content, readErr, statErr
 }
 
 func appendUnique(values []string, additions ...string) []string {
@@ -2401,9 +2667,43 @@ func codexMCPReady(configPath string) bool {
 	return commandOK && argsOK && command == resolveEngramCommand() && slicesEqual(args, []string{"mcp", "--tools=agent"})
 }
 
-func codexPreservedLegacySettings(configPath string) []string {
+func codexMCPRegistrationPreserved(configPath string) bool {
 	data, err := readFileFn(configPath)
 	if err != nil {
+		return false
+	}
+	start, end, found := tomlSectionBounds(string(data), "mcp_servers.engram")
+	return found && !codexMCPSectionOwned(string(data[start:end]))
+}
+
+func codexCheckpointAdaptersReady() (bool, string) {
+	tools := mcp.ResolveTools("agent")
+	for _, tool := range []string{"mem_checkpoint", "mem_checkpoint_status"} {
+		if !tools[tool] {
+			return false, "configured MCP agent profile does not provide " + tool
+		}
+	}
+
+	output, err := runCodexCheckpointProbeFn(resolveEngramCommand(), "checkpoint", "--help")
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return false, "configured Engram executable failed the checkpoint CLI capability probe: " + detail
+	}
+	usage := string(output)
+	for _, command := range []string{"checkpoint record", "checkpoint status", "checkpoint verify-stop"} {
+		if !strings.Contains(usage, command) {
+			return false, "configured Engram executable does not advertise " + command
+		}
+	}
+	return true, ""
+}
+
+func codexPreservedLegacySettings(configPath string) []string {
+	data, err := readFileFn(configPath)
+	if err != nil && !os.IsNotExist(err) {
 		return nil
 	}
 
@@ -2411,10 +2711,14 @@ func codexPreservedLegacySettings(configPath string) []string {
 	for _, setting := range codexLegacySettings() {
 		value, found, valid := topLevelTOMLString(string(data), setting.key)
 		if !found {
+			if _, readErr := readFileFn(setting.path); !os.IsNotExist(readErr) {
+				preserved = append(preserved, setting.key)
+			}
 			continue
 		}
 		generated, readErr := readFileFn(setting.path)
-		if !valid || value != setting.path || readErr != nil || string(generated) != setting.content {
+		info, statErr := os.Lstat(setting.path)
+		if !valid || value != setting.path || readErr != nil || statErr != nil || !info.Mode().IsRegular() || string(generated) != setting.content {
 			preserved = append(preserved, setting.key)
 		}
 	}
@@ -2438,6 +2742,56 @@ func topLevelTOMLString(content, key string) (value string, found, valid bool) {
 		return decoded, true, true
 	}
 	return "", false, false
+}
+
+func countTopLevelTOMLKey(content, key string) int {
+	count := 0
+	for _, line := range strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if _, ok := tomlTableHeader(trimmed); ok {
+			break
+		}
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) == key {
+			count++
+		}
+	}
+	return count
+}
+
+func removeTopLevelTOMLString(content, key, value string) (string, bool) {
+	lineStart := 0
+	found := false
+	removeStart := 0
+	removeEnd := 0
+	for lineStart < len(content) {
+		relativeEnd := strings.IndexByte(content[lineStart:], '\n')
+		lineEnd := len(content)
+		if relativeEnd >= 0 {
+			lineEnd = lineStart + relativeEnd + 1
+		}
+		line := strings.TrimSuffix(content[lineStart:lineEnd], "\n")
+		line = strings.TrimSuffix(line, "\r")
+		trimmed := strings.TrimSpace(line)
+		if _, ok := tomlTableHeader(trimmed); ok {
+			break
+		}
+		parts := strings.SplitN(trimmed, "=", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) == key {
+			decoded, err := strconv.Unquote(strings.TrimSpace(parts[1]))
+			if found || err != nil || decoded != value {
+				return content, false
+			}
+			found = true
+			removeStart = lineStart
+			removeEnd = lineEnd
+		}
+		lineStart = lineEnd
+	}
+	if !found {
+		return content, false
+	}
+	return content[:removeStart] + content[removeEnd:], true
 }
 
 type codexMarketplaceAddResult struct {
@@ -2612,57 +2966,6 @@ func upsertCodexEngramBlock(content string) string {
 		separator = newline
 	}
 	return content + separator + block + newline
-}
-
-func upsertTopLevelTOMLString(content, key, value string) string {
-	newline := "\n"
-	if strings.Contains(content, "\r\n") {
-		newline = "\r\n"
-	}
-	lines := strings.Split(content, newline)
-	lineValue := fmt.Sprintf("%s = %q", key, value)
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if _, ok := tomlTableHeader(trimmed); ok {
-			break
-		}
-		if strings.HasPrefix(trimmed, key+" ") || strings.HasPrefix(trimmed, key+"=") {
-			lines[i] = lineValue
-			return strings.Join(lines, newline)
-		}
-	}
-
-	if strings.TrimSpace(content) == "" {
-		return lineValue + newline
-	}
-
-	headerAt := -1
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if _, ok := tomlTableHeader(trimmed); ok {
-			headerAt = i
-			break
-		}
-	}
-	if headerAt == -1 {
-		if strings.HasSuffix(content, newline) {
-			return content + lineValue + newline
-		}
-		return content + newline + lineValue + newline
-	}
-
-	insertAt := headerAt
-	for insertAt > 0 && strings.TrimSpace(lines[insertAt-1]) == "" {
-		insertAt--
-	}
-	out := append([]string(nil), lines[:insertAt]...)
-	out = append(out, lineValue)
-	if insertAt == headerAt {
-		out = append(out, "")
-	}
-	out = append(out, lines[insertAt:]...)
-	return strings.Join(out, newline)
 }
 
 func tomlSectionBounds(content, table string) (start, end int, found bool) {

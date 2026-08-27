@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -304,10 +305,418 @@ func TestInstallCodexReportsCanonicalCheckpointCapabilitiesWithoutSharedInstruct
 	if !ok || verifier.Status != CheckReady || !result.Complete {
 		t.Fatalf("verifier check = %+v complete=%v, want ready for the installed canonical Stop verifier", verifier, result.Complete)
 	}
+	if result.Files != 1 {
+		t.Fatalf("fresh canonical setup changed %d files, want only config.toml", result.Files)
+	}
+
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read canonical Codex config: %v", err)
+	}
+	for _, legacyKey := range []string{"model_instructions_file", "experimental_compact_prompt_file"} {
+		if strings.Contains(string(config), legacyKey) {
+			t.Fatalf("fresh canonical setup retained legacy key %s:\n%s", legacyKey, config)
+		}
+	}
+	for _, legacyPath := range []string{codexInstructionsPath(), codexCompactPromptPath()} {
+		if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+			t.Fatalf("fresh canonical setup created legacy artifact %s: %v", legacyPath, err)
+		}
+	}
 
 	for _, shared := range []string{"AGENTS.md", "CLAUDE.md"} {
 		if _, err := os.Stat(filepath.Join(home, shared)); !os.IsNotExist(err) {
 			t.Fatalf("Codex setup created or modified shared instruction file %s: %v", shared, err)
+		}
+	}
+}
+
+func TestInstallCodexRetiresOnlyOwnedLegacyActivationAfterReplacementVerification(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	osExecutable = func() (string, error) { return "/usr/local/bin/engram", nil }
+	stubCanonicalCodexCLI(t)
+
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("create Codex config directory: %v", err)
+	}
+	unrelated := "model = \"gpt-user\"\r\n\r\n[mcp_servers.existing]\r\ncommand = \"existing\"\r\nargs = [\"x\"]\r\n"
+	legacyConfig := fmt.Sprintf("model_instructions_file = %q\r\nexperimental_compact_prompt_file = %q\r\n%s",
+		codexInstructionsPath(), codexCompactPromptPath(), unrelated)
+	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
+		t.Fatalf("write owned legacy Codex config: %v", err)
+	}
+	if err := os.WriteFile(codexInstructionsPath(), []byte(memoryProtocolMarkdown), 0o644); err != nil {
+		t.Fatalf("write owned legacy instructions: %v", err)
+	}
+	if err := os.WriteFile(codexCompactPromptPath(), []byte(codexCompactPromptMarkdown), 0o644); err != nil {
+		t.Fatalf("write owned legacy compact prompt: %v", err)
+	}
+
+	result, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err != nil {
+		t.Fatalf("upgrade owned legacy Codex setup: %v", err)
+	}
+	if !result.Complete {
+		t.Fatalf("replacement checks = %+v, want complete before retirement", result.Checks)
+	}
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read migrated Codex config: %v", err)
+	}
+	for _, legacyKey := range []string{"model_instructions_file", "experimental_compact_prompt_file"} {
+		if strings.Contains(string(config), legacyKey) {
+			t.Fatalf("owned legacy key %s survived migration:\n%s", legacyKey, config)
+		}
+	}
+	if !strings.Contains(string(config), unrelated) {
+		t.Fatalf("unrelated CRLF configuration changed during migration:\n%q", config)
+	}
+	for _, legacyPath := range []string{codexInstructionsPath(), codexCompactPromptPath()} {
+		if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+			t.Fatalf("owned legacy artifact %s survived migration: %v", legacyPath, err)
+		}
+	}
+	if len(result.Preserved) != 0 {
+		t.Fatalf("preserved state = %v, want no preservation diagnostic for exactly owned legacy state", result.Preserved)
+	}
+	baseline := append([]byte(nil), config...)
+	second, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err != nil {
+		t.Fatalf("rerun migrated legacy Codex setup: %v", err)
+	}
+	if second.Files != 0 || len(second.Preserved) != 0 {
+		t.Fatalf("rerun result files=%d preserved=%v, want byte-stable duplicate-free state", second.Files, second.Preserved)
+	}
+	assertFileBytes(t, configPath, baseline)
+	for _, shared := range []string{"AGENTS.md", "CLAUDE.md"} {
+		if _, err := os.Stat(filepath.Join(home, shared)); !os.IsNotExist(err) {
+			t.Fatalf("legacy migration created or modified shared instruction file %s: %v", shared, err)
+		}
+	}
+}
+
+func TestInstallCodexPreservesModifiedLegacyArtifactWhileRetiringExactOwnedState(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	osExecutable = func() (string, error) { return "/usr/local/bin/engram", nil }
+	stubCanonicalCodexCLI(t)
+
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("create Codex config directory: %v", err)
+	}
+	legacyConfig := fmt.Sprintf("model_instructions_file = %q\nexperimental_compact_prompt_file = %q\nmodel = \"gpt-user\"\n\n[mcp_servers.engram]\ncommand = \"engram\"\nargs = [\"mcp\", \"--tools=agent\"]\n",
+		codexInstructionsPath(), codexCompactPromptPath())
+	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
+		t.Fatalf("write legacy Codex config: %v", err)
+	}
+	modifiedInstructions := []byte(memoryProtocolMarkdown + "\nUser-owned addition.\n")
+	if err := os.WriteFile(codexInstructionsPath(), modifiedInstructions, 0o644); err != nil {
+		t.Fatalf("write modified legacy instructions: %v", err)
+	}
+	if err := os.WriteFile(codexCompactPromptPath(), []byte(codexCompactPromptMarkdown), 0o644); err != nil {
+		t.Fatalf("write owned legacy compact prompt: %v", err)
+	}
+
+	result, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err != nil {
+		t.Fatalf("upgrade mixed-ownership legacy Codex setup: %v", err)
+	}
+	if !result.Complete {
+		t.Fatalf("replacement checks = %+v, want complete before retirement", result.Checks)
+	}
+	if !slices.Contains(result.Preserved, "model_instructions_file") ||
+		slices.Contains(result.Preserved, "experimental_compact_prompt_file") {
+		t.Fatalf("preserved state = %v, want only modified model instructions", result.Preserved)
+	}
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read migrated Codex config: %v", err)
+	}
+	if !strings.Contains(string(config), "model_instructions_file") || strings.Contains(string(config), "experimental_compact_prompt_file") {
+		t.Fatalf("mixed-ownership migration changed the wrong settings:\n%s", config)
+	}
+	assertFileBytes(t, codexInstructionsPath(), modifiedInstructions)
+	if _, err := os.Stat(codexCompactPromptPath()); !os.IsNotExist(err) {
+		t.Fatalf("exact-owned compact prompt survived migration: %v", err)
+	}
+	baseline := append([]byte(nil), config...)
+	second, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err != nil {
+		t.Fatalf("rerun mixed-ownership legacy Codex setup: %v", err)
+	}
+	if second.Files != 0 || !slices.Equal(second.Preserved, result.Preserved) {
+		t.Fatalf("rerun result files=%d preserved=%v, want byte-stable preservation %v", second.Files, second.Preserved, result.Preserved)
+	}
+	assertFileBytes(t, configPath, baseline)
+	assertFileBytes(t, codexInstructionsPath(), modifiedInstructions)
+	for _, shared := range []string{"AGENTS.md", "CLAUDE.md"} {
+		if _, err := os.Stat(filepath.Join(home, shared)); !os.IsNotExist(err) {
+			t.Fatalf("mixed-ownership migration created or modified shared instruction file %s: %v", shared, err)
+		}
+	}
+}
+
+func TestInstallCodexPreservesOwnedLegacyActivationWhenCheckpointAdaptersAreUnavailable(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	osExecutable = func() (string, error) { return "/usr/local/bin/engram", nil }
+	stubCanonicalCodexCLI(t)
+	runCodexCheckpointProbeFn = func(string, ...string) ([]byte, error) {
+		return []byte("checkpoint command unavailable"), errors.New("exit 1")
+	}
+
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("create Codex config directory: %v", err)
+	}
+	legacyConfig := fmt.Sprintf("model_instructions_file = %q\nexperimental_compact_prompt_file = %q\nmodel = \"gpt-user\"\n\n[mcp_servers.engram]\ncommand = \"engram\"\nargs = [\"mcp\", \"--tools=agent\"]\n",
+		codexInstructionsPath(), codexCompactPromptPath())
+	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
+		t.Fatalf("write owned legacy Codex config: %v", err)
+	}
+	if err := os.WriteFile(codexInstructionsPath(), []byte(memoryProtocolMarkdown), 0o644); err != nil {
+		t.Fatalf("write owned legacy instructions: %v", err)
+	}
+	if err := os.WriteFile(codexCompactPromptPath(), []byte(codexCompactPromptMarkdown), 0o644); err != nil {
+		t.Fatalf("write owned legacy compact prompt: %v", err)
+	}
+
+	result, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err != nil {
+		t.Fatalf("setup with unavailable checkpoint adapters: %v", err)
+	}
+	if result.Complete {
+		t.Fatalf("setup completed without checkpoint adapters: %+v", result.Checks)
+	}
+	mcpCheck, ok := result.Check("mcp")
+	if !ok || mcpCheck.Status != CheckFailed || !strings.Contains(mcpCheck.Detail, "checkpoint") {
+		t.Fatalf("mcp check = %+v, want actionable checkpoint-adapter failure", mcpCheck)
+	}
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read preserved Codex config: %v", err)
+	}
+	if string(config) != legacyConfig {
+		t.Fatalf("failed checkpoint probe changed prior working activation\ngot:  %q\nwant: %q", config, legacyConfig)
+	}
+	for _, legacyKey := range []string{"model_instructions_file", "experimental_compact_prompt_file"} {
+		if !strings.Contains(string(config), legacyKey) {
+			t.Fatalf("failed replacement verification retired %s:\n%s", legacyKey, config)
+		}
+	}
+	assertFileBytes(t, codexInstructionsPath(), []byte(memoryProtocolMarkdown))
+	assertFileBytes(t, codexCompactPromptPath(), []byte(codexCompactPromptMarkdown))
+}
+
+func TestInstallCodexResumesInterruptedLegacyRetirement(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	osExecutable = func() (string, error) { return "/usr/local/bin/engram", nil }
+	stubCanonicalCodexCLI(t)
+
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("create Codex config directory: %v", err)
+	}
+	legacyConfig := fmt.Sprintf("model_instructions_file = %q\nexperimental_compact_prompt_file = %q\nmodel = \"gpt-user\"\n",
+		codexInstructionsPath(), codexCompactPromptPath())
+	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
+		t.Fatalf("write owned legacy Codex config: %v", err)
+	}
+	if err := os.WriteFile(codexInstructionsPath(), []byte(memoryProtocolMarkdown), 0o644); err != nil {
+		t.Fatalf("write owned legacy instructions: %v", err)
+	}
+	if err := os.WriteFile(codexCompactPromptPath(), []byte(codexCompactPromptMarkdown), 0o644); err != nil {
+		t.Fatalf("write owned legacy compact prompt: %v", err)
+	}
+
+	realRemove := removeFileFn
+	failOnce := true
+	removeFileFn = func(path string) error {
+		if failOnce && path == codexLegacyRetirementPath(codexCompactPromptPath()) {
+			failOnce = false
+			return errors.New("simulated retirement interruption")
+		}
+		return realRemove(path)
+	}
+	options := InstallOptions{Version: "2.2.1", Commit: testReleaseCommit}
+	if _, err := InstallWithOptions("codex", options); err == nil || !strings.Contains(err.Error(), "simulated retirement interruption") {
+		t.Fatalf("interrupted retirement error = %v", err)
+	}
+	if _, err := os.Stat(codexLegacyRetirementPath(codexCompactPromptPath())); err != nil {
+		t.Fatalf("interrupted retirement did not retain recoverable staged file: %v", err)
+	}
+	removeFileFn = realRemove
+	second, err := InstallWithOptions("codex", options)
+	if err != nil {
+		t.Fatalf("resume interrupted retirement: %v", err)
+	}
+	if !second.Complete {
+		t.Fatalf("resumed retirement checks = %+v, want complete", second.Checks)
+	}
+	finalConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read resumed config: %v", err)
+	}
+	for _, key := range []string{"model_instructions_file", "experimental_compact_prompt_file"} {
+		if strings.Contains(string(finalConfig), key) {
+			t.Fatalf("resumed retirement retained %s:\n%s", key, finalConfig)
+		}
+	}
+	for _, path := range []string{
+		codexInstructionsPath(), codexLegacyRetirementPath(codexInstructionsPath()),
+		codexCompactPromptPath(), codexLegacyRetirementPath(codexCompactPromptPath()),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("resumed retirement left %s: %v", path, err)
+		}
+	}
+	baseline := append([]byte(nil), finalConfig...)
+	third, err := InstallWithOptions("codex", options)
+	if err != nil {
+		t.Fatalf("rerun completed retirement: %v", err)
+	}
+	if third.Files != 0 {
+		t.Fatalf("completed retirement rerun changed %d files", third.Files)
+	}
+	assertFileBytes(t, configPath, baseline)
+}
+
+func TestInstallCodexRestoresPrePublishStageBeforeReplacementChecks(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("create Codex config directory: %v", err)
+	}
+	legacyConfig := fmt.Sprintf("model_instructions_file = %q\nexperimental_compact_prompt_file = %q\nmodel = \"gpt-user\"\n",
+		codexInstructionsPath(), codexCompactPromptPath())
+	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
+		t.Fatalf("write owned legacy Codex config: %v", err)
+	}
+	if err := os.Mkdir(codexLegacyRetirementDir(codexInstructionsPath()), 0o700); err != nil {
+		t.Fatalf("create simulated pre-publish stage: %v", err)
+	}
+	if err := os.WriteFile(codexLegacyRetirementPath(codexInstructionsPath()), []byte(memoryProtocolMarkdown), 0o644); err != nil {
+		t.Fatalf("write simulated pre-publish stage: %v", err)
+	}
+	if err := os.WriteFile(codexCompactPromptPath(), []byte(codexCompactPromptMarkdown), 0o644); err != nil {
+		t.Fatalf("write owned legacy compact prompt: %v", err)
+	}
+	lookPathFn = func(string) (string, error) { return "", errors.New("codex unavailable") }
+
+	result, err := InstallWithOptions("codex", InstallOptions{Development: true})
+	if err != nil {
+		t.Fatalf("setup with unavailable replacement: %v", err)
+	}
+	if result.Complete {
+		t.Fatalf("setup completed without Codex CLI: %+v", result.Checks)
+	}
+	assertFileBytes(t, configPath, []byte(legacyConfig))
+	assertFileBytes(t, codexInstructionsPath(), []byte(memoryProtocolMarkdown))
+	assertFileBytes(t, codexCompactPromptPath(), []byte(codexCompactPromptMarkdown))
+	if _, err := os.Stat(codexLegacyRetirementPath(codexInstructionsPath())); !os.IsNotExist(err) {
+		t.Fatalf("pre-publish recovery left staged instructions: %v", err)
+	}
+}
+
+func TestInstallCodexCompletesPostPublishCleanupBeforeReplacementChecks(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("create Codex config directory: %v", err)
+	}
+	config := []byte("model = \"gpt-user\"\n")
+	if err := os.WriteFile(configPath, config, 0o644); err != nil {
+		t.Fatalf("write post-publish Codex config: %v", err)
+	}
+	stagePath := codexLegacyRetirementPath(codexInstructionsPath())
+	if err := os.Mkdir(codexLegacyRetirementDir(codexInstructionsPath()), 0o700); err != nil {
+		t.Fatalf("create simulated post-publish stage: %v", err)
+	}
+	if err := os.WriteFile(stagePath, []byte(memoryProtocolMarkdown), 0o644); err != nil {
+		t.Fatalf("write simulated post-publish stage: %v", err)
+	}
+	lookPathFn = func(string) (string, error) { return "", errors.New("codex unavailable") }
+
+	result, err := InstallWithOptions("codex", InstallOptions{Development: true})
+	if err != nil {
+		t.Fatalf("setup with unavailable replacement: %v", err)
+	}
+	if result.Complete {
+		t.Fatalf("setup completed without Codex CLI: %+v", result.Checks)
+	}
+	assertFileBytes(t, configPath, config)
+	if _, err := os.Stat(stagePath); !os.IsNotExist(err) {
+		t.Fatalf("post-publish recovery left staged instructions: %v", err)
+	}
+	if _, err := os.Stat(codexInstructionsPath()); !os.IsNotExist(err) {
+		t.Fatalf("post-publish recovery restored a retired original: %v", err)
+	}
+}
+
+func TestInstallCodexPreservesLegacyFileChangedDuringRetirement(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	osExecutable = func() (string, error) { return "/usr/local/bin/engram", nil }
+	stubCanonicalCodexCLI(t)
+
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("create Codex config directory: %v", err)
+	}
+	legacyConfig := fmt.Sprintf("model_instructions_file = %q\nexperimental_compact_prompt_file = %q\nmodel = \"gpt-user\"\n",
+		codexInstructionsPath(), codexCompactPromptPath())
+	if err := os.WriteFile(configPath, []byte(legacyConfig), 0o644); err != nil {
+		t.Fatalf("write owned legacy Codex config: %v", err)
+	}
+	if err := os.WriteFile(codexInstructionsPath(), []byte(memoryProtocolMarkdown), 0o644); err != nil {
+		t.Fatalf("write owned legacy instructions: %v", err)
+	}
+	if err := os.WriteFile(codexCompactPromptPath(), []byte(codexCompactPromptMarkdown), 0o644); err != nil {
+		t.Fatalf("write owned legacy compact prompt: %v", err)
+	}
+
+	realRename := renameFileFn
+	modified := []byte(memoryProtocolMarkdown + "\nConcurrent user change.\n")
+	changed := false
+	renameFileFn = func(oldPath, newPath string) error {
+		if !changed && oldPath == codexInstructionsPath() {
+			changed = true
+			replacement := oldPath + ".user-replacement"
+			if err := os.WriteFile(replacement, modified, 0o644); err != nil {
+				return err
+			}
+			if err := os.Rename(replacement, oldPath); err != nil {
+				return err
+			}
+		}
+		return realRename(oldPath, newPath)
+	}
+	if _, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit}); err == nil || !strings.Contains(err.Error(), "staged content changed") {
+		t.Fatalf("concurrent modification error = %v", err)
+	}
+	assertFileBytes(t, codexInstructionsPath(), modified)
+	assertFileBytes(t, codexCompactPromptPath(), []byte(codexCompactPromptMarkdown))
+	config, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read preserved config: %v", err)
+	}
+	for _, key := range []string{"model_instructions_file", "experimental_compact_prompt_file"} {
+		if !strings.Contains(string(config), key) {
+			t.Fatalf("concurrent modification retired %s:\n%s", key, config)
+		}
+	}
+	for _, path := range []string{codexLegacyRetirementPath(codexInstructionsPath()), codexLegacyRetirementPath(codexCompactPromptPath())} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("concurrent modification left staged path %s: %v", path, err)
 		}
 	}
 }
@@ -609,8 +1018,9 @@ func TestInstallCodexPreservesCustomInstructionsAfterPluginVerification(t *testi
 
 	marketplaceRoot := t.TempDir()
 	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
-	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.3")
-	writeInstalledCodexPlugin(t, installedPlugin, marketplaceRoot, false)
+	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.5")
+	writeCanonicalCodexActivationFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"))
+	writeCanonicalCodexActivationFixture(t, installedPlugin)
 	lookPathFn = func(file string) (string, error) {
 		if file == "codex" {
 			return "/usr/local/bin/codex", nil
@@ -622,7 +1032,7 @@ func TestInstallCodexPreservesCustomInstructionsAfterPluginVerification(t *testi
 		case len(args) >= 4 && slices.Equal(args[:4], []string{"plugin", "marketplace", "add", codexMarketplace}):
 			return []byte(fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)), nil
 		case len(args) >= 3 && slices.Equal(args[:3], []string{"plugin", "add", "engram@engram"}):
-			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.3","installedPath":%q}`, installedPlugin)), nil
+			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.5","installedPath":%q}`, installedPlugin)), nil
 		default:
 			return nil, fmt.Errorf("unexpected codex command: %v", args)
 		}
@@ -633,8 +1043,8 @@ func TestInstallCodexPreservesCustomInstructionsAfterPluginVerification(t *testi
 		t.Fatalf("InstallWithOptions(codex) failed: %v", err)
 	}
 	activation, ok := result.Check("activation-cue")
-	if !ok || activation.Status != CheckMissing {
-		t.Fatalf("activation-cue check = %+v, want missing until the canonical cue is installed", activation)
+	if !ok || activation.Status != CheckReady || !result.Complete {
+		t.Fatalf("activation-cue check = %+v complete=%v, want ready canonical replacement", activation, result.Complete)
 	}
 	mcpCheck, ok := result.Check("mcp")
 	if !ok || mcpCheck.Status != CheckReady {
@@ -659,6 +1069,35 @@ func TestInstallCodexPreservesCustomInstructionsAfterPluginVerification(t *testi
 	if _, err := os.Stat(filepath.Join(home, ".codex", "engram-instructions.md")); !os.IsNotExist(err) {
 		t.Fatalf("custom activation should not create Engram legacy instructions: %v", err)
 	}
+}
+
+func TestInstallCodexReportsUnrecognizedMCPRegistrationWithoutChangingIt(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	osExecutable = func() (string, error) { return "/usr/local/bin/engram", nil }
+	stubCanonicalCodexCLI(t)
+
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("create Codex config directory: %v", err)
+	}
+	custom := []byte("model = \"gpt-user\"\n\n[mcp_servers.engram]\ncommand = \"custom-wrapper\"\nargs = [\"serve\"]\nuser_field = \"keep\"\n")
+	if err := os.WriteFile(configPath, custom, 0o644); err != nil {
+		t.Fatalf("write custom MCP registration: %v", err)
+	}
+
+	result, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err != nil {
+		t.Fatalf("setup with custom MCP registration: %v", err)
+	}
+	if result.Complete || !slices.Contains(result.Preserved, "mcp_servers.engram") {
+		t.Fatalf("complete=%v preserved=%v, want named preservation of custom MCP state", result.Complete, result.Preserved)
+	}
+	mcpCheck, ok := result.Check("mcp")
+	if !ok || mcpCheck.Status != CheckPreserved {
+		t.Fatalf("mcp check = %+v, want preserved", mcpCheck)
+	}
+	assertFileBytes(t, configPath, custom)
 }
 
 func TestInstallCodexStableSetupRequiresReleaseIdentityBeforeMutation(t *testing.T) {
@@ -742,12 +1181,22 @@ func TestInstallCodexDevelopmentModeExplicitlyUsesMain(t *testing.T) {
 func TestInstallCodexIsolatedHomeAcceptance(t *testing.T) {
 	resetSetupSeams(t)
 	home := useTestHome(t)
-	osExecutable = func() (string, error) { return "/usr/local/bin/engram", nil }
+	engramPath := buildRealEngramCLI(t)
+	osExecutable = func() (string, error) { return engramPath, nil }
+	probeCalls := 0
+	runCodexCheckpointProbeFn = func(name string, args ...string) ([]byte, error) {
+		probeCalls++
+		if name != engramPath || !slices.Equal(args, []string{"checkpoint", "--help"}) {
+			return nil, fmt.Errorf("unexpected checkpoint probe: %s %v", name, args)
+		}
+		return exec.Command(name, args...).CombinedOutput()
+	}
 
 	marketplaceRoot := t.TempDir()
 	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
-	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.3")
-	writeInstalledCodexPlugin(t, installedPlugin, marketplaceRoot, false)
+	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.5")
+	writeCanonicalCodexActivationFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"))
+	writeCanonicalCodexActivationFixture(t, installedPlugin)
 	commandLog := filepath.Join(t.TempDir(), "codex.log")
 	fakeBin := t.TempDir()
 	writeFakeCodexCLI(t, fakeBin, marketplaceRoot, installedPlugin)
@@ -759,21 +1208,24 @@ func TestInstallCodexIsolatedHomeAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first isolated setup: %v", err)
 	}
-	if first.Files != 3 {
-		t.Fatalf("first setup changed %d files, want 3", first.Files)
+	if first.Files != 1 || !first.Complete {
+		t.Fatalf("first setup changed %d files complete=%v checks=%+v, want one duplicate-free config and complete replacement", first.Files, first.Complete, first.Checks)
 	}
 	paths := []string{
 		filepath.Join(home, ".codex", "config.toml"),
-		filepath.Join(home, ".codex", "engram-instructions.md"),
-		filepath.Join(home, ".codex", "engram-compact-prompt.md"),
 	}
 	baseline := readFiles(t, paths)
 	config := string(baseline[paths[0]])
 	if strings.Count(config, "[mcp_servers.engram]") != 1 {
 		t.Fatalf("generated config has duplicate Engram MCP blocks:\n%s", config)
 	}
-	if !strings.Contains(config, `command = "/usr/local/bin/engram"`) {
+	if !strings.Contains(config, fmt.Sprintf("command = %q", engramPath)) {
 		t.Fatalf("generated config lacks stable executable path:\n%s", config)
+	}
+	for _, legacyPath := range []string{codexInstructionsPath(), codexCompactPromptPath()} {
+		if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+			t.Fatalf("fresh acceptance left legacy artifact %s: %v", legacyPath, err)
+		}
 	}
 
 	second, err := InstallWithOptions("codex", options)
@@ -785,6 +1237,9 @@ func TestInstallCodexIsolatedHomeAcceptance(t *testing.T) {
 	}
 	if second.Files != 0 {
 		t.Fatalf("byte-stable rerun reported %d changed files despite identical outputs", second.Files)
+	}
+	if probeCalls != 2 {
+		t.Fatalf("real checkpoint capability probe ran %d times, want once per completed setup", probeCalls)
 	}
 
 	logRaw, err := os.ReadFile(commandLog)
@@ -816,16 +1271,39 @@ func TestInstallCodexIsolatedHomeAcceptance(t *testing.T) {
 	}
 	interruptedPaths := []string{
 		filepath.Join(interruptedHome, ".codex", "config.toml"),
-		filepath.Join(interruptedHome, ".codex", "engram-instructions.md"),
-		filepath.Join(interruptedHome, ".codex", "engram-compact-prompt.md"),
 	}
-	for i, path := range interruptedPaths {
-		want := baseline[paths[i]]
-		if i == 0 {
-			want = []byte(strings.ReplaceAll(string(want), home, interruptedHome))
-		}
+	for _, path := range interruptedPaths {
+		want := baseline[paths[0]]
+		want = []byte(strings.ReplaceAll(string(want), home, interruptedHome))
 		assertFileBytes(t, path, want)
 	}
+	for _, legacyPath := range []string{
+		filepath.Join(interruptedHome, ".codex", "engram-instructions.md"),
+		filepath.Join(interruptedHome, ".codex", "engram-compact-prompt.md"),
+	} {
+		if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+			t.Fatalf("recovered setup left legacy artifact %s: %v", legacyPath, err)
+		}
+	}
+}
+
+func buildRealEngramCLI(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repository root: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "engram")
+	build := exec.Command("go", "build", "-o", path, "./cmd/engram")
+	build.Dir = root
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build real Engram CLI: %v\n%s", err, output)
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolve real Engram CLI: %v", err)
+	}
+	return resolved
 }
 
 func readFiles(t *testing.T, paths []string) map[string][]byte {
@@ -844,7 +1322,7 @@ func readFiles(t *testing.T, paths []string) map[string][]byte {
 func writeFakeCodexCLI(t *testing.T, dir, marketplaceRoot, installedPlugin string) {
 	t.Helper()
 	addJSON := fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)
-	pluginJSON := fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.3","installedPath":%q}`, installedPlugin)
+	pluginJSON := fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.5","installedPath":%q}`, installedPlugin)
 	script := fmt.Sprintf(`#!/bin/sh
 set -eu
 printf '%%s\n' "$*" >> "$FAKE_CODEX_LOG"
@@ -880,6 +1358,34 @@ func stubVerifiedCodexCLI(t *testing.T, includeStop bool) *[][]string {
 			return []byte(fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)), nil
 		case len(args) >= 3 && slices.Equal(args[:3], []string{"plugin", "add", "engram@engram"}):
 			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.3","installedPath":%q}`, installedPlugin)), nil
+		default:
+			return nil, fmt.Errorf("unexpected codex command: %v", args)
+		}
+	}
+	return &commands
+}
+
+func stubCanonicalCodexCLI(t *testing.T) *[][]string {
+	t.Helper()
+	marketplaceRoot := t.TempDir()
+	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
+	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.5")
+	writeCanonicalCodexActivationFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"))
+	writeCanonicalCodexActivationFixture(t, installedPlugin)
+	lookPathFn = func(file string) (string, error) {
+		if file == "codex" {
+			return "/usr/local/bin/codex", nil
+		}
+		return "", errors.New("not found")
+	}
+	commands := make([][]string, 0, 2)
+	runCommand = func(name string, args ...string) ([]byte, error) {
+		commands = append(commands, append([]string{name}, args...))
+		switch {
+		case len(args) >= 4 && slices.Equal(args[:4], []string{"plugin", "marketplace", "add", codexMarketplace}):
+			return []byte(fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)), nil
+		case len(args) >= 3 && slices.Equal(args[:3], []string{"plugin", "add", "engram@engram"}):
+			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.5","installedPath":%q}`, installedPlugin)), nil
 		default:
 			return nil, fmt.Errorf("unexpected codex command: %v", args)
 		}
@@ -944,22 +1450,6 @@ func TestInstallCodexUpgradesOwnedMarketplaceToReleaseRef(t *testing.T) {
 	}
 	if !strings.Contains(string(updated), `ref = "v2.2.1"`) || !strings.Contains(string(updated), `model = "gpt-user"`) {
 		t.Fatalf("owned marketplace ref was not updated safely:\n%s", updated)
-	}
-}
-
-func TestUpsertTopLevelCodexSettingsConvergesToCodexTableSpacing(t *testing.T) {
-	input := "[marketplaces.engram]\nsource_type = \"git\"\n"
-	first := upsertTopLevelTOMLString(input, "model_instructions_file", "/tmp/instructions.md")
-	first = upsertTopLevelTOMLString(first, "experimental_compact_prompt_file", "/tmp/compact.md")
-	second := upsertTopLevelTOMLString(first, "model_instructions_file", "/tmp/instructions.md")
-	second = upsertTopLevelTOMLString(second, "experimental_compact_prompt_file", "/tmp/compact.md")
-
-	wantPrefix := "model_instructions_file = \"/tmp/instructions.md\"\nexperimental_compact_prompt_file = \"/tmp/compact.md\"\n\n[marketplaces.engram]"
-	if !strings.HasPrefix(first, wantPrefix) {
-		t.Fatalf("first generated config does not separate top-level settings from Codex tables:\n%s", first)
-	}
-	if second != first {
-		t.Fatalf("top-level setting upsert is not byte-stable\nfirst:\n%s\nsecond:\n%s", first, second)
 	}
 }
 

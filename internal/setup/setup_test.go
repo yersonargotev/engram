@@ -17,6 +17,10 @@ func resetSetupSeams(t *testing.T) {
 	oldUserHomeDir := userHomeDir
 	oldLookPathFn := lookPathFn
 	oldRunCommand := runCommand
+	oldRunCodexCheckpointProbeFn := runCodexCheckpointProbeFn
+	oldLinkFileFn := linkFileFn
+	oldRenameFileFn := renameFileFn
+	oldRemoveFileFn := removeFileFn
 	oldGitStatusFn := gitStatusFn
 	oldGitResolveRefFn := gitResolveRefFn
 	oldStatFn := statFn
@@ -36,12 +40,19 @@ func resetSetupSeams(t *testing.T) {
 	oldOsExecutable := osExecutable
 	oldWriteClaudeCodeUserMCPFn := writeClaudeCodeUserMCPFn
 	oldResolveMiseNodeVersionFn := resolveMiseNodeVersionFn
+	runCodexCheckpointProbeFn = func(string, ...string) ([]byte, error) {
+		return []byte("engram checkpoint record\nengram checkpoint status\nengram checkpoint verify-stop\n"), nil
+	}
 
 	t.Cleanup(func() {
 		runtimeGOOS = oldRuntimeGOOS
 		userHomeDir = oldUserHomeDir
 		lookPathFn = oldLookPathFn
 		runCommand = oldRunCommand
+		runCodexCheckpointProbeFn = oldRunCodexCheckpointProbeFn
+		linkFileFn = oldLinkFileFn
+		renameFileFn = oldRenameFileFn
+		removeFileFn = oldRemoveFileFn
 		gitStatusFn = oldGitStatusFn
 		gitResolveRefFn = oldGitResolveRefFn
 		statFn = oldStatFn
@@ -187,7 +198,7 @@ func TestInstallGeminiCLIInjectsMCPConfig(t *testing.T) {
 	}
 }
 
-func TestInstallCodexInjectsTOMLAndIsIdempotent(t *testing.T) {
+func TestInstallCodexInjectsOnlyMCPAndIsIdempotent(t *testing.T) {
 	resetSetupSeams(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -223,8 +234,8 @@ func TestInstallCodexInjectsTOMLAndIsIdempotent(t *testing.T) {
 		t.Fatalf("unexpected agent in result: %q", result.Agent)
 	}
 
-	if result.Files != 3 {
-		t.Fatalf("expected 3 files written, got %d", result.Files)
+	if result.Files != 1 {
+		t.Fatalf("expected only config.toml to change, got %d files", result.Files)
 	}
 
 	readAndAssert := func() string {
@@ -252,23 +263,10 @@ func TestInstallCodexInjectsTOMLAndIsIdempotent(t *testing.T) {
 		if !strings.Contains(text, `args = ["mcp", "--tools=agent"]`) {
 			t.Fatalf("expected engram args in config, got:\n%s", text)
 		}
-		instructionsPath := filepath.Join(home, ".codex", "engram-instructions.md")
-		if !strings.Contains(text, "model_instructions_file = \""+instructionsPath+"\"") {
-			t.Fatalf("expected model_instructions_file in config, got:\n%s", text)
-		}
-		compactPromptPath := filepath.Join(home, ".codex", "engram-compact-prompt.md")
-		if !strings.Contains(text, "experimental_compact_prompt_file = \""+compactPromptPath+"\"") {
-			t.Fatalf("expected compact prompt file key in config, got:\n%s", text)
-		}
-		firstSection := strings.Index(text, "[profile]")
-		if firstSection == -1 {
-			t.Fatalf("expected [profile] section in config")
-		}
-		if idx := strings.Index(text, "model_instructions_file"); idx == -1 || idx > firstSection {
-			t.Fatalf("expected model_instructions_file to be top-level before sections, got:\n%s", text)
-		}
-		if idx := strings.Index(text, "experimental_compact_prompt_file"); idx == -1 || idx > firstSection {
-			t.Fatalf("expected compact prompt key to be top-level before sections, got:\n%s", text)
+		for _, legacyKey := range []string{"model_instructions_file", "experimental_compact_prompt_file"} {
+			if strings.Contains(text, legacyKey) {
+				t.Fatalf("fresh setup wrote retired legacy key %s:\n%s", legacyKey, text)
+			}
 		}
 		return text
 	}
@@ -284,20 +282,13 @@ func TestInstallCodexInjectsTOMLAndIsIdempotent(t *testing.T) {
 		t.Fatalf("expected no changes on second install")
 	}
 
-	instructionsRaw, err := os.ReadFile(filepath.Join(home, ".codex", "engram-instructions.md"))
-	if err != nil {
-		t.Fatalf("read codex instructions: %v", err)
-	}
-	if !strings.Contains(string(instructionsRaw), "### AFTER COMPACTION") {
-		t.Fatalf("expected AFTER COMPACTION section in codex instructions")
-	}
-
-	compactRaw, err := os.ReadFile(filepath.Join(home, ".codex", "engram-compact-prompt.md"))
-	if err != nil {
-		t.Fatalf("read codex compact prompt: %v", err)
-	}
-	if !strings.Contains(string(compactRaw), "FIRST ACTION REQUIRED") {
-		t.Fatalf("expected FIRST ACTION REQUIRED text in compact prompt")
+	for _, legacyPath := range []string{
+		filepath.Join(home, ".codex", "engram-instructions.md"),
+		filepath.Join(home, ".codex", "engram-compact-prompt.md"),
+	} {
+		if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+			t.Fatalf("fresh setup wrote retired legacy artifact %s: %v", legacyPath, err)
+		}
 	}
 }
 
@@ -317,8 +308,8 @@ func TestInstallCodexPluginCLIPresent(t *testing.T) {
 	if result.Agent != "codex" {
 		t.Fatalf("unexpected agent: %q", result.Agent)
 	}
-	if result.Files != 3 {
-		t.Fatalf("expected 3 files written, got %d", result.Files)
+	if result.Files != 1 {
+		t.Fatalf("expected only config.toml to change, got %d files", result.Files)
 	}
 	commands := *commandsRef
 
@@ -400,8 +391,8 @@ func TestInstallCodexPluginIdempotentAlreadyAdded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Install(codex) should succeed on already-installed outputs, got: %v", err)
 	}
-	if result.Files != 3 {
-		t.Fatalf("expected 3 files written, got %d", result.Files)
+	if result.Files != 1 {
+		t.Fatalf("expected only config.toml to change, got %d files", result.Files)
 	}
 	if len(*commands) != 2 {
 		t.Fatalf("expected exactly 2 codex CLI calls, got %d", len(*commands))
@@ -2047,16 +2038,6 @@ func TestGeminiAndCodexHelpersErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("upsertTopLevelTOMLString does not replace a nested key", func(t *testing.T) {
-		input := "[profile]\nmodel_instructions_file = \"nested-user-value\"\n"
-		output := upsertTopLevelTOMLString(input, "model_instructions_file", "/tmp/engram.md")
-		if !strings.HasPrefix(output, "model_instructions_file = \"/tmp/engram.md\"\n\n[profile]") {
-			t.Fatalf("top-level key was not inserted before tables:\n%s", output)
-		}
-		if !strings.Contains(output, "model_instructions_file = \"nested-user-value\"") {
-			t.Fatalf("nested user key was replaced:\n%s", output)
-		}
-	})
 }
 
 func TestInstallRoutesForOpenCodeAndClaude(t *testing.T) {

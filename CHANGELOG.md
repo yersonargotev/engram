@@ -28,6 +28,7 @@ Breaking changes are always marked with a `type:breaking-change` label and docum
 - **feat(memory):** complete the `needs_review` disposition with one same-project local Memory proposal, atomic inline creation, replay-safe references, CLI/MCP parity, and no automatic Admission or Promotion.
 - **feat(codex):** activate one canonical checkpoint skill and minimal model-visible `SessionStart` cue, forward Codex root-turn identity through `UserPromptSubmit`, and verify the installed activation assets without editing shared instruction files.
 - **feat(codex):** enforce terminal root-turn checkpoints on Unix and Windows with one synchronous `Stop` verifier, one identity-preserving recovery continuation, loop prevention, visible integration failures, and exact installed-asset verification.
+- **chore(codex):** retire exact-owned legacy instruction and compaction activation through recoverable staging only after the canonical skill, cue, checkpoint CLI/MCP adapters, and Stop verifier are ready; preserve customized or ambiguous state and keep failed upgrades on the prior working path.
 
 ### Cloud sync
 

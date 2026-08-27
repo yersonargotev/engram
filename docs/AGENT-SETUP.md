@@ -405,7 +405,7 @@ Stable setup is tied to the Engram binary that runs it. The command derives a re
 The command reports four independent capabilities:
 
 - `plugin`: the marketplace authority, release commit, and installed plugin identity are verified.
-- `mcp`: both the plugin MCP manifest and `[mcp_servers.engram]` are valid. Homebrew installs use the stable `bin/engram` symlink instead of a versioned Cellar or Caskroom path.
+- `mcp`: both the plugin MCP manifest and `[mcp_servers.engram]` are valid, the configured executable advertises `checkpoint record`, `checkpoint status`, and `checkpoint verify-stop`, and the MCP agent profile exposes `mem_checkpoint` plus `mem_checkpoint_status`. Homebrew installs use the stable `bin/engram` symlink instead of a versioned Cellar or Caskroom path.
 - `activation-cue`: the installed plugin contains the complete canonical checkpoint skill, projects its single short cue through model-visible `SessionStart.additionalContext`, and covers `startup`, `resume`, `clear`, and `compact` exactly once.
 - `verifier`: the installed plugin provides the exact synchronous Engram `Stop` commands for Unix and Windows, a three-second timeout, and the canonical `scripts/stop.sh` Unix launcher from the verified plugin tree. Windows delegates directly to the Engram CLI without an intermediate script.
 
@@ -440,9 +440,9 @@ converted into `skipped`.
 
 ### Ownership and reruns
 
-Engram changes Codex state only when it can attribute that state to its known generated value, expected path, and generated content. Custom or unrecognized marketplace, plugin, instruction, or compact-prompt state is preserved byte-for-byte and named in the result. Engram does not edit shared `AGENTS.md` or `CLAUDE.md` files, and this setup does not retire legacy activation files.
+Engram changes Codex state only when it can attribute that state to its known generated value, expected path, and generated content. After all four replacement capabilities are `ready`, setup retires the former top-level `model_instructions_file` and `experimental_compact_prompt_file` activation only when each setting points to Engram's expected path and the corresponding regular file still has Engram's exact generated content. Modified files, custom paths, duplicate or malformed settings, orphaned files, and unrecognized marketplace or plugin state are preserved byte-for-byte and named in the result. A failed replacement check leaves the prior working activation path in place with a diagnostic. Engram never edits shared `AGENTS.md` or `CLAUDE.md` files.
 
-Writes use atomic replacement. A successful rerun is byte-stable, does not create duplicate MCP blocks, and can recover after an interrupted first run.
+Writes use atomic replacement. Exact-owned legacy files move through Engram-owned recovery paths before their settings are published; a rerun restores the prior activation or completes cleanup after an interruption. Fresh setup and supported legacy upgrades converge on one canonical detailed skill, one short cue, one synchronous Stop verifier, and thin CLI/MCP adapters without legacy protocol copies. A successful rerun is byte-stable and does not create duplicate MCP blocks.
 An owned transaction marker makes marketplace upgrades restartable across interruptions between the ref change, marketplace refresh, and plugin installation; Engram removes it only after the requested plugin tree is verified.
 
 For local plugin development only, explicitly opt into the moving `main` branch:
@@ -453,15 +453,12 @@ engram setup codex --development
 
 Stable builds without a valid release version and exact commit refuse to mutate Codex state. If the Codex CLI is unavailable, no local Codex setup files are changed; install Codex and rerun the same stable command.
 
-Manual alternative: add to your `~/.codex/config.toml` (Windows: `%APPDATA%\codex\config.toml`):
+Manual MCP-only alternative: add the following registration to `~/.codex/config.toml` (Windows: `%APPDATA%\codex\config.toml`). This does not install the canonical checkpoint skill, cue, or Stop verifier, so use `engram setup codex` for the complete integration:
 
 ```toml
-model_instructions_file = "~/.codex/engram-instructions.md"
-experimental_compact_prompt_file = "~/.codex/engram-compact-prompt.md"
-
 [mcp_servers.engram]
 command = "engram"
-args = ["mcp"]
+args = ["mcp", "--tools=agent"]
 ```
 
 ### Troubleshooting: "MCP Transport closed"

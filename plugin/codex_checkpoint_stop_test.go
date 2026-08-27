@@ -173,18 +173,67 @@ func TestCodexCheckpointAcceptanceUsesRealCLIAndScripts(t *testing.T) {
 		t.Fatalf("missing Stop lost original identity: %s", missingOut)
 	}
 
-	record := exec.Command(engramPath,
-		"checkpoint", "record", "--host=codex", "--session-id=session-47-acceptance",
-		"--root-turn-id=turn-47-acceptance", "--disposition=skipped", "--reason=no_durable_knowledge", "--json",
-	)
-	record.Env = baseEnv
-	if output, err := record.CombinedOutput(); err != nil {
-		t.Fatalf("finalize checkpoint through real CLI: %v\n%s", err, output)
+	cases := []struct {
+		name       string
+		sessionID  string
+		rootTurnID string
+		recordArgs []string
+	}{
+		{
+			name:       "skipped",
+			sessionID:  "session-47-acceptance",
+			rootTurnID: "turn-47-acceptance",
+			recordArgs: []string{"--disposition=skipped", "--reason=no_durable_knowledge"},
+		},
+		{
+			name:       "saved",
+			sessionID:  "session-48-saved",
+			rootTurnID: "turn-48-saved",
+			recordArgs: []string{
+				"--disposition=saved",
+				"--project=engram",
+				`--memory-json={"type":"decision","title":"Codex acceptance memory","content":"Retire only exact-owned legacy activation after replacement verification."}`,
+			},
+		},
+		{
+			name:       "needs_review",
+			sessionID:  "session-48-review",
+			rootTurnID: "turn-48-review",
+			recordArgs: []string{
+				"--disposition=needs_review",
+				"--project=engram",
+				`--proposal-json={"type":"decision","title":"Review Codex acceptance proposal","content":"Keep this proposal local until review.","scope":"project","category":"decision","reason_codes":["requires_review"]}`,
+			},
+		},
 	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			args := []string{
+				"checkpoint", "record", "--host=codex",
+				"--session-id=" + testCase.sessionID,
+				"--root-turn-id=" + testCase.rootTurnID,
+			}
+			args = append(args, testCase.recordArgs...)
+			args = append(args, "--json")
+			for attempt, want := range []string{"created", "already_recorded"} {
+				record := exec.Command(engramPath, args...)
+				record.Env = baseEnv
+				output, err := record.CombinedOutput()
+				if err != nil {
+					t.Fatalf("record attempt %d through real CLI: %v\n%s", attempt+1, err, output)
+				}
+				var response map[string]any
+				if err := json.Unmarshal(output, &response); err != nil || response["idempotency"] != want {
+					t.Fatalf("record attempt %d response=%#v parse=%v, want idempotency %q", attempt+1, response, err, want)
+				}
+			}
 
-	terminalOut, terminalErr, err := runCodexStopLauncher(t, nil, stopCommand, stopInput, pluginRoot, binDir, "ENGRAM_DATA_DIR="+dataDir)
-	if err != nil || terminalErr != "" || strings.TrimSpace(terminalOut) != "{}" {
-		t.Fatalf("terminal Stop exit=%v stdout=%q stderr=%q", err, terminalOut, terminalErr)
+			input := `{"session_id":` + quoteJSON(t, testCase.sessionID) + `,"turn_id":` + quoteJSON(t, testCase.rootTurnID) + `,"stop_hook_active":false}`
+			terminalOut, terminalErr, err := runCodexStopLauncher(t, nil, stopCommand, input, pluginRoot, binDir, "ENGRAM_DATA_DIR="+dataDir)
+			if err != nil || terminalErr != "" || strings.TrimSpace(terminalOut) != "{}" {
+				t.Fatalf("terminal Stop exit=%v stdout=%q stderr=%q", err, terminalOut, terminalErr)
+			}
+		})
 	}
 
 	loopInput := `{"session_id":"session-47-acceptance","turn_id":"turn-47-still-missing","stop_hook_active":true}`

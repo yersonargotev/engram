@@ -2044,13 +2044,49 @@ func verifyInstalledCodexPlugin(output []byte, verifiedPluginAssets map[string]c
 			Hooks map[string]json.RawMessage `json:"hooks"`
 		}
 		if json.Unmarshal(hooksRaw, &hooksManifest) == nil {
-			var stopHooks []json.RawMessage
-			stopRaw, ok := hooksManifest.Hooks["Stop"]
-			capabilities.VerifierReady = ok && json.Unmarshal(stopRaw, &stopHooks) == nil && len(stopHooks) > 0
+			capabilities.VerifierReady = verifyInstalledCodexStopVerifier(hooksRaw, verifiedPluginAssets)
 			capabilities.ActivationCueReady = verifyInstalledCodexActivation(installed.InstalledPath, hooksRaw)
 		}
 	}
 	return capabilities, nil
+}
+
+func verifyInstalledCodexStopVerifier(hooksRaw []byte, verifiedPluginAssets map[string]codexPluginTreeEntry) bool {
+	const unixAdapter = "#!/bin/bash\n# Engram — thin Codex Stop adapter\n\nexec engram checkpoint verify-stop --host=codex\n"
+	var manifest struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Type           string `json:"type"`
+				Command        string `json:"command"`
+				CommandWindows string `json:"commandWindows"`
+				Timeout        int    `json:"timeout"`
+				Async          bool   `json:"async"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if json.Unmarshal(hooksRaw, &manifest) != nil {
+		return false
+	}
+	groups := manifest.Hooks["Stop"]
+	if len(groups) != 1 || groups[0].Matcher != "" || len(groups[0].Hooks) != 1 {
+		return false
+	}
+	hook := groups[0].Hooks[0]
+	if hook.Type != "command" ||
+		hook.Command != `"${PLUGIN_ROOT}/scripts/stop.sh"` ||
+		hook.CommandWindows != `engram checkpoint verify-stop --host=codex` ||
+		hook.Timeout != 3 || hook.Async {
+		return false
+	}
+	unixAsset, unixOK := verifiedPluginAssets["scripts/stop.sh"]
+	unixData := unixAsset.data
+	unixModeReady := unixAsset.mode.IsRegular() && unixAsset.mode.Perm()&0o111 != 0
+	if runtimeGOOS == "windows" {
+		unixData = bytes.ReplaceAll(unixData, []byte("\r\n"), []byte("\n"))
+		unixModeReady = unixAsset.mode.IsRegular()
+	}
+	return unixOK && unixModeReady && bytes.Equal(unixData, []byte(unixAdapter))
 }
 
 func inspectInstalledCodexPluginLocation(codexBin, configPath string) (codexInstalledPluginLocation, error) {

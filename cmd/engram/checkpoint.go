@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -46,6 +47,10 @@ func cmdCheckpoint(cfg store.Config) {
 	}
 	if opts.Help {
 		printCheckpointUsage()
+		return
+	}
+	if opts.Action == "verify-stop" {
+		cmdCheckpointVerifyStop(cfg, opts.Host, os.Stdin)
 		return
 	}
 
@@ -117,6 +122,87 @@ func cmdCheckpoint(cfg store.Config) {
 	}
 }
 
+type checkpointStopEvent struct {
+	SessionID      *string `json:"session_id"`
+	TurnID         *string `json:"turn_id"`
+	StopHookActive *bool   `json:"stop_hook_active"`
+}
+
+type checkpointStopResponse struct {
+	Decision      string `json:"decision,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	SystemMessage string `json:"systemMessage,omitempty"`
+}
+
+func cmdCheckpointVerifyStop(cfg store.Config, host string, input io.Reader) {
+	event, err := decodeCheckpointStopEvent(input)
+	if err != nil {
+		_ = writeCLIJSON(checkpointStopIntegrationFailure("Stop input is missing a string session_id, string turn_id, or boolean stop_hook_active."))
+		return
+	}
+
+	s, err := storeNew(cfg)
+	if err != nil {
+		_ = writeCLIJSON(checkpointStopIntegrationFailure("the verifier could not inspect checkpoint status."))
+		return
+	}
+	defer s.Close()
+
+	outcome, err := memoryops.New(s).VerifyCheckpoint(memoryops.CheckpointVerificationInput{
+		Host:           host,
+		SessionID:      *event.SessionID,
+		RootTurnID:     *event.TurnID,
+		RecoveryActive: *event.StopHookActive,
+	})
+	if err != nil {
+		_ = writeCLIJSON(checkpointStopIntegrationFailure("the verifier could not inspect checkpoint status."))
+		return
+	}
+
+	switch outcome {
+	case memoryops.CheckpointVerificationComplete:
+		_ = writeCLIJSON(checkpointStopResponse{})
+	case memoryops.CheckpointVerificationContinuationRequired:
+		identity, marshalErr := json.Marshal(store.CheckpointIdentity{
+			Host: host, SessionID: *event.SessionID, RootTurnID: *event.TurnID,
+		})
+		if marshalErr != nil {
+			_ = writeCLIJSON(checkpointStopIntegrationFailure("the verifier could not encode the original checkpoint identity."))
+			return
+		}
+		reason := "Finalize the missing Engram checkpoint for the original root user turn " + string(identity) + " using the Engram memory skill. Preserve this identity unchanged; do not checkpoint this continuation."
+		_ = writeCLIJSON(checkpointStopResponse{Decision: "block", Reason: reason})
+	case memoryops.CheckpointVerificationRecoveryExhausted:
+		_ = writeCLIJSON(checkpointStopIntegrationFailure("checkpoint is still missing after the single recovery continuation."))
+	default:
+		_ = writeCLIJSON(checkpointStopIntegrationFailure("checkpoint verification returned an unexpected outcome."))
+	}
+}
+
+func decodeCheckpointStopEvent(input io.Reader) (checkpointStopEvent, error) {
+	var event checkpointStopEvent
+	decoder := json.NewDecoder(input)
+	if err := decoder.Decode(&event); err != nil {
+		return event, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return event, fmt.Errorf("multiple Stop input values")
+		}
+		return event, err
+	}
+	if event.SessionID == nil || event.TurnID == nil || event.StopHookActive == nil ||
+		strings.TrimSpace(*event.SessionID) == "" || strings.TrimSpace(*event.TurnID) == "" {
+		return event, fmt.Errorf("incomplete Stop input")
+	}
+	return event, nil
+}
+
+func checkpointStopIntegrationFailure(message string) checkpointStopResponse {
+	return checkpointStopResponse{SystemMessage: "Engram checkpoint verifier integration failure: " + message}
+}
+
 func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgumentError) {
 	opts := checkpointCLIOptions{}
 	if len(args) == 0 {
@@ -127,8 +213,8 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 		opts.Help = true
 		return opts, nil
 	}
-	if opts.Action != "record" && opts.Action != "status" {
-		return opts, &checkpointArgumentError{Message: "checkpoint action must be record or status"}
+	if opts.Action != "record" && opts.Action != "status" && opts.Action != "verify-stop" {
+		return opts, &checkpointArgumentError{Message: "checkpoint action must be record, status, or verify-stop"}
 	}
 
 	for i := 1; i < len(args); i++ {
@@ -216,6 +302,9 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 	if opts.Action == "status" && (opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.ProposalID != "" || opts.Proposal != nil) {
 		return opts, &checkpointArgumentError{Message: "checkpoint status accepts only identity flags"}
 	}
+	if opts.Action == "verify-stop" && (opts.SessionID != "" || opts.RootTurnID != "" || opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.ProposalID != "" || opts.Proposal != nil || opts.JSONMode) {
+		return opts, &checkpointArgumentError{Message: "checkpoint verify-stop accepts only --host"}
+	}
 	return opts, nil
 }
 
@@ -229,5 +318,6 @@ func printCheckpointUsage() {
 	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
 	  --disposition needs_review --project PROJECT \
 	  (--proposal-id ID | --proposal-json JSON) [--json]
-	engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]`)
+	engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
+	engram checkpoint verify-stop --host HOST`)
 }

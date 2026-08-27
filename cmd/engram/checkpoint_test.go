@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -321,9 +322,111 @@ func TestCheckpointHelpDocumentsAllTerminalDispositions(t *testing.T) {
 		store.CheckpointDispositionNeedsReview,
 		"--proposal-id",
 		"--proposal-json",
+		"checkpoint verify-stop --host HOST",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("checkpoint help %q does not contain %q", stdout, want)
 		}
+	}
+}
+
+func TestCheckpointVerifyStopCLIProcessContract(t *testing.T) {
+	if testing.CoverMode() != "" {
+		t.Skip("expected subprocess exits corrupt Go coverage output")
+	}
+	dataDir := t.TempDir()
+	cfg := store.Config{DataDir: dataDir}
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("open checkpoint store: %v", err)
+	}
+	service := memoryops.New(s)
+	if _, err := service.RecordCheckpoint(memoryops.CheckpointRecordInput{
+		Host: "codex", SessionID: "session-terminal", RootTurnID: "turn-terminal",
+		Disposition: store.CheckpointDispositionSkipped, ReasonCode: store.CheckpointSkipReasonNoDurableKnowledge,
+	}); err != nil {
+		t.Fatalf("record terminal checkpoint: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close checkpoint store: %v", err)
+	}
+
+	run := func(t *testing.T, input string) map[string]any {
+		t.Helper()
+		cmd := exec.Command(os.Args[0], "-test.run=^TestCheckpointVerifyStopProcessHelper$")
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_CHECKPOINT_STOP_PROCESS=1",
+			"ENGRAM_DATA_DIR="+dataDir,
+		)
+		cmd.Stdin = strings.NewReader(input)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("verify-stop process: %v, stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+		}
+		if stderr.Len() != 0 {
+			t.Fatalf("verify-stop stderr = %q", stderr.String())
+		}
+		return decodeCLIJSON(t, stdout.String())
+	}
+
+	terminal := run(t, `{"session_id":"session-terminal","turn_id":"turn-terminal","stop_hook_active":false}`)
+	if len(terminal) != 0 {
+		t.Fatalf("terminal response = %#v, want empty object", terminal)
+	}
+
+	missing := run(t, `{"session_id":"session-missing","turn_id":"turn-missing","stop_hook_active":false}`)
+	if missing["decision"] != "block" || !strings.Contains(fmt.Sprint(missing["reason"]), `{"host":"codex","session_id":"session-missing","root_turn_id":"turn-missing"}`) {
+		t.Fatalf("missing response = %#v", missing)
+	}
+
+	replayed := run(t, `{"session_id":"session-missing","turn_id":"turn-missing","stop_hook_active":true}`)
+	if replayed["decision"] != nil || !strings.Contains(fmt.Sprint(replayed["systemMessage"]), "single recovery continuation") {
+		t.Fatalf("replayed missing response = %#v", replayed)
+	}
+
+	for _, input := range []string{
+		`{`,
+		`{"session_id":"session","turn_id":"turn"}`,
+		`{"session_id":47,"turn_id":"turn","stop_hook_active":false}`,
+	} {
+		invalid := run(t, input)
+		if invalid["decision"] != nil || !strings.Contains(fmt.Sprint(invalid["systemMessage"]), "Stop input") {
+			t.Fatalf("invalid input %q response = %#v", input, invalid)
+		}
+	}
+}
+
+func TestCheckpointVerifyStopProcessHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_CHECKPOINT_STOP_PROCESS") != "1" {
+		return
+	}
+	os.Args = []string{"engram", "checkpoint", "verify-stop", "--host=codex"}
+	main()
+	os.Exit(0)
+}
+
+func TestCheckpointVerifyStopReportsStoreFailureWithoutInventingDisposition(t *testing.T) {
+	originalStoreNew := storeNew
+	storeNew = func(store.Config) (*store.Store, error) {
+		return nil, errors.New("injected store failure")
+	}
+	t.Cleanup(func() { storeNew = originalStoreNew })
+
+	stdout, stderr := captureOutput(t, func() {
+		cmdCheckpointVerifyStop(testConfig(t), "codex", strings.NewReader(
+			`{"session_id":"session-store-failure","turn_id":"turn-store-failure","stop_hook_active":false}`,
+		))
+	})
+	if stderr != "" {
+		t.Fatalf("store failure stderr = %q", stderr)
+	}
+	response := decodeCLIJSON(t, stdout)
+	if response["decision"] != nil || !strings.Contains(fmt.Sprint(response["systemMessage"]), "integration failure") {
+		t.Fatalf("store failure response = %#v", response)
+	}
+	if strings.Contains(stdout, store.CheckpointDispositionSkipped) || strings.Contains(stdout, store.CheckpointSkipReasonNoDurableKnowledge) {
+		t.Fatalf("store failure invented a disposition: %s", stdout)
 	}
 }

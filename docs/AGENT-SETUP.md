@@ -407,7 +407,7 @@ The command reports four independent capabilities:
 - `plugin`: the marketplace authority, release commit, and installed plugin identity are verified.
 - `mcp`: both the plugin MCP manifest and `[mcp_servers.engram]` are valid. Homebrew installs use the stable `bin/engram` symlink instead of a versioned Cellar or Caskroom path.
 - `activation-cue`: the installed plugin contains the complete canonical checkpoint skill, projects its single short cue through model-visible `SessionStart.additionalContext`, and covers `startup`, `resume`, `clear`, and `compact` exactly once.
-- `verifier`: the installed plugin provides a non-empty `Stop` verifier.
+- `verifier`: the installed plugin provides the exact synchronous Engram `Stop` commands for Unix and Windows, a three-second timeout, and the canonical `scripts/stop.sh` Unix launcher from the verified plugin tree. Windows delegates directly to the Engram CLI without an intermediate script.
 
 Setup is complete only when all four checks are `ready`. If the Codex CLI, plugin, MCP manifest, activation cue, or verifier is absent, the command reports an incomplete result instead of claiming success.
 
@@ -427,9 +427,16 @@ best-effort but never selects a disposition or creates a checkpoint. Tool calls,
 subagents, compaction events, and continuations remain within the original root
 user turn; the root agent applies the canonical skill and finalizes once.
 
-This provides verifiable activation and identity transport. The blocking
-checkpoint guarantee remains unavailable until the separate `Stop` verifier is
-installed and its capability check reports `ready`.
+`Stop` delegates the complete event to
+`engram checkpoint verify-stop --host=codex`. The Go core queries the exact identity in the local checkpoint
+ledger. A terminal `saved`, `skipped`, or `needs_review` result completes
+normally. Only an absent checkpoint requests one recovery continuation,
+carrying the original identity and instructing the agent not to checkpoint the
+continuation itself. If `stop_hook_active` is already true, Engram never
+requests a second continuation. Invalid input and store failures become visible
+integration messages. Executable failures, malformed command output, and the
+verified three-second hook timeout remain visible to Codex and are never
+converted into `skipped`.
 
 ### Ownership and reruns
 

@@ -2052,6 +2052,8 @@ func verifyInstalledCodexPlugin(output []byte, verifiedPluginAssets map[string]c
 }
 
 func verifyInstalledCodexStopVerifier(hooksRaw []byte, verifiedPluginAssets map[string]codexPluginTreeEntry) bool {
+	const unixAdapter = "#!/bin/bash\n# Engram — thin Codex Stop adapter\n\nexec engram checkpoint verify-stop --host=codex\n"
+	const windowsAdapter = "$ErrorActionPreference = 'Stop'\n\n& engram checkpoint verify-stop --host=codex\nexit $LASTEXITCODE\n"
 	var manifest struct {
 		Hooks map[string][]struct {
 			Matcher string `json:"matcher"`
@@ -2080,8 +2082,9 @@ func verifyInstalledCodexStopVerifier(hooksRaw []byte, verifiedPluginAssets map[
 	}
 	unixAsset, unixOK := verifiedPluginAssets["scripts/stop.sh"]
 	windowsAsset, windowsOK := verifiedPluginAssets["scripts/stop.ps1"]
-	return unixOK && unixAsset.mode.IsRegular() && unixAsset.mode.Perm()&0o111 != 0 && strings.HasPrefix(string(unixAsset.data), "#!/bin/bash\n") &&
-		windowsOK && windowsAsset.mode.IsRegular() && len(windowsAsset.data) > 0
+	windowsData := bytes.ReplaceAll(windowsAsset.data, []byte("\r\n"), []byte("\n"))
+	return unixOK && unixAsset.mode.IsRegular() && unixAsset.mode.Perm()&0o111 != 0 && bytes.Equal(unixAsset.data, []byte(unixAdapter)) &&
+		windowsOK && windowsAsset.mode.IsRegular() && bytes.Equal(windowsData, []byte(windowsAdapter))
 }
 
 func inspectInstalledCodexPluginLocation(codexBin, configPath string) (codexInstalledPluginLocation, error) {

@@ -5,6 +5,7 @@ package plugin_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,11 @@ import (
 
 func TestMain(m *testing.M) {
 	if os.Getenv("ENGRAM_STOP_WINDOWS_HELPER") == "1" {
+		input, _ := io.ReadAll(os.Stdin)
+		if string(input) != os.Getenv("ENGRAM_STOP_WINDOWS_INPUT") || strings.Join(os.Args[1:], "\n") != "checkpoint\nverify-stop\n--host=codex" {
+			fmt.Fprintln(os.Stderr, "Stop adapter did not preserve input and core command")
+			os.Exit(97)
+		}
 		if stdout := os.Getenv("ENGRAM_STOP_WINDOWS_STDOUT"); stdout != "" {
 			fmt.Fprintln(os.Stdout, stdout)
 		}
@@ -33,8 +39,7 @@ func TestCodexWindowsStopVerifierRuntime(t *testing.T) {
 	fakeBin := copyWindowsStopHelper(t)
 
 	t.Run("allows a terminal checkpoint", func(t *testing.T) {
-		status := `{"checkpoint":{"identity":{"host":"codex","session_id":"session-47","root_turn_id":"turn-47"},"disposition":"saved"}}`
-		output, stderr, code := runCodexWindowsStop(t, adapterPath, fakeBin, status, "", 0,
+		output, stderr, code := runCodexWindowsStop(t, adapterPath, fakeBin, `{}`, "", 0,
 			`{"session_id":"session-47","turn_id":"turn-47","stop_hook_active":false}`)
 		if code != 0 || stderr != "" || strings.TrimSpace(output) != "{}" {
 			t.Fatalf("exit=%d stdout=%q stderr=%q, want terminal Stop success", code, output, stderr)
@@ -42,9 +47,9 @@ func TestCodexWindowsStopVerifierRuntime(t *testing.T) {
 	})
 
 	t.Run("requests one continuation for a missing checkpoint", func(t *testing.T) {
-		statusError := `{"code":"checkpoint_not_found","message":"inspect checkpoint: checkpoint not found"}`
-		output, stderr, code := runCodexWindowsStop(t, adapterPath, fakeBin, "", statusError, 1,
-			`{"session_id":"session-47","turn_id":"turn-47","stop_hook_active":false}`)
+		input := `{"session_id":"session-47","turn_id":"turn-47","stop_hook_active":false}`
+		responseJSON := `{"decision":"block","reason":"Finalize the missing Engram checkpoint for {\"host\":\"codex\",\"session_id\":\"session-47\",\"root_turn_id\":\"turn-47\"}."}`
+		output, stderr, code := runCodexWindowsStop(t, adapterPath, fakeBin, responseJSON, "", 0, input)
 		if code != 0 || stderr != "" {
 			t.Fatalf("exit=%d stdout=%q stderr=%q", code, output, stderr)
 		}
@@ -61,8 +66,8 @@ func TestCodexWindowsStopVerifierRuntime(t *testing.T) {
 	})
 
 	t.Run("does not request a second continuation", func(t *testing.T) {
-		statusError := `{"code":"checkpoint_not_found","message":"inspect checkpoint: checkpoint not found"}`
-		output, stderr, code := runCodexWindowsStop(t, adapterPath, fakeBin, "", statusError, 1,
+		responseJSON := `{"systemMessage":"Engram checkpoint verifier integration failure: checkpoint is still missing after the single recovery continuation."}`
+		output, stderr, code := runCodexWindowsStop(t, adapterPath, fakeBin, responseJSON, "", 0,
 			`{"session_id":"session-47","turn_id":"turn-47","stop_hook_active":true}`)
 		if code != 0 || stderr != "" {
 			t.Fatalf("exit=%d stdout=%q stderr=%q", code, output, stderr)
@@ -76,6 +81,22 @@ func TestCodexWindowsStopVerifierRuntime(t *testing.T) {
 		}
 		if response.Decision != "" || !strings.Contains(response.SystemMessage, "single recovery continuation") {
 			t.Fatalf("loop-prevention response = %+v", response)
+		}
+	})
+
+	t.Run("preserves integration failure", func(t *testing.T) {
+		output, stderr, code := runCodexWindowsStop(t, adapterPath, fakeBin, "", "checkpoint store unavailable", 1,
+			`{"session_id":"session-47","turn_id":"turn-47","stop_hook_active":false}`)
+		if code != 1 || output != "" || !strings.Contains(stderr, "checkpoint store unavailable") {
+			t.Fatalf("exit=%d stdout=%q stderr=%q", code, output, stderr)
+		}
+	})
+
+	t.Run("preserves malformed response for the host to reject", func(t *testing.T) {
+		output, stderr, code := runCodexWindowsStop(t, adapterPath, fakeBin, "not-json", "", 0,
+			`{"session_id":"session-47","turn_id":"turn-47","stop_hook_active":false}`)
+		if code != 0 || stderr != "" || strings.TrimSpace(output) != "not-json" {
+			t.Fatalf("exit=%d stdout=%q stderr=%q", code, output, stderr)
 		}
 	})
 }
@@ -106,6 +127,7 @@ func runCodexWindowsStop(t *testing.T, adapterPath, fakeBin, stdout, stderr stri
 		"ENGRAM_STOP_WINDOWS_STDOUT="+stdout,
 		"ENGRAM_STOP_WINDOWS_STDERR="+stderr,
 		"ENGRAM_STOP_WINDOWS_EXIT="+strconv.Itoa(exitCode),
+		"ENGRAM_STOP_WINDOWS_INPUT="+input,
 	)
 	run.Stdin = strings.NewReader(input)
 	var output, errorOutput strings.Builder

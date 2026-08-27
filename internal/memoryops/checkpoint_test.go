@@ -51,6 +51,81 @@ func TestCheckpointRecordAndStatusShareIdempotentDomainResult(t *testing.T) {
 	}
 }
 
+func TestVerifyCheckpointStopOwnsSingleRecoveryDecision(t *testing.T) {
+	service := newTestService(t)
+	identity := CheckpointVerificationInput{
+		Host: "codex", SessionID: "session-stop-domain", RootTurnID: "turn-stop-domain",
+	}
+
+	missing, err := service.VerifyCheckpoint(identity)
+	if err != nil {
+		t.Fatalf("verify missing checkpoint: %v", err)
+	}
+	if missing != CheckpointVerificationContinuationRequired {
+		t.Fatalf("missing outcome = %q, want %q", missing, CheckpointVerificationContinuationRequired)
+	}
+
+	identity.RecoveryActive = true
+	stillMissing, err := service.VerifyCheckpoint(identity)
+	if err != nil {
+		t.Fatalf("verify missing checkpoint during recovery: %v", err)
+	}
+	if stillMissing != CheckpointVerificationRecoveryExhausted {
+		t.Fatalf("recovery outcome = %q, want %q", stillMissing, CheckpointVerificationRecoveryExhausted)
+	}
+
+	if _, err := service.RecordCheckpoint(CheckpointRecordInput{
+		Host: identity.Host, SessionID: identity.SessionID, RootTurnID: identity.RootTurnID,
+		Disposition: store.CheckpointDispositionSkipped, ReasonCode: store.CheckpointSkipReasonNoDurableKnowledge,
+	}); err != nil {
+		t.Fatalf("record terminal checkpoint: %v", err)
+	}
+
+	complete, err := service.VerifyCheckpoint(identity)
+	if err != nil {
+		t.Fatalf("verify terminal checkpoint: %v", err)
+	}
+	if complete != CheckpointVerificationComplete {
+		t.Fatalf("terminal outcome = %q, want %q", complete, CheckpointVerificationComplete)
+	}
+}
+
+func TestVerifyCheckpointAcceptsEveryTerminalDisposition(t *testing.T) {
+	service := newTestService(t)
+	memory := saveObservation(t, service, "engram", "Terminal saved checkpoint", "Durable acceptance evidence.")
+	tests := []CheckpointRecordInput{
+		{
+			Host: "codex", SessionID: "session-terminal-skipped", RootTurnID: "turn-terminal-skipped",
+			Disposition: store.CheckpointDispositionSkipped, ReasonCode: store.CheckpointSkipReasonNoDurableKnowledge,
+		},
+		{
+			Host: "codex", SessionID: "session-terminal-saved", RootTurnID: "turn-terminal-saved",
+			Disposition: store.CheckpointDispositionSaved, Project: "engram", MemoryIDs: []int64{memory.ID},
+		},
+		{
+			Host: "codex", SessionID: "session-terminal-review", RootTurnID: "turn-terminal-review",
+			Disposition: store.CheckpointDispositionNeedsReview, Project: "engram",
+			Proposal: &CheckpointProposalInput{
+				Type: "decision", Title: "Terminal review checkpoint", Content: "Review before admitting this Memory.",
+				Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
+			},
+		},
+	}
+	for _, record := range tests {
+		t.Run(record.Disposition, func(t *testing.T) {
+			if _, err := service.RecordCheckpoint(record); err != nil {
+				t.Fatalf("record %s checkpoint: %v", record.Disposition, err)
+			}
+			outcome, err := service.VerifyCheckpoint(CheckpointVerificationInput{
+				Host: record.Host, SessionID: record.SessionID, RootTurnID: record.RootTurnID,
+			})
+			if err != nil || outcome != CheckpointVerificationComplete {
+				t.Fatalf("verify %s checkpoint outcome=%q err=%v", record.Disposition, outcome, err)
+			}
+		})
+	}
+}
+
 func TestSavedCheckpointAttachesAnExistingMemory(t *testing.T) {
 	service := newTestService(t)
 	memory := saveObservation(t, service, "engram", "Saved checkpoint", "Attach this durable decision to the completed root turn.")

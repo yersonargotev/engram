@@ -81,6 +81,23 @@ type CheckpointStatusResult struct {
 	Checkpoint *store.MemoryCheckpoint `json:"checkpoint"`
 }
 
+type CheckpointVerificationOutcome string
+
+const (
+	CheckpointVerificationComplete             CheckpointVerificationOutcome = "complete"
+	CheckpointVerificationContinuationRequired CheckpointVerificationOutcome = "continuation_required"
+	CheckpointVerificationRecoveryExhausted    CheckpointVerificationOutcome = "recovery_exhausted"
+)
+
+// CheckpointVerificationInput identifies one root turn and whether its single
+// recovery continuation is already active.
+type CheckpointVerificationInput struct {
+	Host           string
+	SessionID      string
+	RootTurnID     string
+	RecoveryActive bool
+}
+
 // RecordCheckpoint finalizes one root user turn through the Store-owned state
 // machine and returns a stable idempotency result for every adapter.
 func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointRecordResult, error) {
@@ -173,6 +190,27 @@ func (s *Service) CheckpointStatus(input CheckpointStatusInput) (*CheckpointStat
 		return nil, fmt.Errorf("inspect checkpoint: %w", err)
 	}
 	return &CheckpointStatusResult{Checkpoint: checkpoint}, nil
+}
+
+// VerifyCheckpoint enforces the one-recovery rule against the Store-owned
+// terminal checkpoint ledger. Adapters only translate the returned outcome to
+// their host protocol.
+func (s *Service) VerifyCheckpoint(input CheckpointVerificationInput) (CheckpointVerificationOutcome, error) {
+	_, err := s.CheckpointStatus(CheckpointStatusInput{
+		Host:       input.Host,
+		SessionID:  input.SessionID,
+		RootTurnID: input.RootTurnID,
+	})
+	if err == nil {
+		return CheckpointVerificationComplete, nil
+	}
+	if !errors.Is(err, store.ErrCheckpointNotFound) {
+		return "", err
+	}
+	if input.RecoveryActive {
+		return CheckpointVerificationRecoveryExhausted, nil
+	}
+	return CheckpointVerificationContinuationRequired, nil
 }
 
 // CheckpointErrorCode maps domain and persistence errors to the stable code

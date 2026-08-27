@@ -204,15 +204,15 @@ policy. Codex runs them exactly once for each supported source: `startup`,
 the session ID. It does not finalize a checkpoint. This preserves one root-turn
 identity for the root agent while tools and subagents remain internal activity.
 
-`Stop` queries `engram checkpoint status` for that exact identity. A terminal
-`saved`, `skipped`, or `needs_review` checkpoint completes with no continuation.
-Only `checkpoint_not_found` can request one recovery continuation, which carries
-the original identity and tells the root agent not to checkpoint the
-continuation itself. Codex's `stop_hook_active` prevents a second continuation.
-Executable, transport, malformed-response, identity, and unexpected-disposition
-failures are surfaced as integration failures and never become `skipped`; the
-adapter reports its own two-second status timeout before Codex's three-second
-hook deadline.
+`Stop` delegates the complete event to
+`engram checkpoint verify-stop --host=codex`. The Go core queries that exact identity in the local checkpoint
+ledger. A terminal `saved`, `skipped`, or `needs_review` checkpoint completes
+with no continuation. Only an absent checkpoint can request one recovery
+continuation, which carries the original identity and tells the root agent not
+to checkpoint the continuation itself. Codex's `stop_hook_active` prevents a
+second continuation. Invalid input and store failures are surfaced as
+integration messages. Executable failures, malformed command output, and
+Codex's three-second hook timeout remain visible and never become `skipped`.
 
 `engram setup codex` verifies the immutable plugin tree, MCP manifest, canonical
 skill, cue, lifecycle coverage, exact synchronous `Stop` command, timeout, and

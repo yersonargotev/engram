@@ -493,6 +493,37 @@ func TestVerifyInstalledCodexPluginRejectsStubStopHook(t *testing.T) {
 	}
 }
 
+func TestVerifyInstalledCodexStopVerifierRejectsModifiedLaunchers(t *testing.T) {
+	root := t.TempDir()
+	writeCanonicalCodexActivationFixture(t, root)
+	hooksRaw, err := os.ReadFile(filepath.Join(root, "hooks", "hooks.json"))
+	if err != nil {
+		t.Fatalf("read canonical hooks: %v", err)
+	}
+	assets, err := snapshotCodexPluginTree(root)
+	if err != nil {
+		t.Fatalf("snapshot canonical plugin: %v", err)
+	}
+	if !verifyInstalledCodexStopVerifier(hooksRaw, assets) {
+		t.Fatal("canonical Stop launchers did not report ready")
+	}
+
+	for _, relative := range []string{"scripts/stop.sh", "scripts/stop.ps1"} {
+		t.Run(relative, func(t *testing.T) {
+			modified := make(map[string]codexPluginTreeEntry, len(assets))
+			for path, entry := range assets {
+				modified[path] = entry
+			}
+			entry := modified[relative]
+			entry.data = append(append([]byte(nil), entry.data...), []byte("# modified\n")...)
+			modified[relative] = entry
+			if verifyInstalledCodexStopVerifier(hooksRaw, modified) {
+				t.Fatalf("modified %s reported verifier ready", relative)
+			}
+		})
+	}
+}
+
 func writeCodexPluginFixture(t *testing.T, root string, includeStop bool) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Join(root, ".codex-plugin"), 0755); err != nil {

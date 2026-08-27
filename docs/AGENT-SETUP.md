@@ -427,15 +427,16 @@ best-effort but never selects a disposition or creates a checkpoint. Tool calls,
 subagents, compaction events, and continuations remain within the original root
 user turn; the root agent applies the canonical skill and finalizes once.
 
-`Stop` queries `engram checkpoint status` for the exact identity. A terminal
-`saved`, `skipped`, or `needs_review` result completes normally. Only the stable
-`checkpoint_not_found` error requests one recovery continuation, carrying the
-original identity and instructing the agent not to checkpoint the continuation
-itself. If `stop_hook_active` is already true, Engram never requests a second
-continuation. Executable, transport, malformed-response, identity, unexpected
-disposition, and timeout failures remain visible integration failures and are
-never converted into `skipped`. The adapter reports a two-second status timeout
-before Codex's verified three-second hook deadline.
+`Stop` delegates the complete event to
+`engram checkpoint verify-stop --host=codex`. The Go core queries the exact identity in the local checkpoint
+ledger. A terminal `saved`, `skipped`, or `needs_review` result completes
+normally. Only an absent checkpoint requests one recovery continuation,
+carrying the original identity and instructing the agent not to checkpoint the
+continuation itself. If `stop_hook_active` is already true, Engram never
+requests a second continuation. Invalid input and store failures become visible
+integration messages. Executable failures, malformed command output, and the
+verified three-second hook timeout remain visible to Codex and are never
+converted into `skipped`.
 
 ### Ownership and reruns
 

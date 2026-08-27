@@ -720,6 +720,8 @@ func shouldCheckForUpdates(args []string) bool {
 	switch command {
 	case "mcp", "serve", "protocol-mode", "admission":
 		return false
+	case "checkpoint":
+		return len(args) >= 2 && strings.ToLower(strings.TrimSpace(args[1])) != "verify-stop"
 	case "cloud":
 		return len(args) < 2 || strings.ToLower(strings.TrimSpace(args[1])) != "serve"
 	}
@@ -3262,6 +3264,9 @@ Commands:
                        --disposition saved|needs_review|skipped [reference flags] [--json]
   checkpoint status  Inspect one exact root-turn Memory checkpoint
                        --host HOST --session-id ID --root-turn-id ID [--json]
+  checkpoint verify-stop
+                     Verify one Codex Stop event against the checkpoint ledger
+                       --host HOST (reads the Stop event from stdin)
   stats              Show memory system statistics
   export [file]      Export all memories to JSON (default: engram-export.json)
   import <file>      Import memories from a JSON export file

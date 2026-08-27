@@ -19,6 +19,19 @@ func TestChunkExportExcludesMemoryCheckpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record checkpoint: %v", err)
 	}
+	_, _, err = s.RecordNeedsReviewCheckpoint(store.RecordNeedsReviewCheckpointParams{
+		Identity: store.CheckpointIdentity{
+			Host: "codex-proposal-canary", SessionID: "session-proposal-canary", RootTurnID: "turn-proposal-canary",
+		},
+		Project: "engram",
+		Proposal: &store.MemoryProposalInput{
+			Type: "decision", Title: "Proposal chunk canary", Content: "Proposal chunk canary content",
+			Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("record needs-review checkpoint: %v", err)
+	}
 
 	result, err := New(s, t.TempDir()).Export("checkpoint-test", "engram")
 	if err != nil {

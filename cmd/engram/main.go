@@ -1464,9 +1464,10 @@ func cmdDeleteProject(cfg store.Config) {
 	if hard {
 		kind = "hard-deleted"
 	}
-	fmt.Printf("Project %q %s: %d observation(s), %d prompt(s), %d session(s), %d admission shadow run(s)\n",
+	fmt.Printf("Project %q %s: %d observation(s), %d prompt(s), %d session(s), %d admission shadow run(s), %d Memory proposal(s), %d checkpoint(s)\n",
 		result.Project, kind, result.ObservationsDeleted, result.PromptsDeleted,
-		result.SessionsDeleted, result.AdmissionShadowRunsDeleted)
+		result.SessionsDeleted, result.AdmissionShadowRunsDeleted,
+		result.MemoryProposalsDeleted, result.MemoryCheckpointsDeleted)
 }
 
 func cmdTimeline(cfg store.Config) {
@@ -2326,7 +2327,7 @@ func cmdProjectsMerge(cfg store.Config) {
 			_ = writeCLIJSON(preview)
 			return
 		}
-		fmt.Printf("Would merge %v into %q: %d observations, %d sessions, %d prompts, %d admission shadow runs\n", preview.SourcesMerged, target, preview.ObservationsUpdated, preview.SessionsUpdated, preview.PromptsUpdated, preview.AdmissionShadowRunsUpdated)
+		fmt.Printf("Would merge %v into %q: %d observations, %d sessions, %d prompts, %d admission shadow runs, %d Memory proposals\n", preview.SourcesMerged, target, preview.ObservationsUpdated, preview.SessionsUpdated, preview.PromptsUpdated, preview.AdmissionShadowRunsUpdated, preview.MemoryProposalsUpdated)
 		return
 	}
 	if !yes {
@@ -2351,7 +2352,7 @@ func cmdProjectsMerge(cfg store.Config) {
 		_ = writeCLIJSON(result)
 		return
 	}
-	fmt.Printf("Merged %v into %q: %d observations, %d sessions, %d prompts, %d admission shadow runs\n", result.SourcesMerged, result.Canonical, result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated, result.AdmissionShadowRunsUpdated)
+	fmt.Printf("Merged %v into %q: %d observations, %d sessions, %d prompts, %d admission shadow runs, %d Memory proposals\n", result.SourcesMerged, result.Canonical, result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated, result.AdmissionShadowRunsUpdated, result.MemoryProposalsUpdated)
 }
 
 func cmdProjectsList(cfg store.Config) {
@@ -2640,6 +2641,7 @@ func cmdProjectsConsolidate(cfg store.Config) {
 		fmt.Printf("  Sessions:     %d\n", result.SessionsUpdated)
 		fmt.Printf("  Prompts:      %d\n", result.PromptsUpdated)
 		fmt.Printf("  Shadow runs:  %d\n", result.AdmissionShadowRunsUpdated)
+		fmt.Printf("  Proposals:    %d\n", result.MemoryProposalsUpdated)
 		return
 	}
 
@@ -2750,8 +2752,9 @@ func cmdProjectsConsolidate(cfg store.Config) {
 			fmt.Println()
 			continue
 		}
-		fmt.Printf("  Merged: %d obs, %d sessions, %d prompts, %d shadow runs\n\n",
-			result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated, result.AdmissionShadowRunsUpdated)
+		fmt.Printf("  Merged: %d obs, %d sessions, %d prompts, %d shadow runs, %d proposals\n\n",
+			result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated,
+			result.AdmissionShadowRunsUpdated, result.MemoryProposalsUpdated)
 	}
 }
 
@@ -3256,7 +3259,7 @@ Commands:
   admission metrics  Report project-local or aggregate study evaluation metrics
   checkpoint record  Record a root-turn Memory checkpoint
                        --host HOST --session-id ID --root-turn-id ID
-                       --disposition skipped --reason no_durable_knowledge [--json]
+                       --disposition saved|needs_review|skipped [reference flags] [--json]
   checkpoint status  Inspect one exact root-turn Memory checkpoint
                        --host HOST --session-id ID --root-turn-id ID [--json]
   stats              Show memory system statistics

@@ -20,13 +20,15 @@ const (
 )
 
 var (
-	ErrCheckpointInvalidIdentity   = errors.New("invalid checkpoint identity")
-	ErrCheckpointInvalidReason     = errors.New("invalid checkpoint reason")
-	ErrCheckpointInvalidReferences = errors.New("invalid checkpoint references")
-	ErrCheckpointMemoryNotFound    = errors.New("checkpoint Memory not found")
-	ErrCheckpointProjectMismatch   = errors.New("checkpoint Memory belongs to a different project")
-	ErrCheckpointConflict          = errors.New("checkpoint already recorded with a different terminal result")
-	ErrCheckpointNotFound          = errors.New("checkpoint not found")
+	ErrCheckpointInvalidIdentity         = errors.New("invalid checkpoint identity")
+	ErrCheckpointInvalidReason           = errors.New("invalid checkpoint reason")
+	ErrCheckpointInvalidReferences       = errors.New("invalid checkpoint references")
+	ErrCheckpointMemoryNotFound          = errors.New("checkpoint Memory not found")
+	ErrCheckpointProposalNotFound        = errors.New("checkpoint Memory proposal not found")
+	ErrCheckpointProjectMismatch         = errors.New("checkpoint Memory belongs to a different project")
+	ErrCheckpointProposalProjectMismatch = errors.New("checkpoint Memory proposal belongs to a different project")
+	ErrCheckpointConflict                = errors.New("checkpoint already recorded with a different terminal result")
+	ErrCheckpointNotFound                = errors.New("checkpoint not found")
 )
 
 // CheckpointIdentity is the opaque, host-provided idempotency key for one
@@ -50,14 +52,18 @@ type MemoryCheckpoint struct {
 	UpdatedAt     string                `json:"updated_at"`
 }
 
-const CheckpointReferenceKindMemory = "memory"
+const (
+	CheckpointReferenceKindMemory   = "memory"
+	CheckpointReferenceKindProposal = "proposal"
+)
 
 // CheckpointReference is an immutable, local-only pointer from a terminal
-// checkpoint to the durable object that justified its disposition.
+// checkpoint to the Memory or Memory proposal that justified its disposition.
 type CheckpointReference struct {
 	Kind         string `json:"kind"`
-	MemoryID     int64  `json:"memory_id"`
-	MemorySyncID string `json:"memory_sync_id"`
+	MemoryID     int64  `json:"memory_id,omitempty"`
+	MemorySyncID string `json:"memory_sync_id,omitempty"`
+	ProposalID   string `json:"proposal_id,omitempty"`
 	Project      string `json:"project"`
 }
 
@@ -74,10 +80,31 @@ type RecordSavedCheckpointParams struct {
 	Memories  []AddObservationParams
 }
 
+type RecordNeedsReviewCheckpointParams struct {
+	Identity   CheckpointIdentity
+	Project    string
+	ProposalID string
+	Proposal   *MemoryProposalInput
+}
+
 // migrateMemoryCheckpoints creates the local-only checkpoint ledger. The table
 // deliberately has no sync triggers and is not part of ExportData.
 func (s *Store) migrateMemoryCheckpoints() error {
 	_, err := s.execHook(s.db, `
+		CREATE TABLE IF NOT EXISTS memory_proposals (
+			id            TEXT PRIMARY KEY,
+			project       TEXT    NOT NULL,
+			type          TEXT    NOT NULL,
+			title         TEXT    NOT NULL,
+			content       TEXT    NOT NULL,
+			scope         TEXT    NOT NULL,
+			category      TEXT    NOT NULL,
+			protected     BOOLEAN NOT NULL DEFAULT 0,
+			evidence_refs TEXT    NOT NULL DEFAULT '[]',
+			reason_codes  TEXT    NOT NULL DEFAULT '[]',
+			created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+		);
+
 		CREATE TABLE IF NOT EXISTS memory_checkpoints (
 			id             INTEGER PRIMARY KEY AUTOINCREMENT,
 			host           TEXT    NOT NULL CHECK (length(host) BETWEEN 1 AND 64),
@@ -106,8 +133,112 @@ func (s *Store) migrateMemoryCheckpoints() error {
 				PRIMARY KEY (checkpoint_id, reference_order),
 				UNIQUE (checkpoint_id, reference_kind, memory_sync_id)
 			);
-		`)
+
+		CREATE TABLE IF NOT EXISTS memory_checkpoint_proposal_references (
+			checkpoint_id INTEGER PRIMARY KEY REFERENCES memory_checkpoints(id) ON DELETE CASCADE,
+			proposal_id   TEXT NOT NULL REFERENCES memory_proposals(id) ON DELETE RESTRICT,
+			project       TEXT NOT NULL
+		);
+	`)
 	return err
+}
+
+// RecordNeedsReviewCheckpoint attaches one existing or newly created local
+// Memory proposal to a terminal needs_review disposition. The proposal,
+// reference, and checkpoint commit in one transaction.
+func (s *Store) RecordNeedsReviewCheckpoint(p RecordNeedsReviewCheckpointParams) (*MemoryCheckpoint, bool, error) {
+	if err := validateCheckpointIdentity(p.Identity); err != nil {
+		return nil, false, err
+	}
+
+	var checkpoint *MemoryCheckpoint
+	alreadyRecorded := false
+	err := s.withTx(func(tx *sql.Tx) error {
+		stored, err := loadMemoryCheckpoint(tx, p.Identity)
+		if err == nil {
+			if stored.Disposition != CheckpointDispositionNeedsReview {
+				return ErrCheckpointConflict
+			}
+			checkpoint = stored
+			alreadyRecorded = true
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+
+		project, _ := NormalizeProject(p.Project)
+		proposalID := strings.TrimSpace(p.ProposalID)
+		if project == "" || (proposalID == "") == (p.Proposal == nil) ||
+			(p.ProposalID != "" && (proposalID != p.ProposalID || len(p.ProposalID) > maxCheckpointOpaqueIDBytes)) {
+			return ErrCheckpointInvalidReferences
+		}
+
+		result, err := s.execHook(tx, `
+			INSERT INTO memory_checkpoints (host, session_id, root_turn_id, disposition)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(host, session_id, root_turn_id) DO NOTHING`,
+			p.Identity.Host, p.Identity.SessionID, p.Identity.RootTurnID, CheckpointDispositionNeedsReview,
+		)
+		if err != nil {
+			return err
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected == 0 {
+			stored, err := loadMemoryCheckpoint(tx, p.Identity)
+			if err != nil {
+				return err
+			}
+			if stored.Disposition != CheckpointDispositionNeedsReview {
+				return ErrCheckpointConflict
+			}
+			checkpoint = stored
+			alreadyRecorded = true
+			return nil
+		}
+
+		var proposal *MemoryProposal
+		if p.Proposal != nil {
+			proposal, err = createMemoryProposalTx(tx, project, *p.Proposal)
+			if err != nil {
+				return err
+			}
+		} else {
+			proposal, err = loadMemoryProposal(tx, proposalID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrCheckpointProposalNotFound
+			}
+			if err != nil {
+				return err
+			}
+			if proposal.Project != project {
+				return ErrCheckpointProposalProjectMismatch
+			}
+		}
+
+		var checkpointID int64
+		if err := tx.QueryRow(`
+			SELECT id FROM memory_checkpoints
+			WHERE host = ? AND session_id = ? AND root_turn_id = ?`,
+			p.Identity.Host, p.Identity.SessionID, p.Identity.RootTurnID,
+		).Scan(&checkpointID); err != nil {
+			return err
+		}
+		if _, err := s.execHook(tx, `
+			INSERT INTO memory_checkpoint_proposal_references (checkpoint_id, proposal_id, project)
+			VALUES (?, ?, ?)`, checkpointID, proposal.ID, proposal.Project); err != nil {
+			return err
+		}
+		checkpoint, err = loadMemoryCheckpoint(tx, p.Identity)
+		return err
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return checkpoint, alreadyRecorded, nil
 }
 
 // RecordSkippedCheckpoint records the terminal skipped disposition for one
@@ -375,6 +506,20 @@ func loadMemoryCheckpoint(q checkpointQuerier, identity CheckpointIdentity) (*Me
 		checkpoint.References = append(checkpoint.References, reference)
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var proposalReference CheckpointReference
+	err = q.QueryRow(`
+		SELECT r.proposal_id, r.project
+		FROM memory_checkpoint_proposal_references r
+		JOIN memory_checkpoints c ON c.id = r.checkpoint_id
+		WHERE c.host = ? AND c.session_id = ? AND c.root_turn_id = ?`,
+		identity.Host, identity.SessionID, identity.RootTurnID,
+	).Scan(&proposalReference.ProposalID, &proposalReference.Project)
+	if err == nil {
+		proposalReference.Kind = CheckpointReferenceKindProposal
+		checkpoint.References = append(checkpoint.References, proposalReference)
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 	return &checkpoint, nil

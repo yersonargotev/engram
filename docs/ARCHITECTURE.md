@@ -267,7 +267,7 @@ engram review list|mark   List due memories or mark one reviewed (local-only) [-
 engram pin|unpin <obs_id> Change local-only context priority [--json]
 engram current-project    Inspect project resolution and ambiguity [--json]
 engram suggest-topic-key  Suggest a stable topic key without writing [--json]
-engram checkpoint record Record a saved or skipped root-turn checkpoint [--json]
+engram checkpoint record Record a saved, needs_review, or skipped root-turn checkpoint [--json]
 engram checkpoint status Inspect one exact root-turn checkpoint [--json]
 engram delete <obs_id>    Delete an observation [--hard] (soft-delete by default; --hard removes permanently)
 engram delete session <id>
@@ -276,7 +276,8 @@ engram delete prompt <id>
                           Delete a prompt by ID (permanent)
 engram delete project <name> [--hard]
                           Cascade-delete a project: soft-deletes observations (or hard-deletes
-                          with --hard, which also removes sessions); always removes prompts
+                          with --hard, which also removes sessions); always removes prompts,
+                          Shadow admission runs, local proposals, and their checkpoints
 engram timeline <obs_id>  Chronological context around an observation
 engram context [project]  Recent context from previous sessions
                           [--brief [--task INTENT] [--base REF] [--scope project|personal]
@@ -300,7 +301,8 @@ engram conflicts <sub>    Inspect and manage memory conflict relations
                             list, show, stats, scan, deferred, judge, compare
 engram doctor             Run read-only operational diagnostics [--json] [--project P] [--check CODE]
 engram projects merge     Deterministic multi-source merge [--dry-run] [--yes] [--json]
-                          (includes local shadow-admission ownership; no shadow sync mutations)
+                          (includes local shadow-admission and Memory-proposal ownership;
+                           no local-review sync mutations)
 engram cloud status       Show cloud runtime/config status
 engram cloud config --server <url>
                           Configure cloud server URL

@@ -46,6 +46,19 @@ func TestObsidianExportExcludesMemoryCheckpointsFromRealStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record checkpoint: %v", err)
 	}
+	_, _, err = s.RecordNeedsReviewCheckpoint(store.RecordNeedsReviewCheckpointParams{
+		Identity: store.CheckpointIdentity{
+			Host: "codex-proposal-canary", SessionID: "session-proposal-canary", RootTurnID: "turn-proposal-canary",
+		},
+		Project: "engram",
+		Proposal: &store.MemoryProposalInput{
+			Type: "decision", Title: "Proposal Obsidian canary", Content: "proposal-obsidian-canary",
+			Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("record needs-review checkpoint: %v", err)
+	}
 
 	vault := t.TempDir()
 	result, err := NewExporter(checkpointStoreReader{store: s}, ExportConfig{
@@ -73,6 +86,7 @@ func TestObsidianExportExcludesMemoryCheckpointsFromRealStore(t *testing.T) {
 		}
 		text := string(content)
 		if strings.Contains(text, "checkpoint-canary") ||
+			strings.Contains(text, "proposal-obsidian-canary") ||
 			strings.Contains(text, store.CheckpointSkipReasonNoDurableKnowledge) {
 			t.Fatalf("Obsidian file %s included checkpoint data: %s", path, text)
 		}

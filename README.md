@@ -393,7 +393,7 @@ Your production engram is fully untouched throughout.
 | `engram delete <obs_id>`                   | Delete an observation (soft by default; `--hard` removes permanently) |
 | `engram delete session <id>`               | Delete a session by ID (must have no observations)                    |
 | `engram delete prompt <id>`                | Delete a prompt by ID (permanent)                                     |
-| `engram delete project <name> [--hard]`    | Cascade-delete a project and its local shadow-admission data; soft-deletes observations by default (`--hard` also removes sessions) |
+| `engram delete project <name> [--hard]`    | Cascade-delete a project and its local review data; soft-deletes observations by default (`--hard` also removes sessions) |
 | `engram timeline <obs_id>`                 | Chronological context                                           |
 | `engram context [project]`                 | Recent session context; add `--brief` for task selection         |
 | `engram admission preview`                 | Preview deterministic Memory proposals and assessments without persisting them |
@@ -402,7 +402,7 @@ Your production engram is fully untouched throughout.
 | `engram admission review list\|mark`       | List pending proposals and append reviewer-attributed corrections |
 | `engram admission omission record`         | Append a reviewer-attributed omission to one study run |
 | `engram admission metrics`                 | Report legacy project metrics or aggregate-only study metrics and gates |
-| `engram checkpoint record [flags]`         | Record an idempotent local `saved` or `skipped` root-turn checkpoint |
+| `engram checkpoint record [flags]`         | Record an idempotent local `saved`, `needs_review`, or `skipped` root-turn checkpoint |
 | `engram checkpoint status [flags]`         | Inspect one exact local root-turn checkpoint                 |
 | `engram stats`                             | Memory statistics                                               |
 | `engram export [file]`                     | Export to JSON                                                  |

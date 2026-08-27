@@ -2952,6 +2952,12 @@ func TestHandleMergeProjects(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create admission shadow run: %v", err)
 	}
+	if _, err := s.CreateMemoryProposal("engram-memory", store.MemoryProposalInput{
+		Type: "decision", Title: "merge proposal", Content: "merge proposal content",
+		Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
+	}); err != nil {
+		t.Fatalf("create Memory proposal: %v", err)
+	}
 
 	h := handleMergeProjects(s)
 
@@ -2977,6 +2983,9 @@ func TestHandleMergeProjects(t *testing.T) {
 	}
 	if !strings.Contains(text, "Admission shadow runs moved: 1") {
 		t.Fatalf("expected shadow run count in result, got %q", text)
+	}
+	if !strings.Contains(text, "Memory proposals moved: 1") {
+		t.Fatalf("expected Memory proposal count in result, got %q", text)
 	}
 
 	// Verify that engram-memory observations are now under "engram"

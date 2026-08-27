@@ -56,26 +56,26 @@ type EvidenceBundle struct {
 	Items   []EvidenceItem `json:"items"`
 }
 
-type ProposalCategory string
+type ProposalCategory = store.MemoryProposalCategory
 
 const (
-	ProposalExplicitRequest ProposalCategory = "explicit_request"
-	ProposalDecision        ProposalCategory = "decision"
-	ProposalRootCause       ProposalCategory = "root_cause"
-	ProposalInvariant       ProposalCategory = "invariant"
-	ProposalConstraint      ProposalCategory = "constraint"
-	ProposalPreference      ProposalCategory = "preference"
-	ProposalLearning        ProposalCategory = "learning"
+	ProposalExplicitRequest = store.MemoryProposalExplicitRequest
+	ProposalDecision        = store.MemoryProposalDecision
+	ProposalRootCause       = store.MemoryProposalRootCause
+	ProposalInvariant       = store.MemoryProposalInvariant
+	ProposalConstraint      = store.MemoryProposalConstraint
+	ProposalPreference      = store.MemoryProposalPreference
+	ProposalLearning        = store.MemoryProposalLearning
 )
 
 const (
-	ReasonExplicitUserRequest      = "explicit_user_request"
-	ReasonStructuredSection        = "structured_section"
-	ReasonProtectedProposal        = "protected_proposal"
-	ReasonEmptyContent             = "empty_content"
-	ReasonNormalizedExactDuplicate = "normalized_exact_duplicate"
-	ReasonRedactedOnly             = "redacted_only"
-	ReasonRequiresReview           = "requires_review"
+	ReasonExplicitUserRequest      = store.MemoryProposalReasonExplicitUserRequest
+	ReasonStructuredSection        = store.MemoryProposalReasonStructuredSection
+	ReasonProtectedProposal        = store.MemoryProposalReasonProtectedProposal
+	ReasonEmptyContent             = store.MemoryProposalReasonEmptyContent
+	ReasonNormalizedExactDuplicate = store.MemoryProposalReasonNormalizedExactDuplicate
+	ReasonRedactedOnly             = store.MemoryProposalReasonRedactedOnly
+	ReasonRequiresReview           = store.MemoryProposalReasonRequiresReview
 )
 
 // MemoryProposal is potentially durable knowledge. It is never persisted by a

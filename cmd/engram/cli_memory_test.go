@@ -144,6 +144,13 @@ func TestCLIProjectsMergeDryRunAndApplyJSON(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed admission shadow run: %v", err)
 	}
+	proposal, err := s.CreateMemoryProposal("old-project", store.MemoryProposalInput{
+		Type: "decision", Title: "merge proposal", Content: "merge proposal content",
+		Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
+	})
+	if err != nil {
+		t.Fatalf("seed Memory proposal: %v", err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("close seed store: %v", err)
 	}
@@ -153,7 +160,7 @@ func TestCLIProjectsMergeDryRunAndApplyJSON(t *testing.T) {
 		t.Fatalf("dry stderr=%q", stderr)
 	}
 	dry := decodeCLIJSON(t, stdout)
-	if dry["dry_run"] != true || dry["admission_shadow_runs_updated"] != float64(1) {
+	if dry["dry_run"] != true || dry["admission_shadow_runs_updated"] != float64(1) || dry["memory_proposals_updated"] != float64(1) {
 		t.Fatalf("dry=%v", dry)
 	}
 	withArgs(t, "engram", "projects", "merge", "--from", "old-project", "--to", "canonical", "--yes", "--json")
@@ -162,7 +169,7 @@ func TestCLIProjectsMergeDryRunAndApplyJSON(t *testing.T) {
 		t.Fatalf("apply stderr=%q", stderr)
 	}
 	applied := decodeCLIJSON(t, stdout)
-	if applied["dry_run"] != false || applied["admission_shadow_runs_updated"] != float64(1) {
+	if applied["dry_run"] != false || applied["admission_shadow_runs_updated"] != float64(1) || applied["memory_proposals_updated"] != float64(1) {
 		t.Fatalf("applied=%v", applied)
 	}
 	s, err = store.New(cfg)
@@ -177,6 +184,10 @@ func TestCLIProjectsMergeDryRunAndApplyJSON(t *testing.T) {
 	runs, err := s.ListAdmissionShadowRuns("canonical")
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("canonical shadow runs=%v err=%v", runs, err)
+	}
+	movedProposal, err := s.GetMemoryProposal(proposal.ID)
+	if err != nil || movedProposal.Project != "canonical" {
+		t.Fatalf("canonical Memory proposal=%#v err=%v", movedProposal, err)
 	}
 }
 

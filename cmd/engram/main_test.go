@@ -1827,6 +1827,24 @@ func TestCmdDeletePromptInvalidID(t *testing.T) {
 func TestCmdDeleteProjectSuccess(t *testing.T) {
 	cfg := testConfig(t)
 	mustSeedObservation(t, cfg, "sess-proj-del", "proj-cascade", "decision", "title", "content", "project")
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if _, _, err := s.RecordNeedsReviewCheckpoint(store.RecordNeedsReviewCheckpointParams{
+		Identity: store.CheckpointIdentity{Host: "codex", SessionID: "delete-project-session", RootTurnID: "delete-project-turn"},
+		Project:  "proj-cascade",
+		Proposal: &store.MemoryProposalInput{
+			Type: "decision", Title: "Delete project proposal", Content: "Delete this with the project.",
+			Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
+		},
+	}); err != nil {
+		_ = s.Close()
+		t.Fatalf("create proposal checkpoint: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
 
 	withArgs(t, "engram", "delete", "project", "proj-cascade", "--hard")
 	stdout, stderr := captureOutput(t, func() { cmdDelete(cfg) })
@@ -1835,6 +1853,9 @@ func TestCmdDeleteProjectSuccess(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "deleted") {
 		t.Fatalf("expected deletion confirmation in stdout, got: %q", stdout)
+	}
+	if !strings.Contains(stdout, "1 Memory proposal(s), 1 checkpoint(s)") {
+		t.Fatalf("expected local proposal deletion counts in stdout, got: %q", stdout)
 	}
 }
 

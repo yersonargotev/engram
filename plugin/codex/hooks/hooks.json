@@ -53,7 +53,7 @@
           {
             "type": "command",
             "command": "\"${PLUGIN_ROOT}/scripts/stop.sh\"",
-            "commandWindows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${PLUGIN_ROOT}\\scripts\\stop.ps1\"",
+            "commandWindows": "engram checkpoint verify-stop --host=codex",
             "timeout": 3,
             "statusMessage": "Verifying engram memory checkpoint..."
           }

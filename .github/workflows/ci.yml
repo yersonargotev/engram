@@ -52,7 +52,7 @@ jobs:
         with:
           go-version: "1.25.10"
 
-      - name: Run Windows Stop adapter tests
+      - name: Run Windows Stop command tests
         run: go test ./plugin -run '^TestCodexWindowsStopVerifierRuntime$'
 
       - name: Run Windows setup verifier tests

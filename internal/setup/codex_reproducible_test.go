@@ -371,7 +371,6 @@ func writeCanonicalCodexActivationFixture(t *testing.T, destination string) {
 		"scripts/session-start.sh",
 		"scripts/post-compaction.sh",
 		"scripts/stop.sh",
-		"scripts/stop.ps1",
 		"skills/memory/SKILL.md",
 	}
 	for _, relative := range paths {
@@ -509,7 +508,7 @@ func TestVerifyInstalledCodexStopVerifierRejectsModifiedLaunchers(t *testing.T) 
 		t.Fatal("canonical Stop launchers did not report ready")
 	}
 
-	for _, relative := range []string{"scripts/stop.sh", "scripts/stop.ps1"} {
+	for _, relative := range []string{"scripts/stop.sh"} {
 		t.Run(relative, func(t *testing.T) {
 			modified := make(map[string]codexPluginTreeEntry, len(assets))
 			for path, entry := range assets {
@@ -536,7 +535,7 @@ func TestVerifyInstalledCodexStopVerifierAcceptsWindowsCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("snapshot canonical plugin: %v", err)
 	}
-	for _, relative := range []string{"scripts/stop.sh", "scripts/stop.ps1"} {
+	for _, relative := range []string{"scripts/stop.sh"} {
 		entry := assets[relative]
 		entry.mode = 0o666
 		// Simulate a Windows checkout that already materialized CRLF bytes.

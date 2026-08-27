@@ -57,7 +57,7 @@ Seven checks run automatically on every PR:
 |-------|-------------|
 | **Unit Tests** | `go test ./...` — all tests except those tagged with `//go:build e2e` |
 | **E2E Tests** | `go test -tags e2e ./internal/server/...` — end-to-end integration tests |
-| **Codex Stop (Windows)** | Runtime PowerShell adapter and Windows setup-verifier tests on `windows-latest` |
+| **Codex Stop (Windows)** | Runtime host-command and Windows setup-verifier tests on `windows-latest` |
 
 #### Managed Pack Validation
 

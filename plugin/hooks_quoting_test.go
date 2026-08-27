@@ -13,14 +13,15 @@ type hooksJSON struct {
 }
 
 type hookGroup struct {
-	Matcher string     `json:"matcher,omitempty"`
+	Matcher string      `json:"matcher,omitempty"`
 	Hooks   []hookEntry `json:"hooks"`
 }
 
 type hookEntry struct {
-	Type    string `json:"type"`
-	Command string `json:"command,omitempty"`
-	Path    string `json:"path,omitempty"`
+	Type           string `json:"type"`
+	Command        string `json:"command,omitempty"`
+	CommandWindows string `json:"commandWindows,omitempty"`
+	Path           string `json:"path,omitempty"`
 }
 
 // TestHooksJSONPluginRootIsQuoted loads plugin/claude-code/hooks/hooks.json and

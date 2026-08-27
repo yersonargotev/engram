@@ -19,6 +19,10 @@ func TestCodexStopVerifierDelegatesToCoreWithoutRuntimeDependencies(t *testing.T
 	pluginRoot := filepath.Join(root, "plugin", "codex")
 	manifest := readCodexHooksManifest(t, filepath.Join(pluginRoot, "hooks", "hooks.json"))
 	command := singleCodexHookCommand(t, manifest, "Stop")
+	windowsCommand := singleCodexHookWindowsCommand(t, manifest, "Stop")
+	if windowsCommand != "engram checkpoint verify-stop --host=codex" || strings.Contains(windowsCommand, `"`) {
+		t.Fatalf("Windows Stop command must be quote-free and delegate directly to core: %q", windowsCommand)
+	}
 	input := `{"session_id":"session-47","turn_id":"turn-47","stop_hook_active":false}`
 	fakeBin, argsPath, inputPath := writeCodexStopDelegate(t, `{}`+"\n", "", 0)
 
@@ -41,7 +45,7 @@ func TestCodexStopVerifierDelegatesToCoreWithoutRuntimeDependencies(t *testing.T
 		t.Fatalf("delegated input = %q, want %q", forwarded, input)
 	}
 
-	for _, relative := range []string{"scripts/stop.sh", "scripts/stop.ps1"} {
+	for _, relative := range []string{"scripts/stop.sh"} {
 		raw, readErr := os.ReadFile(filepath.Join(pluginRoot, filepath.FromSlash(relative)))
 		if readErr != nil {
 			t.Fatalf("read %s: %v", relative, readErr)
@@ -52,6 +56,25 @@ func TestCodexStopVerifierDelegatesToCoreWithoutRuntimeDependencies(t *testing.T
 			}
 		}
 	}
+	if _, err := os.Stat(filepath.Join(pluginRoot, "scripts", "stop.ps1")); !os.IsNotExist(err) {
+		t.Fatalf("obsolete Windows Stop adapter must not remain: %v", err)
+	}
+}
+
+func singleCodexHookWindowsCommand(t *testing.T, manifest hooksJSON, event string) string {
+	t.Helper()
+	var commands []string
+	for _, group := range manifest.Hooks[event] {
+		for _, hook := range group.Hooks {
+			if hook.Type == "command" && hook.CommandWindows != "" {
+				commands = append(commands, hook.CommandWindows)
+			}
+		}
+	}
+	if len(commands) != 1 {
+		t.Fatalf("%s has %d Windows command hooks, want exactly one", event, len(commands))
+	}
+	return commands[0]
 }
 
 func TestCodexStopVerifierLeavesIntegrationFailuresVisible(t *testing.T) {

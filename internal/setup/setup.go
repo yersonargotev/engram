@@ -2053,7 +2053,6 @@ func verifyInstalledCodexPlugin(output []byte, verifiedPluginAssets map[string]c
 
 func verifyInstalledCodexStopVerifier(hooksRaw []byte, verifiedPluginAssets map[string]codexPluginTreeEntry) bool {
 	const unixAdapter = "#!/bin/bash\n# Engram — thin Codex Stop adapter\n\nexec engram checkpoint verify-stop --host=codex\n"
-	const windowsAdapter = "$ErrorActionPreference = 'Stop'\n\n& engram checkpoint verify-stop --host=codex\nexit $LASTEXITCODE\n"
 	var manifest struct {
 		Hooks map[string][]struct {
 			Matcher string `json:"matcher"`
@@ -2076,21 +2075,18 @@ func verifyInstalledCodexStopVerifier(hooksRaw []byte, verifiedPluginAssets map[
 	hook := groups[0].Hooks[0]
 	if hook.Type != "command" ||
 		hook.Command != `"${PLUGIN_ROOT}/scripts/stop.sh"` ||
-		hook.CommandWindows != `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${PLUGIN_ROOT}\scripts\stop.ps1"` ||
+		hook.CommandWindows != `engram checkpoint verify-stop --host=codex` ||
 		hook.Timeout != 3 || hook.Async {
 		return false
 	}
 	unixAsset, unixOK := verifiedPluginAssets["scripts/stop.sh"]
-	windowsAsset, windowsOK := verifiedPluginAssets["scripts/stop.ps1"]
 	unixData := unixAsset.data
 	unixModeReady := unixAsset.mode.IsRegular() && unixAsset.mode.Perm()&0o111 != 0
 	if runtimeGOOS == "windows" {
 		unixData = bytes.ReplaceAll(unixData, []byte("\r\n"), []byte("\n"))
 		unixModeReady = unixAsset.mode.IsRegular()
 	}
-	windowsData := bytes.ReplaceAll(windowsAsset.data, []byte("\r\n"), []byte("\n"))
-	return unixOK && unixModeReady && bytes.Equal(unixData, []byte(unixAdapter)) &&
-		windowsOK && windowsAsset.mode.IsRegular() && bytes.Equal(windowsData, []byte(windowsAdapter))
+	return unixOK && unixModeReady && bytes.Equal(unixData, []byte(unixAdapter))
 }
 
 func inspectInstalledCodexPluginLocation(codexBin, configPath string) (codexInstalledPluginLocation, error) {

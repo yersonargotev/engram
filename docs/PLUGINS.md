@@ -188,8 +188,7 @@ plugin/codex/
 │   ├── session-start.sh           # startup, resume, and clear
 │   ├── post-compaction.sh         # compact
 │   ├── user-prompt-submit.sh      # Prompt capture + opaque root identity
-│   ├── stop.sh                    # Unix exact-checkpoint verifier
-│   └── stop.ps1                   # Windows exact-checkpoint verifier
+│   └── stop.sh                    # Unix exact-checkpoint verifier
 └── skills/memory/SKILL.md         # Canonical cue and complete rubric
 ```
 
@@ -205,7 +204,8 @@ the session ID. It does not finalize a checkpoint. This preserves one root-turn
 identity for the root agent while tools and subagents remain internal activity.
 
 `Stop` delegates the complete event to
-`engram checkpoint verify-stop --host=codex`. The Go core queries that exact identity in the local checkpoint
+`engram checkpoint verify-stop --host=codex`; Windows invokes that command
+directly, while Unix uses the thin `stop.sh` launcher. The Go core queries that exact identity in the local checkpoint
 ledger. A terminal `saved`, `skipped`, or `needs_review` checkpoint completes
 with no continuation. Only an absent checkpoint can request one recovery
 continuation, which carries the original identity and tells the root agent not
@@ -216,7 +216,7 @@ Codex's three-second hook timeout remain visible and never become `skipped`.
 
 `engram setup codex` verifies the immutable plugin tree, MCP manifest, canonical
 skill, cue, lifecycle coverage, exact synchronous `Stop` command, timeout, and
-Unix and Windows verifier assets. It preserves user-owned settings and never
+the Unix launcher used by the verifier. It preserves user-owned settings and never
 adds protocol prose to shared `AGENTS.md` or `CLAUDE.md` files. Setup reports
 complete only when both activation and checkpoint verification are ready.
 

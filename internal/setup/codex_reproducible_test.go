@@ -370,6 +370,7 @@ func writeCanonicalCodexActivationFixture(t *testing.T, destination string) {
 		"scripts/session-start.sh",
 		"scripts/post-compaction.sh",
 		"scripts/stop.sh",
+		"scripts/stop.ps1",
 		"skills/memory/SKILL.md",
 	}
 	for _, relative := range paths {

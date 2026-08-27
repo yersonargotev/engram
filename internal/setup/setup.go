@@ -2056,10 +2056,11 @@ func verifyInstalledCodexStopVerifier(hooksRaw []byte, verifiedPluginAssets map[
 		Hooks map[string][]struct {
 			Matcher string `json:"matcher"`
 			Hooks   []struct {
-				Type    string `json:"type"`
-				Command string `json:"command"`
-				Timeout int    `json:"timeout"`
-				Async   bool   `json:"async"`
+				Type           string `json:"type"`
+				Command        string `json:"command"`
+				CommandWindows string `json:"commandWindows"`
+				Timeout        int    `json:"timeout"`
+				Async          bool   `json:"async"`
 			} `json:"hooks"`
 		} `json:"hooks"`
 	}
@@ -2071,11 +2072,16 @@ func verifyInstalledCodexStopVerifier(hooksRaw []byte, verifiedPluginAssets map[
 		return false
 	}
 	hook := groups[0].Hooks[0]
-	if hook.Type != "command" || hook.Command != `"${PLUGIN_ROOT}/scripts/stop.sh"` || hook.Timeout != 3 || hook.Async {
+	if hook.Type != "command" ||
+		hook.Command != `"${PLUGIN_ROOT}/scripts/stop.sh"` ||
+		hook.CommandWindows != `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${PLUGIN_ROOT}\scripts\stop.ps1"` ||
+		hook.Timeout != 3 || hook.Async {
 		return false
 	}
-	asset, ok := verifiedPluginAssets["scripts/stop.sh"]
-	return ok && asset.mode.IsRegular() && asset.mode.Perm()&0o111 != 0 && strings.HasPrefix(string(asset.data), "#!/bin/bash\n")
+	unixAsset, unixOK := verifiedPluginAssets["scripts/stop.sh"]
+	windowsAsset, windowsOK := verifiedPluginAssets["scripts/stop.ps1"]
+	return unixOK && unixAsset.mode.IsRegular() && unixAsset.mode.Perm()&0o111 != 0 && strings.HasPrefix(string(unixAsset.data), "#!/bin/bash\n") &&
+		windowsOK && windowsAsset.mode.IsRegular() && len(windowsAsset.data) > 0
 }
 
 func inspectInstalledCodexPluginLocation(codexBin, configPath string) (codexInstalledPluginLocation, error) {

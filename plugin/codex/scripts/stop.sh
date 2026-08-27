@@ -53,7 +53,7 @@ if [ "$STATUS_TIMED_OUT" -eq 1 ]; then
   exit 0
 fi
 
-if [ "$STATUS_CODE" -eq 0 ] && printf '%s' "$STATUS_OUTPUT" | jq -s -e \
+if [ "$STATUS_CODE" -eq 0 ] && [ -z "$STATUS_ERROR" ] && printf '%s' "$STATUS_OUTPUT" | jq -s -e \
   --arg session "$SESSION_ID" \
   --arg turn "$ROOT_TURN_ID" '
     length == 1 and
@@ -68,7 +68,7 @@ if [ "$STATUS_CODE" -eq 0 ] && printf '%s' "$STATUS_OUTPUT" | jq -s -e \
   exit 0
 fi
 
-if [ "$STATUS_CODE" -ne 0 ] && printf '%s' "$STATUS_ERROR" | jq -s -e \
+if [ "$STATUS_CODE" -ne 0 ] && [ -z "$STATUS_OUTPUT" ] && printf '%s' "$STATUS_ERROR" | jq -s -e \
   'length == 1 and .[0].code == "checkpoint_not_found"' >/dev/null 2>&1; then
   if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
     checkpoint_failure "checkpoint is still missing after the single recovery continuation."

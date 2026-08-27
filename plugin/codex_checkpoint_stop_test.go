@@ -32,6 +32,56 @@ func TestCodexStopVerifierAllowsTerminalCheckpoint(t *testing.T) {
 	}
 }
 
+func TestCodexStopVerifierDeclaresWindowsAdapter(t *testing.T) {
+	root := repoRoot(t)
+	manifestPath := filepath.Join(root, "plugin", "codex", "hooks", "hooks.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read Codex hooks manifest: %v", err)
+	}
+	var manifest codexHooksManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatalf("parse Codex hooks manifest: %v", err)
+	}
+	const wantUnix = `"${PLUGIN_ROOT}/scripts/stop.sh"`
+	const wantWindows = `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${PLUGIN_ROOT}\scripts\stop.ps1"`
+	for _, group := range manifest.Hooks["Stop"] {
+		for _, hook := range group.Hooks {
+			if hook.Type == "command" && hook.Command == wantUnix && hook.CommandWindows == wantWindows && hook.Timeout == 3 {
+				windowsPath := filepath.Join(root, "plugin", "codex", "scripts", "stop.ps1")
+				windowsRaw, err := os.ReadFile(windowsPath)
+				if err != nil {
+					t.Fatalf("read Windows Stop adapter: %v", err)
+				}
+				windowsScript := string(windowsRaw)
+				for _, required := range []string{
+					"[Console]::In.ReadToEnd()",
+					"ConvertFrom-Json",
+					"session_id",
+					"turn_id",
+					"stop_hook_active",
+					"--host=codex",
+					"--session-id=",
+					"--root-turn-id=",
+					"WaitForExit(2000)",
+					"checkpoint_not_found",
+					"decision = 'block'",
+					"systemMessage",
+				} {
+					if !strings.Contains(windowsScript, required) {
+						t.Errorf("Windows Stop adapter must contain %q", required)
+					}
+				}
+				if strings.Contains(windowsScript, "no_durable_knowledge") {
+					t.Error("Windows Stop adapter must not select the skipped disposition")
+				}
+				return
+			}
+		}
+	}
+	t.Fatalf("Stop hook must declare command %q, commandWindows %q, and timeout 3", wantUnix, wantWindows)
+}
+
 func TestCodexStopVerifierRequestsOneContinuationForMissingCheckpoint(t *testing.T) {
 	root := repoRoot(t)
 	pluginRoot := filepath.Join(root, "plugin", "codex")

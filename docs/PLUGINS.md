@@ -188,7 +188,8 @@ plugin/codex/
 │   ├── session-start.sh           # startup, resume, and clear
 │   ├── post-compaction.sh         # compact
 │   ├── user-prompt-submit.sh      # Prompt capture + opaque root identity
-│   └── stop.sh                    # Synchronous exact-checkpoint verifier
+│   ├── stop.sh                    # Unix exact-checkpoint verifier
+│   └── stop.ps1                   # Windows exact-checkpoint verifier
 └── skills/memory/SKILL.md         # Canonical cue and complete rubric
 ```
 
@@ -215,9 +216,9 @@ hook deadline.
 
 `engram setup codex` verifies the immutable plugin tree, MCP manifest, canonical
 skill, cue, lifecycle coverage, exact synchronous `Stop` command, timeout, and
-executable verifier asset. It preserves user-owned settings and never adds
-protocol prose to shared `AGENTS.md` or `CLAUDE.md` files. Setup reports complete
-only when both activation and checkpoint verification are ready.
+Unix and Windows verifier assets. It preserves user-owned settings and never
+adds protocol prose to shared `AGENTS.md` or `CLAUDE.md` files. Setup reports
+complete only when both activation and checkpoint verification are ready.
 
 ---
 

@@ -300,6 +300,25 @@ func TestGenerateReportsSupersededCandidateFiltering(t *testing.T) {
 	}
 }
 
+func TestGenerateDoesNotEmitOversizedFallbackAnchor(t *testing.T) {
+	memoryStore := newTestStore(t)
+	addTaskBriefingTestMemory(t, memoryStore, "oversized-fallback-session", "Unrelated memory", "Typography guidance.")
+
+	result, err := New(memoryStore).Generate(Input{
+		Project:    "engram",
+		TaskIntent: strings.Repeat("a", maximumFallbackAnchorBytes+1),
+	})
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if result.EmptyResultReason != EmptyResultNoCandidatesMatched {
+		t.Fatalf("empty result reason = %q, want %q", result.EmptyResultReason, EmptyResultNoCandidatesMatched)
+	}
+	if result.Fallback != nil || result.FallbackCandidate != nil {
+		t.Fatalf("fallback = %#v / candidate %#v, want none for an oversized anchor", result.Fallback, result.FallbackCandidate)
+	}
+}
+
 func addTaskBriefingTestMemory(t *testing.T, memoryStore *store.Store, sessionID, title, content string) int64 {
 	t.Helper()
 	if err := memoryStore.CreateSession(sessionID, "engram", "/tmp/engram"); err != nil {

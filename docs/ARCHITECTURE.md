@@ -342,7 +342,9 @@ a lower bound with `count_complete: false`. Rejection details are bounded IDs an
 reason metrics, never rejected Memory bodies or raw Repository signals. A
 structured fallback is advisory: `Generate` returns a read-only `engram search`
 command/argument vector but never executes the second query or persists its
-transient inputs.
+transient inputs. The generator excludes anchors over its fixed byte bound, and
+the CLI drops fallback metadata whole with an explicit omission reason if it
+cannot fit the output budget.
 
 ### Attributable Admission study boundary
 

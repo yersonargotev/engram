@@ -498,10 +498,13 @@ signal-absence case). When a targeted search is a safe next step, `fallback`
 contains one to three bounded normalized anchors, project/scope, a stable reason
 code, and a safe structured invocation (`command` plus `args`). Exact issue/PR,
 topic-key, branch/path, and other distinctive terms are preferred; generic stop
-words alone never become anchors. Fallback reasons cover no matches, incomplete
+words alone never become anchors, and anchors over the fixed byte bound are
+excluded. Fallback reasons cover no matches, incomplete
 retrieval, filtering, threshold rejection, result limiting, and output-budget
 omission. The recommendation is advisory and read-only: Task Brief neither runs
-the search nor persists Task/Repository evidence.
+the search nor persists Task/Repository evidence. If fallback metadata itself
+cannot fit stdout, it is omitted whole and JSON reports `fallback_omitted` with
+`fallback_omission_reason: "output_budget"`.
 
 Task intent and Repository signals are transient: they are used only for local
 deterministic selection and are never saved as memories. Raw diff content is not

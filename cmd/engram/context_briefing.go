@@ -30,6 +30,8 @@ type contextBriefingOutput struct {
 	Rejections              []taskbriefing.CandidateRejection `json:"rejections"`
 	RejectionDetailsOmitted int                               `json:"rejection_details_omitted"`
 	Fallback                *taskbriefing.SearchFallback      `json:"fallback,omitempty"`
+	FallbackOmitted         bool                              `json:"fallback_omitted,omitempty"`
+	FallbackOmissionReason  string                            `json:"fallback_omission_reason,omitempty"`
 	conflictPairs           []taskbriefing.ConflictPair
 	fallbackCandidate       *taskbriefing.SearchFallback
 }
@@ -88,6 +90,12 @@ func encodeContextBriefing(output contextBriefingOutput, jsonMode, taskProvided 
 		if len(output.Rejections) > 0 {
 			output.Rejections = output.Rejections[:len(output.Rejections)-1]
 			output.RejectionDetailsOmitted++
+			continue
+		}
+		if len(output.Memories) == 0 && output.Fallback != nil {
+			output.Fallback = nil
+			output.FallbackOmitted = true
+			output.FallbackOmissionReason = "output_budget"
 			continue
 		}
 		if len(output.Memories) == 0 {
@@ -210,6 +218,9 @@ func formatContextBriefing(output contextBriefingOutput, taskProvided bool) []by
 	if output.Fallback != nil {
 		fmt.Fprintf(&buffer, "Targeted search fallback (%s): anchors %s\n", output.Fallback.ReasonCode, strings.Join(output.Fallback.Anchors, ", "))
 		fmt.Fprintf(&buffer, "Command: %s\n", formatSearchInvocation(output.Fallback.Invocation))
+	}
+	if output.FallbackOmitted {
+		fmt.Fprintf(&buffer, "Targeted search fallback omitted: %s\n", output.FallbackOmissionReason)
 	}
 	fmt.Fprintf(&buffer, "Omitted: %d by result limit, %d by output budget\n", output.ResultLimitOmissions, output.BudgetOmissions)
 	return buffer.Bytes()

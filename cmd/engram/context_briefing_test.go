@@ -231,6 +231,43 @@ func TestEncodeContextBriefingAddsFallbackAfterBudgetOmission(t *testing.T) {
 	}
 }
 
+func TestEncodeContextBriefingOmitsOversizedFallbackMetadata(t *testing.T) {
+	oversized := strings.Repeat("a", taskbriefing.CalibratedDefaults.TotalOutputBudget)
+	fallback := &taskbriefing.SearchFallback{
+		ReasonCode: taskbriefing.FallbackNoCandidatesMatched,
+		Anchors:    []string{oversized}, Project: "engram", Scope: "project_and_personal",
+		Invocation: taskbriefing.SearchInvocation{
+			Command: "engram", Args: []string{"search", oversized, "--project", "engram", "--match-mode", "all", "--limit", "5", "--json"},
+		},
+	}
+	output := contextBriefingOutput{
+		Mode: "brief", Project: "engram", Diagnostics: []taskbriefing.Diagnostic{}, Rejections: []taskbriefing.CandidateRejection{},
+		Pipeline:          taskbriefing.PipelineAccounting{EligibleInventory: 1, RetrievalCountComplete: true},
+		EmptyResultReason: taskbriefing.EmptyResultNoCandidatesMatched,
+		Fallback:          fallback,
+		fallbackCandidate: fallback,
+	}
+
+	encoded, err := encodeContextBriefing(output, true, true, taskbriefing.CalibratedDefaults.TotalOutputBudget)
+	if err != nil {
+		t.Fatalf("encodeContextBriefing: %v", err)
+	}
+	if len(encoded) > taskbriefing.CalibratedDefaults.TotalOutputBudget {
+		t.Fatalf("encoded bytes = %d, budget = %d", len(encoded), taskbriefing.CalibratedDefaults.TotalOutputBudget)
+	}
+	var bounded contextBriefingOutput
+	if err := json.Unmarshal(encoded, &bounded); err != nil {
+		t.Fatalf("decode bounded output: %v", err)
+	}
+	if bounded.Fallback != nil || !bounded.FallbackOmitted || bounded.FallbackOmissionReason != "output_budget" {
+		t.Fatalf("bounded output = %#v, want explicit fallback omission", bounded)
+	}
+	human := string(formatContextBriefing(bounded, true))
+	if !strings.Contains(human, "Targeted search fallback omitted: output_budget") {
+		t.Fatalf("human output = %q, want explicit fallback omission", human)
+	}
+}
+
 func TestEncodeContextBriefingRemovesConflictDiagnosticAfterBudgetOmission(t *testing.T) {
 	memories := []contextBriefingMemory{
 		{Memory: store.Observation{SyncID: "memory-a", Title: "Conflict A", Content: strings.Repeat("complete memory A ", 40)}},

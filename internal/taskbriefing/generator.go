@@ -102,6 +102,7 @@ const (
 	candidateFieldTermLimit         = 64
 	exactIdentifierStrength         = 4
 	maximumRejectionDetails         = 8
+	maximumFallbackAnchorBytes      = 96
 )
 
 var (
@@ -416,7 +417,7 @@ func buildSearchFallback(input Input, signals []weightedSignal) *SearchFallback 
 	anchors := make([]string, 0, 3)
 	seen := make(map[string]struct{})
 	appendAnchor := func(anchor string) {
-		if len(anchors) >= 3 || anchor == "" {
+		if len(anchors) >= 3 || anchor == "" || len(anchor) > maximumFallbackAnchorBytes {
 			return
 		}
 		if _, found := seen[anchor]; found {

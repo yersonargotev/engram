@@ -36,11 +36,12 @@ import (
 )
 
 var (
-	runtimeGOOS  = runtime.GOOS
-	userHomeDir  = os.UserHomeDir
-	lookPathFn   = exec.LookPath
-	osExecutable = os.Executable
-	runCommand   = func(name string, args ...string) ([]byte, error) {
+	runtimeGOOS           = runtime.GOOS
+	userHomeDir           = os.UserHomeDir
+	lookPathFn            = exec.LookPath
+	osExecutable          = os.Executable
+	codexAdminSkillsDirFn = func() string { return "/etc/codex/skills" }
+	runCommand            = func(name string, args ...string) ([]byte, error) {
 		return exec.Command(name, args...).CombinedOutput()
 	}
 	runCodexCheckpointProbeFn = func(name string, args ...string) ([]byte, error) {
@@ -50,7 +51,7 @@ var (
 	renameFileFn = os.Rename
 	removeFileFn = os.Remove
 	gitStatusFn  = func(root string) ([]byte, error) {
-		return exec.Command("git", "-C", root, "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "--", ".agents/plugins/marketplace.json", "plugin/codex").CombinedOutput()
+		return exec.Command("git", "--no-optional-locks", "-C", root, "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "--", ".agents/plugins/marketplace.json", "plugin/codex").CombinedOutput()
 	}
 	gitResolveRefFn = func(root, ref string) ([]byte, error) {
 		return exec.Command("git", "-C", root, "rev-parse", "--verify", ref+"^{commit}").CombinedOutput()
@@ -2252,6 +2253,8 @@ type codexListedPlugin struct {
 type installedCodexPlugin struct {
 	Version            string
 	MCPReady           bool
+	PromptHookReady    bool
+	SessionHookReady   bool
 	ActivationCueReady bool
 	VerifierReady      bool
 }
@@ -2269,8 +2272,11 @@ func verifyInstalledCodexPlugin(output []byte, verifiedPluginAssets map[string]c
 	if installed.Name != "engram" || installed.MarketplaceName != "engram" {
 		return installedCodexPlugin{}, fmt.Errorf("installed plugin identity is %s@%s, want engram@engram", installed.Name, installed.MarketplaceName)
 	}
+	return verifyCodexPluginAtLocation(installed.Version, installed.InstalledPath, verifiedPluginAssets)
+}
 
-	manifestRaw, err := readFileFn(filepath.Join(installed.InstalledPath, ".codex-plugin", "plugin.json"))
+func verifyCodexPluginAtLocation(version, installedPath string, verifiedPluginAssets map[string]codexPluginTreeEntry) (installedCodexPlugin, error) {
+	manifestRaw, err := readFileFn(filepath.Join(installedPath, ".codex-plugin", "plugin.json"))
 	if err != nil {
 		return installedCodexPlugin{}, fmt.Errorf("verify installed plugin manifest: %w", err)
 	}
@@ -2282,15 +2288,15 @@ func verifyInstalledCodexPlugin(output []byte, verifiedPluginAssets map[string]c
 	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
 		return installedCodexPlugin{}, fmt.Errorf("verify installed plugin manifest: %w", err)
 	}
-	if manifest.Name != "engram" || manifest.Repository != "https://github.com/yersonargotev/engram" || manifest.Version != installed.Version {
+	if manifest.Name != "engram" || manifest.Repository != "https://github.com/yersonargotev/engram" || manifest.Version != version {
 		return installedCodexPlugin{}, fmt.Errorf("installed plugin manifest does not match Engram authority and version")
 	}
-	if err := compareCodexPluginTreeSnapshot(verifiedPluginAssets, installed.InstalledPath); err != nil {
+	if err := compareCodexPluginTreeSnapshot(verifiedPluginAssets, installedPath); err != nil {
 		return installedCodexPlugin{}, fmt.Errorf("installed plugin does not match the verified marketplace checkout: %w", err)
 	}
 
-	capabilities := installedCodexPlugin{Version: installed.Version}
-	mcpRaw, err := readFileFn(filepath.Join(installed.InstalledPath, ".mcp.json"))
+	capabilities := installedCodexPlugin{Version: version}
+	mcpRaw, err := readFileFn(filepath.Join(installedPath, ".mcp.json"))
 	if err == nil {
 		var mcpManifest struct {
 			MCPServers map[string]struct {
@@ -2304,14 +2310,16 @@ func verifyInstalledCodexPlugin(output []byte, verifiedPluginAssets map[string]c
 		}
 	}
 
-	hooksRaw, err := readFileFn(filepath.Join(installed.InstalledPath, "hooks", "hooks.json"))
+	hooksRaw, err := readFileFn(filepath.Join(installedPath, "hooks", "hooks.json"))
 	if err == nil {
 		var hooksManifest struct {
 			Hooks map[string]json.RawMessage `json:"hooks"`
 		}
 		if json.Unmarshal(hooksRaw, &hooksManifest) == nil {
 			capabilities.VerifierReady = verifyInstalledCodexStopVerifier(hooksRaw, verifiedPluginAssets)
-			capabilities.ActivationCueReady = verifyInstalledCodexActivation(installed.InstalledPath, hooksRaw)
+			capabilities.PromptHookReady = verifyInstalledCodexPromptHook(installedPath, hooksRaw)
+			capabilities.SessionHookReady = verifyInstalledCodexSessionHooks(installedPath, hooksRaw)
+			capabilities.ActivationCueReady = verifyInstalledCodexActivation(installedPath, hooksRaw)
 		}
 	}
 	return capabilities, nil
@@ -2677,6 +2685,10 @@ func codexMCPRegistrationPreserved(configPath string) bool {
 }
 
 func codexCheckpointAdaptersReady() (bool, string) {
+	return codexCheckpointAdaptersReadyFor(resolveEngramCommand())
+}
+
+func codexCheckpointAdaptersReadyFor(command string) (bool, string) {
 	tools := mcp.ResolveTools("agent")
 	for _, tool := range []string{"mem_checkpoint", "mem_checkpoint_status"} {
 		if !tools[tool] {
@@ -2684,7 +2696,7 @@ func codexCheckpointAdaptersReady() (bool, string) {
 		}
 	}
 
-	output, err := runCodexCheckpointProbeFn(resolveEngramCommand(), "checkpoint", "--help")
+	output, err := runCodexCheckpointProbeFn(command, "checkpoint", "--help")
 	if err != nil {
 		detail := strings.TrimSpace(string(output))
 		if detail == "" {

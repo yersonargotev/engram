@@ -220,6 +220,16 @@ the Unix launcher used by the verifier. It preserves user-owned settings and nev
 adds protocol prose to shared `AGENTS.md` or `CLAUDE.md` files. Setup reports
 complete only when both activation and checkpoint verification are ready.
 
+`engram setup status codex [--json]` is the non-mutating diagnostic counterpart.
+It reports standalone and plugin-provided skills, marketplace registration,
+installed/enabled plugin provenance, MCP configuration and executable preflight,
+prompt/session hooks, the canonical activation cue, and the Stop verifier as
+separate checks. Its `manual_skill_cli`, `mcp_only`, `partial_plugin`,
+`checkpoint_ready`, and `unknown` modes never promote marketplace registration
+or customized state to full readiness. The result is an installed-capability
+snapshot; it does not prove that Codex invoked the skill or created a Memory in
+a particular session.
+
 ---
 
 ## MCP Tool Reference — mem_judge

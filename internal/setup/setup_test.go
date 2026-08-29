@@ -53,6 +53,7 @@ func resetSetupSeams(t *testing.T) {
 	oldInjectCodexMCPFn := injectCodexMCPFn
 	oldAddClaudeCodeAllowlistFn := addClaudeCodeAllowlistFn
 	oldOsExecutable := osExecutable
+	oldCodexAdminSkillsDirFn := codexAdminSkillsDirFn
 	oldWriteClaudeCodeUserMCPFn := writeClaudeCodeUserMCPFn
 	oldResolveMiseNodeVersionFn := resolveMiseNodeVersionFn
 	runCodexCheckpointProbeFn = func(string, ...string) ([]byte, error) {
@@ -85,6 +86,7 @@ func resetSetupSeams(t *testing.T) {
 		injectCodexMCPFn = oldInjectCodexMCPFn
 		addClaudeCodeAllowlistFn = oldAddClaudeCodeAllowlistFn
 		osExecutable = oldOsExecutable
+		codexAdminSkillsDirFn = oldCodexAdminSkillsDirFn
 		writeClaudeCodeUserMCPFn = oldWriteClaudeCodeUserMCPFn
 		resolveMiseNodeVersionFn = oldResolveMiseNodeVersionFn
 	})

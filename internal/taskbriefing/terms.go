@@ -100,7 +100,7 @@ func boundedTermPrefix(raw string, limit int) string {
 		if overflowed {
 			overflowed = false
 			token.Reset()
-			return start, true
+			return 0, false
 		}
 		term := strings.ToLower(token.String())
 		token.Reset()

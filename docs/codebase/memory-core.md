@@ -15,8 +15,9 @@ The memory flow does not start in the database. It starts with the agent decidin
 2. The agent calls an MCP tool
    mem_save / mem_session_summary / mem_save_prompt / mem_capture_passive
 
-3. internal/mcp resolves the project and validates the contract
-   cwd → .engram/config.json → git remote/root → child repo → basename
+3. internal/project classifies identity; internal/mcp validates the contract
+   strong config/remote or explicit/session authority → write
+   weak git root/child/basename → read-only discovery or actionable rejection
 
 4. internal/store persists
    sessions / observations / user_prompts / memory_relations / sync_mutations
@@ -48,7 +49,7 @@ For schema details, use [DOCS.md — Database Schema](../../DOCS.md#database-sch
 - `topic_key` is for evolving topics; distinct decisions are not mixed under the same key.
 - `scope=project` is the default; `scope=personal` exists for non-shared memory.
 - Soft delete (`deleted_at`) hides data without physically deleting it unless explicit hard delete is used.
-- Write tools resolve the project from cwd/config; do not invent a project when there is ambiguity.
+- Project detection is not write authority. Strong `config`/`git_remote` and validated explicit/session sources may write; weak `git_root`/`git_child`/`dir_basename` sources remain read-only until the caller supplies explicit authority.
 - Search is progressive: compact results first, `mem_get_observation` only when full content is needed.
 
 ## Local store change checklist

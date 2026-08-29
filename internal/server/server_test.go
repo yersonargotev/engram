@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -2530,6 +2531,9 @@ func TestProjectCurrentDoctorJudgeAndCompareRoutes(t *testing.T) {
 	if projectResp["project"] == "" || projectResp["cwd"] != "/tmp/engram" {
 		t.Fatalf("unexpected project response: %#v", projectResp)
 	}
+	if projectResp["project_strength"] != "weak" || projectResp["implicit_write_allowed"] != false || projectResp["safe_next_action"] != "provide an explicit project name and retry the write" {
+		t.Fatalf("expected weak read-only project identity, got %#v", projectResp)
+	}
 
 	doctorReq := httptest.NewRequest(http.MethodGet, "/doctor?project=engram&check=session_project_directory_mismatch", nil)
 	doctorRec := httptest.NewRecorder()
@@ -2625,6 +2629,53 @@ func TestProjectCurrentDoctorJudgeAndCompareRoutes(t *testing.T) {
 	}
 	if atomic.LoadInt32(&writes) < 2 {
 		t.Fatalf("expected judge and compare writes to notify, got %d", writes)
+	}
+}
+
+func TestCurrentProjectReportsStrongWriteAuthorityFromConfig(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, ".engram")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"project_name":"configured-project"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/project/current?cwd="+dir, nil)
+	rec := httptest.NewRecorder()
+	New(newServerTestStore(t), 0).Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected current project 200, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode current project response: %v", err)
+	}
+	if body["project"] != "configured-project" || body["project_source"] != "config" || body["project_strength"] != "strong" || body["implicit_write_allowed"] != true {
+		t.Fatalf("unexpected strong current project response: %#v", body)
+	}
+}
+
+func TestCurrentProjectInvalidConfigDeniesWriteAuthority(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, ".engram")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(`{"project_name":""}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/project/current?cwd="+dir, nil)
+	rec := httptest.NewRecorder()
+	New(newServerTestStore(t), 0).Handler().ServeHTTP(rec, req)
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode current project response: %v", err)
+	}
+	if body["project_source"] != "config" || body["project_strength"] != "strong" || body["implicit_write_allowed"] != false || body["error_hint"] == nil {
+		t.Fatalf("invalid config write authority = %#v", body)
 	}
 }
 

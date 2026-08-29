@@ -36,7 +36,7 @@ ${exitCode === undefined
       ? `const server = createServer((req, res) => {
   if (req.url.startsWith("/project/current")) {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ project: "fake-project" }));
+    res.end(JSON.stringify({ project: "fake-project", project_source: "git_remote", project_strength: "strong", implicit_write_allowed: true }));
     return;
   }
   res.writeHead(200, { "content-type": "application/json" });

@@ -12,11 +12,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/yersonargotev/engram/internal/project"
 	"github.com/yersonargotev/engram/internal/store"
 	versioncheck "github.com/yersonargotev/engram/internal/version"
 	_ "modernc.org/sqlite"
@@ -273,6 +275,30 @@ func TestCmdConflictsScan_Apply(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "inserted:") {
 		t.Errorf("expected 'inserted:' label in apply scan output; got: %q", stdout)
+	}
+}
+
+func TestCmdConflictsScanApplyRejectsWeakIdentityBeforeOpeningStore(t *testing.T) {
+	stubExitWithPanic(t)
+	cfg := testConfig(t)
+	workDir := t.TempDir()
+	withCwd(t, workDir)
+	old := detectProjectFull
+	detectProjectFull = func(string) project.DetectionResult {
+		return project.DetectionResult{Project: "local-repo", Source: project.SourceGitRoot, Path: workDir}
+	}
+	t.Cleanup(func() { detectProjectFull = old })
+
+	withArgs(t, "engram", "conflicts", "scan", "--apply")
+	_, stderr, recovered := captureOutputAndRecover(t, func() { cmdConflictsScan(cfg) })
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("expected fatal exit, got %v", recovered)
+	}
+	if !strings.Contains(stderr, project.WriteAuthorityErrorCode) || !strings.Contains(stderr, project.ExplicitProjectSafeNextAction) {
+		t.Fatalf("weak conflict scan rejection = %q", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("weak conflict scan identity opened store or left state: %v", err)
 	}
 }
 

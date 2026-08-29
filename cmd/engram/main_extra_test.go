@@ -3002,7 +3002,7 @@ func TestMainDispatchRemainingCommands(t *testing.T) {
 		args []string
 	}{
 		{name: "search", args: []string{"engram", "search", "focus"}},
-		{name: "save", args: []string{"engram", "save", "t", "c"}},
+		{name: "save", args: []string{"engram", "save", "t", "c", "--project", "main-proj"}},
 		{name: "timeline", args: []string{"engram", "timeline", fmt.Sprintf("%d", focusID)}},
 		{name: "context", args: []string{"engram", "context", "main-proj"}},
 		{name: "admission", args: []string{"engram", "admission", "preview", "--project", "main-proj", "--input", admissionInput, "--json"}},
@@ -3076,7 +3076,7 @@ func TestCmdSyncAdditionalBranches(t *testing.T) {
 			t.Fatalf("write manifest: %v", err)
 		}
 
-		withArgs(t, "engram", "sync", "--import")
+		withArgs(t, "engram", "sync", "--import", "--project", "parse-project")
 		_, stderr, recovered := captureOutputAndRecover(t, func() { cmdSync(cfg) })
 		if _, ok := recovered.(exitCode); !ok {
 			t.Fatalf("expected fatal exit, got %v", recovered)
@@ -3098,7 +3098,7 @@ func TestCmdSyncAdditionalBranches(t *testing.T) {
 			t.Fatalf("write manifest: %v", err)
 		}
 
-		withArgs(t, "engram", "sync")
+		withArgs(t, "engram", "sync", "--project", "parse-project")
 		_, stderr, recovered := captureOutputAndRecover(t, func() { cmdSync(cfg) })
 		if _, ok := recovered.(exitCode); !ok {
 			t.Fatalf("expected fatal exit, got %v", recovered)
@@ -4195,7 +4195,7 @@ func TestCmdSyncImportEmptyAndMixedChunks(t *testing.T) {
 			t.Fatalf("write manifest: %v", err)
 		}
 
-		withArgs(t, "engram", "sync", "--import")
+		withArgs(t, "engram", "sync", "--import", "--project", "empty-project")
 		stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdSync(cfg) })
 		if recovered != nil || stderr != "" {
 			t.Fatalf("empty import failed: panic=%v stderr=%q", recovered, stderr)
@@ -4216,7 +4216,7 @@ func TestCmdSyncImportEmptyAndMixedChunks(t *testing.T) {
 		withArgs(t, "engram", "sync", "--all")
 		_, _, _ = captureOutputAndRecover(t, func() { cmdSync(exportCfg) })
 
-		withArgs(t, "engram", "sync", "--import")
+		withArgs(t, "engram", "sync", "--import", "--project", "mix")
 		_, _, _ = captureOutputAndRecover(t, func() { cmdSync(importCfg) })
 
 		time.Sleep(1100 * time.Millisecond)
@@ -4224,7 +4224,7 @@ func TestCmdSyncImportEmptyAndMixedChunks(t *testing.T) {
 		withArgs(t, "engram", "sync", "--all")
 		_, _, _ = captureOutputAndRecover(t, func() { cmdSync(exportCfg) })
 
-		withArgs(t, "engram", "sync", "--import")
+		withArgs(t, "engram", "sync", "--import", "--project", "mix")
 		stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdSync(importCfg) })
 		if recovered != nil || stderr != "" {
 			t.Fatalf("mixed import failed: panic=%v stderr=%q", recovered, stderr)
@@ -4247,7 +4247,7 @@ func TestCmdSyncImportPrintsRelationCounts(t *testing.T) {
 		return &engramsync.ImportResult{RelationsReplayed: 2, RelationsDeferred: 3, RelationsDead: 4}, nil
 	}
 
-	withArgs(t, "engram", "sync", "--import")
+	withArgs(t, "engram", "sync", "--import", "--project", "relation-project")
 	stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdSync(cfg) })
 	if recovered != nil || stderr != "" {
 		t.Fatalf("sync import failed: panic=%v stderr=%q", recovered, stderr)

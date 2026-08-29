@@ -390,7 +390,7 @@ Your production engram is fully untouched throughout.
 | `engram update <obs_id> [fields]`          | Partially update a memory                                       |
 | `engram review list\|mark`                 | Review due memories and reset their local review cycle          |
 | `engram pin\|unpin <obs_id>`               | Change local-only context priority                              |
-| `engram current-project [--json]`          | Inspect project detection, including ambiguity                  |
+| `engram current-project [--json]`          | Inspect project detection, identity strength, and write authority |
 | `engram suggest-topic-key [inputs]`        | Suggest a stable topic key without writing                      |
 | `engram delete <obs_id>`                   | Delete an observation (soft by default; `--hard` removes permanently) |
 | `engram delete session <id>`               | Delete a session by ID (must have no observations)                    |

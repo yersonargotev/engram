@@ -15,7 +15,9 @@ resolve_project() {
     if (.project | type) == "string"
       and (.project | gsub("^[[:space:]]+|[[:space:]]+$"; "") | length) > 0
       and (.project_source | type) == "string"
-      and (.project_source as $source | ["config", "git_remote", "git_root", "git_child", "dir_basename"] | index($source) != null)
+      and (.project_strength | type) == "string"
+      and (.project_strength as $strength | ["strong", "explicit"] | index($strength) != null)
+      and ((.project_strength == "explicit") or (.implicit_write_allowed == true))
       and (has("error_hint") | not)
     then .project
     else error("canonical project resolution failed")

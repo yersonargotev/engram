@@ -13,6 +13,7 @@ import (
 
 	"github.com/yersonargotev/engram/internal/llm"
 	"github.com/yersonargotev/engram/internal/memoryops"
+	"github.com/yersonargotev/engram/internal/project"
 	"github.com/yersonargotev/engram/internal/store"
 )
 
@@ -81,6 +82,26 @@ func resolveConflictsProject(explicit string) string {
 		exitFunc(1)
 	}
 	return detected
+}
+
+func resolveConflictsWriteProject(explicit string) string {
+	if strings.TrimSpace(explicit) != "" {
+		return strings.TrimSpace(explicit)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot resolve cwd: %v\n", err)
+		fmt.Fprintln(os.Stderr, "hint: use --project to specify the project explicitly")
+		exitFunc(1)
+		return ""
+	}
+	detected := detectProjectFull(cwd)
+	if err := project.RequireImplicitWriteAuthority(detected); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s: %v\n", project.WriteAuthorityErrorCode, err)
+		exitFunc(1)
+		return ""
+	}
+	return detected.Project
 }
 
 // ─── judge ───────────────────────────────────────────────────────────────────
@@ -654,7 +675,12 @@ func cmdConflictsScan(cfg store.Config) {
 		return
 	}
 
-	proj := resolveConflictsProject(projectFlag)
+	proj := ""
+	if apply {
+		proj = resolveConflictsWriteProject(projectFlag)
+	} else {
+		proj = resolveConflictsProject(projectFlag)
+	}
 
 	var sinceTime time.Time
 	if sinceFlag != "" {

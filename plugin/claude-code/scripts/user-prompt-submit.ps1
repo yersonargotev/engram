@@ -34,13 +34,16 @@ function Resolve-EngramProject {
     $resolution = Invoke-RestMethod -Method Get -Uri "$EngramUrl/project/current?cwd=$encodedCwd" -TimeoutSec 1
     $projectProperty = @($resolution.PSObject.Properties | Where-Object { $_.Name -ceq 'project' })
     $sourceProperty = @($resolution.PSObject.Properties | Where-Object { $_.Name -ceq 'project_source' })
-    if ($projectProperty.Count -ne 1 -or $sourceProperty.Count -ne 1 -or $projectProperty[0].Value -isnot [string] -or $sourceProperty[0].Value -isnot [string]) {
+    $strengthProperty = @($resolution.PSObject.Properties | Where-Object { $_.Name -ceq 'project_strength' })
+    $implicitWriteProperty = @($resolution.PSObject.Properties | Where-Object { $_.Name -ceq 'implicit_write_allowed' })
+    if ($projectProperty.Count -ne 1 -or $sourceProperty.Count -ne 1 -or $strengthProperty.Count -ne 1 -or $implicitWriteProperty.Count -ne 1 -or $projectProperty[0].Value -isnot [string] -or $sourceProperty[0].Value -isnot [string] -or $strengthProperty[0].Value -isnot [string] -or $implicitWriteProperty[0].Value -isnot [bool]) {
       return $null
     }
     $project = $projectProperty[0].Value
-    $source = $sourceProperty[0].Value
-    $validSources = @('config', 'git_remote', 'git_root', 'git_child', 'dir_basename')
-    if ([string]::IsNullOrWhiteSpace($project) -or $validSources -cnotcontains $source -or $null -ne $resolution.PSObject.Properties['error_hint']) {
+    $strength = $strengthProperty[0].Value
+    $writeAllowed = $implicitWriteProperty[0].Value
+    $validStrengths = @('strong', 'explicit')
+    if ([string]::IsNullOrWhiteSpace($project) -or $validStrengths -cnotcontains $strength -or ($strength -cne 'explicit' -and -not $writeAllowed) -or $null -ne $resolution.PSObject.Properties['error_hint']) {
       return $null
     }
     return $project

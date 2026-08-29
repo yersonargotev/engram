@@ -1011,13 +1011,19 @@ func handleCurrentProject(s *store.Store, cfg MCPConfig) server.ToolHandlerFunc 
 		if processRes, ok := processProjectResult(cfg.DefaultProject); ok {
 			res = processRes
 		}
+		policy := projectpkg.IdentityPolicyForResult(res)
 
 		envelope := map[string]any{
-			"project":            res.Project,
-			"project_source":     res.Source,
-			"project_path":       res.Path,
-			"cwd":                cwd,
-			"available_projects": res.AvailableProjects,
+			"project":                res.Project,
+			"project_source":         res.Source,
+			"project_path":           res.Path,
+			"project_strength":       policy.Strength,
+			"implicit_write_allowed": policy.AllowsImplicitWrite,
+			"cwd":                    cwd,
+			"available_projects":     res.AvailableProjects,
+		}
+		if policy.Strength == projectpkg.IdentityStrengthWeak {
+			envelope["safe_next_action"] = projectpkg.ExplicitProjectSafeNextAction
 		}
 		if res.Warning != "" {
 			envelope["warning"] = res.Warning
@@ -1997,11 +2003,14 @@ func handleSessionSummary(s *store.Store, cfg MCPConfig, activity *SessionActivi
 func handleSessionStart(s *store.Store, cfg MCPConfig, activity *SessionActivity) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id, _ := req.GetArguments()["id"].(string)
+		if strings.TrimSpace(id) == "" {
+			return mcp.NewToolResultError("Failed to start session: session id is required"), nil
+		}
 		directory, _ := req.GetArguments()["directory"].(string)
 		resolvedDirectory := strings.TrimSpace(directory)
 		// project field intentionally not read — auto-detect only (REQ-308)
 
-		detRes, err := resolveSessionStartProject(resolvedDirectory)
+		detRes, err := resolveSessionStartProject(resolvedDirectory, cfg.DefaultProject)
 		if err != nil {
 			return writeProjectErrorResult(nil, "", detRes, err), nil
 		}
@@ -2024,13 +2033,17 @@ func handleSessionStart(s *store.Store, cfg MCPConfig, activity *SessionActivity
 	}
 }
 
-func resolveSessionStartProject(explicitDirectory string) (projectpkg.DetectionResult, error) {
+func resolveSessionStartProject(explicitDirectory, defaultProject string) (projectpkg.DetectionResult, error) {
+	if res, ok := processProjectResult(defaultProject); ok {
+		res.Path = explicitDirectory
+		return res, nil
+	}
 	if explicitDirectory == "" {
 		return resolveWriteProject()
 	}
 	res := projectpkg.DetectProjectFull(explicitDirectory)
-	if res.Error != nil {
-		return res, res.Error
+	if err := projectpkg.RequireImplicitWriteAuthority(res); err != nil {
+		return res, err
 	}
 	return res, nil
 }
@@ -2039,23 +2052,21 @@ func handleSessionEnd(s *store.Store, cfg MCPConfig, activity *SessionActivity) 
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id, _ := req.GetArguments()["id"].(string)
 		summary, _ := req.GetArguments()["summary"].(string)
-		// project field intentionally not read — auto-detect only (REQ-308)
-
-		detRes, err := resolveWriteProject()
-		if err != nil {
-			if errors.Is(err, projectpkg.ErrInvalidConfig) {
-				return writeProjectErrorResult(nil, "", detRes, err), nil
-			}
-			// For session end, still complete the operation even if project resolution fails.
-			// Use basename fallback.
-			cwd, _ := os.Getwd()
-			detRes = projectpkg.DetectionResult{
-				Project: projectpkg.DetectProject(cwd),
-				Source:  "dir_basename",
-				Path:    cwd,
-			}
+		if strings.TrimSpace(id) == "" {
+			return mcp.NewToolResultError("Failed to end session: session id is required"), nil
 		}
-		project, _ := store.NormalizeProject(detRes.Project)
+		// An existing session owns its project identity. Ending it must not depend
+		// on the caller's current working directory.
+		session, err := s.GetSession(id)
+		if err != nil {
+			return mcp.NewToolResultError("Failed to end session: " + err.Error()), nil
+		}
+		project, _ := store.NormalizeProject(session.Project)
+		detRes := projectpkg.DetectionResult{
+			Project: project,
+			Source:  projectpkg.SourceSessionProject,
+			Path:    session.Directory,
+		}
 
 		if err := s.EndSession(id, summary); err != nil {
 			return mcp.NewToolResultError("Failed to end session: " + err.Error()), nil
@@ -2063,7 +2074,6 @@ func handleSessionEnd(s *store.Store, cfg MCPConfig, activity *SessionActivity) 
 
 		activity.ClearSession(defaultSessionID(project))
 
-		detRes.Project = project
 		return respondWithProject(detRes, fmt.Sprintf("Session %q completed", id), nil), nil
 	}
 }
@@ -2360,9 +2370,7 @@ func (e *sessionProjectMismatchError) Error() string {
 	return fmt.Sprintf("session %q belongs to project %q, not %q", e.SessionID, e.SessionProject, e.ExplicitProject)
 }
 
-// resolveWriteProject detects the current project from the process working
-// directory. Returns ErrAmbiguousProject if cwd is a parent of multiple repos.
-func resolveWriteProject() (projectpkg.DetectionResult, error) {
+func detectCurrentProject() (projectpkg.DetectionResult, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "."
@@ -2370,6 +2378,19 @@ func resolveWriteProject() (projectpkg.DetectionResult, error) {
 	res := projectpkg.DetectProjectFull(cwd)
 	if res.Error != nil {
 		return res, res.Error
+	}
+	return res, nil
+}
+
+// resolveWriteProject detects the current project and requires enough identity
+// evidence to authorize an implicit write.
+func resolveWriteProject() (projectpkg.DetectionResult, error) {
+	res, err := detectCurrentProject()
+	if err != nil {
+		return res, err
+	}
+	if err := projectpkg.RequireImplicitWriteAuthority(res); err != nil {
+		return res, err
 	}
 	return res, nil
 }
@@ -2498,7 +2519,7 @@ func resolveSaveWriteProject(s *store.Store, projectChoice string, explicitProje
 	}
 
 	if trimmedProjectChoice != "" {
-		cwdRes, cwdErr := resolveWriteProject()
+		cwdRes, cwdErr := detectCurrentProject()
 		if cwdErr != nil {
 			if errors.Is(cwdErr, projectpkg.ErrInvalidConfig) {
 				return cwdRes, cwdErr
@@ -2814,7 +2835,7 @@ func resolveReadProjectWithProcessOverride(s *store.Store, override, defaultProj
 func resolveReadProject(s *store.Store, override string) (projectpkg.DetectionResult, error) {
 	override = strings.TrimSpace(override)
 	if override == "" {
-		return resolveWriteProject()
+		return detectCurrentProject()
 	}
 	normalized, _ := store.NormalizeProject(override)
 	exists, err := s.ProjectExists(normalized)
@@ -2840,11 +2861,14 @@ func resolveReadProject(s *store.Store, override string) (projectpkg.DetectionRe
 // fields (project, project_source, project_path) to the text output.
 // extra is an optional map of additional fields to include.
 func respondWithProject(res projectpkg.DetectionResult, text string, extra map[string]any) *mcp.CallToolResult {
+	policy := projectpkg.IdentityPolicyForResult(res)
 	envelope := map[string]any{
-		"project":        res.Project,
-		"project_source": res.Source,
-		"project_path":   res.Path,
-		"result":         text,
+		"project":                res.Project,
+		"project_source":         res.Source,
+		"project_path":           res.Path,
+		"project_strength":       policy.Strength,
+		"implicit_write_allowed": policy.AllowsImplicitWrite,
+		"result":                 text,
 	}
 	if res.Warning != "" {
 		envelope["warning"] = res.Warning
@@ -2928,6 +2952,19 @@ func writeProjectErrorResult(activity *SessionActivity, sessionID string, res pr
 			res.AvailableProjects,
 		)
 	}
+	var authorityErr *projectpkg.WriteAuthorityError
+	if errors.As(err, &authorityErr) {
+		result := errorWithMeta(authorityErr.Code, authorityErr.Error(), res.AvailableProjects)
+		addErrorMetadata(result, map[string]any{
+			"project":                authorityErr.Project,
+			"project_source":         authorityErr.Source,
+			"project_path":           authorityErr.Path,
+			"project_strength":       authorityErr.Strength,
+			"implicit_write_allowed": false,
+			"safe_next_action":       authorityErr.SafeNextAction,
+		})
+		return result
+	}
 	result := errorWithMeta(code, fmt.Sprintf("Cannot determine project: %s", err), res.AvailableProjects)
 	if code == "ambiguous_project" && activity != nil {
 		if strings.TrimSpace(sessionID) == "" {
@@ -2994,6 +3031,8 @@ func errorWithMeta(code, msg string, availableProjects []string) *mcp.CallToolRe
 		envelope["hint"] = "Use ownership rescue before updating this historical record, then retry the field update."
 	case "project_mismatch":
 		envelope["hint"] = "Switch to the observation's owning project, then retry the field update."
+	case projectpkg.WriteAuthorityErrorCode:
+		envelope["hint"] = projectpkg.ExplicitProjectSafeNextAction
 	}
 	out, _ := jsonMarshal(envelope)
 	result := mcp.NewToolResultText(string(out))

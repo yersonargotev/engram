@@ -1095,11 +1095,11 @@ func cmdSearch(cfg store.Config) {
 		failCLI(jsonMode, "incompatible_flags", "--all-projects cannot be combined with --project", nil)
 		return
 	}
-	projectSource := "explicit"
+	projectSource := projectpkg.SourceCLIExplicit
 	projectPath := ""
 	if allProjects {
 		opts.Project = ""
-		projectSource = "all_projects"
+		projectSource = projectpkg.SourceAllProjects
 	} else if opts.Project != "" {
 		opts.Project, _ = store.NormalizeProject(opts.Project)
 		if opts.Project == "" {
@@ -1107,7 +1107,7 @@ func cmdSearch(cfg store.Config) {
 			return
 		}
 	} else if opts.Scope == "personal" {
-		projectSource = "personal_scope"
+		projectSource = projectpkg.SourcePersonalScope
 	} else {
 		res := projectpkg.DetectProjectFull(currentCWD())
 		if res.Error != nil || res.Project == "" {
@@ -1272,11 +1272,11 @@ func cmdSave(cfg store.Config) {
 	// HTTP entry points: the explicit --project flag, then the process override
 	// (project.ProcessOverride reads ENGRAM_PROJECT), then cwd detection.
 	project := opts.Project
-	projectSource, projectPath := "explicit", ""
+	projectSource, projectPath := projectpkg.SourceCLIExplicit, ""
 	if strings.TrimSpace(project) == "" {
 		if override, ok := projectpkg.ProcessOverride(""); ok {
 			project = override
-			projectSource = "environment"
+			projectSource = projectpkg.SourceEnvironment
 		} else {
 			resolved := detectProjectFull(cwd)
 			if resolved.Error != nil || strings.TrimSpace(resolved.Project) == "" {
@@ -1285,6 +1285,10 @@ func cmdSave(cfg store.Config) {
 				} else {
 					fatal(errors.New("cannot save without an unambiguous project identity; use --project <name>"))
 				}
+				return
+			}
+			if authorityErr := projectpkg.RequireImplicitWriteAuthority(resolved); authorityErr != nil {
+				failCLI(opts.JSONMode, projectpkg.WriteAuthorityErrorCode, authorityErr.Error(), projectIdentityDetails(resolved))
 				return
 			}
 			project = resolved.Project
@@ -1332,7 +1336,8 @@ func cmdSave(cfg store.Config) {
 		for _, c := range candidates {
 			candidatePayload = append(candidatePayload, map[string]any{"id": c.ID, "sync_id": c.SyncID, "title": c.Title, "type": c.Type, "topic_key": c.TopicKey, "score": c.Score, "judgment_id": c.JudgmentID})
 		}
-		payload := map[string]any{"observation": obs, "state": obs.State(), "project": project, "project_source": projectSource, "project_path": projectPath, "suggested_topic_key": result.SuggestedTopicKey, "judgment_required": len(candidates) > 0, "candidates": candidatePayload}
+		identity := projectpkg.ClassifyIdentitySource(projectSource)
+		payload := map[string]any{"observation": obs, "state": obs.State(), "project": project, "project_source": projectSource, "project_path": projectPath, "project_strength": identity.Strength, "implicit_write_allowed": identity.AllowsImplicitWrite, "suggested_topic_key": result.SuggestedTopicKey, "judgment_required": len(candidates) > 0, "candidates": candidatePayload}
 		if warning != "" {
 			payload["project_warning"] = warning
 		}
@@ -1908,13 +1913,23 @@ func cmdSync(cfg store.Config) {
 		}
 	}
 
-	// Default project using git detection (so sync only exports
+	// Default project using authoritative detection (so sync only exports
 	// memories for THIS project, not everything in the global DB).
 	// --all skips project filtering entirely — exports everything.
 	if !doAll && project == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			project = detectProject(cwd)
+		cwd, err := os.Getwd()
+		if err != nil {
+			fatal(fmt.Errorf("project_detection_failed: %w", err))
+			return
 		}
+		resolved := detectProjectFull(cwd)
+		if !doStatus {
+			if authorityErr := projectpkg.RequireImplicitWriteAuthority(resolved); authorityErr != nil {
+				fatal(fmt.Errorf("%s: %w", projectpkg.WriteAuthorityErrorCode, authorityErr))
+				return
+			}
+		}
+		project = resolved.Project
 	}
 	if project != "" {
 		normalizedProject, warning := store.NormalizeProject(project)
@@ -2295,7 +2310,7 @@ func cmdObsidianExport(cfg store.Config) {
 }
 
 func cmdProjects(cfg store.Config) {
-	// Route: engram projects list | engram projects consolidate [--all] [--dry-run]
+	// Route: engram projects list | engram projects consolidate [--project NAME | --all] [--dry-run]
 	subCmd := "list"
 	if len(os.Args) > 2 {
 		subCmd = os.Args[2]
@@ -2418,7 +2433,7 @@ func cmdProjectsMerge(cfg store.Config) {
 
 func printProjectsUsage() {
 	fmt.Fprintln(os.Stderr, "usage: engram projects list")
-	fmt.Fprintln(os.Stderr, "       engram projects consolidate [--all] [--dry-run]")
+	fmt.Fprintln(os.Stderr, "       engram projects consolidate [--project NAME | --all] [--dry-run]")
 	fmt.Fprintln(os.Stderr, "       engram projects merge --from SOURCE [--from SOURCE...] --to TARGET [--dry-run] [--yes] [--json]")
 	fmt.Fprintln(os.Stderr, "       engram projects prune [--dry-run] [--paths-only]")
 	fmt.Fprintln(os.Stderr, "       engram projects rescue-ownership --project <name> [--session <id>]... [--observation <id>]... [--prompt <id>]...")
@@ -2653,12 +2668,58 @@ func reportUnmergedSources(sources []string, result *store.MergeResult) {
 func cmdProjectsConsolidate(cfg store.Config) {
 	doAll := false
 	dryRun := false
+	explicitProject := ""
+	projectProvided := false
 	for i := 3; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--all":
 			doAll = true
 		case "--dry-run":
 			dryRun = true
+		case "--project":
+			projectProvided = true
+			if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
+				fatal(errors.New("--project requires a value"))
+				return
+			}
+			explicitProject = strings.TrimSpace(os.Args[i+1])
+			i++
+		}
+	}
+	if projectProvided && explicitProject == "" {
+		fatal(errors.New("--project requires a non-empty value"))
+		return
+	}
+	if doAll && projectProvided {
+		fatal(errors.New("--all cannot be combined with --project"))
+		return
+	}
+
+	var detectedProject projectpkg.DetectionResult
+	if !doAll {
+		if projectProvided {
+			detectedProject = projectpkg.DetectionResult{Project: explicitProject, Source: projectpkg.SourceExplicitOverride}
+		} else {
+			cwd, err := os.Getwd()
+			if err != nil {
+				fatal(err)
+				return
+			}
+			detectedProject = detectProjectFull(cwd)
+			if detectedProject.Error != nil || strings.TrimSpace(detectedProject.Project) == "" {
+				if detectedProject.Error != nil {
+					fatal(fmt.Errorf("project detection failed: %w", detectedProject.Error))
+				} else {
+					fatal(errors.New("project detection failed: empty project"))
+				}
+				return
+			}
+			if !dryRun {
+				if err := projectpkg.RequireImplicitWriteAuthority(detectedProject); err != nil {
+					fatal(fmt.Errorf("%s: %w", projectpkg.WriteAuthorityErrorCode, err))
+					return
+				}
+			}
 		}
 	}
 
@@ -2670,11 +2731,7 @@ func cmdProjectsConsolidate(cfg store.Config) {
 
 	if !doAll {
 		// Single-project mode: detect canonical project for cwd, find variants
-		cwd, err := os.Getwd()
-		if err != nil {
-			fatal(err)
-		}
-		canonical, _ := store.NormalizeProject(detectProject(cwd))
+		canonical, _ := store.NormalizeProject(detectedProject.Project)
 
 		allNames, err := s.ListProjectNames()
 		if err != nil {
@@ -3495,8 +3552,9 @@ Commands:
   export [file]      Export all memories to JSON (default: engram-export.json)
   import <file>      Import memories from a JSON export file
   projects list      List all projects with observation, session, and prompt counts
-  projects consolidate [--all] [--dry-run]
+  projects consolidate [--project NAME | --all] [--dry-run]
                      Merge similar project names into one canonical name
+                       --project  Explicit canonical project for single-project mode
                        --all      Scan ALL projects for similar name groups
                        --dry-run  Preview what would be merged (no changes)
   projects merge --from SOURCE [--from SOURCE...] --to TARGET [--dry-run] [--yes] [--json]

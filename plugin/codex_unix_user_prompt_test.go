@@ -29,7 +29,7 @@ func TestCodexUnixUserPromptSubmitDetachesPromptPersistencePipes(t *testing.T) {
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/project/current":
-			_, _ = io.WriteString(w, `{"project":"test-project","project_source":"config"}`)
+			_, _ = io.WriteString(w, `{"project":"test-project","project_source":"config","project_strength":"strong","implicit_write_allowed":true}`)
 		case "/prompts":
 			postOnce.Do(func() { close(postStarted) })
 			<-releasePost
@@ -127,7 +127,7 @@ func TestCodexUnixUserPromptSubmitDetachesPromptPersistenceStdin(t *testing.T) {
 	binDir := t.TempDir()
 	markerPath := filepath.Join(binDir, "stdin-result")
 	writeCodexPromptProbeCommand(t, filepath.Join(binDir, "cat"), "#!/bin/bash\nprintf '%s' '{\"cwd\":\"/tmp/test\",\"session_id\":\"stdin-pipe-test\",\"prompt\":\"capture this\"}'\n")
-	writeCodexPromptProbeCommand(t, filepath.Join(binDir, "curl"), "#!/bin/bash\ncase \"$*\" in\n  *'/project/current'*) printf '%s' '{\"project\":\"test-project\",\"project_source\":\"config\"}' ;;\n  *'/prompts'*) if IFS= read -r _; then printf data > \"$PROMPT_STDIN_MARKER\"; else printf eof > \"$PROMPT_STDIN_MARKER\"; fi ;;\n  *) exit 0 ;;\nesac\n")
+	writeCodexPromptProbeCommand(t, filepath.Join(binDir, "curl"), "#!/bin/bash\ncase \"$*\" in\n  *'/project/current'*) printf '%s' '{\"project\":\"test-project\",\"project_source\":\"config\",\"project_strength\":\"strong\",\"implicit_write_allowed\":true}' ;;\n  *'/prompts'*) if IFS= read -r _; then printf data > \"$PROMPT_STDIN_MARKER\"; else printf eof > \"$PROMPT_STDIN_MARKER\"; fi ;;\n  *) exit 0 ;;\nesac\n")
 
 	stdinReader, stdinWriter, err := os.Pipe()
 	if err != nil {

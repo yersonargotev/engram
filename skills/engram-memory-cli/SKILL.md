@@ -14,11 +14,14 @@ work; the primary deliverable remains independent from memory availability.
    failure as task evidence and diagnose it within scope. For other tasks,
    continue without memory when the CLI is unavailable or fails.
 2. Run `engram current-project --json` before the first project-scoped operation.
-3. Use the returned project only when it is exact. When `project` is empty,
-   ask the user to select from `available_projects` for an explicit memory
-   task; otherwise skip memory and continue. Similar names are not an exact
-   selection.
-4. Pass the exact project to every command that accepts it: use
+3. Treat detection and write authority separately. For reads, a non-empty weak
+   result remains useful best-effort scope. For writes, use the result as exact
+   only when `project_strength` is `strong` or `explicit`. Never turn a weak
+   `git_root`, `git_child`, or `dir_basename` result into authority by copying it
+   into `--project`. Ask the user for the exact project on an explicit memory
+   task; otherwise skip the write and continue. When `project` is empty, ask the
+   user to select from `available_projects` for an explicit memory task.
+4. Pass an exact project to every command that accepts it: use
    `--project <project>` for project-scoped flags and positional `[project]` for
    `engram context`.
 5. Use `--json` for agent operations. Parse successful stdout as JSON and

@@ -168,6 +168,65 @@ test("registered Pi-native mem_search reports native provider transport failure"
   }
 });
 
+test("weak detected identity remains available to reads but cannot authorize Pi writes", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalUrl = process.env.ENGRAM_URL;
+  process.env.ENGRAM_URL = "http://127.0.0.1:17437";
+  let sessionWrites = 0;
+  let observationWrites = 0;
+  globalThis.fetch = async (url) => {
+    const path = new URL(url).pathname;
+    if (path === "/health") return { ok: true, async json() { return { status: "ok" }; } };
+    if (path === "/project/current") {
+      return {
+        ok: true,
+        async json() {
+          return {
+            project: "local-repo",
+            project_source: "git_root",
+            project_path: ROOT,
+            project_strength: "weak",
+            implicit_write_allowed: false,
+            safe_next_action: "provide an explicit project name and retry the write",
+          };
+        },
+      };
+    }
+    if (path === "/context") return { ok: true, async json() { return { context: "readable weak context" }; } };
+    if (path === "/sessions") sessionWrites += 1;
+    if (path === "/observations") observationWrites += 1;
+    return { ok: true, status: 201, async json() { return {}; } };
+  };
+
+  try {
+    await withPluginSandbox("engram-pi-contract-", async ({ sandbox }) => {
+      const { registeredTools } = await loadPluginHarness(sandbox);
+      const ctx = runtimeContext("weak-identity-session");
+
+      const read = await registeredTools.get("mem_context").execute("weak-read", {}, undefined, undefined, ctx);
+      assert.equal(read.isError, undefined);
+      assert.match(read.content[0].text, /readable weak context/);
+
+      const write = await registeredTools.get("mem_save").execute(
+        "weak-write",
+        { title: "must not persist", content: "weak identity" },
+        undefined,
+        undefined,
+        ctx,
+      );
+      assert.equal(write.isError, true);
+      assert.match(write.content[0].text, /weak_project_identity/);
+      assert.match(write.content[0].text, /provide an explicit project name and retry the write/);
+      assert.equal(sessionWrites, 0);
+      assert.equal(observationWrites, 0);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalUrl === undefined) delete process.env.ENGRAM_URL;
+    else process.env.ENGRAM_URL = originalUrl;
+  }
+});
+
 test("session-attributed Pi writes bind to acknowledged runtime identity and retry failed registration", async () => {
   const originalFetch = globalThis.fetch;
   const originalUrl = process.env.ENGRAM_URL;
@@ -179,7 +238,7 @@ test("session-attributed Pi writes bind to acknowledged runtime identity and ret
     const path = new URL(url).pathname;
     if (path === "/health") return { ok: true, async json() { return { status: "ok" }; } };
     if (path === "/project/current") {
-      return { ok: true, async json() { return { project: "pi", project_source: "dir_basename", project_path: ROOT }; } };
+      return { ok: true, async json() { return { project: "pi", project_source: "git_remote", project_path: ROOT, project_strength: "strong", implicit_write_allowed: true }; } };
     }
     if (path === "/sessions") {
       registrationAttempts += 1;
@@ -247,7 +306,7 @@ test("parallel first-use writes share one acknowledged registration and keep it 
     const path = new URL(url).pathname;
     if (path === "/health") return { ok: true, async json() { return { status: "ok" }; } };
     if (path === "/project/current") {
-      return { ok: true, async json() { return { project: "pi", project_source: "dir_basename", project_path: ROOT }; } };
+      return { ok: true, async json() { return { project: "pi", project_source: "git_remote", project_path: ROOT, project_strength: "strong", implicit_write_allowed: true }; } };
     }
     if (path === "/sessions") {
       registrationAttempts += 1;
@@ -303,7 +362,7 @@ test("shared registration failure rejects parallel writes and a later call retri
     const path = new URL(url).pathname;
     if (path === "/health") return { ok: true, async json() { return { status: "ok" }; } };
     if (path === "/project/current") {
-      return { ok: true, async json() { return { project: "pi", project_source: "dir_basename", project_path: ROOT }; } };
+      return { ok: true, async json() { return { project: "pi", project_source: "git_remote", project_path: ROOT, project_strength: "strong", implicit_write_allowed: true }; } };
     }
     if (path === "/sessions") {
       registrationAttempts += 1;
@@ -371,7 +430,7 @@ test("an opaque runtime session ID stays byte-identical through registration, co
     const path = new URL(url).pathname;
     if (path === "/health") return { ok: true, async json() { return { status: "ok" }; } };
     if (path === "/project/current") {
-      return { ok: true, async json() { return { project: "pi", project_source: "dir_basename", project_path: ROOT }; } };
+      return { ok: true, async json() { return { project: "pi", project_source: "git_remote", project_path: ROOT, project_strength: "strong", implicit_write_allowed: true }; } };
     }
     if (path === "/sessions") {
       sessionBodies.push(JSON.parse(init.body));

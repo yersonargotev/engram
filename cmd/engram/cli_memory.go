@@ -262,7 +262,19 @@ func cmdCurrentProject() {
 	}
 	cwd := currentCWD()
 	res := project.DetectProjectFull(cwd)
-	payload := map[string]any{"project": res.Project, "project_source": res.Source, "project_path": res.Path, "cwd": cwd, "available_projects": res.AvailableProjects}
+	policy := project.IdentityPolicyForResult(res)
+	payload := map[string]any{
+		"project":                res.Project,
+		"project_source":         res.Source,
+		"project_path":           res.Path,
+		"project_strength":       policy.Strength,
+		"implicit_write_allowed": policy.AllowsImplicitWrite,
+		"cwd":                    cwd,
+		"available_projects":     res.AvailableProjects,
+	}
+	if policy.Strength == project.IdentityStrengthWeak {
+		payload["safe_next_action"] = project.ExplicitProjectSafeNextAction
+	}
 	if res.Warning != "" {
 		payload["warning"] = res.Warning
 	}

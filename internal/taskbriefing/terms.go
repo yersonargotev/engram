@@ -80,6 +80,69 @@ func collectTerms(input io.Reader, limit int, byteLimit int64) ([]string, int, b
 	}
 }
 
+// boundedTermPrefix returns the portion of raw covered by the same unique-term
+// vocabulary bound as collectTerms. Exact identifiers are extracted only from
+// this prefix so values in a diagnosed omitted tail cannot influence selection.
+func boundedTermPrefix(raw string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	retained := make(map[string]struct{}, min(limit, 64))
+	var token strings.Builder
+	tokenStart := -1
+	overflowed := false
+	flush := func() (int, bool) {
+		if tokenStart < 0 {
+			return 0, false
+		}
+		start := tokenStart
+		tokenStart = -1
+		if overflowed {
+			overflowed = false
+			token.Reset()
+			return start, true
+		}
+		term := strings.ToLower(token.String())
+		token.Reset()
+		if len([]rune(term)) < 2 {
+			return 0, false
+		}
+		if _, exists := retained[term]; exists {
+			return 0, false
+		}
+		if len(retained) >= limit {
+			return start, true
+		}
+		retained[term] = struct{}{}
+		return 0, false
+	}
+
+	for index, r := range raw {
+		if !unicode.IsLetter(r) && !unicode.IsNumber(r) {
+			if boundary, stopped := flush(); stopped {
+				return raw[:boundary]
+			}
+			continue
+		}
+		if tokenStart < 0 {
+			tokenStart = index
+		}
+		if overflowed {
+			continue
+		}
+		if token.Len()+len(string(r)) > maximumGitTermBytes {
+			overflowed = true
+			token.Reset()
+			continue
+		}
+		token.WriteRune(r)
+	}
+	if boundary, stopped := flush(); stopped {
+		return raw[:boundary]
+	}
+	return raw
+}
+
 type byteBoundedReader struct {
 	source    io.Reader
 	remaining int64

@@ -481,7 +481,7 @@ func buildSignals(input Input) ([]weightedSignal, []Diagnostic, *BaseResolution)
 		if len(terms) == 0 {
 			continue
 		}
-		identifiers := extractExactIdentifiers(raw.raw, raw.kind, raw.limit)
+		identifiers := extractExactIdentifiers(boundedTermPrefix(raw.raw, raw.limit), raw.kind, raw.limit)
 		signals = append(signals, weightedSignal{
 			kind: raw.kind, terms: terms, identifiers: identifiers,
 			distinctiveTerms: distinctiveTerms(terms), weight: raw.weight,
@@ -526,7 +526,8 @@ func matchEvidence(memory store.Observation, group signalGroup) SelectionEvidenc
 	termMatches := make(map[string]struct{}, len(group.terms))
 	distinctiveSet := stringSet(group.distinctiveTerms)
 	for _, field := range fields {
-		fieldIdentifiers := stringSet(extractMemoryIdentifiers(field.value, field.name, candidateIdentifierLimit))
+		boundedField := boundedTermPrefix(field.value, candidateFieldTermLimit)
+		fieldIdentifiers := stringSet(extractMemoryIdentifiers(boundedField, field.name, candidateIdentifierLimit))
 		fieldTerms := stringSet(normalizeTerms(field.value, candidateFieldTermLimit))
 		remaining := candidateFieldContributionLimit
 		for _, identifier := range group.identifiers {
@@ -595,20 +596,21 @@ func extractExactIdentifiers(raw string, signal SignalType, limit int) []string 
 		seen[identifier] = struct{}{}
 		identifiers = append(identifiers, identifier)
 	}
-	appendMatches := func(prefix string, pattern *regexp.Regexp) {
-		for _, match := range pattern.FindAllStringSubmatch(raw, -1) {
+	appendMatches := func(source, prefix string, pattern *regexp.Regexp) {
+		for _, match := range pattern.FindAllStringSubmatch(source, -1) {
 			if len(identifiers) >= limit || len(match) < 2 {
 				return
 			}
 			appendIdentifier(prefix + normalizeIdentifierValue(match[1]))
 		}
 	}
-	appendMatches("pr:#", prIdentifierPattern)
-	appendMatches("issue:#", issueIdentifierPattern)
-	appendMatches("branch:", branchIdentifierPattern)
-	appendMatches("commit:", commitIdentifierPattern)
-	appendMatches("path:", pathIdentifierPattern)
-	appendMatches("topic:", topicIdentifierPattern)
+	appendMatches(raw, "pr:#", prIdentifierPattern)
+	withoutPullRequests := prIdentifierPattern.ReplaceAllString(raw, " ")
+	appendMatches(withoutPullRequests, "issue:#", issueIdentifierPattern)
+	appendMatches(raw, "branch:", branchIdentifierPattern)
+	appendMatches(raw, "commit:", commitIdentifierPattern)
+	appendMatches(raw, "path:", pathIdentifierPattern)
+	appendMatches(raw, "topic:", topicIdentifierPattern)
 	if signal == SignalBranch {
 		appendIdentifier("branch:" + normalizeIdentifierValue(raw))
 	}

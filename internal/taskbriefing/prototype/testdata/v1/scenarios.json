@@ -36,14 +36,35 @@
     },
     {
       "name": "exact_issue_and_pr_identifiers_beat_generic_workflow_terms_task_only",
-      "purpose": "Exact issue and PR identity outrank generic merge and branch-cleanup prose without Repository signals.",
-      "input": {"project":"engram","task_intent":"merge PR 56 for issue 43 and clean only its branch after protected validation"},
+      "purpose": "Exact issue and PR identity plus the Codex setup subject outrank generic workflow prose without Repository signals.",
+      "input": {"project":"engram","task_intent":"merge PR 56 for issue 43 and restore Codex setup reproducibility while cleaning its protected branch after validation"},
       "memories": [
-        {"key":"exact","title":"Completed delivery identity","content":"PR 56 addressed #43.","project":"engram","scope":"project"},
+        {"key":"exact","title":"Codex setup reproducibility delivery","content":"PR 56 addressed #43.","project":"engram","scope":"project"},
         {"key":"generic","title":"Old merge workflow","content":"Merge PR for issue and clean only its branch after validation.","project":"engram","scope":"project"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"exact","because":"exact PR and issue agreement establishes authoritative Task relevance","signals":["task_intent"],"identifiers":["pr:#56","issue:#43"]}],"must_not_appear":[{"key":"generic","because":"generic workflow overlap cannot qualify a Memory"}],"order":["exact"],"diagnostics":["task_input_truncated"],"truncations":{"task_intent":2}}
+      "expected": {"must_appear":[{"key":"exact","because":"exact PR and issue agreement plus the Codex setup subject establish authoritative Task relevance","signals":["task_intent"],"identifiers":["pr:#56","issue:#43"],"distinctive_terms":["codex","setup","reproducibility"]}],"must_not_appear":[{"key":"generic","because":"generic workflow overlap cannot qualify a Memory"}],"order":["exact"],"diagnostics":["task_input_truncated"],"truncations":{"task_intent":6}}
+    },
+    {
+      "name": "pr_hash_notation_does_not_become_issue_identity",
+      "purpose": "A hash inside an explicit PR reference remains typed as a PR and cannot match an issue with the same number.",
+      "input": {"project":"engram","task_intent":"PR #56"},
+      "memories": [
+        {"key":"pr","title":"Pull request delivery","content":"PR #56 contains the approved change.","project":"engram","scope":"project"},
+        {"key":"issue","title":"Issue record","content":"Issue #56 describes unrelated work.","project":"engram","scope":"project"}
+      ],
+      "relations": [], "repeat": 3,
+      "expected": {"must_appear":[{"key":"pr","because":"the typed PR identity agrees exactly","signals":["task_intent"],"identifiers":["pr:#56"]}],"must_not_appear":[{"key":"issue","because":"PR #56 must not be reclassified as issue #56"}],"order":["pr"],"diagnostics":[]}
+    },
+    {
+      "name": "identifiers_after_task_vocabulary_limit_do_not_contribute",
+      "purpose": "Exact identifiers beyond the analyzed Task vocabulary cannot bypass bounded-input diagnostics.",
+      "input": {"project":"engram","task_intent":"alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima PR 56 for issue 43"},
+      "memories": [
+        {"key":"tail","title":"Tail identity","content":"alpha bravo PR 56 issue 43","project":"engram","scope":"project"}
+      ],
+      "relations": [], "repeat": 3,
+      "expected": {"must_appear":[],"must_not_appear":[{"key":"tail","because":"identifier evidence after the vocabulary bound is outside analyzed input"}],"order":[],"diagnostics":["task_input_truncated"],"truncations":{"task_intent":5}}
     },
     {
       "name": "exact_issue_and_pr_identifiers_accept_repository_reinforcement",
@@ -59,13 +80,13 @@
     {
       "name": "compound_branch_commit_path_and_topic_identifiers_remain_distinguishable",
       "purpose": "Branch names, commit identities, paths, and topic keys contribute as exact typed evidence rather than loose component tokens.",
-      "input": {"project":"engram","task_intent":"branch fix/codex-setup commit abc1234 path internal/taskbriefing/generator.go topic admission/issue-50-calibration"},
+      "input": {"project":"engram","task_intent":"branch fix/codex-setup commit abc1234 path fix/codex-setup topic fix/codex-setup"},
       "memories": [
-        {"key":"exact","title":"Owned delivery references","content":"Branch fix/codex-setup at commit abc1234; path internal/taskbriefing/generator.go.","project":"engram","scope":"project","topic_key":"admission/issue-50-calibration"},
+        {"key":"exact","title":"Owned delivery references","content":"Branch fix/codex-setup at commit abc1234; path fix/codex-setup.","project":"engram","scope":"project","topic_key":"fix/codex-setup"},
         {"key":"generic","title":"Other delivery references","content":"Branch fix/other-work at commit def5678; path internal/other/file.go.","project":"engram","scope":"project","topic_key":"other/topic"}
       ],
       "relations": [], "repeat": 3,
-      "expected": {"must_appear":[{"key":"exact","because":"every compound identity agrees exactly","signals":["task_intent"],"identifiers":["branch:fix/codex-setup","commit:abc1234","path:internal/taskbriefing/generator.go","topic:admission/issue-50-calibration"]}],"must_not_appear":[{"key":"generic","because":"structural labels and path fragments cannot substitute for exact identity agreement"}],"order":["exact"],"diagnostics":["task_input_truncated"],"truncations":{"task_intent":4}}
+      "expected": {"must_appear":[{"key":"exact","because":"every compound identity agrees exactly and remains typed independently","signals":["task_intent"],"identifiers":["branch:fix/codex-setup","commit:abc1234","path:fix/codex-setup","topic:fix/codex-setup"]}],"must_not_appear":[{"key":"generic","because":"structural labels and path fragments cannot substitute for exact identity agreement"}],"order":["exact"],"diagnostics":[]}
     },
     {
       "name": "identifier_agreement_ranks_before_title_tie_breaking",

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -63,6 +64,24 @@ func callResultText(t *testing.T, res *mcppkg.CallToolResult) string {
 		t.Fatalf("expected text content")
 	}
 	return text.Text
+}
+
+type cancelAfterFirstErrCheckContext struct {
+	context.Context
+	cancel context.CancelFunc
+	checks atomic.Int32
+}
+
+func newCancelAfterFirstErrCheckContext() *cancelAfterFirstErrCheckContext {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &cancelAfterFirstErrCheckContext{Context: ctx, cancel: cancel}
+}
+
+func (c *cancelAfterFirstErrCheckContext) Err() error {
+	if c.checks.Add(1) == 2 {
+		c.cancel()
+	}
+	return c.Context.Err()
 }
 
 func assertSessionSyncMutationDirectory(t *testing.T, s *store.Store, sessionID, wantDirectory string) {
@@ -1212,7 +1231,7 @@ func TestHandleSearchAndCRUDHandlers(t *testing.T) {
 	}
 }
 
-func TestHandleSearch_PropagatesCanceledContext(t *testing.T) {
+func TestHandleSearch_PropagatesCancellationPastHandlerBoundary(t *testing.T) {
 	s := newMCPTestStore(t)
 	if err := s.CreateSession("s-canceled-search", "engram", "/tmp/engram"); err != nil {
 		t.Fatalf("create session: %v", err)
@@ -1228,8 +1247,7 @@ func TestHandleSearch_PropagatesCanceledContext(t *testing.T) {
 		t.Fatalf("add observation: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	ctx := newCancelAfterFirstErrCheckContext()
 	result, err := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))(ctx, mcppkg.CallToolRequest{
 		Params: mcppkg.CallToolParams{Arguments: map[string]any{
 			"query":   "canceled search",
@@ -1244,6 +1262,9 @@ func TestHandleSearch_PropagatesCanceledContext(t *testing.T) {
 	}
 	if !strings.Contains(callResultText(t, result), context.Canceled.Error()) {
 		t.Fatalf("expected cancellation error, got %s", callResultText(t, result))
+	}
+	if got := ctx.checks.Load(); got < 2 {
+		t.Fatalf("request context was checked %d time(s), want cancellation to cross the handler boundary", got)
 	}
 }
 

@@ -1,6 +1,8 @@
 package memoryops
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -134,6 +136,21 @@ func TestSearchAndGetReturnFullObservationsWithRelations(t *testing.T) {
 	}
 	if len(get.Relations.AsSource)+len(get.Relations.AsTarget) == 0 {
 		t.Fatal("get did not return relations")
+	}
+}
+
+func TestSearchContextPropagatesCancellation(t *testing.T) {
+	service := newTestService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := service.SearchContext(ctx, SearchInput{
+		Query:   "canceled search",
+		Project: "engram",
+		Limit:   10,
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SearchContext() error = %v, want context.Canceled; result=%#v", err, result)
 	}
 }
 

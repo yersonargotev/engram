@@ -1087,7 +1087,7 @@ func handleSearch(s *store.Store, cfg MCPConfig, activity *SessionActivity) serv
 			return mcp.NewToolResultError(fmt.Sprintf("Search error: %s. Try simpler keywords.", err)), nil
 		}
 
-		searchResult, err := memoryops.New(s).Search(memoryops.SearchInput{
+		searchResult, err := memoryops.New(s).SearchContext(ctx, memoryops.SearchInput{
 			Type:        typ,
 			Query:       query,
 			Project:     searchProject,

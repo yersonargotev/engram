@@ -3,6 +3,7 @@
 package memoryops
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -142,9 +143,14 @@ type SearchResult struct {
 	Observations []ObservationResult
 }
 
-// Search runs the store search and enriches every result with relations without
-// N+1 database queries.
+// Search preserves the non-context API for callers that do not need cancellation.
 func (s *Service) Search(input SearchInput) (*SearchResult, error) {
+	return s.SearchContext(context.Background(), input)
+}
+
+// SearchContext runs the store search and enriches every result with relations
+// without N+1 database queries while honoring caller cancellation.
+func (s *Service) SearchContext(ctx context.Context, input SearchInput) (*SearchResult, error) {
 	if err := s.requireStore(); err != nil {
 		return nil, err
 	}
@@ -159,7 +165,7 @@ func (s *Service) Search(input SearchInput) (*SearchResult, error) {
 		project, _ = store.NormalizeProject(input.Project)
 	}
 
-	observations, err := s.store.Search(input.Query, store.SearchOptions{
+	observations, err := s.store.SearchContext(ctx, input.Query, store.SearchOptions{
 		Type:      input.Type,
 		Project:   project,
 		Scope:     input.Scope,
@@ -176,7 +182,7 @@ func (s *Service) Search(input SearchInput) (*SearchResult, error) {
 			syncIDs = append(syncIDs, observation.SyncID)
 		}
 	}
-	relations, err := s.store.GetRelationsForObservations(syncIDs)
+	relations, err := s.store.GetRelationsForObservationsContext(ctx, syncIDs)
 	if err != nil {
 		return nil, fmt.Errorf("load search relations: %w", err)
 	}

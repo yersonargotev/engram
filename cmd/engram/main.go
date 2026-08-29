@@ -1293,7 +1293,7 @@ func cmdSave(cfg store.Config) {
 				return
 			}
 			if authorityErr := projectpkg.RequireImplicitWriteAuthority(resolved); authorityErr != nil {
-				failProjectWriteAuthority(resolved, authorityErr)
+				failProjectResolution(resolved, authorityErr)
 				return
 			}
 			project = resolved.Project
@@ -1930,7 +1930,7 @@ func cmdSync(cfg store.Config) {
 		resolved := detectProjectFull(cwd)
 		if !doStatus {
 			if authorityErr := projectpkg.RequireImplicitWriteAuthority(resolved); authorityErr != nil {
-				failProjectWriteAuthority(resolved, authorityErr)
+				failProjectResolution(resolved, authorityErr)
 				return
 			}
 		}
@@ -2721,7 +2721,7 @@ func cmdProjectsConsolidate(cfg store.Config) {
 			}
 			if !dryRun {
 				if err := projectpkg.RequireImplicitWriteAuthority(detectedProject); err != nil {
-					failProjectWriteAuthority(detectedProject, err)
+					failProjectResolution(detectedProject, err)
 					return
 				}
 			}

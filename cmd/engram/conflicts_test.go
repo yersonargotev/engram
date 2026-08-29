@@ -309,6 +309,39 @@ func TestCmdConflictsScanApplyRejectsWeakIdentityBeforeOpeningStore(t *testing.T
 	}
 }
 
+func TestCmdConflictsScanApplyPreservesDetectionErrorBeforeOpeningStore(t *testing.T) {
+	stubExitWithPanic(t)
+	cfg := testConfig(t)
+	workDir := t.TempDir()
+	withCwd(t, workDir)
+	old := detectProjectFull
+	detectProjectFull = func(string) project.DetectionResult {
+		return project.DetectionResult{
+			Source: project.SourceConfig,
+			Path:   filepath.Join(workDir, ".engram", "config.json"),
+			Error:  fmt.Errorf("%w: project_name is empty", project.ErrInvalidConfig),
+		}
+	}
+	t.Cleanup(func() { detectProjectFull = old })
+
+	withArgs(t, "engram", "conflicts", "scan", "--apply")
+	_, stderr, recovered := captureOutputAndRecover(t, func() { cmdConflictsScan(cfg) })
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("expected fatal exit, got %v", recovered)
+	}
+	payload := decodeCLIJSON(t, stderr)
+	details, _ := payload["details"].(map[string]any)
+	if payload["code"] != "project_detection_failed" ||
+		details["project_source"] != project.SourceConfig ||
+		details["project_strength"] != string(project.IdentityStrengthStrong) ||
+		details["implicit_write_allowed"] != false {
+		t.Fatalf("config detection rejection = %v", payload)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid config opened store or left state: %v", err)
+	}
+}
+
 // TestCmdConflictsScan_CapWarning verifies that when --apply reaches the
 // --max-insert cap, a WARNING line is printed.
 func TestCmdConflictsScan_CapWarning(t *testing.T) {

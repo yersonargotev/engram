@@ -2209,6 +2209,40 @@ func TestCmdSyncRejectsWeakImplicitProjectBeforeOpeningStore(t *testing.T) {
 	}
 }
 
+func TestCmdSyncPreservesAmbiguousDetectionErrorBeforeOpeningStore(t *testing.T) {
+	stubExitWithPanic(t)
+	workDir := t.TempDir()
+	withCwd(t, workDir)
+	cfg := testConfig(t)
+
+	old := detectProjectFull
+	t.Cleanup(func() { detectProjectFull = old })
+	detectProjectFull = func(string) project.DetectionResult {
+		return project.DetectionResult{
+			Source:            project.SourceAmbiguous,
+			Path:              workDir,
+			Error:             project.ErrAmbiguousProject,
+			AvailableProjects: []string{"alpha", "beta"},
+		}
+	}
+
+	withArgs(t, "engram", "sync")
+	_, stderr, recovered := captureOutputAndRecover(t, func() { cmdSync(cfg) })
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("expected fatal exit, got %v", recovered)
+	}
+	payload := decodeCLIJSON(t, stderr)
+	details, _ := payload["details"].(map[string]any)
+	if payload["code"] != "ambiguous_project" ||
+		details["project_strength"] != string(project.IdentityStrengthUnresolved) ||
+		fmt.Sprint(details["available_projects"]) != "[alpha beta]" {
+		t.Fatalf("ambiguous sync rejection = %v", payload)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ambiguous project opened store or left state: %v", err)
+	}
+}
+
 // ─── obsidian-export command tests ───────────────────────────────────────────
 
 // TestObsidianExportMissingVault verifies that omitting --vault exits with code 1

@@ -120,6 +120,9 @@ metadata while preserving weak best-effort reads. A weak CLI mutation rejection
 always writes the structured error envelope to stderr, even without `--json`;
 its `details` contain `project`, `project_source`, `project_path`,
 `project_strength`, `implicit_write_allowed`, and the exact `safe_next_action`.
+Ambiguous and otherwise failed detection retain `ambiguous_project` and
+`project_detection_failed`; `weak_project_identity` is reserved for a resolved
+fallback identity whose evidence is too weak to authorize the mutation.
 
 Checkpoint identity values are opaque. If one begins with a hyphen, use the inline
 forms `--host=VALUE`, `--session-id=VALUE`, or `--root-turn-id=VALUE` to avoid

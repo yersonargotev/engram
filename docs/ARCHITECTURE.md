@@ -325,6 +325,25 @@ engram obsidian-export    Export memories to Obsidian vault (beta)
 engram version            Show version
 ```
 
+### Task briefing diagnostic boundary
+
+`internal/taskbriefing.Generator.Generate` owns the complete local selection
+pipeline: bounded signal grouping and retrieval, lifecycle filtering, Task or
+Repository qualification, thresholding, ranking, result limiting, privacy-safe
+rejection telemetry, empty-result classification, and targeted-search fallback
+construction. The Store supplies searchable inventory, FTS results, and relation
+state; it does not decide Task relevance. The CLI adapter owns human/JSON
+rendering and the exact 4,096-byte stdout budget, including deterministic
+rejection-detail and whole-Memory omission.
+
+Pipeline counts always name their population. Retrieval reports are complete
+only when a signal query returns below its ceiling; hitting the ceiling produces
+a lower bound with `count_complete: false`. Rejection details are bounded IDs and
+reason metrics, never rejected Memory bodies or raw Repository signals. A
+structured fallback is advisory: `Generate` returns a read-only `engram search`
+command/argument vector but never executes the second query or persists its
+transient inputs.
+
 ### Attributable Admission study boundary
 
 Attributable evaluation extends the explicit local Shadow path; it does not

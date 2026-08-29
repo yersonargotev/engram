@@ -17,15 +17,21 @@ type contextBriefingMemory struct {
 }
 
 type contextBriefingOutput struct {
-	Mode                 string                       `json:"mode"`
-	Project              string                       `json:"project"`
-	Scope                string                       `json:"scope,omitempty"`
-	Memories             []contextBriefingMemory      `json:"memories"`
-	Diagnostics          []taskbriefing.Diagnostic    `json:"diagnostics"`
-	BaseResolution       *taskbriefing.BaseResolution `json:"base_resolution,omitempty"`
-	ResultLimitOmissions int                          `json:"result_limit_omissions"`
-	BudgetOmissions      int                          `json:"budget_omissions"`
-	conflictPairs        []taskbriefing.ConflictPair
+	Mode                    string                            `json:"mode"`
+	Project                 string                            `json:"project"`
+	Scope                   string                            `json:"scope,omitempty"`
+	Memories                []contextBriefingMemory           `json:"memories"`
+	Diagnostics             []taskbriefing.Diagnostic         `json:"diagnostics"`
+	BaseResolution          *taskbriefing.BaseResolution      `json:"base_resolution,omitempty"`
+	ResultLimitOmissions    int                               `json:"result_limit_omissions"`
+	BudgetOmissions         int                               `json:"budget_omissions"`
+	Pipeline                taskbriefing.PipelineAccounting   `json:"pipeline"`
+	EmptyResultReason       taskbriefing.EmptyResultReason    `json:"empty_result_reason,omitempty"`
+	Rejections              []taskbriefing.CandidateRejection `json:"rejections"`
+	RejectionDetailsOmitted int                               `json:"rejection_details_omitted"`
+	Fallback                *taskbriefing.SearchFallback      `json:"fallback,omitempty"`
+	conflictPairs           []taskbriefing.ConflictPair
+	fallbackCandidate       *taskbriefing.SearchFallback
 }
 
 func newContextBriefingOutput(project, scope string, result taskbriefing.Result) contextBriefingOutput {
@@ -41,15 +47,25 @@ func newContextBriefingOutput(project, scope string, result taskbriefing.Result)
 	if diagnostics == nil {
 		diagnostics = []taskbriefing.Diagnostic{}
 	}
+	rejections := result.Rejections
+	if rejections == nil {
+		rejections = []taskbriefing.CandidateRejection{}
+	}
 	return contextBriefingOutput{
-		Mode:                 "brief",
-		Project:              project,
-		Scope:                scope,
-		Memories:             memories,
-		Diagnostics:          diagnostics,
-		BaseResolution:       result.BaseResolution,
-		ResultLimitOmissions: result.ResultLimitOmissions,
-		conflictPairs:        result.ConflictPairs,
+		Mode:                    "brief",
+		Project:                 project,
+		Scope:                   scope,
+		Memories:                memories,
+		Diagnostics:             diagnostics,
+		BaseResolution:          result.BaseResolution,
+		ResultLimitOmissions:    result.ResultLimitOmissions,
+		Pipeline:                result.Pipeline,
+		EmptyResultReason:       result.EmptyResultReason,
+		Rejections:              rejections,
+		RejectionDetailsOmitted: result.RejectionDetailsOmitted,
+		Fallback:                result.Fallback,
+		conflictPairs:           result.ConflictPairs,
+		fallbackCandidate:       result.FallbackCandidate,
 	}
 }
 
@@ -69,6 +85,11 @@ func encodeContextBriefing(output contextBriefingOutput, jsonMode, taskProvided 
 		if len(encoded) <= budget {
 			return encoded, nil
 		}
+		if len(output.Rejections) > 0 {
+			output.Rejections = output.Rejections[:len(output.Rejections)-1]
+			output.RejectionDetailsOmitted++
+			continue
+		}
 		if len(output.Memories) == 0 {
 			return nil, fmt.Errorf("task briefing metadata exceeds %d-byte output budget", budget)
 		}
@@ -80,6 +101,11 @@ func encodeContextBriefing(output contextBriefingOutput, jsonMode, taskProvided 
 		}
 		if !hasContextBriefingDiagnostic(output.Diagnostics, taskbriefing.DiagnosticOutputBudgetExhausted) {
 			output.Diagnostics = append(output.Diagnostics, taskbriefing.Diagnostic{Code: taskbriefing.DiagnosticOutputBudgetExhausted})
+		}
+		if output.Fallback == nil && output.fallbackCandidate != nil {
+			fallback := *output.fallbackCandidate
+			fallback.ReasonCode = taskbriefing.FallbackOutputBudgetExhausted
+			output.Fallback = &fallback
 		}
 	}
 }
@@ -105,6 +131,28 @@ func formatContextBriefing(output contextBriefingOutput, taskProvided bool) []by
 	fmt.Fprintf(&buffer, "Project: %s\n", output.Project)
 	if output.BaseResolution != nil {
 		fmt.Fprintf(&buffer, "Base: %s (%s)\n", output.BaseResolution.Ref, output.BaseResolution.Source)
+	}
+	retrieved := fmt.Sprintf("%d (complete)", output.Pipeline.RetrievedCandidates)
+	if !output.Pipeline.RetrievalCountComplete {
+		retrieved = fmt.Sprintf("at least %d (incomplete)", output.Pipeline.RetrievedCandidates)
+	}
+	fmt.Fprintf(&buffer, "Pipeline: eligible inventory: %d; retrieved candidates: %s; task gate: %d; repository gate: %d; lifecycle: %d; threshold: %d; qualified: %d\n",
+		output.Pipeline.EligibleInventory, retrieved, output.Pipeline.TaskGateRejections,
+		output.Pipeline.RepositoryRejections, output.Pipeline.LifecycleRejections,
+		output.Pipeline.ThresholdRejections, output.Pipeline.QualifiedCandidates)
+	if len(output.Pipeline.Retrievals) > 0 {
+		fmt.Fprintln(&buffer, "Retrieval ceilings:")
+		for _, retrieval := range output.Pipeline.Retrievals {
+			completeness := "complete"
+			if !retrieval.CountComplete {
+				completeness = "incomplete"
+			}
+			signals := make([]string, len(retrieval.Signals))
+			for index, signal := range retrieval.Signals {
+				signals[index] = string(signal)
+			}
+			fmt.Fprintf(&buffer, "- %s: %d retrieved, ceiling %d (%s)\n", strings.Join(signals, ", "), retrieval.Retrieved, retrieval.Limit, completeness)
+		}
 	}
 	fmt.Fprintln(&buffer)
 	if len(output.Memories) == 0 {
@@ -140,10 +188,43 @@ func formatContextBriefing(output contextBriefingOutput, taskProvided bool) []by
 			fmt.Fprintf(&buffer, "- %s: %s\n", diagnostic.Code, formatContextBriefingDiagnostic(diagnostic))
 		}
 	}
-	if output.ResultLimitOmissions > 0 || output.BudgetOmissions > 0 {
-		fmt.Fprintf(&buffer, "Omitted: %d by result limit, %d by output budget\n", output.ResultLimitOmissions, output.BudgetOmissions)
+	if len(output.Rejections) > 0 || output.RejectionDetailsOmitted > 0 {
+		fmt.Fprintln(&buffer, "Rejections:")
+		for _, rejection := range output.Rejections {
+			fmt.Fprintf(&buffer, "- memory #%d: %s/%s", rejection.MemoryID, rejection.Stage, rejection.ReasonCode)
+			if rejection.TaskEvidence != nil {
+				fmt.Fprintf(&buffer, "; task evidence %d/%d", rejection.TaskEvidence.Matched, rejection.TaskEvidence.Required)
+			}
+			if rejection.Score != nil && rejection.Threshold != nil {
+				fmt.Fprintf(&buffer, "; score %d/%d", *rejection.Score, *rejection.Threshold)
+			}
+			fmt.Fprintln(&buffer)
+		}
+		if output.RejectionDetailsOmitted > 0 {
+			fmt.Fprintf(&buffer, "- %d additional rejection details omitted\n", output.RejectionDetailsOmitted)
+		}
 	}
+	if output.EmptyResultReason != "" {
+		fmt.Fprintf(&buffer, "Empty result: %s\n", output.EmptyResultReason)
+	}
+	if output.Fallback != nil {
+		fmt.Fprintf(&buffer, "Targeted search fallback (%s): anchors %s\n", output.Fallback.ReasonCode, strings.Join(output.Fallback.Anchors, ", "))
+		fmt.Fprintf(&buffer, "Command: %s\n", formatSearchInvocation(output.Fallback.Invocation))
+	}
+	fmt.Fprintf(&buffer, "Omitted: %d by result limit, %d by output budget\n", output.ResultLimitOmissions, output.BudgetOmissions)
 	return buffer.Bytes()
+}
+
+func formatSearchInvocation(invocation taskbriefing.SearchInvocation) string {
+	parts := []string{invocation.Command}
+	for _, arg := range invocation.Args {
+		parts = append(parts, shellQuote(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func formatContextBriefingDiagnostic(diagnostic taskbriefing.Diagnostic) string {

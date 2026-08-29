@@ -41,21 +41,29 @@ Recall only when prior project knowledge could materially change the work.
      --scope project --limit 5 --json
    ```
 
-2. Account for every selected memory, Selection evidence, diagnostic, and
-   omission before acting. Use `engram get <id> --json` when relation context
-   could change the task.
-3. Run a targeted search when the briefing command is unavailable, when a
-   material memory is expected but absent, or when the task needs an exact
-   known fact. Search one lookup intent with one to three distinctive anchors:
+2. Account for every selected memory, Selection evidence, pipeline count,
+   rejection summary, diagnostic, omission, and empty-result reason before
+   acting. A retrieval with `count_complete: false` is a bounded lower bound,
+   not a known total. Use `engram get <id> --json` when relation context could
+   change the task.
+3. When the briefing returns `fallback`, verify that its project/scope match
+   the requested briefing and execute the exact structured `invocation.command`
+   with its `invocation.args` as separate arguments. Do not reconstruct or
+   evaluate a shell string. The recommendation is read-only and advisory; the
+   briefing itself has not executed it.
+4. Otherwise, run a targeted search when the briefing command is unavailable,
+   when a material memory is expected but absent, or when the task needs an
+   exact known fact. Search one lookup intent with one to three distinctive
+   anchors:
 
    ```bash
    engram search "<narrow query>" --project "<project>" --match-mode all --limit 5 --json
    ```
 
-4. Inspect every search result's content, state, pin, and relations. If a
+5. Inspect every search result's content, state, pin, and relations. If a
    material memory is expected and the first search is empty, refine once.
    Remove generic terms or switch to `--match-mode any`; keep the same intent.
-5. Prefer the newest applicable memory while honoring `supersedes`,
+6. Prefer the newest applicable memory while honoring `supersedes`,
    `superseded_by`, and `conflicts_with` relations. Surface unresolved conflicts
    instead of silently choosing one side.
 

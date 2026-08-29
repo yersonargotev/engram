@@ -467,6 +467,42 @@ multiple Repository sources remains traceable under every source but contributes
 only its strongest weight during ranking. Memories are emitted whole, and a
 lower-ranked memory that does not fit the bounded output is omitted and counted.
 
+Every briefing reports bounded pipeline accounting in human and JSON output.
+The stages and their candidate sets are distinct:
+
+| JSON field | Meaning |
+| --- | --- |
+| `pipeline.eligible_inventory` | Non-deleted memories in the selected project/scope before signal retrieval and relation filtering. |
+| `pipeline.retrieved_candidates` | Unique memories in the bounded union returned by signal searches. |
+| `pipeline.retrievals[]` | Per-query signal sources, the fixed retrieval `limit`, returned lower bound, and `count_complete`. A query that reaches its ceiling is incomplete; Engram never substitutes an unknown total with zero. |
+| `pipeline.task_gate_rejections` | Retrieved memories that lacked the required exact/distinctive Task evidence. |
+| `pipeline.repository_gate_rejections` | Retrieved memories that lacked qualifying Repository evidence when no Task was supplied. |
+| `pipeline.lifecycle_rejections` | Retrieved memories excluded by judged supersession. |
+| `pipeline.threshold_rejections` | Gate-qualified memories whose pre-ranking score remained below the inclusion threshold. |
+| `pipeline.qualified_candidates` | Memories that passed lifecycle, gate, and threshold checks before the result cap. |
+| `result_limit_omissions` | Qualified memories removed after ranking by the requested or calibrated result cap. |
+| `budget_omissions` | Selected complete memories removed only while enforcing the final stdout byte budget. |
+
+JSON includes at most eight privacy-safe `rejections`: each entry contains the
+Memory ID, rejection stage/reason, matched versus required Task evidence when
+applicable, and score versus threshold for threshold failures. It never includes
+the rejected Memory body or raw Repository evidence. Additional entries are
+reported by `rejection_details_omitted`; if stdout needs further bounding,
+rejection details are removed deterministically before complete selected
+Memories, and the same counter increases.
+
+An empty result uses `empty_result_reason` to distinguish
+`project_has_no_memories`, `no_candidates_matched`, `candidates_filtered`, and
+`candidates_below_threshold` (with `no_usable_signals` retained for the existing
+signal-absence case). When a targeted search is a safe next step, `fallback`
+contains one to three bounded normalized anchors, project/scope, a stable reason
+code, and a safe structured invocation (`command` plus `args`). Exact issue/PR,
+topic-key, branch/path, and other distinctive terms are preferred; generic stop
+words alone never become anchors. Fallback reasons cover no matches, incomplete
+retrieval, filtering, threshold rejection, result limiting, and output-budget
+omission. The recommendation is advisory and read-only: Task Brief neither runs
+the search nor persists Task/Repository evidence.
+
 Task intent and Repository signals are transient: they are used only for local
 deterministic selection and are never saved as memories. Raw diff content is not
 echoed in briefing output, and untracked file content is neither read nor emitted.
@@ -489,7 +525,8 @@ no Repository signal is usable and no Task intent is supplied, `--brief` succeed
 with an empty briefing and suggests `--task`; memory-store failures remain command
 errors. Human and JSON briefings expose the resolved base, source-level Selection
 evidence—including `matched_identifiers` and `matched_distinctive_terms`—typed
-degradations, and result/output omissions. Supported briefing
+degradations, pipeline/rejection accounting, structured fallback, and
+result/output omissions. Supported briefing
 flags are `--task INTENT`, `--base REF`, `--scope project|personal`, `--limit 1..5`,
 and `--json`; `--task`, `--base`, and `--limit` require `--brief`. Without `--brief`,
 the existing chronological human and JSON contracts are unchanged. The four

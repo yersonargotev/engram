@@ -71,6 +71,7 @@ These run automatically and **all must pass** before merge:
 | **Unit Tests** | `go test ./...` passes | ⏳ |
 | **E2E Tests** | `go test -tags e2e ./internal/server/...` passes | ⏳ |
 | **Validate Engram Managed Pack** | Pinned Packy preflight passes | ⏳ |
+| **Plugin Tests** | `npm test` passes in `plugin/pi` | ⏳ |
 
 ---
 

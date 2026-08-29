@@ -698,6 +698,9 @@ Full environment variable reference → [DOCS.md#environment-variables](DOCS.md#
 | [Codebase Guide](docs/CODEBASE-GUIDE.md)      | Guide to the repository structure, flows, and implementation landmarks |
 | [Architecture](docs/ARCHITECTURE.md)          | How it works + MCP tools + project structure                           |
 | [Plugins](docs/PLUGINS.md)                    | OpenCode & Claude Code plugin details                                  |
+| [Doctor](docs/DOCTOR.md)                      | Operational diagnosis and repair workflows                             |
+| [Binary self-testing](docs/SELF-TESTING.md)   | Isolated reliability and performance checks for released binaries      |
+| [Beta Testing](docs/BETA_TESTING.md)          | Isolated beta testing flows and cleanup guidance                       |
 | [Comparison](docs/COMPARISON.md)              | Why Engram vs claude-mem                                               |
 | [Intended Usage](docs/intended-usage.md)      | Mental model — how Engram is meant to be used                          |
 | [Obsidian Brain](docs/beta/obsidian-brain.md) | Export memories as Obsidian knowledge graph (beta)                     |

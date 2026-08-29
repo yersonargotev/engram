@@ -26,16 +26,17 @@ ROOT_TURN_ID=$(json_string "turn_id")
 PROMPT=$(json_string "prompt")
 
 # Prompt capture remains lifecycle telemetry. It never creates a Memory or a
-# checkpoint and cannot block prompt submission.
+# checkpoint and cannot block prompt submission. Project policy stays in the
+# server; detached standard streams keep the foreground hook prompt.
 if [ -n "$PROMPT" ] && [ -n "$SESSION_ID" ]; then
   (
-    PROJECT=$(detect_project "$CWD")
+    PROJECT=$(resolve_project "$CWD") || exit 0
     curl -sf -X POST "${ENGRAM_URL}/prompts" --max-time 2 \
       -H 'Content-Type: application/json' \
-      -d "$(jq -n --arg session "$SESSION_ID" --arg project "${PROJECT:-}" --arg content "$PROMPT" \
+      -d "$(jq -n --arg session "$SESSION_ID" --arg project "$PROJECT" --arg content "$PROMPT" \
         '{session_id:$session, project:$project, content:$content}')" \
       >/dev/null 2>&1 || true
-  ) &
+  ) </dev/null >/dev/null 2>&1 &
 fi
 
 if [ -z "$SESSION_ID" ] || [ -z "$ROOT_TURN_ID" ]; then

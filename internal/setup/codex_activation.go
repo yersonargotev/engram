@@ -16,8 +16,11 @@ type codexActivationHooksManifest struct {
 	Hooks map[string][]struct {
 		Matcher string `json:"matcher"`
 		Hooks   []struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
+			Type           string `json:"type"`
+			Command        string `json:"command"`
+			CommandWindows string `json:"commandWindows"`
+			Timeout        int    `json:"timeout"`
+			Async          bool   `json:"async"`
 		} `json:"hooks"`
 	} `json:"hooks"`
 }
@@ -26,11 +29,41 @@ type codexActivationHooksManifest struct {
 // contract without executing hooks. The skill is the canonical source for both
 // the detailed rubric and the cue; SessionStart adapters may only project it.
 func verifyInstalledCodexActivation(installedPath string, hooksRaw []byte) bool {
+	return verifyInstalledCodexActivationCue(installedPath) && verifyInstalledCodexSessionStartHooks(installedPath, hooksRaw)
+}
+
+func verifyInstalledCodexActivationCue(installedPath string) bool {
 	skillRaw, err := readFileFn(filepath.Join(installedPath, "skills", "memory", "SKILL.md"))
-	if err != nil || !validCodexCheckpointSkill(string(skillRaw)) {
+	return err == nil && validCodexCheckpointSkill(string(skillRaw))
+}
+
+func verifyInstalledCodexSessionHooks(installedPath string, hooksRaw []byte) bool {
+	if !verifyInstalledCodexSessionStartHooks(installedPath, hooksRaw) {
 		return false
 	}
+	var manifest codexActivationHooksManifest
+	if json.Unmarshal(hooksRaw, &manifest) != nil {
+		return false
+	}
+	groups := manifest.Hooks["SessionEnd"]
+	if len(groups) != 1 || groups[0].Matcher != "" || len(groups[0].Hooks) != 1 {
+		return false
+	}
+	end := groups[0].Hooks[0]
+	if end.Type != "command" || end.Command != `"${PLUGIN_ROOT}/scripts/session-end.sh"` ||
+		end.CommandWindows != `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${PLUGIN_ROOT}\scripts\session-end.ps1"` ||
+		end.Timeout != 3 || end.Async {
+		return false
+	}
+	for _, relative := range []string{"scripts/session-end.sh", "scripts/session-end.ps1"} {
+		if _, err := readFileFn(filepath.Join(installedPath, filepath.FromSlash(relative))); err != nil {
+			return false
+		}
+	}
+	return true
+}
 
+func verifyInstalledCodexSessionStartHooks(installedPath string, hooksRaw []byte) bool {
 	helperRaw, err := readFileFn(filepath.Join(installedPath, "scripts", "_checkpoint.sh"))
 	if err != nil || !validCodexCheckpointHelper(string(helperRaw)) {
 		return false
@@ -55,6 +88,28 @@ func verifyInstalledCodexActivation(installedPath string, hooksRaw []byte) bool 
 		}
 	}
 	return true
+}
+
+func verifyInstalledCodexPromptHook(installedPath string, hooksRaw []byte) bool {
+	var manifest codexActivationHooksManifest
+	if json.Unmarshal(hooksRaw, &manifest) != nil {
+		return false
+	}
+	groups := manifest.Hooks["UserPromptSubmit"]
+	if len(groups) != 1 || groups[0].Matcher != "" || len(groups[0].Hooks) != 1 {
+		return false
+	}
+	hook := groups[0].Hooks[0]
+	if hook.Type != "command" || hook.Command != `"${PLUGIN_ROOT}/scripts/user-prompt-submit.sh"` || hook.Timeout != 2 || hook.Async {
+		return false
+	}
+	scriptRaw, err := readFileFn(filepath.Join(installedPath, "scripts", "user-prompt-submit.sh"))
+	if err != nil {
+		return false
+	}
+	script := string(scriptRaw)
+	return strings.Contains(script, `"${ENGRAM_URL}/prompts"`) &&
+		strings.Contains(script, "session_id") && strings.Contains(script, "turn_id")
 }
 
 func validCodexCheckpointSkill(skill string) bool {

@@ -107,6 +107,7 @@ var (
 
 	setupSupportedAgents        = setup.SupportedAgents
 	setupInstallAgent           = setup.InstallWithOptions
+	setupInspectCodexStatus     = setup.InspectCodexStatus
 	setupAddClaudeCodeAllowlist = setup.AddClaudeCodeAllowlist
 	scanInputLine               = fmt.Scanln
 
@@ -722,6 +723,9 @@ func shouldCheckForUpdates(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
+	if isCodexSetupStatus(args) {
+		return false
+	}
 	for _, arg := range args {
 		if arg == "--json" {
 			return false
@@ -742,6 +746,10 @@ func shouldCheckForUpdates(args []string) bool {
 func handleConfigFreeCommand(args []string) bool {
 	if len(args) == 0 {
 		return false
+	}
+	if isCodexSetupStatus(args) {
+		cmdSetup(store.Config{})
+		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
 	case "version", "--version", "-v":
@@ -805,6 +813,13 @@ func handleConfigFreeCommand(args []string) bool {
 		}
 	}
 	return false
+}
+
+func isCodexSetupStatus(args []string) bool {
+	return len(args) >= 3 &&
+		strings.EqualFold(strings.TrimSpace(args[0]), "setup") &&
+		strings.EqualFold(strings.TrimSpace(args[1]), "status") &&
+		strings.EqualFold(strings.TrimSpace(args[2]), "codex")
 }
 
 func printUpdateCheckResult(result versioncheck.CheckResult) {
@@ -3016,6 +3031,10 @@ func isPathLikeProjectName(name string) bool {
 // present > protocol-only > no args.
 func cmdSetup(cfg store.Config) {
 	args := os.Args[2:]
+	if len(args) >= 2 && strings.EqualFold(strings.TrimSpace(args[0]), "status") && strings.EqualFold(strings.TrimSpace(args[1]), "codex") {
+		cmdSetupStatusCodex(args[2:])
+		return
+	}
 
 	var (
 		helpSeen        bool
@@ -3106,6 +3125,49 @@ func cmdSetup(cfg store.Config) {
 	}
 }
 
+func cmdSetupStatusCodex(args []string) {
+	jsonMode := false
+	for _, arg := range args {
+		if arg == "--json" {
+			jsonMode = true
+		}
+	}
+	for _, arg := range args {
+		switch arg {
+		case "--json":
+		case "--help", "-h", "help":
+			fmt.Println("usage: engram setup status codex [--json]")
+			return
+		default:
+			failCLI(jsonMode, "invalid_argument", "usage: engram setup status codex [--json]", map[string]any{"argument": arg})
+			return
+		}
+	}
+
+	status, err := setupInspectCodexStatus(version, currentCWD())
+	if err != nil {
+		failCLI(jsonMode, "codex_status_failed", err.Error(), nil)
+		return
+	}
+	if jsonMode {
+		if err := writeCLIJSON(status); err != nil {
+			failCLI(true, "encode_error", err.Error(), nil)
+		}
+		return
+	}
+	printCodexIntegrationStatus(status)
+}
+
+func printCodexIntegrationStatus(status setup.CodexIntegrationStatus) {
+	fmt.Printf("Codex integration mode: %s\n", status.Mode)
+	for _, check := range status.Checks {
+		fmt.Printf("  - %s: %s — %s\n", check.Capability, check.Status, check.Reason)
+		for _, evidence := range check.Evidence {
+			fmt.Printf("      %s: %s\n", evidence.Name, evidence.Value)
+		}
+	}
+}
+
 // cmdSetupInteractive renders the agent picker and installs the chosen
 // agent. mode is the already-resolved --protocol value ("slim"/"full") from
 // a slug-less invocation, or "" when --protocol was not given at all.
@@ -3173,9 +3235,11 @@ func printSetupResult(result *setup.Result) {
 // stdin (Guarantee 2 — safe under a detached/non-TTY stdin).
 func printSetupUsage() {
 	fmt.Println("usage: engram setup [<agent>] [--protocol=slim|full] [--development]")
+	fmt.Println("       engram setup status codex [--json]")
 	fmt.Println()
 	fmt.Println("Install an agent plugin (claude-code, opencode, codex, ...).")
 	fmt.Println("Without <agent>, shows an interactive menu.")
+	fmt.Println("The status command reports a read-only Codex capability snapshot.")
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  --protocol=<slim|full>  Set the session-start protocol verbosity for the")
@@ -3446,6 +3510,7 @@ Commands:
   setup [agent]      Install/setup agent integration (opencode, pi, claude-code,
                      gemini-cli, codex, antigravity-cli, windsurf, qwen, kiro,
                      cursor, vscode-copilot, kilocode)
+  setup status codex Report the read-only Codex integration capability snapshot [--json]
   sync               Export new memories as compressed chunk to .engram/
                          --import   Import new chunks from .engram/ into local DB
                          --status   Show sync status

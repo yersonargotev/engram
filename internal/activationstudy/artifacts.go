@@ -32,6 +32,15 @@ func ReadEventSet(path string) (EventSet, error) {
 
 // WriteJSON atomically writes one stable, indented shared artifact.
 func WriteJSON(path string, value any) error {
+	return writeJSON(path, value, 0o644)
+}
+
+// WritePrivateJSON atomically writes one owner-readable row-level artifact.
+func WritePrivateJSON(path string, value any) error {
+	return writeJSON(path, value, 0o600)
+}
+
+func writeJSON(path string, value any, mode os.FileMode) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("activation artifact output path is required")
 	}
@@ -39,16 +48,15 @@ func WriteJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	encoded = append(encoded, '\n')
-	return writeAtomicArtifact(path, encoded)
+	return writeAtomicArtifact(path, append(encoded, '\n'), mode)
 }
 
 // WriteMarkdown atomically writes one deterministic aggregate report.
 func WriteMarkdown(path string, report Report) error {
-	return writeAtomicArtifact(path, []byte(RenderMarkdown(report)))
+	return writeAtomicArtifact(path, []byte(RenderMarkdown(report)), 0o644)
 }
 
-func writeAtomicArtifact(path string, encoded []byte) error {
+func writeAtomicArtifact(path string, encoded []byte, mode os.FileMode) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("activation artifact output path is required")
 	}
@@ -68,7 +76,7 @@ func writeAtomicArtifact(path string, encoded []byte) error {
 			_ = os.Remove(temporaryPath)
 		}
 	}()
-	if err := temporary.Chmod(0o644); err != nil {
+	if err := temporary.Chmod(mode); err != nil {
 		return err
 	}
 	if _, err := temporary.Write(encoded); err != nil {

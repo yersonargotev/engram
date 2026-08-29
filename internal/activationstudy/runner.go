@@ -168,7 +168,7 @@ func (study *Study) Run(ctx context.Context, options RunOptions) (EventSet, erro
 		sort.Slice(eventSet.Records, func(i, j int) bool { return eventSet.Records[i].Sequence < eventSet.Records[j].Sequence })
 		eventSet.Verification.CodexPromptInputVerified = true
 		if strings.TrimSpace(options.OutputPath) != "" {
-			if err := WriteJSON(options.OutputPath, eventSet); err != nil {
+			if err := WritePrivateJSON(options.OutputPath, eventSet); err != nil {
 				return EventSet{}, fmt.Errorf("persist activation study progress: %w", err)
 			}
 		}
@@ -180,7 +180,7 @@ func (study *Study) Run(ctx context.Context, options RunOptions) (EventSet, erro
 	eventSet.Verification.CodexPromptInputVerified = true
 	eventSet.Verification.CleanupVerified = true
 	if strings.TrimSpace(options.OutputPath) != "" {
-		if err := WriteJSON(options.OutputPath, eventSet); err != nil {
+		if err := WritePrivateJSON(options.OutputPath, eventSet); err != nil {
 			return EventSet{}, fmt.Errorf("persist completed activation study: %w", err)
 		}
 	}

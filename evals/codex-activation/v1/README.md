@@ -61,6 +61,8 @@ after each completed cell. Repeating the command with the same output resumes
 without rerunning retained cells. `events.json` is ignored by Git and must remain
 local while the aggregate report is generated:
 
+The runner writes this row-level file with owner-only (`0600`) permissions.
+
 ```bash
 go run ./cmd/engram activation-study run \
   --contract evals/codex-activation/v1/contract.json \

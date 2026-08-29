@@ -66,3 +66,19 @@ func TestEventSetRoundTripAndMarkdownReportAreDeterministic(t *testing.T) {
 		t.Fatal("WriteMarkdown() did not preserve deterministic output")
 	}
 }
+
+func TestWritePrivateJSONRestrictsRowLevelEvidenceToTheOwner(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "events.json")
+	if err := WritePrivateJSON(path, map[string]bool{"bounded": true}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("private event mode = %o, want 600", info.Mode().Perm())
+	}
+}

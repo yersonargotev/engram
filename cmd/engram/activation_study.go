@@ -137,7 +137,7 @@ func cmdActivationStudyRun(flags activationStudyFlags) {
 		failCLI(flags.JSONMode, "activation_run_failed", err.Error(), nil)
 		return
 	}
-	if err := activationstudy.WriteJSON(flags.OutputPath, events); err != nil {
+	if err := activationstudy.WritePrivateJSON(flags.OutputPath, events); err != nil {
 		failCLI(flags.JSONMode, "output_error", err.Error(), nil)
 		return
 	}

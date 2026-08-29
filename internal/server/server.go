@@ -968,12 +968,18 @@ func (s *Server) handleCurrentProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res := projectpkg.DetectProjectFull(cwd)
+	identity := projectpkg.IdentityPolicyForResult(res)
 	payload := map[string]any{
-		"project":            res.Project,
-		"project_source":     res.Source,
-		"project_path":       res.Path,
-		"cwd":                cwd,
-		"available_projects": res.AvailableProjects,
+		"project":                res.Project,
+		"project_source":         res.Source,
+		"project_path":           res.Path,
+		"project_strength":       identity.Strength,
+		"implicit_write_allowed": identity.AllowsImplicitWrite,
+		"cwd":                    cwd,
+		"available_projects":     res.AvailableProjects,
+	}
+	if identity.Strength == projectpkg.IdentityStrengthWeak {
+		payload["safe_next_action"] = projectpkg.ExplicitProjectSafeNextAction
 	}
 	if res.Warning != "" {
 		payload["warning"] = res.Warning

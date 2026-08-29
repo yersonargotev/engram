@@ -27,7 +27,7 @@ func TestLifecycleScriptsUseCanonicalProjectResolution(t *testing.T) {
 					w.WriteHeader(http.StatusOK)
 				case "/project/current":
 					requestedCWD = r.URL.Query().Get("cwd")
-					_, _ = w.Write([]byte(`{"project":"configured-project","project_source":"config"}`))
+					_, _ = w.Write([]byte(`{"project":"configured-project","project_source":"config","project_strength":"strong","implicit_write_allowed":true}`))
 				case "/sessions":
 					var payload struct {
 						Project string `json:"project"`
@@ -65,6 +65,7 @@ func TestLifecycleScriptsUseCanonicalProjectResolution(t *testing.T) {
 			{name: "empty", status: http.StatusOK, body: `{"project":"","project_source":"config"}`},
 			{name: "ambiguous", status: http.StatusOK, body: `{"project":"","project_source":"ambiguous","available_projects":["one","two"]}`},
 			{name: "invalid", status: http.StatusOK, body: `{"project":"configured-project","project_source":"unexpected"}`},
+			{name: "weak identity", status: http.StatusOK, body: `{"project":"local-repo","project_source":"git_root","project_strength":"weak","implicit_write_allowed":false,"safe_next_action":"provide an explicit project name and retry the write"}`},
 			{name: "error hint", status: http.StatusOK, body: `{"project":"configured-project","project_source":"config","error_hint":"choose a project"}`},
 		} {
 			t.Run(agent+" fails closed when canonical resolution is "+response.name, func(t *testing.T) {

@@ -316,7 +316,7 @@ engram cloud bootstrap admin --username <name> [--email <email>]
                           Create the first managed admin (see DOCS.md for details
                           and the current server-side auth wiring limitation)
 engram projects list      Show all projects with obs/session/prompt counts
-engram projects consolidate  Interactive merge of normalization-equivalent project names [--all] [--dry-run]
+engram projects consolidate  Interactive merge of normalization-equivalent project names [--project NAME | --all] [--dry-run]
 engram projects prune     Remove projects with 0 observations [--dry-run]
 engram projects rescue-ownership --project <name> [--session <id>] [--observation <id>] [--prompt <id>]
                           Assign explicit ownership to legacy rows that carry none. Reaches the local

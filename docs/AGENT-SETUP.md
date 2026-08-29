@@ -102,7 +102,12 @@ When present, `project_name` is the default auto-detected target for writes from
 
 For monorepos, prefer subproject configs such as `backend/.engram/config.json` and `frontend/.engram/config.json`. Engram uses the **nearest** config under the enclosing git root, so backend/frontend can resolve as separate projects while still blocking `$HOME/.engram/config.json` ancestor leakage.
 
-**Recommended first call:** `mem_current_project` — confirms which project Engram detected before you start writing. Returns `project_source` (how it was detected) and `available_projects` (if cwd is ambiguous).
+**Recommended first call:** `mem_current_project` — confirms which project Engram detected before you start writing. It returns `project_source`, `project_strength`, and `implicit_write_allowed`, plus `available_projects` when cwd is ambiguous. Weak `git_root`, `git_child`, and `dir_basename` identities are useful for reads but do not authorize writes.
+
+If a write returns `weak_project_identity`, do not copy the detected name back as
+if it were user confirmation. Ask for the exact project and retry through an
+explicit project field, or add a deliberate `.engram/config.json`. The stable
+safe action is `provide an explicit project name and retry the write`.
 
 If a write tool returns `ambiguous_project`, the agent must not guess. This happens when the MCP server is started from a parent directory that contains multiple repositories, for example:
 
@@ -593,7 +598,7 @@ See [Surviving Compaction](#surviving-compaction-recommended) for the minimal ve
 
 ### Project detection in VS Code, WSL, and CI
 
-VS Code, WSL, and most CI runners start the MCP server process without inheriting the shell's working directory, so cwd-based project detection may resolve to the wrong project or fall back to a directory basename you don't recognise.
+VS Code, WSL, and most CI runners start the MCP server process without inheriting the shell's working directory, so cwd-based project detection may resolve to the wrong project or fall back to a weak directory basename. Weak detection remains available for reads, but writes now fail closed with `weak_project_identity`.
 
 The reliable fix is to pin the project explicitly at startup time. Both forms below work:
 

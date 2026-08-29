@@ -44,7 +44,8 @@ The plugin auto-starts the HTTP server if it's not already running — no manual
 
 The plugin:
 - **Auto-starts** the engram server if not running
-- **Auto-imports** git-synced memories from `.engram/manifest.json` if present in the project
+- **Consumes core project identity** from `/project/current`; weak identities remain readable but cannot trigger session or memory writes
+- **Auto-imports** git-synced memories from `.engram/manifest.json` only when the current project has strong write authority
 - **Creates sessions** on-demand via `ensureSession()` (resilient to restarts/reconnects)
 - **Injects the Memory Protocol** into the agent's system prompt via `chat.system.transform` — strict rules for when to save, when to search, and a mandatory session close protocol. The protocol is concatenated into the existing system message (not pushed as a separate one), ensuring compatibility with models that only accept a single system block (Qwen, Mistral/Ministral via llama.cpp, etc.)
 - **Injects session-only runtime context** into the compaction prompt; manual `mem_context` and `GET /context` remain project/scope-scoped
@@ -125,7 +126,7 @@ plugin/claude-code/
 
 **On session start** (`startup`):
 1. Ensures the engram HTTP server is running
-2. Creates a new session via the API
+2. Resolves the project through `/project/current` and creates a session only for strong or explicit authority
 3. Auto-imports git-synced chunks from `.engram/manifest.json` (if present)
 4. Injects previous session context into Claude's initial context
 
@@ -135,9 +136,10 @@ plugin/claude-code/
 3. This ensures no work is lost when context is compressed
 
 **On user prompt submit**:
-1. The first prompt injects a ToolSearch instruction so Claude Code loads Engram MCP tools before responding.
-2. Later prompts may inject a save reminder if the local Engram API is fast and available.
-3. On Windows Git Bash/MSYS2, the hook uses a bash-builtin-only safe path to avoid fork-heavy helpers (`jq`, `git`, `curl`, `date`). In that mode first-prompt ToolSearch still works, but later save reminders degrade to `{}` so prompt submission stays fast.
+1. The hook resolves `/project/current` and persists only when `project_strength` is `strong` or `explicit`; weak identities fail closed without blocking the user prompt.
+2. The first prompt injects a ToolSearch instruction so Claude Code loads Engram MCP tools before responding.
+3. Later prompts may inject a save reminder if the local Engram API is fast and available.
+4. On Windows Git Bash/MSYS2, the hook uses a bash-builtin-only safe path to avoid fork-heavy helpers (`jq`, `git`, `curl`, `date`). In that mode first-prompt ToolSearch still works, but later save reminders degrade to `{}` so prompt submission stays fast.
 
 If Git Bash itself is blocked by enterprise security tooling, `scripts/user-prompt-submit.ps1` is provided as a native PowerShell fallback for manual hook testing or local override.
 

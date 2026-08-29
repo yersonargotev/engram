@@ -18,6 +18,20 @@ func decodeCLIJSON(t *testing.T, output string) map[string]any {
 	return result
 }
 
+func TestCmdCurrentProjectExposesWeakWriteAuthority(t *testing.T) {
+	withCwd(t, t.TempDir())
+	withArgs(t, "engram", "current-project", "--json")
+
+	stdout, stderr := captureOutput(t, cmdCurrentProject)
+	if stderr != "" {
+		t.Fatalf("current-project stderr=%q", stderr)
+	}
+	payload := decodeCLIJSON(t, stdout)
+	if payload["project_source"] != "dir_basename" || payload["project_strength"] != "weak" || payload["implicit_write_allowed"] != false || payload["safe_next_action"] != "provide an explicit project name and retry the write" {
+		t.Fatalf("current-project identity policy = %v", payload)
+	}
+}
+
 func TestCLIMemoryJSONWorkflow(t *testing.T) {
 	cfg := testConfig(t)
 

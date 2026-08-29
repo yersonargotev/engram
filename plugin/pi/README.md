@@ -223,15 +223,15 @@ The command respects `PI_CODING_AGENT_DIR`; otherwise it writes to `~/.pi/agent`
 
 ## Project detection
 
-The HTTP event-capture path mirrors Engram's normal project detection order as closely as a Pi adapter can:
-
-1. nearest `.engram/config.json` inside the current git repo
-2. git `origin` remote name
-3. git root directory name
-4. single child git repo name
-5. current directory basename
-
-MCP tool calls still use Engram core's canonical project resolver at call time. Pi-native tool calls ask the Engram HTTP server for `/project/current`; if that route is missing on an older running server, the adapter falls back to the nearest local `.engram/config.json` and returns a version-mismatch warning. For critical repos or monorepos, prefer an explicit `.engram/config.json`:
+Pi event capture and Pi-native tools consume Engram core's `/project/current`
+classification. `config` and `git_remote` are strong automatic identities;
+`git_root`, `git_child`, and `dir_basename` remain available for reads but cannot
+create sessions, prompts, or observations implicitly. A weak write reports
+`weak_project_identity` and asks for an explicit project. If the route is missing
+on an older running server, the adapter accepts only the nearest local
+`.engram/config.json` as a strong compatibility fallback and returns a
+version-mismatch warning. For critical repos or monorepos, prefer an explicit
+`.engram/config.json`:
 
 ```json
 {
@@ -255,7 +255,7 @@ MCP tool calls still use Engram core's canonical project resolver at call time. 
 ## Next steps
 
 - Run `engram tui` to inspect stored memories.
-- Use `mem_current_project` to confirm project detection before writing memories.
+- Use `mem_current_project` to confirm `project_strength` and write authority before writing memories.
 - Read the main Engram setup guide: <https://github.com/yersonargotev/engram/blob/main/docs/AGENT-SETUP.md>
 - Explore Engram Cloud: <https://github.com/yersonargotev/engram/blob/main/docs/engram-cloud/README.md>
 - Join the project through issues, discussions, and beta feedback: <https://github.com/yersonargotev/engram>

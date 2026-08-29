@@ -32,6 +32,7 @@ func TestClaudeCodeWindowsPromptResolverRejectsMalformedCanonicalProject(t *test
 		{name: "blank project", status: http.StatusOK, resolution: `{"project":"","project_source":"config"}`},
 		{name: "error hint", status: http.StatusOK, resolution: `{"project":"canonical-project","project_source":"config","error_hint":"choose a project"}`},
 		{name: "ambiguous response", status: http.StatusOK, resolution: `{"project":"","project_source":"ambiguous","available_projects":["one","two"]}`},
+		{name: "weak identity", status: http.StatusOK, resolution: `{"project":"local-repo","project_source":"git_root","project_strength":"weak","implicit_write_allowed":false}`},
 		{name: "non-2xx response", status: http.StatusServiceUnavailable, resolution: `unavailable`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -98,7 +99,7 @@ func TestClaudeCodeWindowsPromptResolverPersistsCanonicalProject(t *testing.T) {
 		case "/project/current":
 			resolutionRequests++
 			requestedCWD = r.URL.Query().Get("cwd")
-			_, _ = w.Write([]byte(`{"project":"canonical-project","project_source":"config"}`))
+			_, _ = w.Write([]byte(`{"project":"canonical-project","project_source":"config","project_strength":"strong","implicit_write_allowed":true}`))
 		case "/prompts":
 			promptWrites++
 			if r.Method != http.MethodPost {

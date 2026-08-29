@@ -721,7 +721,7 @@ func TestCmdSaveUsesDetectionSeamAndPrintsNormalizationWarning(t *testing.T) {
 		if gotCWD != resolvedCWD {
 			t.Fatalf("detection cwd = %q, want %q", gotCWD, resolvedCWD)
 		}
-		return project.DetectionResult{Project: " Configured--Project "}
+		return project.DetectionResult{Project: " Configured--Project ", Source: project.SourceConfig, Path: cwd}
 	}
 	t.Cleanup(func() { detectProjectFull = originalDetectProjectFull })
 
@@ -766,6 +766,38 @@ func TestCmdSaveRejectsUnresolvableProjectBeforeOpeningStore(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("unresolvable project opened store or left state: %v", err)
+	}
+}
+
+func TestCmdSaveRejectsWeakImplicitProjectBeforeOpeningStore(t *testing.T) {
+	stubExitWithPanic(t)
+	cfg := testConfig(t)
+	cwd := t.TempDir()
+	withCwd(t, cwd)
+	withArgs(t, "engram", "save", "rejected-title", "rejected-content", "--json")
+
+	originalDetectProjectFull := detectProjectFull
+	detectProjectFull = func(string) project.DetectionResult {
+		return project.DetectionResult{Project: "tmp", Source: project.SourceDirBasename, Path: cwd}
+	}
+	t.Cleanup(func() { detectProjectFull = originalDetectProjectFull })
+
+	_, stderr, recovered := captureOutputAndRecover(t, func() { cmdSave(cfg) })
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("expected fatal exit, got %v", recovered)
+	}
+	payload := decodeCLIJSON(t, stderr)
+	details, _ := payload["details"].(map[string]any)
+	if payload["code"] != project.WriteAuthorityErrorCode ||
+		details["project"] != "tmp" ||
+		details["project_source"] != project.SourceDirBasename ||
+		details["project_path"] != cwd ||
+		details["project_strength"] != string(project.IdentityStrengthWeak) ||
+		details["safe_next_action"] != project.ExplicitProjectSafeNextAction {
+		t.Fatalf("weak identity error = %v", payload)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("weak project identity opened store or left state: %v", err)
 	}
 }
 
@@ -899,7 +931,7 @@ func TestCmdSyncStatusExportAndImport(t *testing.T) {
 		t.Fatalf("unexpected sync export output: %q", exportOut)
 	}
 
-	withArgs(t, "engram", "sync", "--import")
+	withArgs(t, "engram", "sync", "--import", "--project", "sync-project")
 	importOut, importErr := captureOutput(t, func() { cmdSync(importCfg) })
 	if importErr != "" {
 		t.Fatalf("expected no stderr from sync import, got: %q", importErr)
@@ -908,7 +940,7 @@ func TestCmdSyncStatusExportAndImport(t *testing.T) {
 		t.Fatalf("unexpected sync import output: %q", importOut)
 	}
 
-	withArgs(t, "engram", "sync", "--import")
+	withArgs(t, "engram", "sync", "--import", "--project", "sync-project")
 	noopOut, noopErr := captureOutput(t, func() { cmdSync(importCfg) })
 	if noopErr != "" {
 		t.Fatalf("expected no stderr from second sync import, got: %q", noopErr)
@@ -918,7 +950,7 @@ func TestCmdSyncStatusExportAndImport(t *testing.T) {
 	}
 }
 
-func TestCmdSyncDefaultProjectNoData(t *testing.T) {
+func TestCmdSyncExplicitProjectNoData(t *testing.T) {
 	workDir := filepath.Join(t.TempDir(), "repo-name")
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		t.Fatalf("mkdir workdir: %v", err)
@@ -926,7 +958,7 @@ func TestCmdSyncDefaultProjectNoData(t *testing.T) {
 	withCwd(t, workDir)
 
 	cfg := testConfig(t)
-	withArgs(t, "engram", "sync")
+	withArgs(t, "engram", "sync", "--project", "repo-name")
 	stdout, stderr := captureOutput(t, func() { cmdSync(cfg) })
 	if stderr != "" {
 		t.Fatalf("expected no stderr, got: %q", stderr)
@@ -1108,6 +1140,30 @@ func TestCmdSearchLocalMode(t *testing.T) {
 	}
 }
 
+func TestCmdSearchJSONExposesWeakIdentityStrength(t *testing.T) {
+	cfg := testConfig(t)
+	workDir := t.TempDir()
+	withCwd(t, workDir)
+	resolvedWorkDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	withArgs(t, "engram", "search", "missing", "--json")
+	stdout, stderr := captureOutput(t, func() { cmdSearch(cfg) })
+	if stderr != "" {
+		t.Fatalf("search stderr = %q", stderr)
+	}
+	payload := decodeCLIJSON(t, stdout)
+	if payload["project_source"] != project.SourceDirBasename ||
+		payload["project_path"] != resolvedWorkDir ||
+		payload["project_strength"] != string(project.IdentityStrengthWeak) ||
+		payload["implicit_write_allowed"] != false ||
+		payload["safe_next_action"] != project.ExplicitProjectSafeNextAction {
+		t.Fatalf("search identity metadata = %v", payload)
+	}
+}
+
 // ─── Projects command tests ───────────────────────────────────────────────────
 
 func TestCmdProjectsListEmpty(t *testing.T) {
@@ -1266,7 +1322,51 @@ func TestCmdProjectsRescueOwnershipRequiresScope(t *testing.T) {
 	}
 }
 
+func stubStrongDetectedProject(t *testing.T, name string) {
+	t.Helper()
+	old := detectProjectFull
+	detectProjectFull = func(dir string) project.DetectionResult {
+		return project.DetectionResult{Project: name, Source: project.SourceConfig, Path: dir}
+	}
+	t.Cleanup(func() { detectProjectFull = old })
+}
+
+func TestCmdProjectsConsolidateRejectsWeakIdentityBeforeOpeningStore(t *testing.T) {
+	stubExitWithPanic(t)
+	cfg := testConfig(t)
+	workDir := filepath.Join(t.TempDir(), "local-repo")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withCwd(t, workDir)
+	old := detectProjectFull
+	detectProjectFull = func(string) project.DetectionResult {
+		return project.DetectionResult{Project: "local-repo", Source: project.SourceDirBasename, Path: workDir}
+	}
+	t.Cleanup(func() { detectProjectFull = old })
+
+	withArgs(t, "engram", "projects", "consolidate")
+	_, stderr, recovered := captureOutputAndRecover(t, func() { cmdProjectsConsolidate(cfg) })
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("expected fatal exit, got %v", recovered)
+	}
+	payload := decodeCLIJSON(t, stderr)
+	details, _ := payload["details"].(map[string]any)
+	if payload["code"] != project.WriteAuthorityErrorCode ||
+		details["project"] != "local-repo" ||
+		details["project_source"] != project.SourceDirBasename ||
+		details["project_path"] != workDir ||
+		details["project_strength"] != string(project.IdentityStrengthWeak) ||
+		details["safe_next_action"] != project.ExplicitProjectSafeNextAction {
+		t.Fatalf("weak consolidation rejection = %v", payload)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("weak consolidation identity opened store or left state: %v", err)
+	}
+}
+
 func TestCmdProjectsConsolidateNoSimilar(t *testing.T) {
+	stubExitWithPanic(t)
 	cfg := testConfig(t)
 
 	// Seed a single unique project
@@ -1279,15 +1379,10 @@ func TestCmdProjectsConsolidateNoSimilar(t *testing.T) {
 	}
 	withCwd(t, workDir)
 
-	// Stub detectProject to return the known canonical
-	old := detectProject
-	detectProject = func(string) string { return "unique-project" }
-	t.Cleanup(func() { detectProject = old })
-
-	withArgs(t, "engram", "projects", "consolidate")
-	stdout, stderr := captureOutput(t, func() { cmdProjectsConsolidate(cfg) })
-	if stderr != "" {
-		t.Fatalf("expected no stderr, got: %q", stderr)
+	withArgs(t, "engram", "projects", "consolidate", "--project", "unique-project")
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdProjectsConsolidate(cfg) })
+	if recovered != nil || stderr != "" {
+		t.Fatalf("expected explicit project to succeed, panic=%v stderr=%q", recovered, stderr)
 	}
 	if !strings.Contains(stdout, "No similar") {
 		t.Fatalf("expected no-similar message, got: %q", stdout)
@@ -1311,9 +1406,7 @@ func TestCmdProjectsConsolidateRejectsWeakCandidates(t *testing.T) {
 			mustSeedObservation(t, cfg, "s-canonical", tt.canonical, "note", "canonical", "content", "project")
 			mustSeedObservation(t, cfg, "s-candidate", tt.candidate, "note", "candidate", "content", "project")
 
-			old := detectProject
-			detectProject = func(string) string { return tt.canonical }
-			t.Cleanup(func() { detectProject = old })
+			stubStrongDetectedProject(t, tt.canonical)
 
 			withArgs(t, "engram", "projects", "consolidate")
 			stdout, stderr := captureOutput(t, func() { cmdProjectsConsolidate(cfg) })
@@ -1335,9 +1428,7 @@ func TestCmdProjectsConsolidateDryRun(t *testing.T) {
 	mustSeedObservation(t, cfg, "s-legacy", "legacy-source", "note", "legacy note", "content", "project")
 	rewriteLegacyProjectName(t, cfg, "legacy-source", "ENGRAM")
 
-	old := detectProject
-	detectProject = func(string) string { return "engram" }
-	t.Cleanup(func() { detectProject = old })
+	stubStrongDetectedProject(t, "engram")
 
 	withArgs(t, "engram", "projects", "consolidate", "--dry-run")
 	stdout, stderr := captureOutput(t, func() { cmdProjectsConsolidate(cfg) })
@@ -1371,9 +1462,7 @@ func TestCmdProjectsConsolidateSingleProject(t *testing.T) {
 	mustSeedObservation(t, cfg, "s-legacy", "legacy-source", "note", "legacy note", "content", "project")
 	rewriteLegacyProjectName(t, cfg, "legacy-source", "ENGRAM")
 
-	old := detectProject
-	detectProject = func(string) string { return "engram" }
-	t.Cleanup(func() { detectProject = old })
+	stubStrongDetectedProject(t, "engram")
 
 	// Stub scanInputLine to answer "all"
 	oldScan := scanInputLine
@@ -1694,9 +1783,7 @@ func TestCmdProjectsConsolidateCaseOnlyVariantReportsMovedRecords(t *testing.T) 
 	mustSeedPrompt(t, cfg, "s-legacy", "legacy-source")
 	rewriteLegacyProjectName(t, cfg, "legacy-source", "ENGRAM")
 
-	old := detectProject
-	detectProject = func(string) string { return "engram" }
-	t.Cleanup(func() { detectProject = old })
+	stubStrongDetectedProject(t, "engram")
 
 	oldScan := scanInputLine
 	t.Cleanup(func() { scanInputLine = oldScan })
@@ -1743,9 +1830,7 @@ func TestCmdProjectsConsolidateReportsNothingMergedWhenNoRecordsMove(t *testing.
 	mustSeedObservation(t, cfg, "s-legacy", "legacy-source", "note", "legacy note", "content", "project")
 	rewriteLegacyProjectName(t, cfg, "legacy-source", " engram ")
 
-	old := detectProject
-	detectProject = func(string) string { return "engram" }
-	t.Cleanup(func() { detectProject = old })
+	stubStrongDetectedProject(t, "engram")
 
 	oldScan := scanInputLine
 	t.Cleanup(func() { scanInputLine = oldScan })
@@ -1898,9 +1983,7 @@ func TestCmdProjectsConsolidateLeavesFuzzyMatchesUnmerged(t *testing.T) {
 				mustSeedObservation(t, cfg, "s-canonical", tt.canonical, "note", "canonical", "content", "project")
 				mustSeedObservation(t, cfg, "s-candidate", tt.candidate, "note", "candidate", "content", "project")
 
-				old := detectProject
-				detectProject = func(string) string { return tt.canonical }
-				t.Cleanup(func() { detectProject = old })
+				stubStrongDetectedProject(t, tt.canonical)
 
 				oldScan := scanInputLine
 				t.Cleanup(func() { scanInputLine = oldScan })
@@ -2077,10 +2160,12 @@ func TestCmdSyncUsesDetectProject(t *testing.T) {
 
 	cfg := testConfig(t)
 
-	// Stub detectProject to verify it's called instead of filepath.Base
-	old := detectProject
-	t.Cleanup(func() { detectProject = old })
-	detectProject = func(dir string) string { return "git-detected-project" }
+	// Stub full detection so sync consumes the shared write-authority policy.
+	old := detectProjectFull
+	t.Cleanup(func() { detectProjectFull = old })
+	detectProjectFull = func(dir string) project.DetectionResult {
+		return project.DetectionResult{Project: "git-detected-project", Source: project.SourceGitRemote, Path: dir}
+	}
 
 	withArgs(t, "engram", "sync")
 	stdout, stderr := captureOutput(t, func() { cmdSync(cfg) })
@@ -2089,6 +2174,72 @@ func TestCmdSyncUsesDetectProject(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "git-detected-project") {
 		t.Fatalf("expected detectProject result in output, got: %q", stdout)
+	}
+}
+
+func TestCmdSyncRejectsWeakImplicitProjectBeforeOpeningStore(t *testing.T) {
+	stubExitWithPanic(t)
+	workDir := t.TempDir()
+	withCwd(t, workDir)
+	cfg := testConfig(t)
+
+	old := detectProjectFull
+	t.Cleanup(func() { detectProjectFull = old })
+	detectProjectFull = func(string) project.DetectionResult {
+		return project.DetectionResult{Project: "tmp", Source: project.SourceDirBasename, Path: workDir}
+	}
+
+	withArgs(t, "engram", "sync")
+	_, stderr, recovered := captureOutputAndRecover(t, func() { cmdSync(cfg) })
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("expected fatal exit, got %v", recovered)
+	}
+	payload := decodeCLIJSON(t, stderr)
+	details, _ := payload["details"].(map[string]any)
+	if payload["code"] != project.WriteAuthorityErrorCode ||
+		details["project"] != "tmp" ||
+		details["project_source"] != project.SourceDirBasename ||
+		details["project_path"] != workDir ||
+		details["project_strength"] != string(project.IdentityStrengthWeak) ||
+		details["safe_next_action"] != project.ExplicitProjectSafeNextAction {
+		t.Fatalf("weak sync rejection = %v", payload)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("weak sync identity opened store or left state: %v", err)
+	}
+}
+
+func TestCmdSyncPreservesAmbiguousDetectionErrorBeforeOpeningStore(t *testing.T) {
+	stubExitWithPanic(t)
+	workDir := t.TempDir()
+	withCwd(t, workDir)
+	cfg := testConfig(t)
+
+	old := detectProjectFull
+	t.Cleanup(func() { detectProjectFull = old })
+	detectProjectFull = func(string) project.DetectionResult {
+		return project.DetectionResult{
+			Source:            project.SourceAmbiguous,
+			Path:              workDir,
+			Error:             project.ErrAmbiguousProject,
+			AvailableProjects: []string{"alpha", "beta"},
+		}
+	}
+
+	withArgs(t, "engram", "sync")
+	_, stderr, recovered := captureOutputAndRecover(t, func() { cmdSync(cfg) })
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("expected fatal exit, got %v", recovered)
+	}
+	payload := decodeCLIJSON(t, stderr)
+	details, _ := payload["details"].(map[string]any)
+	if payload["code"] != "ambiguous_project" ||
+		details["project_strength"] != string(project.IdentityStrengthUnresolved) ||
+		fmt.Sprint(details["available_projects"]) != "[alpha beta]" {
+		t.Fatalf("ambiguous sync rejection = %v", payload)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ambiguous project opened store or left state: %v", err)
 	}
 }
 

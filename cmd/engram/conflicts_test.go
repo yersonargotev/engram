@@ -12,11 +12,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/yersonargotev/engram/internal/project"
 	"github.com/yersonargotev/engram/internal/store"
 	versioncheck "github.com/yersonargotev/engram/internal/version"
 	_ "modernc.org/sqlite"
@@ -273,6 +275,70 @@ func TestCmdConflictsScan_Apply(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "inserted:") {
 		t.Errorf("expected 'inserted:' label in apply scan output; got: %q", stdout)
+	}
+}
+
+func TestCmdConflictsScanApplyRejectsWeakIdentityBeforeOpeningStore(t *testing.T) {
+	stubExitWithPanic(t)
+	cfg := testConfig(t)
+	workDir := t.TempDir()
+	withCwd(t, workDir)
+	old := detectProjectFull
+	detectProjectFull = func(string) project.DetectionResult {
+		return project.DetectionResult{Project: "local-repo", Source: project.SourceGitRoot, Path: workDir}
+	}
+	t.Cleanup(func() { detectProjectFull = old })
+
+	withArgs(t, "engram", "conflicts", "scan", "--apply")
+	_, stderr, recovered := captureOutputAndRecover(t, func() { cmdConflictsScan(cfg) })
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("expected fatal exit, got %v", recovered)
+	}
+	payload := decodeCLIJSON(t, stderr)
+	details, _ := payload["details"].(map[string]any)
+	if payload["code"] != project.WriteAuthorityErrorCode ||
+		details["project"] != "local-repo" ||
+		details["project_source"] != project.SourceGitRoot ||
+		details["project_path"] != workDir ||
+		details["project_strength"] != string(project.IdentityStrengthWeak) ||
+		details["safe_next_action"] != project.ExplicitProjectSafeNextAction {
+		t.Fatalf("weak conflict scan rejection = %v", payload)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("weak conflict scan identity opened store or left state: %v", err)
+	}
+}
+
+func TestCmdConflictsScanApplyPreservesDetectionErrorBeforeOpeningStore(t *testing.T) {
+	stubExitWithPanic(t)
+	cfg := testConfig(t)
+	workDir := t.TempDir()
+	withCwd(t, workDir)
+	old := detectProjectFull
+	detectProjectFull = func(string) project.DetectionResult {
+		return project.DetectionResult{
+			Source: project.SourceConfig,
+			Path:   filepath.Join(workDir, ".engram", "config.json"),
+			Error:  fmt.Errorf("%w: project_name is empty", project.ErrInvalidConfig),
+		}
+	}
+	t.Cleanup(func() { detectProjectFull = old })
+
+	withArgs(t, "engram", "conflicts", "scan", "--apply")
+	_, stderr, recovered := captureOutputAndRecover(t, func() { cmdConflictsScan(cfg) })
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("expected fatal exit, got %v", recovered)
+	}
+	payload := decodeCLIJSON(t, stderr)
+	details, _ := payload["details"].(map[string]any)
+	if payload["code"] != "project_detection_failed" ||
+		details["project_source"] != project.SourceConfig ||
+		details["project_strength"] != string(project.IdentityStrengthStrong) ||
+		details["implicit_write_allowed"] != false {
+		t.Fatalf("config detection rejection = %v", payload)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid config opened store or left state: %v", err)
 	}
 }
 

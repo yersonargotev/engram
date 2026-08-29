@@ -1,8 +1,7 @@
 // Package project provides utilities for detecting and normalizing project names.
 //
-// It replicates the detection logic from the Claude Code shell helpers and
-// OpenCode TypeScript plugin in pure Go, so CLI and MCP server can share
-// a single canonical implementation.
+// It owns the canonical detection logic consumed by the CLI, MCP server, HTTP
+// API, and thin agent adapters.
 package project
 
 import (
@@ -31,6 +30,8 @@ const (
 	SourceGitChild         = "git_child"         // auto-promoted from single child git repo
 	SourceDirBasename      = "dir_basename"      // fallback: directory basename
 	SourceAmbiguous        = "ambiguous"         // cwd contains multiple git repos (Case 4)
+	SourceCLIExplicit      = "explicit"          // CLI read scope came from an explicit project flag
+	SourceEnvironment      = "environment"       // CLI write scope came from ENGRAM_PROJECT
 	SourceExplicitOverride = "explicit_override" // JR2-2: caller explicitly supplied a project name
 	SourceSessionProject   = "session"           // caller supplied a session_id with an existing project
 	// SourceUserSelectedAfterAmbiguousProject means an MCP write initially hit
@@ -40,6 +41,7 @@ const (
 	SourceRequestBody                       = "request_body"     // REQ-414: project came from the request body (server-side, no filesystem path)
 	SourceConfig                            = "config"           // derived from .engram/config.json project_name
 	SourceAllProjects                       = "all_projects"     // caller asked for cross-project search (no single project resolved)
+	SourcePersonalScope                     = "personal_scope"   // caller asked for cross-project personal-scope search
 	SourceProcessOverride                   = "process_override" // resolved from the process-level project override
 )
 

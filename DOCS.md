@@ -110,6 +110,20 @@ engram checkpoint record --host HOST --session-id ID --root-turn-id ID
 engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
 ```
 
+`engram current-project --json` separates discovery from write authority with
+`project_strength` and `implicit_write_allowed`. Weak `git_root`, `git_child`,
+and `dir_basename` results remain useful for reads, but an implicit write fails
+with `weak_project_identity` before the store opens. Supply `--project` (or a
+documented explicit project boundary) to authorize the intended target.
+`engram search --json` reports the same source, path, strength, and implicit-write
+metadata while preserving weak best-effort reads. A weak CLI mutation rejection
+always writes the structured error envelope to stderr, even without `--json`;
+its `details` contain `project`, `project_source`, `project_path`,
+`project_strength`, `implicit_write_allowed`, and the exact `safe_next_action`.
+Ambiguous and otherwise failed detection retain `ambiguous_project` and
+`project_detection_failed`; `weak_project_identity` is reserved for a resolved
+fallback identity whose evidence is too weak to authorize the mutation.
+
 Checkpoint identity values are opaque. If one begins with a hyphen, use the inline
 forms `--host=VALUE`, `--session-id=VALUE`, or `--root-turn-id=VALUE` to avoid
 ambiguity with CLI options.
@@ -376,7 +390,7 @@ Engram is local-first: local SQLite is authoritative; cloud features are optiona
 ### Project Detection / Migration
 
 - `GET /project/current` — Detect the current project. Query: `?cwd=/path/to/repo`
-  - Always returns a success envelope with `{project, project_source, project_path, cwd, available_projects}` plus optional `warning`/`error_hint`
+  - Always returns a success envelope with `{project, project_source, project_path, project_strength, implicit_write_allowed, cwd, available_projects}` plus optional `warning`, `error_hint`, or `safe_next_action`
 - `POST /projects/migrate` — Rename a project across local records with `{old_project, new_project}`. It follows the server's optional Bearer authentication policy.
 - `POST /projects/rescue-ownership` — Bulk-assign ownership to explicitly selected historical records that carry none. The JSON body is limited to 8 KiB: `{target_project, confirmed:true, observation_ids?:[], session_ids?:[], prompt_ids?:[]}`.
   - A configured `ENGRAM_HTTP_TOKEN`, matching `Authorization: Bearer <token>`, `target_project`, `confirmed:true`, and at least one positive observation/prompt ID or non-blank session ID are required. Missing server token returns `503`; missing or wrong credentials return `401`; malformed or invalid requests return `400`.
@@ -939,14 +953,21 @@ Engram resolves the project at MCP tool call time. The default source is the **s
 
 ### Detection algorithm
 
-| Case | Condition                                                                                 | Source            | Project                            |
-| ---- | ----------------------------------------------------------------------------------------- | ----------------- | ---------------------------------- |
-| 1    | nearest `.engram/config.json` exists within the enclosing git root, or at cwd outside git | `config`          | `project_name` from config         |
-| 2    | cwd is a git root with `origin` remote                                                    | `git_remote`      | repo name from remote URL          |
-| 3    | cwd is inside a git repo (subdirectory)                                                   | `git_root`        | git root's directory basename      |
-| 4    | cwd has exactly one git-repo child                                                        | `git_child`       | child repo name (warning included) |
-| 5    | cwd has multiple git-repo children                                                        | `ambiguous` error | — write tools fail fast            |
-| 6    | no git repo near cwd                                                                      | `dir_basename`    | basename of cwd                    |
+| Case | Condition                                                                                 | Source            | Strength     | Implicit write | Project                            |
+| ---- | ----------------------------------------------------------------------------------------- | ----------------- | ------------ | -------------- | ---------------------------------- |
+| 1    | nearest `.engram/config.json` exists within the enclosing git root, or at cwd outside git | `config`          | `strong`     | allowed        | `project_name` from config         |
+| 2    | cwd is a git root with `origin` remote                                                    | `git_remote`      | `strong`     | allowed        | repo name from remote URL          |
+| 3    | cwd is inside a git repo (subdirectory)                                                   | `git_root`        | `weak`       | rejected       | git root's directory basename      |
+| 4    | cwd has exactly one git-repo child                                                        | `git_child`       | `weak`       | rejected       | child repo name (warning included) |
+| 5    | cwd has multiple git-repo children                                                        | `ambiguous` error | `unresolved` | rejected       | —                                  |
+| 6    | no git repo near cwd                                                                      | `dir_basename`    | `weak`       | rejected       | basename of cwd                    |
+
+CLI explicit scope, `ENGRAM_PROJECT` environment scope, explicit override,
+validated ambiguity selection, request-owned project, process override, and
+existing session-owned project sources have `explicit`
+strength and continue through their existing validation boundaries. The
+`all_projects` and `personal_scope` sources are `aggregate`. Unknown future sources fail closed for
+implicit writes.
 
 Child scan constraints: depth=1, max 20 entries, 200ms timeout, skips hidden dirs and noise dirs (`node_modules`, `vendor`, `.venv`, `__pycache__`, `target`, `dist`, `build`, `.idea`, `.vscode`).
 
@@ -959,6 +980,8 @@ Most successful MCP tool responses use this envelope:
   "project": "engram",
   "project_source": "git_remote",
   "project_path": "/home/user/engram",
+  "project_strength": "strong",
+  "implicit_write_allowed": true,
   "result": "...(tool output)..."
 }
 ```
@@ -967,21 +990,22 @@ Error responses include `available_projects` when the error is `ambiguous_projec
 
 Exceptions:
 
-- `mem_current_project` returns detection fields directly (`project`, `project_source`, `project_path`, `cwd`, `available_projects`, optional `warning` / `error_hint`) and does not wrap them in `result`.
+- `mem_current_project` returns detection fields directly (`project`, `project_source`, `project_path`, `project_strength`, `implicit_write_allowed`, `cwd`, `available_projects`, optional `warning`, `error_hint`, or `safe_next_action`) and does not wrap them in `result`.
 - `mem_doctor` returns the same JSON report shape as `engram doctor --json`; it uses read-project resolution before running diagnostics but does not wrap the report in the common MCP envelope.
 - `mem_checkpoint` and `mem_checkpoint_status` use opaque host/session/root-turn identity instead of automatic project resolution. `saved` and `needs_review` writes require an explicit `project`; `skipped` and status do not. Their JSON success and error envelopes match the corresponding CLI commands; tool errors set MCP `isError=true`.
 
 ### Write tools (explicit/session/cwd project resolution)
 
-`mem_session_start` resolves from its explicit `directory` argument when supplied; otherwise it auto-detects from cwd. `mem_session_end` and `mem_capture_passive` auto-detect project from cwd; any `project` argument the LLM sends to them is ignored. `mem_session_summary` supports explicit project override (`project`, `project_choice_reason`, `recovery_token`) matching `mem_save`'s project resolution.
+`mem_session_start` honors the MCP process override (`--project` or `ENGRAM_PROJECT`), then resolves from its explicit `directory` argument when supplied, otherwise from cwd. `mem_session_end` uses the project already owned by the persisted session, while `mem_capture_passive` auto-detects from cwd; any `project` argument the LLM sends to them is ignored. `mem_session_summary` supports explicit project override (`project`, `project_choice_reason`, `recovery_token`) matching `mem_save`'s project resolution.
 
 `mem_update` uses ID-based updates and auto-detects project only for response envelope metadata. Its public schema does not expose `project`; raw legacy clients may still send a non-empty `project` argument, and the handler tolerates it as an observation project update for compatibility.
 
-`mem_save` resolves writes by precedence: validated explicit `project`, project already associated with `session_id`, repo/cwd detection (nearest `.engram/config.json` within the enclosing git root, git remote/root/child), then directory-basename fallback.
+`mem_save` resolves writes by precedence: validated explicit `project`, project already associated with `session_id`, then strong repo/cwd detection (`config` or `git_remote`). Weak repo-root, child-repo, and directory-basename detection is retained for discovery but cannot select the write target.
 
 Guardrails:
 
 - Invalid explicit `project` names fail loudly instead of silently falling back.
+- Weak implicit identity fails with `weak_project_identity` and the exact safe next action `provide an explicit project name and retry the write` before any session, observation, prompt, proposal, checkpoint, or sync mutation is created.
 - Valid-looking explicit `project` names are accepted only when backed by known context: an existing local project in the store, a matching existing session project, the nearest resolvable `.engram/config.json`, or exact ambiguous-project recovery after the user selected one available project.
 - An unbacked explicit `project` fails loudly and does not create a new bucket.
 - If a non-empty `session_id` is supplied and no session exists, `mem_save` fails with a structured error and does not write.
@@ -1014,13 +1038,19 @@ Use `mem_current_project` as the first call in a session to inspect the detectio
   "project": "engram",
   "project_source": "git_remote",
   "project_path": "/home/user/engram",
+  "project_strength": "strong",
+  "implicit_write_allowed": true,
   "cwd": "/home/user/engram",
   "available_projects": [],
   "warning": ""
 }
 ```
 
-Returns success even when cwd is ambiguous — empty `project` + non-empty `available_projects` signals the agent to navigate to a specific repo before writing.
+Returns success for weak and ambiguous discovery. A weak non-empty project is
+read-only evidence; `project_strength: "weak"` and
+`implicit_write_allowed: false` signal the caller to request an explicit project
+before writing. An empty `project` plus non-empty `available_projects` signals an
+explicit ambiguity choice.
 
 ---
 
@@ -1176,7 +1206,7 @@ Extract structured learnings from text output. Looks for `## Key Learnings:` sec
 
 ### mem_current_project
 
-Detect the current project from the working directory. Returns `project`, `project_source`, `project_path`, `cwd`, `available_projects`, and `warning`. Never returns an error — even on ambiguous cwd it returns success with an empty `project` and non-empty `available_projects`. Recommended as the first call when starting a session.
+Detect the current project from the working directory. Returns `project`, `project_source`, `project_path`, `project_strength`, `implicit_write_allowed`, `cwd`, `available_projects`, and optional recovery metadata. Never returns an error — weak results remain readable and ambiguous cwd returns an empty `project` with non-empty `available_projects`. Recommended as the first call when starting a session.
 
 ### mem_doctor
 
@@ -1363,7 +1393,7 @@ When saving to a project that doesn't exist yet, Engram checks for similar exist
 
 ### Retroactive cleanup
 
-Use `engram projects consolidate` to interactively merge legacy project names that are equivalent after normalization, or `mem_merge_projects` for agent-driven consolidation.
+Use `engram projects consolidate --project <name>` to interactively merge legacy project names that are equivalent after normalization. In a strong config- or remote-backed repo, `--project` may be omitted. Use `mem_merge_projects` for agent-driven consolidation.
 
 Use `engram projects rescue-ownership --project <name> [--session <id>] [--observation <id>] [--prompt <id>]` to assign ownership to legacy rows that carry none. It prints how many sessions, observations, and prompts moved, and — when anything was left behind — exactly which items and why. It works against the local store, so it needs no running server and no `ENGRAM_HTTP_TOKEN`.
 

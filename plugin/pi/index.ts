@@ -127,6 +127,9 @@ interface CurrentProjectResponse {
   project?: string;
   project_source?: string;
   project_path?: string;
+  project_strength?: string;
+  implicit_write_allowed?: boolean;
+  safe_next_action?: string;
   cwd?: string;
   available_projects?: string[] | null;
   warning?: string;
@@ -277,6 +280,8 @@ function detectLocalConfigProject(cwd: string): CurrentProjectResponse | undefin
             project: projectName,
             project_source: "config",
             project_path: current,
+            project_strength: "strong",
+            implicit_write_allowed: true,
             cwd,
             warning: `Engram server at ${ENGRAM_URL} does not support /project/current; using ${configPath}. Upgrade or restart Engram for canonical project detection.`,
           };
@@ -613,6 +618,7 @@ let project = "unknown";
 let directory = "";
 let pendingRecoveryNotice: string | undefined;
 let projectResolutionError: string | undefined;
+let projectWriteAuthorityError: string | undefined;
 let projectDetectionPending = false;
 
 const knownSessions = new Set<string>();
@@ -666,13 +672,24 @@ function applyDetectedProject(detected: CurrentProjectResponse | undefined): boo
     return false;
   }
   projectDetectionPending = false;
-  if (detected.project) {
+  if (detected.project && !detected.error_hint) {
     project = detected.project;
     projectResolutionError = undefined;
+    const writeIdentityAccepted = detected.project_strength === "explicit"
+      || (detected.project_strength === "strong" && detected.implicit_write_allowed === true);
+    if (writeIdentityAccepted) {
+      projectWriteAuthorityError = undefined;
+    } else if (detected.project_strength === "weak") {
+      const action = detected.safe_next_action || "provide an explicit project name and retry the write";
+      projectWriteAuthorityError = `weak_project_identity: project ${JSON.stringify(detected.project)} was detected from ${detected.project_source || "unknown"} with weak identity strength; ${action}`;
+    } else {
+      projectWriteAuthorityError = "Engram project identity classification is unavailable; upgrade or restart Engram, or provide an explicit project name for the write";
+    }
     return true;
   }
   const choices = detected.available_projects?.length ? ` Available projects: ${detected.available_projects.join(", ")}.` : "";
   projectResolutionError = detected.error_hint || detected.warning || `Engram project detection did not resolve a project.${choices}`;
+  projectWriteAuthorityError = undefined;
   return false;
 }
 
@@ -691,6 +708,11 @@ function forgetKnownSession(sessionId: string): void {
 function requireResolvedProject(): void {
   if (projectResolutionError) throw new Error(projectResolutionError);
   if (projectDetectionPending) throw new Error("Engram project detection is unavailable; cannot safely choose a project");
+}
+
+function requireWriteProject(): void {
+  requireResolvedProject();
+  if (projectWriteAuthorityError) throw new Error(projectWriteAuthorityError);
 }
 
 async function initialize(cwd: string): Promise<void> {
@@ -914,7 +936,7 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
     case "mem_get_observation":
       return engramFetch(`/observations/${encodeURIComponent(String(params.id))}`);
     case "mem_save": {
-      if (!requestedProject) requireResolvedProject();
+      if (!requestedProject) requireWriteProject();
       const activeSessionId = runtimeSessionForWrite();
       await ensureSession(activeSessionId, activeProject);
       return engramFetch("/observations", {
@@ -946,7 +968,7 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
     case "mem_suggest_topic_key":
       return { topic_key: slugifyTopicKey(params) };
     case "mem_save_prompt": {
-      if (!requestedProject) requireResolvedProject();
+      if (!requestedProject) requireWriteProject();
       const promptSessionId = runtimeSessionForWrite();
       await ensureSession(promptSessionId, activeProject);
       const response = await engramFetch<{ id: number }>("/prompts", {
@@ -956,7 +978,7 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
       return response ? { prompt_id: response.id, status: "saved" } : response;
     }
     case "mem_session_summary": {
-      if (!requestedProject) requireResolvedProject();
+      if (!requestedProject) requireWriteProject();
       const summarySessionId = runtimeSessionForWrite();
       await ensureSession(summarySessionId, activeProject);
       return engramFetch("/observations", {
@@ -972,7 +994,7 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
       });
     }
     case "mem_session_start":
-      requireResolvedProject();
+      requireWriteProject();
       return engramFetch("/sessions", {
         method: "POST",
         body: { id: params.id, project, directory: params.directory || directory || ctx.cwd },
@@ -996,7 +1018,7 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
     case "mem_doctor":
       return engramFetch(`/doctor${queryString({ project: params.project, check: params.check, cwd: params.project ? undefined : ctx.cwd })}`);
     case "mem_capture_passive": {
-      requireResolvedProject();
+      requireWriteProject();
       const passiveSessionId = runtimeSessionForWrite();
       await ensureSession(passiveSessionId);
       return engramFetch("/observations/passive", {
@@ -1132,7 +1154,7 @@ export default function registerEngram(pi: ExtensionAPI) {
   pi.on("session_compact", async (event: unknown, ctx: SessionContext) => {
     if (!(await initOnceForHook(ctx.cwd))) return;
     await refreshProjectDetection(ctx.cwd);
-    if (projectDetectionPending || projectResolutionError) return;
+    if (projectDetectionPending || projectResolutionError || projectWriteAuthorityError) return;
     const sessionId = getSessionId(ctx);
     if (sessionId) await ensureSession(sessionId);
 
@@ -1170,7 +1192,7 @@ export default function registerEngram(pi: ExtensionAPI) {
     }
 
     const finalContent = event.prompt?.trim();
-    if ((projectDetectionPending || projectResolutionError) && sessionId && finalContent && finalContent.length > 10) {
+    if ((projectDetectionPending || projectResolutionError || projectWriteAuthorityError) && sessionId && finalContent && finalContent.length > 10) {
       return { systemPrompt };
     }
     if (sessionId && finalContent && finalContent.length > 10) {
@@ -1193,7 +1215,7 @@ export default function registerEngram(pi: ExtensionAPI) {
     if (!(await initOnceForHook(ctx.cwd))) return;
     await refreshProjectDetection(ctx.cwd);
     const sessionId = getSessionId(ctx);
-    if (!sessionId || projectDetectionPending || projectResolutionError) return;
+    if (!sessionId || projectDetectionPending || projectResolutionError || projectWriteAuthorityError) return;
 
     await ensureSessionBestEffort(sessionId);
     toolCounts.set(sessionId, (toolCounts.get(sessionId) ?? 0) + 1);

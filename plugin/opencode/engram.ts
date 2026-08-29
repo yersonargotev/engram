@@ -166,32 +166,6 @@ async function isEngramRunning(): Promise<boolean> {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function extractProjectName(directory: string): string {
-  // Try git remote origin URL
-  try {
-    const result = Bun.spawnSync(["git", "-C", directory, "remote", "get-url", "origin"])
-    if (result.exitCode === 0) {
-      const url = result.stdout?.toString().trim()
-      if (url) {
-        const name = url.replace(/\.git$/, "").split(/[/:]/).pop()
-        if (name) return name
-      }
-    }
-  } catch {}
-
-  // Fallback: git root directory name (works in worktrees)
-  try {
-    const result = Bun.spawnSync(["git", "-C", directory, "rev-parse", "--show-toplevel"])
-    if (result.exitCode === 0) {
-      const root = result.stdout?.toString().trim()
-      if (root) return root.split("/").pop() ?? "unknown"
-    }
-  } catch {}
-
-  // Final fallback: cwd basename
-  return directory.split("/").pop() ?? "unknown"
-}
-
 function truncate(str: string, max: number): string {
   if (!str) return ""
   return str.length > max ? str.slice(0, max) + "..." : str
@@ -211,7 +185,9 @@ function stripPrivateTags(str: string): string {
 
 export const Engram: Plugin = async (ctx) => {
   const oldProject = ctx.directory.split("/").pop() ?? "unknown"
-  const project = extractProjectName(ctx.directory)
+  let project = oldProject
+  let implicitProjectWriteAllowed = false
+  let projectWriteAuthorityError = "Engram project identity classification is unavailable; upgrade or restart Engram, or provide an explicit project name for the write"
 
   // Track tool counts per session (in-memory only, not critical)
   const toolCounts = new Map<string, number>()
@@ -377,16 +353,18 @@ export const Engram: Plugin = async (ctx) => {
    *
    * Silently skips sub-agent sessions (tracked in `subAgentSessions`).
    */
-  async function ensureSession(sessionId: string): Promise<boolean> {
+  async function ensureSession(sessionId: string, explicitProject = ""): Promise<boolean> {
     if (!sessionId || invalidSessions.has(sessionId)) return false
     if (knownSessions.has(sessionId)) return true
     // Do not register sub-agent sessions in Engram (issue #116).
     if (subAgentSessions.has(sessionId)) return false
+    const sessionProject = explicitProject.trim() || project
+    if (!explicitProject.trim() && !implicitProjectWriteAllowed) return false
     const acknowledgement = await engramFetch("/sessions", {
       method: "POST",
       body: {
         id: sessionId,
-        project,
+        project: sessionProject,
         directory: ctx.directory,
       },
     })
@@ -410,9 +388,22 @@ export const Engram: Plugin = async (ctx) => {
     }
   }
 
+  const detectedProject = await engramFetch(`/project/current?cwd=${encodeURIComponent(ctx.directory)}`)
+  if (typeof detectedProject?.project === "string" && detectedProject.project.trim() && !detectedProject.error_hint) {
+    project = detectedProject.project.trim()
+    implicitProjectWriteAllowed = detectedProject.project_strength === "explicit"
+      || (detectedProject.project_strength === "strong" && detectedProject.implicit_write_allowed === true)
+    if (implicitProjectWriteAllowed) {
+      projectWriteAuthorityError = ""
+    } else if (detectedProject.project_strength === "weak") {
+      const action = detectedProject.safe_next_action || "provide an explicit project name and retry the write"
+      projectWriteAuthorityError = `weak_project_identity: project ${JSON.stringify(project)} was detected from ${detectedProject.project_source || "unknown"} with weak identity strength; ${action}`
+    }
+  }
+
   // Migrate project name if it changed (one-time, idempotent)
   // Must run AFTER server startup to ensure the endpoint is available
-  if (oldProject !== project) {
+  if (implicitProjectWriteAllowed && oldProject !== project) {
     await engramFetch("/projects/migrate", {
       method: "POST",
       body: { old_project: oldProject, new_project: project },
@@ -426,7 +417,7 @@ export const Engram: Plugin = async (ctx) => {
   try {
     const manifestFile = `${ctx.directory}/.engram/manifest.json`
     const file = Bun.file(manifestFile)
-    if (await file.exists()) {
+    if (implicitProjectWriteAllowed && await file.exists()) {
       Bun.spawn([ENGRAM_BIN, "sync", "--import"], {
         cwd: ctx.directory,
         stdout: "ignore",
@@ -524,11 +515,15 @@ export const Engram: Plugin = async (ctx) => {
 
     "tool.execute.before": async (input, output) => {
       if (!SESSION_ATTRIBUTED_WRITE_TOOLS.has(input.tool.toLowerCase())) return
+      const requestedProject = typeof output.args.project === "string" ? output.args.project.trim() : ""
+      if (!requestedProject && !implicitProjectWriteAllowed) {
+        throw new Error(projectWriteAuthorityError)
+      }
       const authoritativeSessionID = await resolveAuthoritativeSessionID(input.sessionID)
       if (!authoritativeSessionID) {
         throw new Error(`gentle-engram could not resolve an authoritative OpenCode runtime session for ${input.tool}`)
       }
-      const registered = await ensureSession(authoritativeSessionID)
+      const registered = await ensureSession(authoritativeSessionID, requestedProject)
       const confirmedSessionID = await resolveAuthoritativeSessionID(input.sessionID)
       if (confirmedSessionID !== authoritativeSessionID) {
         throw new Error(`gentle-engram could not resolve an authoritative OpenCode runtime session for ${input.tool}`)

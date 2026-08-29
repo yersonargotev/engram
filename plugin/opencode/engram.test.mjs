@@ -71,6 +71,13 @@ async function createRuntime(t, {
   sessionGet = async ({ path }) => sdkResult(session(path.id)),
   registrationResponse,
   contextResponse,
+  projectResponse = {
+    project: "engram",
+    project_source: "git_remote",
+    project_path: "/work/engram",
+    project_strength: "strong",
+    implicit_write_allowed: true,
+  },
 } = {}) {
   const originalFetch = globalThis.fetch
   const originalBun = globalThis.Bun
@@ -88,6 +95,7 @@ async function createRuntime(t, {
   globalThis.fetch = async (url, init) => {
     const path = new URL(url).pathname
     if (path === "/health") return { ok: true, async json() { return { status: "ok" } } }
+    if (path === "/project/current") return httpResponse(projectResponse)
     const body = init?.body ? JSON.parse(init.body) : undefined
     requests.push({ path, url: String(url), body })
     if (path === "/sessions") {
@@ -130,6 +138,32 @@ async function createRuntime(t, {
     requests,
   }
 }
+
+test("weak automatic identity blocks OpenCode writes while explicit project input remains accepted", async (t) => {
+  const runtime = await createRuntime(t, {
+    projectResponse: {
+      project: "local-repo",
+      project_source: "git_root",
+      project_path: "/work/engram",
+      project_strength: "weak",
+      implicit_write_allowed: false,
+      safe_next_action: "provide an explicit project name and retry the write",
+    },
+  })
+
+  await runtime.event("session.created", session("runtime"))
+  assertNoRegistration(runtime, "weak identity must not create a session from lifecycle events")
+
+  const implicit = toolOutput()
+  await assert.rejects(runtime.before({ tool: "mem_save", sessionID: "runtime" }, implicit), /weak_project_identity.*provide an explicit project name and retry the write/)
+  assertNoRegistration(runtime, "weak implicit MCP preparation must fail before session registration")
+
+  const explicit = { args: { project: "chosen-project" } }
+  await runtime.before({ tool: "mem_save", sessionID: "runtime" }, explicit)
+  assert.equal(explicit.args.session_id, "runtime")
+  const registration = runtime.requests.find(({ path }) => path === "/sessions")
+  assert.equal(registration?.body.project, "chosen-project")
+})
 
 test("registration enters the cache only after a successful acknowledgement", async (t) => {
   assert.match(source, /signal: AbortSignal\.timeout\(3000\)/)

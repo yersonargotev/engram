@@ -1487,10 +1487,12 @@ func TestHandlePromptContextStatsTimelineAndSessionHandlers(t *testing.T) {
 	}
 
 	sessionStart := handleSessionStart(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
+	sessionStartDir := t.TempDir()
+	initTestGitRepoWithRemote(t, sessionStartDir, "git@github.com:user/engram.git")
 	startReq := mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
 		"id":        "s-new",
 		"project":   "engram",
-		"directory": "/tmp/engram",
+		"directory": sessionStartDir,
 	}}}
 	startRes, err := sessionStart(context.Background(), startReq)
 	if err != nil {
@@ -2888,7 +2890,7 @@ func TestMemDoctorOmittedProjectUsesAutoDetectedScope(t *testing.T) {
 	dir := t.TempDir()
 	initTestGitRepo(t, dir)
 	t.Chdir(dir)
-	detected, err := resolveWriteProject()
+	detected, err := detectCurrentProject()
 	if err != nil {
 		t.Fatalf("resolveWriteProject: %v", err)
 	}
@@ -3370,8 +3372,9 @@ func TestHandleSaveSimilarProjectWarning(t *testing.T) {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		initTestGitRepo(t, d)
 	}
+	initTestGitRepoWithRemote(t, engramDir, "git@github.com:user/engram.git")
+	initTestGitRepoWithRemote(t, engamDir, "git@github.com:user/engam.git")
 
 	// Save original cwd to restore between sub-saves.
 	origDir, err := os.Getwd()
@@ -3427,7 +3430,7 @@ func TestHandleSaveSimilarProjectWarning(t *testing.T) {
 func TestHandleSaveNoSimilarWarningWhenProjectExists(t *testing.T) {
 	// Set up a git repo so auto-detect returns a known project.
 	dir := t.TempDir()
-	initTestGitRepo(t, dir)
+	initTestGitRepoWithRemote(t, dir, "git@github.com:user/no-similar-warning.git")
 	t.Chdir(dir)
 
 	s := newMCPTestStore(t)
@@ -3790,6 +3793,30 @@ func TestSessionEndClearsActivity(t *testing.T) {
 	}
 }
 
+func TestSessionEndUsesExistingSessionAuthorityFromWeakCWD(t *testing.T) {
+	t.Chdir(t.TempDir())
+	s := newMCPTestStore(t)
+	if err := s.CreateSession("session-owned-end", "session-owned-project", "/work/session-owned"); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	res, err := handleSessionEnd(s, MCPConfig{}, NewSessionActivity(10*time.Minute))(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+		"id":      "session-owned-end",
+		"summary": "done",
+	}}})
+	if err != nil || res.IsError {
+		t.Fatalf("session end: err=%v isError=%v text=%s", err, res.IsError, callResultText(t, res))
+	}
+	body := callResultJSON(t, res)
+	if body["project"] != "session-owned-project" || body["project_source"] != project.SourceSessionProject || body["project_strength"] != string(project.IdentityStrengthExplicit) {
+		t.Fatalf("session-owned end envelope = %v", body)
+	}
+	session, err := s.GetSession("session-owned-end")
+	if err != nil || session.EndedAt == nil {
+		t.Fatalf("ended session = %+v err=%v", session, err)
+	}
+}
+
 func TestSessionEndRejectsBlankIDsWithoutMutation(t *testing.T) {
 	s := newMCPTestStore(t)
 	if err := s.CreateSession("valid-session", "engram", "/tmp"); err != nil {
@@ -4013,6 +4040,10 @@ func TestSessionStartWithExplicitDirectoryPreservesDirectory(t *testing.T) {
 		t.Fatalf("enroll project: %v", err)
 	}
 	explicitDir := filepath.Join(t.TempDir(), "explicit-worktree")
+	if err := os.MkdirAll(explicitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initTestGitRepoWithRemote(t, explicitDir, "git@github.com:user/session-start-explicit-project.git")
 
 	start := handleSessionStart(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
 	res, err := start(context.Background(), mcppkg.CallToolRequest{
@@ -4125,7 +4156,7 @@ func TestSessionStartWithExplicitDirectoryTrimsWhitespaceBeforePersisting(t *tes
 	}
 }
 
-func TestSessionStartWithExplicitPlainDirectoryUsesDirectoryBasenameProject(t *testing.T) {
+func TestSessionStartWithExplicitPlainDirectoryRejectsWeakIdentity(t *testing.T) {
 	s := newMCPTestStore(t)
 
 	workspace := t.TempDir()
@@ -4154,24 +4185,48 @@ func TestSessionStartWithExplicitPlainDirectoryUsesDirectoryBasenameProject(t *t
 			"directory": explicitDir,
 		}},
 	})
+	if err != nil {
+		t.Fatalf("session start handler: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("expected weak identity error, got %q", callResultText(t, res))
+	}
+	body := callResultJSON(t, res)
+	if body["error_code"] != project.WriteAuthorityErrorCode ||
+		body["project"] != "plain-session-target" ||
+		body["project_source"] != project.SourceDirBasename ||
+		body["project_strength"] != string(project.IdentityStrengthWeak) {
+		t.Fatalf("weak session-start envelope = %v", body)
+	}
+	var sessions int
+	if err := s.DB().QueryRow(`SELECT count(*) FROM sessions`).Scan(&sessions); err != nil || sessions != 0 {
+		t.Fatalf("weak session start created sessions=%d err=%v", sessions, err)
+	}
+}
+
+func TestSessionStartProcessOverrideAuthorizesWeakDirectory(t *testing.T) {
+	s := newMCPTestStore(t)
+	explicitDir := filepath.Join(t.TempDir(), "plain-session-target")
+	if err := os.MkdirAll(explicitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := handleSessionStart(s, MCPConfig{DefaultProject: "chosen-project"}, NewSessionActivity(10*time.Minute))(context.Background(), mcppkg.CallToolRequest{
+		Params: mcppkg.CallToolParams{Arguments: map[string]any{
+			"id":        "session-start-process-override",
+			"directory": explicitDir,
+		}},
+	})
 	if err != nil || res.IsError {
 		t.Fatalf("session start: err=%v isError=%v text=%s", err, res.IsError, callResultText(t, res))
 	}
-
-	sess, err := s.GetSession("session-start-explicit-plain-dir")
-	if err != nil {
-		t.Fatalf("get session: %v", err)
-	}
-	if sess.Project != "plain-session-target" {
-		t.Fatalf("expected explicit plain directory project, got %q", sess.Project)
-	}
-	if sess.Directory != explicitDir {
-		t.Fatalf("expected persisted directory=%q, got %q", explicitDir, sess.Directory)
-	}
-
 	body := callResultJSON(t, res)
-	if body["project"] != "plain-session-target" || body["project_source"] != project.SourceDirBasename {
-		t.Fatalf("expected dir_basename envelope for explicit plain directory, got %v", body)
+	if body["project"] != "chosen-project" || body["project_source"] != project.SourceProcessOverride || body["project_strength"] != string(project.IdentityStrengthExplicit) {
+		t.Fatalf("process-authorized session envelope = %v", body)
+	}
+	session, err := s.GetSession("session-start-process-override")
+	if err != nil || session.Project != "chosen-project" || session.Directory != explicitDir {
+		t.Fatalf("process-authorized session = %+v err=%v", session, err)
 	}
 }
 
@@ -4308,6 +4363,28 @@ func TestMemSave_ExplicitProjectOverridesDetectedProject(t *testing.T) {
 	correctResults, _ := s.Search("should be explicit project", store.SearchOptions{Project: "explicit memory project", Limit: 5})
 	if len(correctResults) == 0 {
 		t.Error("observation must be stored under explicit project")
+	}
+}
+
+func TestMemSaveExplicitProjectRemainsAuthorizedFromWeakCWD(t *testing.T) {
+	t.Chdir(t.TempDir())
+	s := newMCPTestStore(t)
+	if err := s.CreateSession("explicit-authority-seed", "explicit project", "/work/explicit"); err != nil {
+		t.Fatalf("create seed session: %v", err)
+	}
+
+	res, err := handleSave(s, MCPConfig{}, NewSessionActivity(10*time.Minute))(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+		"title":   "explicit authority",
+		"content": "must remain compatible",
+		"type":    "manual",
+		"project": "Explicit Project",
+	}}})
+	if err != nil || res.IsError {
+		t.Fatalf("explicit weak-cwd save: err=%v isError=%v text=%s", err, res.IsError, callResultText(t, res))
+	}
+	body := callResultJSON(t, res)
+	if body["project"] != "explicit project" || body["project_source"] != project.SourceExplicitOverride {
+		t.Fatalf("explicit project envelope = %v", body)
 	}
 }
 
@@ -4649,6 +4726,75 @@ func TestMemSave_AmbiguousEnvelope(t *testing.T) {
 	token, ok := body["recovery_token"].(string)
 	if !ok || token == "" {
 		t.Fatalf("expected ambiguous_project error to include recovery_token, got %v", body)
+	}
+}
+
+func TestMemSaveRejectsWeakImplicitProjectWithoutMutation(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	s := newMCPTestStore(t)
+	h := handleSave(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
+
+	res, err := h(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+		"title":   "must not persist",
+		"content": "weak project evidence",
+		"type":    "manual",
+	}}})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("expected weak identity error, got %q", callResultText(t, res))
+	}
+	body := callResultJSON(t, res)
+	if body["error_code"] != project.WriteAuthorityErrorCode ||
+		body["project"] != filepath.Base(dir) ||
+		body["project_source"] != project.SourceDirBasename ||
+		body["project_path"] != dir ||
+		body["project_strength"] != string(project.IdentityStrengthWeak) ||
+		body["safe_next_action"] != project.ExplicitProjectSafeNextAction {
+		t.Fatalf("weak identity envelope = %v", body)
+	}
+
+	for _, table := range []string{"sessions", "observations", "user_prompts", "sync_mutations"} {
+		var count int
+		if err := s.DB().QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("weak identity created %d rows in %s", count, table)
+		}
+	}
+}
+
+func TestMemSaveRejectsCollidingGitRootBasenames(t *testing.T) {
+	s := newMCPTestStore(t)
+	h := handleSave(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
+	workspace := t.TempDir()
+	for _, parent := range []string{"first", "second"} {
+		repoDir := filepath.Join(workspace, parent, "shared-name")
+		if err := os.MkdirAll(repoDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		initTestGitRepo(t, repoDir)
+		t.Chdir(repoDir)
+
+		res, err := h(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+			"title":   "must not collide",
+			"content": parent,
+		}}})
+		if err != nil || !res.IsError {
+			t.Fatalf("%s weak basename write: err=%v isError=%v text=%s", parent, err, res.IsError, callResultText(t, res))
+		}
+		body := callResultJSON(t, res)
+		if body["error_code"] != project.WriteAuthorityErrorCode || body["project"] != "shared-name" || body["project_source"] != project.SourceGitRoot {
+			t.Fatalf("%s weak basename envelope = %v", parent, body)
+		}
+	}
+
+	var observations int
+	if err := s.DB().QueryRow(`SELECT count(*) FROM observations`).Scan(&observations); err != nil || observations != 0 {
+		t.Fatalf("colliding weak basenames created observations=%d err=%v", observations, err)
 	}
 }
 
@@ -5505,7 +5651,7 @@ func TestMemSavePrompt_AmbiguousWithInventedProjectRejected(t *testing.T) {
 // TestMemSave_SuccessEnvelope asserts project, project_source, project_path in response (REQ-309).
 func TestMemSave_SuccessEnvelope(t *testing.T) {
 	dir := t.TempDir()
-	initTestGitRepo(t, dir)
+	initTestGitRepoWithRemote(t, dir, "git@github.com:user/mem-save-envelope.git")
 	t.Chdir(dir)
 
 	s := newMCPTestStore(t)
@@ -5717,6 +5863,23 @@ func TestMemCurrentProject_NormalResult(t *testing.T) {
 	}
 }
 
+func TestMemCurrentProjectExposesWeakWriteAuthority(t *testing.T) {
+	t.Chdir(t.TempDir())
+	s := newMCPTestStore(t)
+
+	res, err := handleCurrentProject(s, MCPConfig{})(context.Background(), mcppkg.CallToolRequest{})
+	if err != nil || res.IsError {
+		t.Fatalf("current project: err=%v isError=%v text=%s", err, res.IsError, callResultText(t, res))
+	}
+	body := callResultJSON(t, res)
+	if body["project_source"] != project.SourceDirBasename ||
+		body["project_strength"] != string(project.IdentityStrengthWeak) ||
+		body["implicit_write_allowed"] != false ||
+		body["safe_next_action"] != project.ExplicitProjectSafeNextAction {
+		t.Fatalf("weak current project policy = %v", body)
+	}
+}
+
 // TestMemCurrentProject_AmbiguousNoError: IsError==false, project=="", available_projects non-empty (REQ-313)
 func TestMemCurrentProject_AmbiguousNoError(t *testing.T) {
 	parent := t.TempDir()
@@ -5797,6 +5960,16 @@ func initTestGitRepo(t *testing.T, dir string) {
 	run("config", "user.name", "Test User")
 }
 
+func initTestGitRepoWithRemote(t *testing.T, dir, remote string) {
+	t.Helper()
+	initTestGitRepo(t, dir)
+	cmd := exec.Command("git", "remote", "add", "origin", remote)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git remote add: %v\n%s", err, out)
+	}
+}
+
 func callResultJSON(t *testing.T, res *mcppkg.CallToolResult) map[string]any {
 	t.Helper()
 	text := callResultText(t, res)
@@ -5809,21 +5982,18 @@ func callResultJSON(t *testing.T, res *mcppkg.CallToolResult) map[string]any {
 
 // ─── Batch 3: resolver helpers + envelope + error helper ─────────────────────
 
-// TestResolveWriteProject_AutoDetects: t.Chdir to temp git repo, assert Source!=""
-func TestResolveWriteProject_AutoDetects(t *testing.T) {
+func TestResolveWriteProjectRejectsGitRootWithoutRemote(t *testing.T) {
 	dir := t.TempDir()
 	initTestGitRepo(t, dir)
 	t.Chdir(dir)
 
 	res, err := resolveWriteProject()
-	if err != nil {
-		t.Fatalf("resolveWriteProject: %v", err)
+	var authorityErr *project.WriteAuthorityError
+	if !errors.As(err, &authorityErr) {
+		t.Fatalf("resolveWriteProject error = %T %v, want *project.WriteAuthorityError", err, err)
 	}
-	if res.Source == "" {
-		t.Error("Source must be non-empty for a git repo")
-	}
-	if res.Project == "" {
-		t.Error("Project must be non-empty for a git repo")
+	if res.Source != project.SourceGitRoot || authorityErr.Strength != project.IdentityStrengthWeak {
+		t.Fatalf("git-root write identity = result %+v error %+v", res, authorityErr)
 	}
 }
 
@@ -5988,6 +6158,19 @@ func TestResolveReadProject_WithOverride(t *testing.T) {
 	}
 	if res.Project != "known-project" {
 		t.Errorf("Project = %q; want %q", res.Project, "known-project")
+	}
+}
+
+func TestResolveReadProjectPreservesWeakBestEffortDetection(t *testing.T) {
+	t.Chdir(t.TempDir())
+	s := newMCPTestStore(t)
+
+	res, err := resolveReadProject(s, "")
+	if err != nil {
+		t.Fatalf("resolveReadProject weak fallback: %v", err)
+	}
+	if res.Source != project.SourceDirBasename || project.ClassifyIdentitySource(res.Source).Strength != project.IdentityStrengthWeak {
+		t.Fatalf("weak read identity = %+v", res)
 	}
 }
 

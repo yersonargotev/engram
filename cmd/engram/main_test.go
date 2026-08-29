@@ -1140,6 +1140,30 @@ func TestCmdSearchLocalMode(t *testing.T) {
 	}
 }
 
+func TestCmdSearchJSONExposesWeakIdentityStrength(t *testing.T) {
+	cfg := testConfig(t)
+	workDir := t.TempDir()
+	withCwd(t, workDir)
+	resolvedWorkDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	withArgs(t, "engram", "search", "missing", "--json")
+	stdout, stderr := captureOutput(t, func() { cmdSearch(cfg) })
+	if stderr != "" {
+		t.Fatalf("search stderr = %q", stderr)
+	}
+	payload := decodeCLIJSON(t, stdout)
+	if payload["project_source"] != project.SourceDirBasename ||
+		payload["project_path"] != resolvedWorkDir ||
+		payload["project_strength"] != string(project.IdentityStrengthWeak) ||
+		payload["implicit_write_allowed"] != false ||
+		payload["safe_next_action"] != project.ExplicitProjectSafeNextAction {
+		t.Fatalf("search identity metadata = %v", payload)
+	}
+}
+
 // ─── Projects command tests ───────────────────────────────────────────────────
 
 func TestCmdProjectsListEmpty(t *testing.T) {
@@ -1326,8 +1350,15 @@ func TestCmdProjectsConsolidateRejectsWeakIdentityBeforeOpeningStore(t *testing.
 	if _, ok := recovered.(exitCode); !ok {
 		t.Fatalf("expected fatal exit, got %v", recovered)
 	}
-	if !strings.Contains(stderr, project.WriteAuthorityErrorCode) || !strings.Contains(stderr, project.ExplicitProjectSafeNextAction) {
-		t.Fatalf("weak consolidation rejection = %q", stderr)
+	payload := decodeCLIJSON(t, stderr)
+	details, _ := payload["details"].(map[string]any)
+	if payload["code"] != project.WriteAuthorityErrorCode ||
+		details["project"] != "local-repo" ||
+		details["project_source"] != project.SourceDirBasename ||
+		details["project_path"] != workDir ||
+		details["project_strength"] != string(project.IdentityStrengthWeak) ||
+		details["safe_next_action"] != project.ExplicitProjectSafeNextAction {
+		t.Fatalf("weak consolidation rejection = %v", payload)
 	}
 	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("weak consolidation identity opened store or left state: %v", err)
@@ -2163,8 +2194,15 @@ func TestCmdSyncRejectsWeakImplicitProjectBeforeOpeningStore(t *testing.T) {
 	if _, ok := recovered.(exitCode); !ok {
 		t.Fatalf("expected fatal exit, got %v", recovered)
 	}
-	if !strings.Contains(stderr, project.WriteAuthorityErrorCode) || !strings.Contains(stderr, project.ExplicitProjectSafeNextAction) {
-		t.Fatalf("weak sync rejection = %q", stderr)
+	payload := decodeCLIJSON(t, stderr)
+	details, _ := payload["details"].(map[string]any)
+	if payload["code"] != project.WriteAuthorityErrorCode ||
+		details["project"] != "tmp" ||
+		details["project_source"] != project.SourceDirBasename ||
+		details["project_path"] != workDir ||
+		details["project_strength"] != string(project.IdentityStrengthWeak) ||
+		details["safe_next_action"] != project.ExplicitProjectSafeNextAction {
+		t.Fatalf("weak sync rejection = %v", payload)
 	}
 	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("weak sync identity opened store or left state: %v", err)

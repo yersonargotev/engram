@@ -294,8 +294,15 @@ func TestCmdConflictsScanApplyRejectsWeakIdentityBeforeOpeningStore(t *testing.T
 	if _, ok := recovered.(exitCode); !ok {
 		t.Fatalf("expected fatal exit, got %v", recovered)
 	}
-	if !strings.Contains(stderr, project.WriteAuthorityErrorCode) || !strings.Contains(stderr, project.ExplicitProjectSafeNextAction) {
-		t.Fatalf("weak conflict scan rejection = %q", stderr)
+	payload := decodeCLIJSON(t, stderr)
+	details, _ := payload["details"].(map[string]any)
+	if payload["code"] != project.WriteAuthorityErrorCode ||
+		details["project"] != "local-repo" ||
+		details["project_source"] != project.SourceGitRoot ||
+		details["project_path"] != workDir ||
+		details["project_strength"] != string(project.IdentityStrengthWeak) ||
+		details["safe_next_action"] != project.ExplicitProjectSafeNextAction {
+		t.Fatalf("weak conflict scan rejection = %v", payload)
 	}
 	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("weak conflict scan identity opened store or left state: %v", err)

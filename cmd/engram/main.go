@@ -1146,7 +1146,12 @@ func cmdSearch(cfg store.Config) {
 				"relations":   relations[result.SyncID],
 			})
 		}
-		_ = writeCLIJSON(map[string]any{"query": query, "project": opts.Project, "project_source": projectSource, "project_path": projectPath, "all_projects": allProjects, "results": structured})
+		identity := projectpkg.ClassifyIdentitySource(projectSource)
+		payload := map[string]any{"query": query, "project": opts.Project, "project_source": projectSource, "project_path": projectPath, "project_strength": identity.Strength, "implicit_write_allowed": identity.AllowsImplicitWrite, "all_projects": allProjects, "results": structured}
+		if identity.Strength == projectpkg.IdentityStrengthWeak {
+			payload["safe_next_action"] = projectpkg.ExplicitProjectSafeNextAction
+		}
+		_ = writeCLIJSON(payload)
 		return
 	}
 
@@ -1288,7 +1293,7 @@ func cmdSave(cfg store.Config) {
 				return
 			}
 			if authorityErr := projectpkg.RequireImplicitWriteAuthority(resolved); authorityErr != nil {
-				failCLI(opts.JSONMode, projectpkg.WriteAuthorityErrorCode, authorityErr.Error(), projectIdentityDetails(resolved))
+				failProjectWriteAuthority(resolved, authorityErr)
 				return
 			}
 			project = resolved.Project
@@ -1925,7 +1930,7 @@ func cmdSync(cfg store.Config) {
 		resolved := detectProjectFull(cwd)
 		if !doStatus {
 			if authorityErr := projectpkg.RequireImplicitWriteAuthority(resolved); authorityErr != nil {
-				fatal(fmt.Errorf("%s: %w", projectpkg.WriteAuthorityErrorCode, authorityErr))
+				failProjectWriteAuthority(resolved, authorityErr)
 				return
 			}
 		}
@@ -2716,7 +2721,7 @@ func cmdProjectsConsolidate(cfg store.Config) {
 			}
 			if !dryRun {
 				if err := projectpkg.RequireImplicitWriteAuthority(detectedProject); err != nil {
-					fatal(fmt.Errorf("%s: %w", projectpkg.WriteAuthorityErrorCode, err))
+					failProjectWriteAuthority(detectedProject, err)
 					return
 				}
 			}

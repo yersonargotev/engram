@@ -13,3 +13,7 @@ func projectIdentityDetails(result project.DetectionResult) map[string]any {
 		"safe_next_action":       project.ExplicitProjectSafeNextAction,
 	}
 }
+
+func failProjectWriteAuthority(result project.DetectionResult, err error) {
+	failCLI(true, project.WriteAuthorityErrorCode, err.Error(), projectIdentityDetails(result))
+}

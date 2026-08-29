@@ -97,8 +97,7 @@ func resolveConflictsWriteProject(explicit string) string {
 	}
 	detected := detectProjectFull(cwd)
 	if err := project.RequireImplicitWriteAuthority(detected); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s: %v\n", project.WriteAuthorityErrorCode, err)
-		exitFunc(1)
+		failProjectWriteAuthority(detected, err)
 		return ""
 	}
 	return detected.Project

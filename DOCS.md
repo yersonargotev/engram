@@ -115,6 +115,11 @@ engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
 and `dir_basename` results remain useful for reads, but an implicit write fails
 with `weak_project_identity` before the store opens. Supply `--project` (or a
 documented explicit project boundary) to authorize the intended target.
+`engram search --json` reports the same source, path, strength, and implicit-write
+metadata while preserving weak best-effort reads. A weak CLI mutation rejection
+always writes the structured error envelope to stderr, even without `--json`;
+its `details` contain `project`, `project_source`, `project_path`,
+`project_strength`, `implicit_write_allowed`, and the exact `safe_next_action`.
 
 Checkpoint identity values are opaque. If one begins with a hyphen, use the inline
 forms `--host=VALUE`, `--session-id=VALUE`, or `--root-turn-id=VALUE` to avoid

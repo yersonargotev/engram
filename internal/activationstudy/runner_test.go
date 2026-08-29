@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,7 @@ func TestRunUsesDisposableStateAndReturnsOnlyBoundedEvents(t *testing.T) {
 	}
 	study.Contract.SourceRevision = revision
 	study.Contract.Engram.SourceRevision = revision
+	study.Contract.Codex.GoVersion = runtime.Version()
 	study.Contract.UserSkill.TreeSHA256 = skillHash
 	study.Contract.Repetitions = 1
 

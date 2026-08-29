@@ -35,6 +35,82 @@
       "expected": {"must_appear":[{"key":"task","because":"it matches authoritative Task intent","signals":["task_intent"]}],"must_not_appear":[{"key":"git","because":"repository-only evidence cannot override supplied Task intent"}],"order":["task"],"diagnostics":[]}
     },
     {
+      "name": "exact_issue_and_pr_identifiers_beat_generic_workflow_terms_task_only",
+      "purpose": "Exact issue and PR identity plus the Codex setup subject outrank generic workflow prose without Repository signals.",
+      "input": {"project":"engram","task_intent":"merge PR 56 for issue 43 and restore Codex setup reproducibility while cleaning its protected branch after validation"},
+      "memories": [
+        {"key":"exact","title":"Codex setup reproducibility delivery","content":"PR 56 addressed #43.","project":"engram","scope":"project"},
+        {"key":"generic","title":"Old merge workflow","content":"Merge PR for issue and clean only its branch after validation.","project":"engram","scope":"project"}
+      ],
+      "relations": [], "repeat": 3,
+      "expected": {"must_appear":[{"key":"exact","because":"exact PR and issue agreement plus the Codex setup subject establish authoritative Task relevance","signals":["task_intent"],"identifiers":["pr:#56","issue:#43"],"distinctive_terms":["codex","setup","reproducibility"]}],"must_not_appear":[{"key":"generic","because":"generic workflow overlap cannot qualify a Memory"}],"order":["exact"],"diagnostics":["task_input_truncated"],"truncations":{"task_intent":6}}
+    },
+    {
+      "name": "pr_hash_notation_does_not_become_issue_identity",
+      "purpose": "A hash inside an explicit PR reference remains typed as a PR and cannot match an issue with the same number.",
+      "input": {"project":"engram","task_intent":"PR #56"},
+      "memories": [
+        {"key":"pr","title":"Pull request delivery","content":"PR #56 contains the approved change.","project":"engram","scope":"project"},
+        {"key":"issue","title":"Issue record","content":"Issue #56 describes unrelated work.","project":"engram","scope":"project"}
+      ],
+      "relations": [], "repeat": 3,
+      "expected": {"must_appear":[{"key":"pr","because":"the typed PR identity agrees exactly","signals":["task_intent"],"identifiers":["pr:#56"]}],"must_not_appear":[{"key":"issue","because":"PR #56 must not be reclassified as issue #56"}],"order":["pr"],"diagnostics":[]}
+    },
+    {
+      "name": "identifiers_after_task_vocabulary_limit_do_not_contribute",
+      "purpose": "Exact identifiers beyond the analyzed Task vocabulary cannot bypass bounded-input diagnostics.",
+      "input": {"project":"engram","task_intent":"alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima PR 56 for issue 43"},
+      "memories": [
+        {"key":"tail","title":"Tail identity","content":"alpha bravo PR 56 issue 43","project":"engram","scope":"project"}
+      ],
+      "relations": [], "repeat": 3,
+      "expected": {"must_appear":[],"must_not_appear":[{"key":"tail","because":"identifier evidence after the vocabulary bound is outside analyzed input"}],"order":[],"diagnostics":["task_input_truncated"],"truncations":{"task_intent":5}}
+    },
+    {
+      "name": "exact_issue_and_pr_identifiers_accept_repository_reinforcement",
+      "purpose": "Repository evidence reinforces a Task-relevant exact delivery without rescuing generic workflow prose.",
+      "input": {"project":"engram","task_intent":"merge PR 56 for issue 43 and clean only its branch after protected validation","repository_project":"engram","repository":{"branch":"feat/codex-setup-reproducibility","branch_diff":"codex setup reproducibility contract","affected_paths":["plugin/codex/setup.go"],"commit_subjects":["deliver reproducible Codex setup"]}},
+      "memories": [
+        {"key":"exact","title":"Codex setup reproducibility contract","content":"PR 56 addressed issue 43.","project":"engram","scope":"project"},
+        {"key":"generic","title":"Old merge workflow","content":"Merge PR for issue and clean only its branch after protected validation.","project":"engram","scope":"project"}
+      ],
+      "relations": [], "repeat": 3,
+      "expected": {"must_appear":[{"key":"exact","because":"exact Task identity qualifies before distinctive Repository subject evidence reinforces it","signals":["task_intent","branch_diff","commit_subject"],"identifiers":["pr:#56","issue:#43"],"distinctive_terms":["codex","setup","reproducibility"]}],"must_not_appear":[{"key":"generic","because":"Repository signals cannot rescue generic-only Task overlap"}],"order":["exact"],"diagnostics":["task_input_truncated"],"truncations":{"task_intent":2}}
+    },
+    {
+      "name": "compound_branch_commit_path_and_topic_identifiers_remain_distinguishable",
+      "purpose": "Branch names, commit identities, paths, and topic keys contribute as exact typed evidence rather than loose component tokens.",
+      "input": {"project":"engram","task_intent":"branch fix/codex-setup commit abc1234 path fix/codex-setup topic fix/codex-setup"},
+      "memories": [
+        {"key":"exact","title":"Owned delivery references","content":"Branch fix/codex-setup at commit abc1234; path fix/codex-setup.","project":"engram","scope":"project","topic_key":"fix/codex-setup"},
+        {"key":"generic","title":"Other delivery references","content":"Branch fix/other-work at commit def5678; path internal/other/file.go.","project":"engram","scope":"project","topic_key":"other/topic"}
+      ],
+      "relations": [], "repeat": 3,
+      "expected": {"must_appear":[{"key":"exact","because":"every compound identity agrees exactly and remains typed independently","signals":["task_intent"],"identifiers":["branch:fix/codex-setup","commit:abc1234","path:fix/codex-setup","topic:fix/codex-setup"]}],"must_not_appear":[{"key":"generic","because":"structural labels and path fragments cannot substitute for exact identity agreement"}],"order":["exact"],"diagnostics":[]}
+    },
+    {
+      "name": "identifier_agreement_ranks_before_title_tie_breaking",
+      "purpose": "A candidate agreeing with every exact identifier outranks a title-favored partial agreement.",
+      "input": {"project":"engram","task_intent":"merge PR 56 for issue 43"},
+      "memories": [
+        {"key":"partial","title":"A Partial identity","content":"PR 56 addressed issue 44.","project":"engram","scope":"project"},
+        {"key":"exact","title":"Z Exact identity","content":"PR 56 addressed issue 43.","project":"engram","scope":"project"}
+      ],
+      "relations": [], "repeat": 3,
+      "expected": {"must_appear":[{"key":"exact","because":"two exact identifiers create stronger evidence","signals":["task_intent"],"identifiers":["pr:#56","issue:#43"]},{"key":"partial","because":"one exact identifier remains relevant but weaker","signals":["task_intent"],"identifiers":["pr:#56"]}],"must_not_appear":[],"order":["exact","partial"],"diagnostics":[]}
+    },
+    {
+      "name": "candidate_field_contribution_is_bounded",
+      "purpose": "A long content field cannot dominate a concise title by matching every bounded Task term.",
+      "input": {"project":"engram","task_intent":"alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima"},
+      "memories": [
+        {"key":"concise","title":"Alpha bravo charlie delta echo foxtrot","content":"Concise decision.","project":"engram","scope":"project"},
+        {"key":"long","title":"Z Long prose","content":"alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima","content_repeat":100,"project":"engram","scope":"project"}
+      ],
+      "relations": [], "repeat": 3,
+      "expected": {"must_appear":[{"key":"concise","because":"six distinctive title terms satisfy the Task gate and receive the title bonus","signals":["task_intent"],"max_distinctive_terms":6},{"key":"long","because":"the content remains relevant but its field contribution is capped","signals":["task_intent"],"max_distinctive_terms":6}],"must_not_appear":[],"order":["concise","long"],"diagnostics":[]}
+    },
+    {
       "name": "repository_only_clean_branch",
       "purpose": "A clean feature branch remains useful through committed diff and subjects.",
       "input": {"project":"engram","repository_project":"engram","repository":{"branch":"feat/dashboard-card-spacing","branch_diff":"dashboard card spacing","affected_paths":["internal/cloud/dashboard/cards.templ"],"commit_subjects":["tighten dashboard card spacing"]}},

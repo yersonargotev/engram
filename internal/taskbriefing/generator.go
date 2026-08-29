@@ -4,6 +4,7 @@ package taskbriefing
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -94,12 +95,41 @@ var CalibratedDefaults = Defaults{
 	GitInputByteLimit:   1024 * 1024,
 }
 
-const candidateRetrievalLimit = 20
+const (
+	candidateRetrievalLimit         = 20
+	candidateIdentifierLimit        = 8
+	candidateFieldContributionLimit = 6
+	candidateFieldTermLimit         = 64
+	exactIdentifierStrength         = 4
+)
+
+var (
+	issueIdentifierPattern  = regexp.MustCompile(`(?i)(?:#|\bissue[\s:#-]*)([0-9]+)\b`)
+	prIdentifierPattern     = regexp.MustCompile(`(?i)\b(?:pr|pull[\s-]*request)[\s:#-]*([0-9]+)\b`)
+	branchIdentifierPattern = regexp.MustCompile(`(?i)\bbranch(?:[\s_-]+name)?[\s:=]+([a-z0-9](?:[a-z0-9._/-]*[a-z0-9._-])?)(?:$|[^a-z0-9._/-])`)
+	commitIdentifierPattern = regexp.MustCompile(`(?i)\bcommit[\s:#-]*([0-9a-f]{7,40})\b`)
+	pathIdentifierPattern   = regexp.MustCompile(`(?i)\bpath[\s:=]+([a-z0-9._-]+(?:/[a-z0-9._-]+)+)(?:$|[^a-z0-9._/-])`)
+	topicIdentifierPattern  = regexp.MustCompile(`(?i)\btopic(?:[\s_-]+key)?[\s:=]+([a-z0-9._-]+(?:/[a-z0-9._-]+)*)(?:$|[^a-z0-9._/-])`)
+	compoundTokenPattern    = regexp.MustCompile(`(?i)([a-z0-9._-]+(?:/[a-z0-9._-]+)+)(?:$|[^a-z0-9._/-])`)
+	genericWorkflowTerms    = map[string]struct{}{
+		"after": {}, "an": {}, "and": {}, "as": {}, "at": {}, "be": {}, "before": {}, "branch": {},
+		"by": {}, "change": {}, "changes": {}, "clean": {}, "code": {}, "commit": {}, "do": {}, "does": {},
+		"done": {}, "feat": {}, "feature": {}, "fix": {}, "for": {}, "from": {}, "implement": {},
+		"implementation": {}, "in": {}, "into": {}, "is": {}, "issue": {}, "it": {}, "its": {},
+		"merge": {}, "merged": {}, "no": {}, "not": {}, "of": {}, "on": {}, "only": {}, "or": {},
+		"out": {}, "path": {}, "pr": {}, "pull": {}, "request": {}, "test": {}, "tests": {}, "that": {},
+		"the": {}, "then": {}, "these": {}, "this": {}, "those": {}, "through": {}, "to": {}, "topic": {},
+		"under": {}, "update": {}, "updated": {}, "use": {}, "uses": {}, "using": {}, "via": {}, "was": {},
+		"were": {}, "will": {}, "with": {}, "without": {}, "work": {},
+	}
+)
 
 type SelectionEvidence struct {
-	Signal        SignalType `json:"signal"`
-	MatchedTerms  []string   `json:"matched_terms"`
-	MatchedFields []string   `json:"matched_fields"`
+	Signal                  SignalType `json:"signal"`
+	MatchedTerms            []string   `json:"matched_terms"`
+	MatchedFields           []string   `json:"matched_fields"`
+	MatchedIdentifiers      []string   `json:"matched_identifiers,omitempty"`
+	MatchedDistinctiveTerms []string   `json:"matched_distinctive_terms,omitempty"`
 }
 
 type SelectedMemory struct {
@@ -242,24 +272,35 @@ func rankCandidates(input Input, groups []signalGroup, candidates map[int64]stor
 		}
 		matches := make([]matchedSignalGroup, 0, len(groups))
 		hasTaskEvidence := false
+		hasStrongRepositoryEvidence := false
 		for _, group := range groups {
-			evidence := matchEvidence(memory, group.sources[0], group.terms)
-			if len(evidence.MatchedTerms) < group.minimumTerms() {
+			evidence := matchEvidence(memory, group)
+			isTaskGroup := containsSignalType(group.sources, SignalTaskIntent)
+			if group.qualifies(evidence) {
+				matches = append(matches, matchedSignalGroup{group: group, evidence: evidence})
+				if isTaskGroup {
+					hasTaskEvidence = true
+				} else {
+					hasStrongRepositoryEvidence = true
+				}
 				continue
 			}
-			matches = append(matches, matchedSignalGroup{group: group, evidence: evidence})
-			if containsSignalType(group.sources, SignalTaskIntent) {
-				hasTaskEvidence = true
+			if input.TaskIntent == "" && !isTaskGroup && len(evidence.MatchedTerms) >= 2 {
+				matches = append(matches, matchedSignalGroup{group: group, evidence: evidence})
 			}
 		}
 		if input.TaskIntent != "" && !hasTaskEvidence {
 			continue
 		}
-		evidenceItems := expandSelectionEvidence(matches)
-		score := scoreMatchedGroups(matches)
-		if score < CalibratedDefaults.InclusionThreshold {
+		if input.TaskIntent == "" && !hasStrongRepositoryEvidence {
 			continue
 		}
+		evidenceItems := expandSelectionEvidence(matches)
+		baseScore := scoreMatchedGroups(matches, false)
+		if baseScore < CalibratedDefaults.InclusionThreshold {
+			continue
+		}
+		score := scoreMatchedGroups(matches, true)
 		pinBoost := 0
 		if memory.Pinned {
 			pinBoost = CalibratedDefaults.PinBoost
@@ -289,11 +330,15 @@ type matchedSignalGroup struct {
 	evidence SelectionEvidence
 }
 
-func (g signalGroup) minimumTerms() int {
+func (g signalGroup) qualifies(evidence SelectionEvidence) bool {
+	identifierStrength := len(g.identifiers) * exactIdentifierStrength
+	matchedStrength := len(evidence.MatchedIdentifiers)*exactIdentifierStrength + len(evidence.MatchedDistinctiveTerms)
 	if containsSignalType(g.sources, SignalTaskIntent) {
-		return (len(g.terms) + 1) / 2
+		totalStrength := identifierStrength + len(g.distinctiveTerms)
+		return totalStrength > 0 && matchedStrength >= (totalStrength+1)/2
 	}
-	return 2
+	return len(evidence.MatchedIdentifiers) > 0 ||
+		(len(evidence.MatchedDistinctiveTerms) > 0 && len(evidence.MatchedTerms) >= 2)
 }
 
 func expandSelectionEvidence(matches []matchedSignalGroup) []SelectionEvidence {
@@ -308,10 +353,13 @@ func expandSelectionEvidence(matches []matchedSignalGroup) []SelectionEvidence {
 	return evidenceItems
 }
 
-func scoreMatchedGroups(matches []matchedSignalGroup) int {
+func scoreMatchedGroups(matches []matchedSignalGroup, includeMatchStrength bool) int {
 	score := 0
 	for _, match := range matches {
 		score += match.group.weight
+		if includeMatchStrength {
+			score += len(match.evidence.MatchedIdentifiers)*exactIdentifierStrength + len(match.evidence.MatchedDistinctiveTerms)
+		}
 		if containsString(match.evidence.MatchedFields, "title") || containsString(match.evidence.MatchedFields, "topic_key") {
 			score += CalibratedDefaults.TitleOrTopicBonus
 		}
@@ -343,32 +391,37 @@ func (g *Generator) boundSelection(inputLimit int, selected []SelectedMemory, di
 }
 
 type weightedSignal struct {
-	kind   SignalType
-	terms  []string
-	weight int
+	kind             SignalType
+	terms            []string
+	identifiers      []string
+	distinctiveTerms []string
+	weight           int
 }
 
 type signalGroup struct {
-	terms   []string
-	sources []SignalType
-	weight  int
+	terms            []string
+	identifiers      []string
+	distinctiveTerms []string
+	sources          []SignalType
+	weight           int
 }
 
 func groupSignals(signals []weightedSignal) []signalGroup {
 	groups := make([]signalGroup, 0, len(signals))
 	byQuery := make(map[string]int, len(signals))
 	for _, signal := range signals {
-		query := strings.Join(signal.terms, " ")
-		if index, found := byQuery[query]; found {
+		groupKey := strings.Join(signal.terms, " ") + "\x00" + strings.Join(signal.identifiers, " ")
+		if index, found := byQuery[groupKey]; found {
 			groups[index].sources = append(groups[index].sources, signal.kind)
 			if signal.weight > groups[index].weight {
 				groups[index].weight = signal.weight
 			}
 			continue
 		}
-		byQuery[query] = len(groups)
+		byQuery[groupKey] = len(groups)
 		groups = append(groups, signalGroup{
-			terms: append([]string(nil), signal.terms...), sources: []SignalType{signal.kind}, weight: signal.weight,
+			terms: append([]string(nil), signal.terms...), identifiers: append([]string(nil), signal.identifiers...),
+			distinctiveTerms: append([]string(nil), signal.distinctiveTerms...), sources: []SignalType{signal.kind}, weight: signal.weight,
 		})
 	}
 	return groups
@@ -428,7 +481,15 @@ func buildSignals(input Input) ([]weightedSignal, []Diagnostic, *BaseResolution)
 		if len(terms) == 0 {
 			continue
 		}
-		signals = append(signals, weightedSignal{kind: raw.kind, terms: terms, weight: raw.weight})
+		identifierSignal := raw.kind
+		if raw.kind == SignalBranch && omitted > 0 {
+			identifierSignal = ""
+		}
+		identifiers := extractExactIdentifiers(boundedIdentifierInput(raw.raw, raw.limit), identifierSignal, raw.limit)
+		signals = append(signals, weightedSignal{
+			kind: raw.kind, terms: terms, identifiers: identifiers,
+			distinctiveTerms: distinctiveTerms(terms), weight: raw.weight,
+		})
 	}
 	if len(repositoryTruncations) > 0 {
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticRepositoryInputTruncated, Truncations: repositoryTruncations})
@@ -446,7 +507,7 @@ func normalizeTermsWithCount(raw string, limit int) ([]string, int) {
 	return terms, omitted
 }
 
-func matchEvidence(memory store.Observation, signal SignalType, terms []string) SelectionEvidence {
+func matchEvidence(memory store.Observation, group signalGroup) SelectionEvidence {
 	fields := []struct {
 		name  string
 		value string
@@ -462,17 +523,55 @@ func matchEvidence(memory store.Observation, signal SignalType, terms []string) 
 		}{name: "topic_key", value: *memory.TopicKey})
 	}
 
-	matchedTerms := make([]string, 0, len(terms))
+	matchedTerms := make([]string, 0, len(group.terms))
+	matchedIdentifiers := make([]string, 0, len(group.identifiers))
 	matchedFields := make(map[string]struct{})
-	for _, term := range terms {
-		matched := false
-		for _, field := range fields {
-			if containsTerm(field.value, term) {
+	identifierMatches := make(map[string]struct{}, len(group.identifiers))
+	termMatches := make(map[string]struct{}, len(group.terms))
+	distinctiveSet := stringSet(group.distinctiveTerms)
+	for _, field := range fields {
+		boundedField := boundedIdentifierInput(field.value, candidateFieldTermLimit)
+		fieldIdentifiers := stringSet(extractMemoryIdentifiers(boundedField, field.name, candidateIdentifierLimit))
+		fieldTerms := stringSet(normalizeTerms(field.value, candidateFieldTermLimit))
+		remaining := candidateFieldContributionLimit
+		for _, identifier := range group.identifiers {
+			if _, found := fieldIdentifiers[identifier]; found {
 				matchedFields[field.name] = struct{}{}
-				matched = true
+				if _, alreadyMatched := identifierMatches[identifier]; !alreadyMatched && remaining > 0 {
+					identifierMatches[identifier] = struct{}{}
+					remaining--
+				}
 			}
 		}
-		if matched {
+		for _, term := range group.distinctiveTerms {
+			if _, found := fieldTerms[term]; found {
+				matchedFields[field.name] = struct{}{}
+				if _, alreadyMatched := termMatches[term]; !alreadyMatched && remaining > 0 {
+					termMatches[term] = struct{}{}
+					remaining--
+				}
+			}
+		}
+		for _, term := range group.terms {
+			if _, distinctive := distinctiveSet[term]; distinctive {
+				continue
+			}
+			if _, found := fieldTerms[term]; found {
+				matchedFields[field.name] = struct{}{}
+				if _, alreadyMatched := termMatches[term]; !alreadyMatched && remaining > 0 {
+					termMatches[term] = struct{}{}
+					remaining--
+				}
+			}
+		}
+	}
+	for _, identifier := range group.identifiers {
+		if _, found := identifierMatches[identifier]; found {
+			matchedIdentifiers = append(matchedIdentifiers, identifier)
+		}
+	}
+	for _, term := range group.terms {
+		if _, found := termMatches[term]; found {
 			matchedTerms = append(matchedTerms, term)
 		}
 	}
@@ -481,16 +580,110 @@ func matchEvidence(memory store.Observation, signal SignalType, terms []string) 
 		fieldNames = append(fieldNames, field)
 	}
 	sort.Strings(fieldNames)
-	return SelectionEvidence{Signal: signal, MatchedTerms: matchedTerms, MatchedFields: fieldNames}
+	matchedDistinctiveTerms := intersectOrdered(group.distinctiveTerms, stringSet(matchedTerms))
+	return SelectionEvidence{
+		Signal: group.sources[0], MatchedTerms: matchedTerms, MatchedFields: fieldNames,
+		MatchedIdentifiers: matchedIdentifiers, MatchedDistinctiveTerms: matchedDistinctiveTerms,
+	}
 }
 
-func containsTerm(value, term string) bool {
-	for _, candidate := range normalizeTerms(value, int(^uint(0)>>1)) {
-		if candidate == term {
-			return true
+func extractExactIdentifiers(raw string, signal SignalType, limit int) []string {
+	identifiers := make([]string, 0, min(limit, candidateIdentifierLimit))
+	seen := make(map[string]struct{})
+	appendIdentifier := func(identifier string) {
+		if len(identifiers) >= limit || identifier == "" {
+			return
+		}
+		if _, found := seen[identifier]; found {
+			return
+		}
+		seen[identifier] = struct{}{}
+		identifiers = append(identifiers, identifier)
+	}
+	appendMatches := func(source, prefix string, pattern *regexp.Regexp) {
+		for _, match := range pattern.FindAllStringSubmatch(source, -1) {
+			if len(identifiers) >= limit || len(match) < 2 {
+				return
+			}
+			appendIdentifier(prefix + normalizeIdentifierValue(match[1]))
 		}
 	}
-	return false
+	appendMatches(raw, "pr:#", prIdentifierPattern)
+	withoutPullRequests := prIdentifierPattern.ReplaceAllString(raw, " ")
+	appendMatches(withoutPullRequests, "issue:#", issueIdentifierPattern)
+	appendMatches(raw, "branch:", branchIdentifierPattern)
+	appendMatches(raw, "commit:", commitIdentifierPattern)
+	appendMatches(raw, "path:", pathIdentifierPattern)
+	appendMatches(raw, "topic:", topicIdentifierPattern)
+	if signal == SignalBranch {
+		appendIdentifier("branch:" + normalizeIdentifierValue(raw))
+	}
+	if signal == SignalAffectedPath || signal == SignalUntrackedPath || signal == SignalBranchDiff || signal == SignalStagedDiff || signal == SignalUnstagedDiff {
+		for _, match := range compoundTokenPattern.FindAllStringSubmatch(raw, -1) {
+			if len(match) >= 2 {
+				appendIdentifier("path:" + normalizeIdentifierValue(match[1]))
+			}
+		}
+	}
+	return identifiers
+}
+
+func extractMemoryIdentifiers(raw, field string, limit int) []string {
+	identifiers := extractExactIdentifiers(raw, "", limit)
+	if field == "topic_key" && len(identifiers) < limit {
+		topicIdentifier := "topic:" + normalizeIdentifierValue(raw)
+		if topicIdentifier != "topic:" && !containsString(identifiers, topicIdentifier) {
+			identifiers = append(identifiers, topicIdentifier)
+		}
+	}
+	return identifiers
+}
+
+func normalizeIdentifierValue(value string) string {
+	normalized := strings.ToLower(strings.Trim(value, " \t\r\n.,;:()[]{}<>\"'`"))
+	normalized = strings.TrimPrefix(normalized, "./")
+	return strings.TrimSuffix(normalized, "/")
+}
+
+func distinctiveTerms(terms []string) []string {
+	distinctive := make([]string, 0, len(terms))
+	for _, term := range terms {
+		if _, generic := genericWorkflowTerms[term]; generic || onlyDigits(term) {
+			continue
+		}
+		distinctive = append(distinctive, term)
+	}
+	return distinctive
+}
+
+func onlyDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func stringSet(values []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		set[value] = struct{}{}
+	}
+	return set
+}
+
+func intersectOrdered(values []string, matches map[string]struct{}) []string {
+	intersection := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, found := matches[value]; found {
+			intersection = append(intersection, value)
+		}
+	}
+	return intersection
 }
 
 func repositoryHasInput(repository RepositorySignals) bool {

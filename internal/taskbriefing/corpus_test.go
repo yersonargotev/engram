@@ -57,9 +57,12 @@ type relationFixture struct {
 }
 
 type memoryExpectation struct {
-	Key     string       `json:"key"`
-	Because string       `json:"because"`
-	Signals []SignalType `json:"signals"`
+	Key              string       `json:"key"`
+	Because          string       `json:"because"`
+	Signals          []SignalType `json:"signals"`
+	Identifiers      []string     `json:"identifiers"`
+	DistinctiveTerms []string     `json:"distinctive_terms"`
+	MaxDistinctive   int          `json:"max_distinctive_terms"`
 }
 
 type corpusExpected struct {
@@ -244,6 +247,33 @@ func assertCorpusExpectations(t *testing.T, scenario corpusScenario, result Resu
 		for _, signal := range expectation.Signals {
 			if !containsSignal(actualSignals, signal) {
 				t.Errorf("%s evidence signals = %v, want %s: %s", expectation.Key, actualSignals, signal, expectation.Because)
+			}
+		}
+		actualIdentifiers := make(map[string]struct{})
+		actualDistinctiveTerms := make(map[string]struct{})
+		for _, evidence := range memory.Evidence {
+			for _, identifier := range evidence.MatchedIdentifiers {
+				actualIdentifiers[identifier] = struct{}{}
+			}
+			for _, term := range evidence.MatchedDistinctiveTerms {
+				actualDistinctiveTerms[term] = struct{}{}
+			}
+		}
+		for _, identifier := range expectation.Identifiers {
+			if _, found := actualIdentifiers[identifier]; !found {
+				t.Errorf("%s identifiers = %v, want %s: %s", expectation.Key, actualIdentifiers, identifier, expectation.Because)
+			}
+		}
+		for _, term := range expectation.DistinctiveTerms {
+			if _, found := actualDistinctiveTerms[term]; !found {
+				t.Errorf("%s distinctive terms = %v, want %s: %s", expectation.Key, actualDistinctiveTerms, term, expectation.Because)
+			}
+		}
+		if expectation.MaxDistinctive > 0 {
+			for _, evidence := range memory.Evidence {
+				if len(evidence.MatchedDistinctiveTerms) > expectation.MaxDistinctive {
+					t.Errorf("%s distinctive contribution = %v, want at most %d: %s", expectation.Key, evidence.MatchedDistinctiveTerms, expectation.MaxDistinctive, expectation.Because)
+				}
 			}
 		}
 		t.Logf("included %s: %s", expectation.Key, expectation.Because)

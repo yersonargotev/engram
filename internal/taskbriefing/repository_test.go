@@ -272,7 +272,7 @@ func TestGeneratePreservesSourcesForDeduplicatedEvidence(t *testing.T) {
 	if !reflect.DeepEqual(signals, []SignalType{SignalTaskIntent, SignalStagedDiff, SignalUnstagedDiff}) {
 		t.Fatalf("signals = %v, want each source traceable exactly once", signals)
 	}
-	if first.Memories[0].Score != CalibratedDefaults.TaskWeight+CalibratedDefaults.TitleOrTopicBonus {
+	if first.Memories[0].Score != CalibratedDefaults.TaskWeight+CalibratedDefaults.TitleOrTopicBonus+2 {
 		t.Fatalf("score = %d, duplicated payloads must contribute only the strongest grouped weight", first.Memories[0].Score)
 	}
 }

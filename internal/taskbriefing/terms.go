@@ -10,6 +10,11 @@ import (
 
 const maximumGitTermBytes = 64 * 1024
 
+type byteSpan struct {
+	start int
+	end   int
+}
+
 // collectTerms retains only the bounded vocabulary used for selection. Once the
 // vocabulary is full, omitted occurrences are counted without retaining their
 // values, so repository input cannot grow the tracked term set without bound.
@@ -78,6 +83,96 @@ func collectTerms(input io.Reader, limit int, byteLimit int64) ([]string, int, b
 		}
 		token.WriteRune(r)
 	}
+}
+
+// boundedIdentifierInput returns the portion of raw covered by the same
+// unique-term vocabulary bound as collectTerms. Oversized tokens are removed so
+// omitted values cannot become exact identifier evidence, while retained input
+// after them remains available for parsing.
+func boundedIdentifierInput(raw string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	retained := make(map[string]struct{}, min(limit, 64))
+	omittedFields := make([]byteSpan, 0)
+	var token strings.Builder
+	tokenStart := -1
+	overflowed := false
+	flush := func(tokenEnd int) (int, bool) {
+		if tokenStart < 0 {
+			return 0, false
+		}
+		start := tokenStart
+		tokenStart = -1
+		if overflowed {
+			overflowed = false
+			token.Reset()
+			omittedFields = append(omittedFields, byteSpan{start: start, end: tokenEnd})
+			return 0, false
+		}
+		term := strings.ToLower(token.String())
+		token.Reset()
+		if len([]rune(term)) < 2 {
+			return 0, false
+		}
+		if _, exists := retained[term]; exists {
+			return 0, false
+		}
+		if len(retained) >= limit {
+			return start, true
+		}
+		retained[term] = struct{}{}
+		return 0, false
+	}
+
+	for index, r := range raw {
+		if !unicode.IsLetter(r) && !unicode.IsNumber(r) {
+			if boundary, stopped := flush(index); stopped {
+				return omitByteSpans(raw, boundary, omittedFields)
+			}
+			continue
+		}
+		if tokenStart < 0 {
+			tokenStart = index
+		}
+		if overflowed {
+			continue
+		}
+		if token.Len()+len(string(r)) > maximumGitTermBytes {
+			overflowed = true
+			token.Reset()
+			continue
+		}
+		token.WriteRune(r)
+	}
+	if boundary, stopped := flush(len(raw)); stopped {
+		return omitByteSpans(raw, boundary, omittedFields)
+	}
+	return omitByteSpans(raw, len(raw), omittedFields)
+}
+
+func omitByteSpans(raw string, end int, spans []byteSpan) string {
+	if len(spans) == 0 {
+		return raw[:end]
+	}
+	var sanitized strings.Builder
+	sanitized.Grow(min(end, maximumGitTermBytes))
+	cursor := 0
+	for _, span := range spans {
+		if span.start >= end {
+			break
+		}
+		spanStart := max(span.start, cursor)
+		spanEnd := min(span.end, end)
+		if spanEnd <= spanStart {
+			continue
+		}
+		sanitized.WriteString(raw[cursor:spanStart])
+		sanitized.WriteByte(' ')
+		cursor = spanEnd
+	}
+	sanitized.WriteString(raw[cursor:end])
+	return sanitized.String()
 }
 
 type byteBoundedReader struct {

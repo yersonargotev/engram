@@ -119,7 +119,14 @@ func formatContextBriefing(output contextBriefingOutput, taskProvided bool) []by
 			fmt.Fprintf(&buffer, "Scope: %s\n\n%s\n\n", memory.Scope, memory.Content)
 			fmt.Fprintln(&buffer, "Selection evidence:")
 			for _, evidence := range selected.Evidence {
-				fmt.Fprintf(&buffer, "- %s: matched %s in %s\n", evidence.Signal, strings.Join(evidence.MatchedTerms, ", "), strings.Join(evidence.MatchedFields, ", "))
+				fmt.Fprintf(&buffer, "- %s: matched %s in %s", evidence.Signal, strings.Join(evidence.MatchedTerms, ", "), strings.Join(evidence.MatchedFields, ", "))
+				if len(evidence.MatchedIdentifiers) > 0 {
+					fmt.Fprintf(&buffer, "; identifiers %s", strings.Join(evidence.MatchedIdentifiers, ", "))
+				}
+				if len(evidence.MatchedDistinctiveTerms) > 0 {
+					fmt.Fprintf(&buffer, "; distinctive %s", strings.Join(evidence.MatchedDistinctiveTerms, ", "))
+				}
+				fmt.Fprintln(&buffer)
 			}
 			if selected.PinBoost > 0 {
 				fmt.Fprintf(&buffer, "- pin: relevant pinned memory received +%d\n", selected.PinBoost)

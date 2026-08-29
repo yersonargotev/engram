@@ -441,6 +441,24 @@ Task intent returns a successful empty briefing. Project and personal memories
 for the selected project are eligible by default, while `--scope project` or
 `--scope personal` narrows selection.
 
+Selection preserves exact compound identities instead of reducing them to
+unrelated words. Issue and PR references (`#43`, `issue 43`, `PR 56`), named
+branches, commit hashes, paths, and topic keys contribute typed identifier
+evidence. Common stop words and workflow labels such as `and`, `for`, `merge`,
+`pr`, `issue`, `branch`, `commit`, `path`, and `topic` do not independently
+qualify a Memory or inflate the Task gate. Other bounded terms are distinctive
+evidence. Exact identifiers have greater ranking strength than distinctive
+terms; more exact agreement sorts before title and local-ID tie-breaking.
+
+The historical inclusion threshold still decides whether a candidate has enough
+corroborated evidence before match-strength bonuses affect ordering. With an
+explicit Task, Repository signals can reinforce only a Memory that first has
+strong Task evidence; generic Repository overlap cannot rescue it. Without a
+Task, generic Repository overlap can contribute only after another Repository
+source supplies exact or distinctive evidence. Each Memory field contributes at
+most six matched identifiers or terms per signal, so repeated or long prose
+cannot dominate selection.
+
 The result limit is a cap, not a quota: weak matches are excluded, and at most
 five memories are returned. Relevant pins may improve ordering but cannot force
 an unrelated memory into a briefing. Deleted and superseded memories stay out;
@@ -456,7 +474,9 @@ Every input source has a calibrated deterministic term bound. If a bound is
 reached, JSON diagnostics include each source's `total_terms`, `analyzed_terms`,
 and `omitted_terms`; human output shows the same counts. Acquisition retains only
 the calibrated vocabulary; after that bound, `omitted_terms` counts eligible
-occurrences without retaining their values. Git streams also have a deterministic
+occurrences without retaining their values. Exact identifiers are extracted only
+from retained input; oversized tokens and the omitted tail cannot affect
+selection. Git streams also have a deterministic
 one-MiB acquisition ceiling. `count_complete: false` marks prefix counts when
 that ceiling is reached, so partial analysis is never presented as complete.
 Both human and compact JSON output
@@ -468,7 +488,8 @@ Task or Repository signals; failed base resolution reports
 no Repository signal is usable and no Task intent is supplied, `--brief` succeeds
 with an empty briefing and suggests `--task`; memory-store failures remain command
 errors. Human and JSON briefings expose the resolved base, source-level Selection
-evidence, typed degradations, and result/output omissions. Supported briefing
+evidence—including `matched_identifiers` and `matched_distinctive_terms`—typed
+degradations, and result/output omissions. Supported briefing
 flags are `--task INTENT`, `--base REF`, `--scope project|personal`, `--limit 1..5`,
 and `--json`; `--task`, `--base`, and `--limit` require `--brief`. Without `--brief`,
 the existing chronological human and JSON contracts are unchanged. The four

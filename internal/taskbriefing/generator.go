@@ -104,13 +104,13 @@ const (
 )
 
 var (
-	issueIdentifierPattern  = regexp.MustCompile(`(?i)(?:#|\bissue[\s:#-]*)([0-9]+)`)
-	prIdentifierPattern     = regexp.MustCompile(`(?i)\b(?:pr|pull[\s-]*request)[\s:#-]*([0-9]+)`)
-	branchIdentifierPattern = regexp.MustCompile(`(?i)\bbranch(?:[\s_-]+name)?[\s:=]+([a-z0-9][a-z0-9._/-]*)`)
+	issueIdentifierPattern  = regexp.MustCompile(`(?i)(?:#|\bissue[\s:#-]*)([0-9]+)\b`)
+	prIdentifierPattern     = regexp.MustCompile(`(?i)\b(?:pr|pull[\s-]*request)[\s:#-]*([0-9]+)\b`)
+	branchIdentifierPattern = regexp.MustCompile(`(?i)\bbranch(?:[\s_-]+name)?[\s:=]+([a-z0-9](?:[a-z0-9._/-]*[a-z0-9._-])?)(?:$|[^a-z0-9._/-])`)
 	commitIdentifierPattern = regexp.MustCompile(`(?i)\bcommit[\s:#-]*([0-9a-f]{7,40})\b`)
-	pathIdentifierPattern   = regexp.MustCompile(`(?i)\bpath[\s:=]+([a-z0-9._-]+(?:/[a-z0-9._-]+)+)`)
-	topicIdentifierPattern  = regexp.MustCompile(`(?i)\btopic(?:[\s_-]+key)?[\s:=]+([a-z0-9._-]+(?:/[a-z0-9._-]+)*)`)
-	compoundTokenPattern    = regexp.MustCompile(`(?i)[a-z0-9._-]+(?:/[a-z0-9._-]+)+`)
+	pathIdentifierPattern   = regexp.MustCompile(`(?i)\bpath[\s:=]+([a-z0-9._-]+(?:/[a-z0-9._-]+)+)(?:$|[^a-z0-9._/-])`)
+	topicIdentifierPattern  = regexp.MustCompile(`(?i)\btopic(?:[\s_-]+key)?[\s:=]+([a-z0-9._-]+(?:/[a-z0-9._-]+)*)(?:$|[^a-z0-9._/-])`)
+	compoundTokenPattern    = regexp.MustCompile(`(?i)([a-z0-9._-]+(?:/[a-z0-9._-]+)+)(?:$|[^a-z0-9._/-])`)
 	genericWorkflowTerms    = map[string]struct{}{
 		"after": {}, "an": {}, "and": {}, "as": {}, "at": {}, "be": {}, "before": {}, "branch": {},
 		"by": {}, "change": {}, "changes": {}, "clean": {}, "code": {}, "commit": {}, "do": {}, "does": {},
@@ -481,7 +481,11 @@ func buildSignals(input Input) ([]weightedSignal, []Diagnostic, *BaseResolution)
 		if len(terms) == 0 {
 			continue
 		}
-		identifiers := extractExactIdentifiers(boundedIdentifierInput(raw.raw, raw.limit), raw.kind, raw.limit)
+		identifierSignal := raw.kind
+		if raw.kind == SignalBranch && omitted > 0 {
+			identifierSignal = ""
+		}
+		identifiers := extractExactIdentifiers(boundedIdentifierInput(raw.raw, raw.limit), identifierSignal, raw.limit)
 		signals = append(signals, weightedSignal{
 			kind: raw.kind, terms: terms, identifiers: identifiers,
 			distinctiveTerms: distinctiveTerms(terms), weight: raw.weight,
@@ -615,8 +619,10 @@ func extractExactIdentifiers(raw string, signal SignalType, limit int) []string 
 		appendIdentifier("branch:" + normalizeIdentifierValue(raw))
 	}
 	if signal == SignalAffectedPath || signal == SignalUntrackedPath || signal == SignalBranchDiff || signal == SignalStagedDiff || signal == SignalUnstagedDiff {
-		for _, token := range compoundTokenPattern.FindAllString(raw, -1) {
-			appendIdentifier("path:" + normalizeIdentifierValue(token))
+		for _, match := range compoundTokenPattern.FindAllStringSubmatch(raw, -1) {
+			if len(match) >= 2 {
+				appendIdentifier("path:" + normalizeIdentifierValue(match[1]))
+			}
 		}
 	}
 	return identifiers

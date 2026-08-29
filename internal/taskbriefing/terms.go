@@ -6,7 +6,6 @@ import (
 	"io"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 )
 
 const maximumGitTermBytes = 64 * 1024
@@ -87,9 +86,9 @@ func collectTerms(input io.Reader, limit int, byteLimit int64) ([]string, int, b
 }
 
 // boundedIdentifierInput returns the portion of raw covered by the same
-// unique-term vocabulary bound as collectTerms. Oversized whitespace-delimited
-// fields are removed so omitted values cannot become exact identifier evidence,
-// while retained input after them remains available for parsing.
+// unique-term vocabulary bound as collectTerms. Oversized tokens are removed so
+// omitted values cannot become exact identifier evidence, while retained input
+// after them remains available for parsing.
 func boundedIdentifierInput(raw string, limit int) string {
 	if limit <= 0 {
 		return ""
@@ -108,8 +107,7 @@ func boundedIdentifierInput(raw string, limit int) string {
 		if overflowed {
 			overflowed = false
 			token.Reset()
-			fieldStart, fieldEnd := whitespaceFieldBounds(raw, start, tokenEnd)
-			omittedFields = append(omittedFields, byteSpan{start: fieldStart, end: fieldEnd})
+			omittedFields = append(omittedFields, byteSpan{start: start, end: tokenEnd})
 			return 0, false
 		}
 		term := strings.ToLower(token.String())
@@ -151,24 +149,6 @@ func boundedIdentifierInput(raw string, limit int) string {
 		return omitByteSpans(raw, boundary, omittedFields)
 	}
 	return omitByteSpans(raw, len(raw), omittedFields)
-}
-
-func whitespaceFieldBounds(raw string, start, end int) (int, int) {
-	for start > 0 {
-		r, size := utf8.DecodeLastRuneInString(raw[:start])
-		if unicode.IsSpace(r) {
-			break
-		}
-		start -= size
-	}
-	for end < len(raw) {
-		r, size := utf8.DecodeRuneInString(raw[end:])
-		if unicode.IsSpace(r) {
-			break
-		}
-		end += size
-	}
-	return start, end
 }
 
 func omitByteSpans(raw string, end int, spans []byteSpan) string {

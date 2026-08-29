@@ -56,9 +56,10 @@ go run ./cmd/engram activation-study verify \
   --json
 ```
 
-`run` executes missing cells and atomically updates the bounded event set after
-each completed cell. Repeating the command with the same output resumes without
-rerunning retained cells:
+`run` executes missing cells and atomically updates a private bounded event set
+after each completed cell. Repeating the command with the same output resumes
+without rerunning retained cells. `events.json` is ignored by Git and must remain
+local while the aggregate report is generated:
 
 ```bash
 go run ./cmd/engram activation-study run \
@@ -84,5 +85,25 @@ go run ./cmd/engram activation-study analyze \
   --json
 ```
 
-The committed outputs are `events.json`, `report.json`, and `report.md`. They may
-be regenerated from the frozen inputs but must not include raw evidence.
+The committed outputs are the aggregate-only `report.json` and `report.md`.
+`events.json` contains bounded but row-level evidence: do not publish or commit it,
+and remove it after validating the aggregates. No artifact may contain raw
+evidence.
+
+## Results
+
+The complete cohort retained 36 of 36 planned cells with no exclusions,
+omissions, integration failures, or protocol deviations. Normal repository
+guidance increased broad observed activation by 8.3 percentage points versus the
+matched ablation; the paired 95% bootstrap interval is 0.0 to 25.0 points, so the
+small sample remains compatible with no difference. The user skill itself was
+read less often under normal guidance than under the ablation, showing why the
+study reports individual activation surfaces instead of one binary label.
+
+Overlapping Memory skill reads occurred in 7 of 12 normal Engram runs (58.3%) and
+4 of 12 ablated runs (33.3%). No treatment invoked the Engram CLI, so the overlap
+produced redundant skill reading but no observed redundant CLI work. Consequently,
+CLI invocation followed 0 of 29 runs with a Memory skill read, and the cohort
+observed neither useful recall nor verified preservation. See [`report.md`](report.md)
+for the four separate study answers and every predeclared aggregate with its
+uncertainty interval.

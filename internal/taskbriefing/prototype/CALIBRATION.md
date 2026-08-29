@@ -30,6 +30,9 @@ generation does not add memories.
 | Affected path weight | 7 | Paths can strongly corroborate a diff while a single generic term remains insufficient. |
 | Commit subject weight | 6 | `commit_subjects_contribute` preserves recorded branch intent without using recency. |
 | Untracked path weight | 7 | `untracked_paths_without_content` selects from paths alone and proves file contents are unnecessary. |
+| Exact identifier strength | 4 per match | `identifier_agreement_ranks_before_title_tie_breaking` places full PR/issue agreement ahead of partial agreement before title or ID ties. |
+| Distinctive term strength | 1 per match | `exact_issue_and_pr_identifiers_beat_generic_workflow_terms_task_only` excludes generic workflow overlap while subject terms still refine ranking. |
+| Candidate field contribution limit | 6 per signal and field | `candidate_field_contribution_is_bounded` prevents a long content field from outranking concise title evidence merely by containing every bounded Task term. |
 | Title or topic-key bonus | 2 | Exact domain labels are more precise than content-only overlap. |
 | Pin boost | 2 | `pin_boost_requires_relevance` reorders qualifying memories but excludes an irrelevant pin. |
 | Inclusion threshold | 10 | Repository-only selection needs corroboration; `precision_first_does_not_fill_limit` leaves weak candidates out. |
@@ -54,13 +57,25 @@ term counts.
 
 ## Precision and lifecycle decisions
 
-Repository evidence contributes only when at least two normalized terms from a
-source match a memory. When Task intent is supplied, a memory must independently
-match at least half of its bounded normalized terms; Repository signals can only
-improve qualifying Task matches. A pin is applied only after the threshold is
-met. Deleted and superseded memories are ineligible, relations do not expand
-candidates, and two selected memories with a judged conflict remain selected
-with a diagnostic.
+Normalization separates exact compound identifiers, distinctive terms, and
+generic words. Issue and PR references, named branches, commit identities,
+paths, and topic keys retain typed identity. Common stop words and workflow
+labels do not contribute to the authoritative Task denominator. Exact identifier
+matches contribute four strength units and distinctive terms contribute one; a
+Task candidate must match at least half of that bounded strong evidence. A
+Repository source is strong when it supplies an exact identifier or a
+distinctive term with corroborating overlap. Generic Repository overlap can
+reinforce repository-only selection after another source is strong, but cannot
+rescue a candidate when explicit Task evidence is weak.
+
+The calibrated inclusion threshold is evaluated before match-strength bonuses,
+so a single weak source cannot become relevant merely because it contains more
+words. Ranking then adds exact and distinctive match strength before title and
+local-ID tie-breaking. Each candidate field contributes at most six identifiers
+or terms for one signal; repeated prose and long bodies cannot create unbounded
+authority. A pin is applied only after the threshold is met. Deleted and
+superseded memories are ineligible, relations do not expand candidates, and two
+selected memories with a judged conflict remain selected with a diagnostic.
 
 Selection order is score descending, then title and local ID for deterministic
 ties. Recency is not relevance evidence. A missing or mismatched repository

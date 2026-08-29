@@ -74,6 +74,26 @@ func TestEncodeContextBriefingEnforcesPublicByteBudget(t *testing.T) {
 	}
 }
 
+func TestFormatContextBriefingReportsExactAndDistinctiveEvidence(t *testing.T) {
+	output := contextBriefingOutput{
+		Mode: "brief", Project: "engram", Diagnostics: []taskbriefing.Diagnostic{},
+		Memories: []contextBriefingMemory{{
+			Memory: store.Observation{ID: 1, Type: "decision", Title: "Exact delivery", Content: "Complete Memory.", Scope: "project"},
+			Evidence: []taskbriefing.SelectionEvidence{{
+				Signal: taskbriefing.SignalTaskIntent, MatchedTerms: []string{"pr", "56", "codex", "setup"}, MatchedFields: []string{"content", "title"},
+				MatchedIdentifiers: []string{"pr:#56", "issue:#43"}, MatchedDistinctiveTerms: []string{"codex", "setup"},
+			}},
+		}},
+	}
+
+	formatted := string(formatContextBriefing(output, true))
+	for _, want := range []string{"identifiers pr:#56, issue:#43", "distinctive codex, setup"} {
+		if !strings.Contains(formatted, want) {
+			t.Fatalf("human briefing = %q, want %q", formatted, want)
+		}
+	}
+}
+
 func TestEncodeContextBriefingRemovesConflictDiagnosticAfterBudgetOmission(t *testing.T) {
 	memories := []contextBriefingMemory{
 		{Memory: store.Observation{SyncID: "memory-a", Title: "Conflict A", Content: strings.Repeat("complete memory A ", 40)}},

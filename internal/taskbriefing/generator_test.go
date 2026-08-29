@@ -64,6 +64,20 @@ func TestGenerateReportsNoCandidateMatchAndFallback(t *testing.T) {
 	if !reflect.DeepEqual(result.Fallback.Invocation.Args, wantArgs) {
 		t.Fatalf("fallback args = %v, want %v", result.Fallback.Invocation.Args, wantArgs)
 	}
+	if result.Fallback.Scope != "all_scopes" {
+		t.Fatalf("fallback scope = %q, want all_scopes for an unfiltered invocation", result.Fallback.Scope)
+	}
+
+	result, err = New(memoryStore).Generate(Input{
+		Project: "engram", Scope: "project", TaskIntent: "repair cache migration",
+	})
+	if err != nil {
+		t.Fatalf("Generate with scope: %v", err)
+	}
+	wantScopedArgs := []string{"search", "repair cache migration", "--project", "engram", "--scope", "project", "--match-mode", "all", "--limit", "5", "--json"}
+	if result.Fallback == nil || result.Fallback.Scope != "project" || !reflect.DeepEqual(result.Fallback.Invocation.Args, wantScopedArgs) {
+		t.Fatalf("scoped fallback = %#v, want matching metadata and invocation", result.Fallback)
+	}
 }
 
 func TestGenerateReportsIncompleteCandidateRetrieval(t *testing.T) {

@@ -92,7 +92,7 @@ func encodeContextBriefing(output contextBriefingOutput, jsonMode, taskProvided 
 			output.RejectionDetailsOmitted++
 			continue
 		}
-		if len(output.Memories) == 0 && output.Fallback != nil {
+		if output.Fallback != nil {
 			output.Fallback = nil
 			output.FallbackOmitted = true
 			output.FallbackOmissionReason = "output_budget"
@@ -110,7 +110,7 @@ func encodeContextBriefing(output contextBriefingOutput, jsonMode, taskProvided 
 		if !hasContextBriefingDiagnostic(output.Diagnostics, taskbriefing.DiagnosticOutputBudgetExhausted) {
 			output.Diagnostics = append(output.Diagnostics, taskbriefing.Diagnostic{Code: taskbriefing.DiagnosticOutputBudgetExhausted})
 		}
-		if output.Fallback == nil && output.fallbackCandidate != nil {
+		if output.Fallback == nil && output.fallbackCandidate != nil && !output.FallbackOmitted {
 			fallback := *output.fallbackCandidate
 			fallback.ReasonCode = taskbriefing.FallbackOutputBudgetExhausted
 			output.Fallback = &fallback

@@ -120,7 +120,7 @@ func TestContextBriefingOutputReportsPipelineRejectionsAndFallback(t *testing.T)
 		RejectionDetailsOmitted: 2,
 		Fallback: &taskbriefing.SearchFallback{
 			ReasonCode: taskbriefing.FallbackCandidatesFiltered,
-			Anchors:    []string{"pr 56", "issue 43"}, Project: "engram", Scope: "project_and_personal",
+			Anchors:    []string{"pr 56", "issue 43"}, Project: "engram", Scope: "all_scopes",
 			Invocation: taskbriefing.SearchInvocation{
 				Command: "engram", Args: []string{"search", "pr 56 issue 43", "--project", "engram", "--match-mode", "all", "--limit", "5", "--json"},
 			},
@@ -191,7 +191,7 @@ func TestEncodeContextBriefingBoundsRejectionDetails(t *testing.T) {
 
 func TestEncodeContextBriefingAddsFallbackAfterBudgetOmission(t *testing.T) {
 	fallbackCandidate := &taskbriefing.SearchFallback{
-		Anchors: []string{"cache", "migration"}, Project: "engram", Scope: "project_and_personal",
+		Anchors: []string{"cache", "migration"}, Project: "engram", Scope: "all_scopes",
 		Invocation: taskbriefing.SearchInvocation{
 			Command: "engram", Args: []string{"search", "cache migration", "--project", "engram", "--match-mode", "all", "--limit", "5", "--json"},
 		},
@@ -235,7 +235,7 @@ func TestEncodeContextBriefingOmitsOversizedFallbackMetadata(t *testing.T) {
 	oversized := strings.Repeat("a", taskbriefing.CalibratedDefaults.TotalOutputBudget)
 	fallback := &taskbriefing.SearchFallback{
 		ReasonCode: taskbriefing.FallbackNoCandidatesMatched,
-		Anchors:    []string{oversized}, Project: "engram", Scope: "project_and_personal",
+		Anchors:    []string{oversized}, Project: "engram", Scope: "all_scopes",
 		Invocation: taskbriefing.SearchInvocation{
 			Command: "engram", Args: []string{"search", oversized, "--project", "engram", "--match-mode", "all", "--limit", "5", "--json"},
 		},
@@ -265,6 +265,55 @@ func TestEncodeContextBriefingOmitsOversizedFallbackMetadata(t *testing.T) {
 	human := string(formatContextBriefing(bounded, true))
 	if !strings.Contains(human, "Targeted search fallback omitted: output_budget") {
 		t.Fatalf("human output = %q, want explicit fallback omission", human)
+	}
+}
+
+func TestEncodeContextBriefingPrefersMemoryOverFallback(t *testing.T) {
+	fallback := &taskbriefing.SearchFallback{
+		ReasonCode: taskbriefing.FallbackResultLimitReached,
+		Anchors:    []string{"cache", "migration"}, Project: "engram", Scope: "all_scopes",
+		Invocation: taskbriefing.SearchInvocation{
+			Command: "engram", Args: []string{"search", "cache migration", "--project", "engram", "--match-mode", "all", "--limit", "5", "--json"},
+		},
+	}
+	output := contextBriefingOutput{
+		Mode: "brief", Project: "engram", Diagnostics: []taskbriefing.Diagnostic{}, Rejections: []taskbriefing.CandidateRejection{},
+		Memories: []contextBriefingMemory{{Memory: store.Observation{
+			ID: 1, Type: "decision", Title: "Complete memory", Content: strings.Repeat("useful memory content ", 80), Scope: "project",
+		}}},
+		Pipeline: taskbriefing.PipelineAccounting{EligibleInventory: 1, RetrievedCandidates: 1, RetrievalCountComplete: true, QualifiedCandidates: 1},
+		Fallback: fallback,
+	}
+	preferred := output
+	preferred.Fallback = nil
+	preferred.FallbackOmitted = true
+	preferred.FallbackOmissionReason = "output_budget"
+	preferredBytes, err := json.Marshal(preferred)
+	if err != nil {
+		t.Fatalf("marshal preferred output: %v", err)
+	}
+	withFallbackBytes, err := json.Marshal(output)
+	if err != nil {
+		t.Fatalf("marshal output with fallback: %v", err)
+	}
+	budget := len(preferredBytes) + 1
+	if len(withFallbackBytes)+1 <= budget {
+		t.Fatalf("test setup does not exceed budget: with fallback %d, budget %d", len(withFallbackBytes)+1, budget)
+	}
+
+	encoded, err := encodeContextBriefing(output, true, true, budget)
+	if err != nil {
+		t.Fatalf("encodeContextBriefing: %v", err)
+	}
+	var bounded contextBriefingOutput
+	if err := json.Unmarshal(encoded, &bounded); err != nil {
+		t.Fatalf("decode bounded output: %v", err)
+	}
+	if len(bounded.Memories) != 1 || bounded.BudgetOmissions != 0 {
+		t.Fatalf("bounded output = %#v, want the complete memory retained", bounded)
+	}
+	if bounded.Fallback != nil || !bounded.FallbackOmitted || bounded.FallbackOmissionReason != "output_budget" {
+		t.Fatalf("bounded output = %#v, want advisory fallback omitted first", bounded)
 	}
 }
 

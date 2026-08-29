@@ -344,7 +344,10 @@ structured fallback is advisory: `Generate` returns a read-only `engram search`
 command/argument vector but never executes the second query or persists its
 transient inputs. The generator excludes anchors over its fixed byte bound, and
 the CLI drops fallback metadata whole with an explicit omission reason if it
-cannot fit the output budget.
+cannot fit the output budget. Fallback metadata uses `all_scopes` when its
+invocation intentionally has no scope filter; explicit scopes are represented
+by the matching `--scope` argument. Under output pressure, an advisory fallback
+is omitted before any complete selected Memory.
 
 ### Attributable Admission study boundary
 

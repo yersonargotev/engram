@@ -443,7 +443,7 @@ func buildSearchFallback(input Input, signals []weightedSignal) *SearchFallback 
 	args := []string{"search", query, "--project", input.Project, "--match-mode", "all", "--limit", "5", "--json"}
 	scope := input.Scope
 	if scope == "" {
-		scope = "project_and_personal"
+		scope = "all_scopes"
 	} else {
 		args = append(args[:4], append([]string{"--scope", input.Scope}, args[4:]...)...)
 	}

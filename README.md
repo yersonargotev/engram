@@ -437,8 +437,8 @@ Engram derives transient Repository signals from the branch name, committed diff
 Repository signals are used only when the cwd repository resolves to the selected
 project. A mismatch disables them and reports `repository_project_mismatch`;
 Task intent can still produce a task-only briefing, while an invocation without
-Task intent returns a successful empty briefing. Project and personal memories
-for the selected project are eligible by default, while `--scope project` or
+Task intent returns a successful empty briefing. All Memory scopes stored under
+the selected project are eligible by default, while `--scope project` or
 `--scope personal` narrows selection.
 
 Selection preserves exact compound identities instead of reducing them to
@@ -505,6 +505,8 @@ omission. The recommendation is advisory and read-only: Task Brief neither runs
 the search nor persists Task/Repository evidence. If fallback metadata itself
 cannot fit stdout, it is omitted whole and JSON reports `fallback_omitted` with
 `fallback_omission_reason: "output_budget"`.
+An unfiltered fallback reports scope as `all_scopes`; an explicit Task Brief
+scope is copied into both the fallback metadata and its `--scope` argument.
 
 Task intent and Repository signals are transient: they are used only for local
 deterministic selection and are never saved as memories. Raw diff content is not

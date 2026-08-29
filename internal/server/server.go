@@ -156,6 +156,46 @@ func requireAuth(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// writeOwnershipError reports an ownership failure the client can act on, and
+// names the concrete repair. The repair is a CLI path that reaches the store
+// directly, so it stays available in a zero-config install where the HTTP
+// rescue endpoint is not served. Returns false when err is not an ownership
+// failure and the caller should keep its own handling.
+func writeOwnershipError(w http.ResponseWriter, sessionID string, err error) bool {
+	code := ""
+	switch {
+	case errors.Is(err, store.ErrProjectOwnershipAmbiguous):
+		code = "project_ownership_ambiguous"
+	case errors.Is(err, store.ErrProjectRequired):
+		code = "project_ownership_required"
+	default:
+		return false
+	}
+	remedy := store.RescueOwnershipCommand + " --project <name>"
+	if strings.TrimSpace(sessionID) != "" {
+		remedy += " --session " + sessionID
+	}
+	jsonErrorWithFields(w, http.StatusConflict, err.Error(), map[string]any{
+		"code":   code,
+		"remedy": remedy,
+	})
+	return true
+}
+
+// requireConfiguredAuth rejects requests when the server token is not configured.
+// It is reserved for endpoints that must never use the zero-config auth default.
+// It is not the only way to repair ownership: store.RescueOwnershipCommand does
+// the same work locally without any server token.
+func requireConfiguredAuth(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if os.Getenv("ENGRAM_HTTP_TOKEN") == "" {
+			jsonError(w, http.StatusServiceUnavailable, "server authorization is not configured")
+			return
+		}
+		requireAuth(h)(w, r)
+	}
+}
+
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
 	listenFn := s.listen
@@ -216,6 +256,7 @@ func (s *Server) routes() {
 
 	// Context
 	s.mux.HandleFunc("GET /context", s.handleContext)
+	s.mux.HandleFunc("GET /context/compaction", s.handleCompactionContext)
 
 	// Export / Import — sensitive: full data read and bulk mutation.
 	s.mux.HandleFunc("GET /export", requireAuth(s.handleExport))
@@ -225,9 +266,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /stats", s.handleStats)
 	s.mux.HandleFunc("GET /doctor", s.handleDoctor)
 
-	// Project detection / migration
+	// Project detection, migration, and ownership rescue
 	s.mux.HandleFunc("GET /project/current", s.handleCurrentProject)
 	s.mux.HandleFunc("POST /projects/migrate", requireAuth(s.handleMigrateProject))
+	s.mux.HandleFunc("POST /projects/rescue-ownership", requireConfiguredAuth(s.handleRescueProjectOwnership))
 
 	// Sync status (degraded-state visibility for autosync)
 	s.mux.HandleFunc("GET /sync/status", s.handleSyncStatus)
@@ -327,8 +369,15 @@ func (s *Server) handleAddObservation(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	if body.SessionID == "" || body.Title == "" || body.Content == "" {
-		jsonError(w, http.StatusBadRequest, "session_id, title, and content are required")
+	// Validate the title before the session lookup so a bad session or project
+	// cannot mask the documented title-validation 400 (#459). A whitespace-only
+	// title survives a raw `== ""` check, so it needs the shared predicate.
+	if err := store.ValidateObservationTitle(body.Title); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if body.SessionID == "" || body.Content == "" {
+		jsonError(w, http.StatusBadRequest, "session_id and content are required")
 		return
 	}
 	if !s.validateSessionProject(w, body.SessionID, body.Project) {
@@ -337,7 +386,16 @@ func (s *Server) handleAddObservation(w http.ResponseWriter, r *http.Request) {
 
 	id, err := s.store.AddObservation(body)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
+		// A titleless or contentless observation is a client mistake, not a
+		// server failure.
+		switch {
+		case errors.Is(err, store.ErrObservationTitleRequired),
+			errors.Is(err, store.ErrObservationContentRequired):
+			jsonError(w, http.StatusBadRequest, err.Error())
+		case writeOwnershipError(w, body.SessionID, err):
+		default:
+			jsonError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 
@@ -361,6 +419,9 @@ func (s *Server) handlePassiveCapture(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.store.PassiveCapture(body)
 	if err != nil {
+		if writeOwnershipError(w, body.SessionID, err) {
+			return
+		}
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -423,6 +484,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if results == nil {
+		results = []store.SearchResult{}
+	}
 
 	jsonResponse(w, http.StatusOK, results)
 }
@@ -465,7 +529,13 @@ func (s *Server) handleUpdateObservation(w http.ResponseWriter, r *http.Request)
 
 	obs, err := s.store.UpdateObservation(id, body)
 	if err != nil {
-		jsonError(w, http.StatusNotFound, err.Error())
+		switch {
+		case errors.Is(err, store.ErrObservationTitleRequired),
+			errors.Is(err, store.ErrObservationContentRequired):
+			jsonError(w, http.StatusBadRequest, err.Error())
+		default:
+			jsonError(w, http.StatusNotFound, err.Error())
+		}
 		return
 	}
 
@@ -626,7 +696,13 @@ func (s *Server) handleAddPrompt(w http.ResponseWriter, r *http.Request) {
 
 	id, err := s.store.AddPrompt(body)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
+		switch {
+		case errors.Is(err, store.ErrPromptContentRequired):
+			jsonError(w, http.StatusBadRequest, err.Error())
+		case writeOwnershipError(w, body.SessionID, err):
+		default:
+			jsonError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 
@@ -776,6 +852,26 @@ func (s *Server) handleContext(w http.ResponseWriter, r *http.Request) {
 
 	context, err := s.store.FormatContext(project, scope)
 	if err != nil {
+		jsonError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]string{"context": context})
+}
+
+func (s *Server) handleCompactionContext(w http.ResponseWriter, r *http.Request) {
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if sessionID == "" {
+		jsonError(w, http.StatusBadRequest, "session_id is required")
+		return
+	}
+
+	context, err := s.store.FormatCompactionContext(sessionID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			jsonError(w, http.StatusNotFound, "session not found")
+			return
+		}
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -976,6 +1072,74 @@ func (s *Server) handleMigrateProject(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ─── Project Ownership Rescue ─────────────────────────────────────────────────
+
+func (s *Server) handleRescueProjectOwnership(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10) // 8 KB max
+	var body struct {
+		TargetProject  string   `json:"target_project"`
+		Confirmed      bool     `json:"confirmed"`
+		ObservationIDs []int64  `json:"observation_ids"`
+		SessionIDs     []string `json:"session_ids"`
+		PromptIDs      []int64  `json:"prompt_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	target, _ := store.NormalizeProject(body.TargetProject)
+	if target == "" {
+		jsonError(w, http.StatusBadRequest, "target_project is required")
+		return
+	}
+	if !body.Confirmed {
+		jsonError(w, http.StatusBadRequest, "confirmed must be true")
+		return
+	}
+	result, err := s.store.RescueNullProjectOwnership(store.ProjectRescueParams{
+		TargetProject:  target,
+		ObservationIDs: body.ObservationIDs,
+		SessionIDs:     body.SessionIDs,
+		PromptIDs:      body.PromptIDs,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrProjectRequired) || errors.Is(err, store.ErrProjectRescueInvalidRequest) {
+			jsonError(w, http.StatusBadRequest, "invalid ownership rescue request: provide a target project and at least one positive record ID or non-blank session ID")
+			return
+		}
+		log.Printf("[engram] project ownership rescue failed: %v", err)
+		jsonError(w, http.StatusInternalServerError, "project ownership rescue is temporarily unavailable")
+		return
+	}
+	if result.Rescued() > 0 || result.Journaled {
+		s.notifyWrite()
+	}
+	// "rescued" and "partially_rescued" are distinguishable outcomes: the
+	// counters alone cannot tell a clean move apart from one that left records
+	// behind, so the status and the blocked list say it outright.
+	status := "rescued"
+	if !result.Complete {
+		status = "partially_rescued"
+	}
+	blocked := result.Blocked
+	if blocked == nil {
+		blocked = []store.ProjectRescueBlocked{}
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"status":                status,
+		"complete":              result.Complete,
+		"blocked":               blocked,
+		"target_project":        target,
+		"rescued_observations":  result.RescuedObservations,
+		"rescued_sessions":      result.RescuedSessions,
+		"rescued_prompts":       result.RescuedPrompts,
+		"conflicting_records":   result.ConflictingRecords,
+		"skipped_records":       result.SkippedRecords,
+		"journaled_local":       result.Journaled,
+		"reconciliation_status": "local journal pending autosync",
+	})
+}
+
 // ─── Conflicts ───────────────────────────────────────────────────────────────
 
 const (
@@ -1102,7 +1266,7 @@ func (s *Server) handleListDeferred(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleScanConflicts serves POST /conflicts/scan
-// Body: {"project":"X","since":"...","apply":bool,"max_insert":int,
+// Body: {"project":"X","since":"...","limit":int,"cursor":int,"apply":bool,"max_insert":int,
 //
 //	"semantic":bool,"concurrency":int,"timeout_per_call_seconds":int,"max_semantic":int}
 func (s *Server) handleScanConflicts(w http.ResponseWriter, r *http.Request) {
@@ -1111,6 +1275,8 @@ func (s *Server) handleScanConflicts(w http.ResponseWriter, r *http.Request) {
 		Since     string `json:"since"`
 		Apply     bool   `json:"apply"`
 		MaxInsert int    `json:"max_insert"`
+		Limit     *int   `json:"limit"`
+		Cursor    *int64 `json:"cursor"`
 
 		// Phase 4 semantic fields — all optional, defaults match CLI.
 		// Pointer types so absent fields are nil (use default) vs. explicit 0 (invalid).
@@ -1127,7 +1293,14 @@ func (s *Server) handleScanConflicts(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "project is required")
 		return
 	}
-
+	if body.Limit != nil && (*body.Limit < 1 || *body.Limit > store.DefaultScanLimit) {
+		jsonError(w, http.StatusBadRequest, fmt.Sprintf("limit must be between 1 and %d", store.DefaultScanLimit))
+		return
+	}
+	if body.Cursor != nil && *body.Cursor < 0 {
+		jsonError(w, http.StatusBadRequest, "cursor must be non-negative")
+		return
+	}
 	// Resolve semantic params: validate explicit values, apply defaults for absent fields.
 	concurrency := 5
 	timeoutPerCallSeconds := 60
@@ -1159,10 +1332,12 @@ func (s *Server) handleScanConflicts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	opts := store.ScanOptions{
-		Project:   body.Project,
-		Apply:     body.Apply,
-		MaxInsert: body.MaxInsert,
+	opts := store.ScanOptions{Project: body.Project, Apply: body.Apply, MaxInsert: body.MaxInsert}
+	if body.Limit != nil {
+		opts.Limit = *body.Limit
+	}
+	if body.Cursor != nil {
+		opts.Cursor = *body.Cursor
 	}
 	if body.Since != "" {
 		t, err := time.Parse(time.RFC3339, body.Since)
@@ -1212,6 +1387,7 @@ func (s *Server) handleScanConflicts(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"project":          result.Project,
 		"inspected":        result.Inspected,
+		"ranked_queries":   result.RankedQueries,
 		"candidates_found": result.CandidatesFound,
 		"already_related":  result.AlreadyRelated,
 		"inserted":         result.RelationsInserted,
@@ -1222,8 +1398,11 @@ func (s *Server) handleScanConflicts(w http.ResponseWriter, r *http.Request) {
 		"semantic_skipped": result.SemanticSkipped,
 		"semantic_errors":  result.SemanticErrors,
 	}
+	if result.NextCursor != nil {
+		resp["next_cursor"] = *result.NextCursor
+	}
 	if result.Capped {
-		resp["warning"] = "cap reached: not all candidates were inserted"
+		resp["warning"] = "cap reached: this page has no continuation; rerun from the same cursor with a higher applicable cap"
 	}
 
 	jsonResponse(w, http.StatusOK, resp)

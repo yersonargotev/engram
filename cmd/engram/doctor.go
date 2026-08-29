@@ -79,6 +79,8 @@ func cmdDoctor(cfg store.Config) {
 func printDoctorUsage() {
 	fmt.Fprintln(os.Stdout, "usage: engram doctor [--json] [--project PROJECT] [--check CODE]")
 	fmt.Fprintln(os.Stdout, "       engram doctor repair --project PROJECT --check CODE (--plan|--dry-run|--apply)")
+	fmt.Fprintln(os.Stdout, "       engram doctor repair [--project PROJECT] --check "+diagnostic.CheckSyncMutationRequiredFields+" (--plan|--dry-run|--apply)")
+	fmt.Fprintln(os.Stdout, "note: --project is required for every repair check except "+diagnostic.CheckSyncMutationRequiredFields+", where it optionally scopes the quarantine to one project.")
 	fmt.Fprintln(os.Stdout, "checks: "+strings.Join(diagnostic.RegisteredCodes(), ", "))
 }
 
@@ -124,7 +126,7 @@ func cmdDoctorRepair(cfg store.Config) {
 	project, _ = store.NormalizeProject(project)
 	project = strings.TrimSpace(project)
 	check = strings.TrimSpace(check)
-	if project == "" {
+	if project == "" && check != diagnostic.CheckSyncMutationRequiredFields {
 		failDoctorRepair("--project is required")
 		return
 	}
@@ -147,6 +149,15 @@ func cmdDoctorRepair(cfg store.Config) {
 		return
 	}
 	defer s.Close()
+	if check == diagnostic.CheckSyncMutationRequiredFields {
+		report, err := s.QuarantineIrreparableSyncMutations(project, mode == diagnostic.RepairModeApply)
+		if err != nil {
+			failDoctorRepair(err.Error())
+			return
+		}
+		writeDoctorRepairJSON(report)
+		return
+	}
 
 	ctx := context.Background()
 	report, err := runDiagnostics(ctx, s, project, check)
@@ -197,7 +208,10 @@ func cmdDoctorRepair(cfg store.Config) {
 
 func isSupportedDoctorRepairCheck(check string) bool {
 	switch check {
-	case diagnostic.CheckSessionProjectDirectoryMismatch, diagnostic.CheckManualSessionNameProjectMismatch:
+	case diagnostic.CheckSessionProjectDirectoryMismatch,
+		diagnostic.CheckManualSessionNameProjectMismatch,
+		diagnostic.CheckInvalidSessionIdentity,
+		diagnostic.CheckSyncMutationRequiredFields:
 		return true
 	default:
 		return false
@@ -210,8 +224,8 @@ func failDoctorRepair(message string) {
 	exitFunc(1)
 }
 
-func writeDoctorRepairJSON(plan diagnostic.RepairPlan) {
-	out, err := jsonMarshalIndent(plan, "", "  ")
+func writeDoctorRepairJSON(value any) {
+	out, err := jsonMarshalIndent(value, "", "  ")
 	if err != nil {
 		fatal(err)
 		return

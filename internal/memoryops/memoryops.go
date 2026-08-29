@@ -422,14 +422,14 @@ func (s *Service) Merge(input MergeInput) (*MergeResult, error) {
 		return nil, errors.New("at least one source project is required")
 	}
 	if !input.DryRun {
-		merged, err := s.store.MergeProjects(sources, canonical)
+		merged, err := s.store.MergeProjectsExplicit(sources, canonical)
 		if err != nil {
 			return nil, fmt.Errorf("merge projects: %w", err)
 		}
 		return &MergeResult{MergeResult: *merged}, nil
 	}
 
-	preview, err := s.store.PreviewMergeProjects(input.Sources, canonical)
+	preview, err := s.store.PreviewMergeProjectsExplicit(input.Sources, canonical)
 	if err != nil {
 		return nil, fmt.Errorf("preview project merge: %w", err)
 	}

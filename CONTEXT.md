@@ -47,6 +47,11 @@ _Avoid_: Session collection, admission experiment
 A predeclared calibration or held-out partition within one Admission study.
 _Avoid_: Dataset split, run group
 
+**Activation study**:
+A frozen, versioned matched-prompt evaluation that measures agent skill and CLI
+invocation across disposable repository treatments using bounded event evidence.
+_Avoid_: Admission study, activation experiment
+
 **Admission correction**:
 An append-only human verdict about one retained Memory proposal, attributed to
 a pseudonymous reviewer when it belongs to a study. It supplies evaluation

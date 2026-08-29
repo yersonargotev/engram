@@ -708,6 +708,8 @@ func main() {
 		cmdSetup(cfg)
 	case "protocol-mode":
 		cmdProtocolMode(cfg)
+	case "activation-study":
+		cmdActivationStudy()
 	case "version", "--version", "-v":
 		fmt.Printf("engram %s\n", version)
 	case "help", "--help", "-h":
@@ -733,7 +735,7 @@ func shouldCheckForUpdates(args []string) bool {
 	}
 	command := strings.ToLower(strings.TrimSpace(args[0]))
 	switch command {
-	case "mcp", "serve", "protocol-mode", "admission":
+	case "mcp", "serve", "protocol-mode", "admission", "activation-study":
 		return false
 	case "checkpoint":
 		return len(args) >= 2 && strings.ToLower(strings.TrimSpace(args[1])) != "verify-stop"
@@ -752,6 +754,9 @@ func handleConfigFreeCommand(args []string) bool {
 		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "activation-study":
+		cmdActivationStudy()
+		return true
 	case "version", "--version", "-v":
 		fmt.Printf("engram %s\n", version)
 		return true
@@ -3545,6 +3550,7 @@ Commands:
   admission review   List or correct retained Memory proposals
   admission omission Record a bounded, redacted omission for an attributed run
   admission metrics  Report project-local or aggregate study evaluation metrics
+  activation-study   Verify, run, or analyze the frozen Codex activation cohort
   checkpoint record  Record a root-turn Memory checkpoint
                        --host HOST --session-id ID --root-turn-id ID
                        --disposition saved|needs_review|skipped [reference flags] [--json]

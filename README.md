@@ -404,6 +404,7 @@ Your production engram is fully untouched throughout.
 | `engram admission review list\|mark`       | List pending proposals and append reviewer-attributed corrections |
 | `engram admission omission record`         | Append a reviewer-attributed omission to one study run |
 | `engram admission metrics`                 | Report legacy project metrics or aggregate-only study metrics and gates |
+| `engram activation-study verify\|run\|analyze` | Verify, execute, or analyze a frozen disposable Codex activation cohort |
 | `engram checkpoint record [flags]`         | Record an idempotent local `saved`, `needs_review`, or `skipped` root-turn checkpoint |
 | `engram checkpoint status [flags]`         | Inspect one exact local root-turn checkpoint                 |
 | `engram stats`                             | Memory statistics                                               |
@@ -737,6 +738,16 @@ thresholds before the corpus is added or executed. Held-out evaluation is exclud
 from ordinary `go test ./...` and runs only through the explicit
 `admission_heldout` test tag. Synthetic fixtures do not establish production
 readiness; that requires a consented, independently labeled real-session corpus.
+
+### Codex activation evaluation
+
+`engram activation-study` owns the separate matched-prompt evaluation of
+repository-scoped Memory guidance. It verifies and runs disposable fresh-session
+Codex treatments, reduces raw run evidence to bounded activation events, and
+produces deterministic aggregate reports. It does not enable plugins, MCP,
+lifecycle hooks, Stop verification, or Admission behavior. The frozen v1 contract,
+reproducible commands, privacy boundary, and published results live in
+[`evals/codex-activation/v1/`](evals/codex-activation/v1/README.md).
 
 ### Key Environment Variables
 

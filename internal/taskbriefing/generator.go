@@ -101,6 +101,8 @@ const (
 	candidateFieldContributionLimit = 6
 	candidateFieldTermLimit         = 64
 	exactIdentifierStrength         = 4
+	maximumRejectionDetails         = 8
+	maximumFallbackAnchorBytes      = 96
 )
 
 var (
@@ -140,11 +142,102 @@ type SelectedMemory struct {
 }
 
 type Result struct {
-	Memories             []SelectedMemory `json:"memories"`
-	Diagnostics          []Diagnostic     `json:"diagnostics"`
-	BaseResolution       *BaseResolution  `json:"base_resolution,omitempty"`
-	ResultLimitOmissions int              `json:"result_limit_omissions,omitempty"`
-	ConflictPairs        []ConflictPair   `json:"-"`
+	Memories                []SelectedMemory     `json:"memories"`
+	Diagnostics             []Diagnostic         `json:"diagnostics"`
+	BaseResolution          *BaseResolution      `json:"base_resolution,omitempty"`
+	Pipeline                PipelineAccounting   `json:"pipeline"`
+	EmptyResultReason       EmptyResultReason    `json:"empty_result_reason,omitempty"`
+	Fallback                *SearchFallback      `json:"fallback,omitempty"`
+	FallbackCandidate       *SearchFallback      `json:"-"`
+	Rejections              []CandidateRejection `json:"rejections"`
+	RejectionDetailsOmitted int                  `json:"rejection_details_omitted"`
+	ResultLimitOmissions    int                  `json:"result_limit_omissions,omitempty"`
+	ConflictPairs           []ConflictPair       `json:"-"`
+}
+
+type RejectionStage string
+
+const (
+	RejectionStageLifecycle      RejectionStage = "lifecycle"
+	RejectionStageTaskGate       RejectionStage = "task_gate"
+	RejectionStageRepositoryGate RejectionStage = "repository_gate"
+	RejectionStageThreshold      RejectionStage = "threshold"
+)
+
+type RejectionReasonCode string
+
+const (
+	RejectionSuperseded             RejectionReasonCode = "superseded"
+	RejectionTaskEvidenceBelowGate  RejectionReasonCode = "task_evidence_below_gate"
+	RejectionRepositoryEvidenceWeak RejectionReasonCode = "repository_evidence_below_gate"
+	RejectionScoreBelowThreshold    RejectionReasonCode = "score_below_threshold"
+)
+
+type TaskEvidenceProgress struct {
+	Matched  int `json:"matched"`
+	Required int `json:"required"`
+}
+
+type CandidateRejection struct {
+	MemoryID     int64                 `json:"memory_id"`
+	Stage        RejectionStage        `json:"stage"`
+	ReasonCode   RejectionReasonCode   `json:"reason_code"`
+	TaskEvidence *TaskEvidenceProgress `json:"task_evidence,omitempty"`
+	Score        *int                  `json:"score,omitempty"`
+	Threshold    *int                  `json:"threshold,omitempty"`
+}
+
+type PipelineAccounting struct {
+	EligibleInventory      int                   `json:"eligible_inventory"`
+	RetrievedCandidates    int                   `json:"retrieved_candidates"`
+	RetrievalCountComplete bool                  `json:"retrieval_count_complete"`
+	Retrievals             []RetrievalAccounting `json:"retrievals"`
+	TaskGateRejections     int                   `json:"task_gate_rejections"`
+	RepositoryRejections   int                   `json:"repository_gate_rejections"`
+	LifecycleRejections    int                   `json:"lifecycle_rejections"`
+	ThresholdRejections    int                   `json:"threshold_rejections"`
+	QualifiedCandidates    int                   `json:"qualified_candidates"`
+}
+
+type RetrievalAccounting struct {
+	Signals       []SignalType `json:"signals"`
+	Limit         int          `json:"limit"`
+	Retrieved     int          `json:"retrieved"`
+	CountComplete bool         `json:"count_complete"`
+}
+
+type EmptyResultReason string
+
+const (
+	EmptyResultProjectHasNoMemories     EmptyResultReason = "project_has_no_memories"
+	EmptyResultNoCandidatesMatched      EmptyResultReason = "no_candidates_matched"
+	EmptyResultCandidatesFiltered       EmptyResultReason = "candidates_filtered"
+	EmptyResultCandidatesBelowThreshold EmptyResultReason = "candidates_below_threshold"
+	EmptyResultNoUsableSignals          EmptyResultReason = "no_usable_signals"
+)
+
+type FallbackReasonCode string
+
+const (
+	FallbackNoCandidatesMatched         FallbackReasonCode = "no_candidates_matched"
+	FallbackCandidateRetrievalTruncated FallbackReasonCode = "candidate_retrieval_truncated"
+	FallbackCandidatesFiltered          FallbackReasonCode = "candidates_filtered"
+	FallbackCandidatesBelowThreshold    FallbackReasonCode = "candidates_below_threshold"
+	FallbackResultLimitReached          FallbackReasonCode = "result_limit_reached"
+	FallbackOutputBudgetExhausted       FallbackReasonCode = "output_budget_exhausted"
+)
+
+type SearchFallback struct {
+	ReasonCode FallbackReasonCode `json:"reason_code"`
+	Anchors    []string           `json:"anchors"`
+	Project    string             `json:"project"`
+	Scope      string             `json:"scope"`
+	Invocation SearchInvocation   `json:"invocation"`
+}
+
+type SearchInvocation struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
 }
 
 type ConflictPair struct {
@@ -217,38 +310,173 @@ func (g *Generator) Generate(input Input) (Result, error) {
 	if input.WorkingDirectory != "" {
 		input.RepositoryProject, input.Repository = inspectRepository(input.WorkingDirectory, input.ExplicitBase, input.Project)
 	}
+	eligibleInventory, err := g.store.CountSearchableObservations(input.Project, input.Scope)
+	if err != nil {
+		return Result{}, &generateError{code: ErrorMemoryStoreFailure, err: fmt.Errorf("%w: %v", ErrMemoryStore, err)}
+	}
+	pipeline := PipelineAccounting{
+		EligibleInventory: eligibleInventory, RetrievalCountComplete: true, Retrievals: []RetrievalAccounting{},
+	}
 	signals, diagnostics, baseResolution := buildSignals(input)
 	if len(signals) == 0 {
 		diagnostics = append(diagnostics, Diagnostic{Code: DiagnosticNoUsableSignals})
-		return Result{Diagnostics: diagnostics, BaseResolution: baseResolution}, nil
+		return Result{
+			Diagnostics: diagnostics, BaseResolution: baseResolution, Pipeline: pipeline,
+			EmptyResultReason: EmptyResultNoUsableSignals,
+		}, nil
 	}
 	groups := groupSignals(signals)
-	candidates, err := g.retrieveCandidates(input, groups)
+	retrieval, err := g.retrieveCandidates(input, groups)
 	if err != nil {
 		return Result{}, err
 	}
-	relations, err := g.loadCandidateRelations(candidates)
+	pipeline.RetrievedCandidates = len(retrieval.candidates)
+	pipeline.RetrievalCountComplete = retrieval.countComplete
+	pipeline.Retrievals = retrieval.reports
+	relations, err := g.loadCandidateRelations(retrieval.candidates)
 	if err != nil {
 		return Result{}, err
 	}
-	selected := rankCandidates(input, groups, candidates, relations)
-	return g.boundSelection(input.Limit, selected, diagnostics, baseResolution, relations), nil
+	ranking := rankCandidates(input, groups, retrieval.candidates, relations)
+	pipeline.TaskGateRejections = ranking.taskGateRejections
+	pipeline.RepositoryRejections = ranking.repositoryRejections
+	pipeline.LifecycleRejections = ranking.lifecycleRejections
+	pipeline.ThresholdRejections = ranking.thresholdRejections
+	pipeline.QualifiedCandidates = len(ranking.selected)
+	result := g.boundSelection(input.Limit, ranking.selected, diagnostics, baseResolution, relations)
+	result.Pipeline = pipeline
+	result.Rejections = ranking.rejections
+	result.RejectionDetailsOmitted = ranking.rejectionDetailsOmitted
+	result.EmptyResultReason = emptyResultReason(pipeline, len(ranking.selected))
+	fallbackCandidate := buildSearchFallback(input, signals)
+	result.FallbackCandidate = fallbackCandidate
+	switch {
+	case !pipeline.RetrievalCountComplete:
+		result.Fallback = fallbackWithReason(fallbackCandidate, FallbackCandidateRetrievalTruncated)
+	case pipeline.RetrievedCandidates == 0 && pipeline.EligibleInventory > 0:
+		result.Fallback = fallbackWithReason(fallbackCandidate, FallbackNoCandidatesMatched)
+	case pipeline.TaskGateRejections > 0 || pipeline.RepositoryRejections > 0 || pipeline.LifecycleRejections > 0:
+		result.Fallback = fallbackWithReason(fallbackCandidate, FallbackCandidatesFiltered)
+	case pipeline.ThresholdRejections > 0:
+		result.Fallback = fallbackWithReason(fallbackCandidate, FallbackCandidatesBelowThreshold)
+	case result.ResultLimitOmissions > 0:
+		result.Fallback = fallbackWithReason(fallbackCandidate, FallbackResultLimitReached)
+	}
+	return result, nil
 }
 
-func (g *Generator) retrieveCandidates(input Input, groups []signalGroup) (map[int64]store.Observation, error) {
+type candidateRetrieval struct {
+	candidates    map[int64]store.Observation
+	reports       []RetrievalAccounting
+	countComplete bool
+}
+
+func (g *Generator) retrieveCandidates(input Input, groups []signalGroup) (candidateRetrieval, error) {
 	candidates := make(map[int64]store.Observation)
+	reports := make([]RetrievalAccounting, 0, len(groups))
+	countComplete := true
 	for _, group := range groups {
 		results, err := g.store.Search(strings.Join(group.terms, " "), store.SearchOptions{
 			Project: input.Project, Scope: input.Scope, Limit: candidateRetrievalLimit, MatchMode: "any",
 		})
 		if err != nil {
-			return nil, &generateError{code: ErrorMemoryStoreFailure, err: fmt.Errorf("%w: %v", ErrMemoryStore, err)}
+			return candidateRetrieval{}, &generateError{code: ErrorMemoryStoreFailure, err: fmt.Errorf("%w: %v", ErrMemoryStore, err)}
+		}
+		complete := len(results) < candidateRetrievalLimit
+		if !complete {
+			countComplete = false
 		}
 		for _, result := range results {
 			candidates[result.ID] = result.Observation
 		}
+		reports = append(reports, RetrievalAccounting{
+			Signals: append([]SignalType(nil), group.sources...), Limit: candidateRetrievalLimit,
+			Retrieved: len(results), CountComplete: complete,
+		})
 	}
-	return candidates, nil
+	return candidateRetrieval{candidates: candidates, reports: reports, countComplete: countComplete}, nil
+}
+
+func emptyResultReason(pipeline PipelineAccounting, qualified int) EmptyResultReason {
+	if qualified > 0 {
+		return ""
+	}
+	if pipeline.EligibleInventory == 0 {
+		return EmptyResultProjectHasNoMemories
+	}
+	if pipeline.RetrievedCandidates == 0 {
+		return EmptyResultNoCandidatesMatched
+	}
+	if pipeline.ThresholdRejections > 0 && pipeline.TaskGateRejections == 0 && pipeline.RepositoryRejections == 0 && pipeline.LifecycleRejections == 0 {
+		return EmptyResultCandidatesBelowThreshold
+	}
+	return EmptyResultCandidatesFiltered
+}
+
+func buildSearchFallback(input Input, signals []weightedSignal) *SearchFallback {
+	anchors := make([]string, 0, 3)
+	seen := make(map[string]struct{})
+	appendAnchor := func(anchor string) {
+		if len(anchors) >= 3 || anchor == "" || len(anchor) > maximumFallbackAnchorBytes {
+			return
+		}
+		if _, found := seen[anchor]; found {
+			return
+		}
+		seen[anchor] = struct{}{}
+		anchors = append(anchors, anchor)
+	}
+	for _, signal := range signals {
+		for _, identifier := range signal.identifiers {
+			appendAnchor(searchAnchorForIdentifier(identifier))
+		}
+	}
+	for _, signal := range signals {
+		for _, term := range signal.distinctiveTerms {
+			appendAnchor(term)
+		}
+	}
+	if len(anchors) == 0 {
+		return nil
+	}
+	query := strings.Join(anchors, " ")
+	args := []string{"search", query, "--project", input.Project, "--match-mode", "all", "--limit", "5", "--json"}
+	scope := input.Scope
+	if scope == "" {
+		scope = "all_scopes"
+	} else {
+		args = append(args[:4], append([]string{"--scope", input.Scope}, args[4:]...)...)
+	}
+	return &SearchFallback{
+		Anchors: anchors, Project: input.Project, Scope: scope,
+		Invocation: SearchInvocation{Command: "engram", Args: args},
+	}
+}
+
+func searchAnchorForIdentifier(identifier string) string {
+	for _, prefix := range []string{"pr:#", "issue:#"} {
+		if value, found := strings.CutPrefix(identifier, prefix); found {
+			return strings.TrimSuffix(prefix, ":#") + " " + value
+		}
+	}
+	for _, prefix := range []string{"branch:", "commit:", "path:", "topic:"} {
+		if value, found := strings.CutPrefix(identifier, prefix); found {
+			if _, generic := genericWorkflowTerms[value]; generic {
+				return ""
+			}
+			return value
+		}
+	}
+	return ""
+}
+
+func fallbackWithReason(fallback *SearchFallback, reason FallbackReasonCode) *SearchFallback {
+	if fallback == nil {
+		return nil
+	}
+	copy := *fallback
+	copy.ReasonCode = reason
+	return &copy
 }
 
 func (g *Generator) loadCandidateRelations(candidates map[int64]store.Observation) (map[string]store.ObservationRelations, error) {
@@ -264,18 +492,53 @@ func (g *Generator) loadCandidateRelations(candidates map[int64]store.Observatio
 	return relations, nil
 }
 
-func rankCandidates(input Input, groups []signalGroup, candidates map[int64]store.Observation, relations map[string]store.ObservationRelations) []SelectedMemory {
-	selected := make([]SelectedMemory, 0, len(candidates))
-	for _, memory := range candidates {
+type rankingResult struct {
+	selected                []SelectedMemory
+	rejections              []CandidateRejection
+	rejectionDetailsOmitted int
+	taskGateRejections      int
+	repositoryRejections    int
+	lifecycleRejections     int
+	thresholdRejections     int
+}
+
+func rankCandidates(input Input, groups []signalGroup, candidates map[int64]store.Observation, relations map[string]store.ObservationRelations) rankingResult {
+	ranked := rankingResult{
+		selected:   make([]SelectedMemory, 0, len(candidates)),
+		rejections: make([]CandidateRejection, 0, min(len(candidates), maximumRejectionDetails)),
+	}
+	recordRejection := func(rejection CandidateRejection) {
+		if len(ranked.rejections) < maximumRejectionDetails {
+			ranked.rejections = append(ranked.rejections, rejection)
+			return
+		}
+		ranked.rejectionDetailsOmitted++
+	}
+
+	candidateIDs := make([]int64, 0, len(candidates))
+	for id := range candidates {
+		candidateIDs = append(candidateIDs, id)
+	}
+	sort.Slice(candidateIDs, func(i, j int) bool { return candidateIDs[i] < candidateIDs[j] })
+
+	for _, candidateID := range candidateIDs {
+		memory := candidates[candidateID]
 		if isSuperseded(relations[memory.SyncID]) {
+			ranked.lifecycleRejections++
+			recordRejection(CandidateRejection{MemoryID: memory.ID, Stage: RejectionStageLifecycle, ReasonCode: RejectionSuperseded})
 			continue
 		}
 		matches := make([]matchedSignalGroup, 0, len(groups))
 		hasTaskEvidence := false
 		hasStrongRepositoryEvidence := false
+		taskProgress := TaskEvidenceProgress{}
 		for _, group := range groups {
 			evidence := matchEvidence(memory, group)
 			isTaskGroup := containsSignalType(group.sources, SignalTaskIntent)
+			if isTaskGroup {
+				matched, required := group.taskEvidenceProgress(evidence)
+				taskProgress = TaskEvidenceProgress{Matched: matched, Required: required}
+			}
 			if group.qualifies(evidence) {
 				matches = append(matches, matchedSignalGroup{group: group, evidence: evidence})
 				if isTaskGroup {
@@ -290,14 +553,29 @@ func rankCandidates(input Input, groups []signalGroup, candidates map[int64]stor
 			}
 		}
 		if input.TaskIntent != "" && !hasTaskEvidence {
+			ranked.taskGateRejections++
+			progress := taskProgress
+			recordRejection(CandidateRejection{
+				MemoryID: memory.ID, Stage: RejectionStageTaskGate, ReasonCode: RejectionTaskEvidenceBelowGate,
+				TaskEvidence: &progress,
+			})
 			continue
 		}
 		if input.TaskIntent == "" && !hasStrongRepositoryEvidence {
+			ranked.repositoryRejections++
+			recordRejection(CandidateRejection{MemoryID: memory.ID, Stage: RejectionStageRepositoryGate, ReasonCode: RejectionRepositoryEvidenceWeak})
 			continue
 		}
 		evidenceItems := expandSelectionEvidence(matches)
 		baseScore := scoreMatchedGroups(matches, false)
 		if baseScore < CalibratedDefaults.InclusionThreshold {
+			ranked.thresholdRejections++
+			score := baseScore
+			threshold := CalibratedDefaults.InclusionThreshold
+			recordRejection(CandidateRejection{
+				MemoryID: memory.ID, Stage: RejectionStageThreshold, ReasonCode: RejectionScoreBelowThreshold,
+				Score: &score, Threshold: &threshold,
+			})
 			continue
 		}
 		score := scoreMatchedGroups(matches, true)
@@ -306,23 +584,23 @@ func rankCandidates(input Input, groups []signalGroup, candidates map[int64]stor
 			pinBoost = CalibratedDefaults.PinBoost
 			score += pinBoost
 		}
-		selected = append(selected, SelectedMemory{
+		ranked.selected = append(ranked.selected, SelectedMemory{
 			Memory:   memory,
 			Score:    score,
 			PinBoost: pinBoost,
 			Evidence: evidenceItems,
 		})
 	}
-	sort.Slice(selected, func(i, j int) bool {
-		if selected[i].Score != selected[j].Score {
-			return selected[i].Score > selected[j].Score
+	sort.Slice(ranked.selected, func(i, j int) bool {
+		if ranked.selected[i].Score != ranked.selected[j].Score {
+			return ranked.selected[i].Score > ranked.selected[j].Score
 		}
-		if selected[i].Memory.Title != selected[j].Memory.Title {
-			return selected[i].Memory.Title < selected[j].Memory.Title
+		if ranked.selected[i].Memory.Title != ranked.selected[j].Memory.Title {
+			return ranked.selected[i].Memory.Title < ranked.selected[j].Memory.Title
 		}
-		return selected[i].Memory.ID < selected[j].Memory.ID
+		return ranked.selected[i].Memory.ID < ranked.selected[j].Memory.ID
 	})
-	return selected
+	return ranked
 }
 
 type matchedSignalGroup struct {
@@ -339,6 +617,16 @@ func (g signalGroup) qualifies(evidence SelectionEvidence) bool {
 	}
 	return len(evidence.MatchedIdentifiers) > 0 ||
 		(len(evidence.MatchedDistinctiveTerms) > 0 && len(evidence.MatchedTerms) >= 2)
+}
+
+func (g signalGroup) taskEvidenceProgress(evidence SelectionEvidence) (int, int) {
+	matched := len(evidence.MatchedIdentifiers)*exactIdentifierStrength + len(evidence.MatchedDistinctiveTerms)
+	total := len(g.identifiers)*exactIdentifierStrength + len(g.distinctiveTerms)
+	required := (total + 1) / 2
+	if required == 0 {
+		required = 1
+	}
+	return matched, required
 }
 
 func expandSelectionEvidence(matches []matchedSignalGroup) []SelectionEvidence {

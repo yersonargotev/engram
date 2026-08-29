@@ -20,7 +20,7 @@ func TestEncodeContextBriefingEnforcesPublicByteBudget(t *testing.T) {
 		memories = append(memories, contextBriefingMemory{
 			Memory: store.Observation{
 				ID: int64(index + 1), Type: "decision", Title: "Bounded task briefing",
-				Content: strings.Repeat("complete durable memory content ", 55), Scope: "project",
+				Content: strings.Repeat("complete durable memory content ", 50), Scope: "project",
 			},
 			Evidence: []taskbriefing.SelectionEvidence{{
 				Signal: taskbriefing.SignalTaskIntent, MatchedTerms: []string{"bounded", "briefing"}, MatchedFields: []string{"title", "content"},
@@ -91,6 +91,229 @@ func TestFormatContextBriefingReportsExactAndDistinctiveEvidence(t *testing.T) {
 		if !strings.Contains(formatted, want) {
 			t.Fatalf("human briefing = %q, want %q", formatted, want)
 		}
+	}
+}
+
+func TestContextBriefingOutputReportsPipelineRejectionsAndFallback(t *testing.T) {
+	score := 5
+	threshold := 10
+	result := taskbriefing.Result{
+		Diagnostics: []taskbriefing.Diagnostic{},
+		Pipeline: taskbriefing.PipelineAccounting{
+			EligibleInventory: 3, RetrievedCandidates: 2, RetrievalCountComplete: false,
+			Retrievals: []taskbriefing.RetrievalAccounting{{
+				Signals: []taskbriefing.SignalType{taskbriefing.SignalTaskIntent}, Limit: 20, Retrieved: 20, CountComplete: false,
+			}},
+			TaskGateRejections: 1, ThresholdRejections: 1,
+		},
+		EmptyResultReason: taskbriefing.EmptyResultCandidatesFiltered,
+		Rejections: []taskbriefing.CandidateRejection{
+			{
+				MemoryID: 41, Stage: taskbriefing.RejectionStageTaskGate, ReasonCode: taskbriefing.RejectionTaskEvidenceBelowGate,
+				TaskEvidence: &taskbriefing.TaskEvidenceProgress{Matched: 1, Required: 3},
+			},
+			{
+				MemoryID: 42, Stage: taskbriefing.RejectionStageThreshold, ReasonCode: taskbriefing.RejectionScoreBelowThreshold,
+				Score: &score, Threshold: &threshold,
+			},
+		},
+		RejectionDetailsOmitted: 2,
+		Fallback: &taskbriefing.SearchFallback{
+			ReasonCode: taskbriefing.FallbackCandidatesFiltered,
+			Anchors:    []string{"pr 56", "issue 43"}, Project: "engram", Scope: "all_scopes",
+			Invocation: taskbriefing.SearchInvocation{
+				Command: "engram", Args: []string{"search", "pr 56 issue 43", "--project", "engram", "--match-mode", "all", "--limit", "5", "--json"},
+			},
+		},
+	}
+	output := newContextBriefingOutput("engram", "", result)
+
+	encoded, err := json.Marshal(output)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	for _, want := range []string{
+		`"eligible_inventory":3`, `"retrieved_candidates":2`, `"retrieval_count_complete":false`,
+		`"memory_id":41`, `"matched":1`, `"required":3`, `"rejection_details_omitted":2`,
+		`"reason_code":"candidates_filtered"`, `"args":["search","pr 56 issue 43"`,
+	} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("JSON output = %s, want %s", encoded, want)
+		}
+	}
+
+	human := string(formatContextBriefing(output, true))
+	for _, want := range []string{
+		"eligible inventory: 3", "retrieved candidates: at least 2 (incomplete)",
+		"task gate: 1", "threshold: 1", "memory #41: task_gate/task_evidence_below_gate; task evidence 1/3",
+		"2 additional rejection details omitted", "Empty result: candidates_filtered",
+		"engram 'search' 'pr 56 issue 43' '--project' 'engram' '--match-mode' 'all' '--limit' '5' '--json'",
+	} {
+		if !strings.Contains(human, want) {
+			t.Fatalf("human output = %q, want %q", human, want)
+		}
+	}
+}
+
+func TestEncodeContextBriefingBoundsRejectionDetails(t *testing.T) {
+	rejections := make([]taskbriefing.CandidateRejection, 0, 8)
+	for index := 0; index < 8; index++ {
+		rejections = append(rejections, taskbriefing.CandidateRejection{
+			MemoryID: int64(index + 1), Stage: taskbriefing.RejectionStageTaskGate,
+			ReasonCode:   taskbriefing.RejectionTaskEvidenceBelowGate,
+			TaskEvidence: &taskbriefing.TaskEvidenceProgress{Matched: index, Required: 12},
+		})
+	}
+	output := contextBriefingOutput{
+		Mode: "brief", Project: "engram", Diagnostics: []taskbriefing.Diagnostic{}, Rejections: rejections,
+		Pipeline: taskbriefing.PipelineAccounting{EligibleInventory: 8, RetrievedCandidates: 8, RetrievalCountComplete: true},
+	}
+	oneRejection := output
+	oneRejection.Rejections = rejections[:1]
+	oneRejection.RejectionDetailsOmitted = 7
+	encodedOne, err := json.Marshal(oneRejection)
+	if err != nil {
+		t.Fatalf("marshal one-rejection output: %v", err)
+	}
+
+	encoded, err := encodeContextBriefing(output, true, true, len(encodedOne)+1)
+	if err != nil {
+		t.Fatalf("encodeContextBriefing: %v", err)
+	}
+	var bounded contextBriefingOutput
+	if err := json.Unmarshal(encoded, &bounded); err != nil {
+		t.Fatalf("decode bounded output: %v", err)
+	}
+	if len(bounded.Rejections) != 1 || bounded.RejectionDetailsOmitted != 7 {
+		t.Fatalf("bounded output = %#v, want one detail and seven explicit omissions", bounded)
+	}
+}
+
+func TestEncodeContextBriefingAddsFallbackAfterBudgetOmission(t *testing.T) {
+	fallbackCandidate := &taskbriefing.SearchFallback{
+		Anchors: []string{"cache", "migration"}, Project: "engram", Scope: "all_scopes",
+		Invocation: taskbriefing.SearchInvocation{
+			Command: "engram", Args: []string{"search", "cache migration", "--project", "engram", "--match-mode", "all", "--limit", "5", "--json"},
+		},
+	}
+	output := contextBriefingOutput{
+		Mode: "brief", Project: "engram", Diagnostics: []taskbriefing.Diagnostic{},
+		Memories: []contextBriefingMemory{{
+			Memory: store.Observation{ID: 1, Type: "decision", Title: "Large memory", Content: strings.Repeat("complete memory content ", 80), Scope: "project"},
+		}},
+		Pipeline: taskbriefing.PipelineAccounting{
+			EligibleInventory: 1, RetrievedCandidates: 1, RetrievalCountComplete: true, QualifiedCandidates: 1,
+		},
+		fallbackCandidate: fallbackCandidate,
+	}
+	withoutMemory := output
+	withoutMemory.Memories = nil
+	withoutMemory.BudgetOmissions = 1
+	withoutMemory.Diagnostics = []taskbriefing.Diagnostic{{Code: taskbriefing.DiagnosticOutputBudgetExhausted}}
+	fallback := *fallbackCandidate
+	fallback.ReasonCode = taskbriefing.FallbackOutputBudgetExhausted
+	withoutMemory.Fallback = &fallback
+	encodedWithoutMemory, err := json.Marshal(withoutMemory)
+	if err != nil {
+		t.Fatalf("marshal bounded output: %v", err)
+	}
+
+	encoded, err := encodeContextBriefing(output, true, true, len(encodedWithoutMemory)+1)
+	if err != nil {
+		t.Fatalf("encodeContextBriefing: %v", err)
+	}
+	var bounded contextBriefingOutput
+	if err := json.Unmarshal(encoded, &bounded); err != nil {
+		t.Fatalf("decode bounded output: %v", err)
+	}
+	if bounded.BudgetOmissions != 1 || bounded.Fallback == nil || bounded.Fallback.ReasonCode != taskbriefing.FallbackOutputBudgetExhausted {
+		t.Fatalf("bounded output = %#v, want output-budget fallback", bounded)
+	}
+}
+
+func TestEncodeContextBriefingOmitsOversizedFallbackMetadata(t *testing.T) {
+	oversized := strings.Repeat("a", taskbriefing.CalibratedDefaults.TotalOutputBudget)
+	fallback := &taskbriefing.SearchFallback{
+		ReasonCode: taskbriefing.FallbackNoCandidatesMatched,
+		Anchors:    []string{oversized}, Project: "engram", Scope: "all_scopes",
+		Invocation: taskbriefing.SearchInvocation{
+			Command: "engram", Args: []string{"search", oversized, "--project", "engram", "--match-mode", "all", "--limit", "5", "--json"},
+		},
+	}
+	output := contextBriefingOutput{
+		Mode: "brief", Project: "engram", Diagnostics: []taskbriefing.Diagnostic{}, Rejections: []taskbriefing.CandidateRejection{},
+		Pipeline:          taskbriefing.PipelineAccounting{EligibleInventory: 1, RetrievalCountComplete: true},
+		EmptyResultReason: taskbriefing.EmptyResultNoCandidatesMatched,
+		Fallback:          fallback,
+		fallbackCandidate: fallback,
+	}
+
+	encoded, err := encodeContextBriefing(output, true, true, taskbriefing.CalibratedDefaults.TotalOutputBudget)
+	if err != nil {
+		t.Fatalf("encodeContextBriefing: %v", err)
+	}
+	if len(encoded) > taskbriefing.CalibratedDefaults.TotalOutputBudget {
+		t.Fatalf("encoded bytes = %d, budget = %d", len(encoded), taskbriefing.CalibratedDefaults.TotalOutputBudget)
+	}
+	var bounded contextBriefingOutput
+	if err := json.Unmarshal(encoded, &bounded); err != nil {
+		t.Fatalf("decode bounded output: %v", err)
+	}
+	if bounded.Fallback != nil || !bounded.FallbackOmitted || bounded.FallbackOmissionReason != "output_budget" {
+		t.Fatalf("bounded output = %#v, want explicit fallback omission", bounded)
+	}
+	human := string(formatContextBriefing(bounded, true))
+	if !strings.Contains(human, "Targeted search fallback omitted: output_budget") {
+		t.Fatalf("human output = %q, want explicit fallback omission", human)
+	}
+}
+
+func TestEncodeContextBriefingPrefersMemoryOverFallback(t *testing.T) {
+	fallback := &taskbriefing.SearchFallback{
+		ReasonCode: taskbriefing.FallbackResultLimitReached,
+		Anchors:    []string{"cache", "migration"}, Project: "engram", Scope: "all_scopes",
+		Invocation: taskbriefing.SearchInvocation{
+			Command: "engram", Args: []string{"search", "cache migration", "--project", "engram", "--match-mode", "all", "--limit", "5", "--json"},
+		},
+	}
+	output := contextBriefingOutput{
+		Mode: "brief", Project: "engram", Diagnostics: []taskbriefing.Diagnostic{}, Rejections: []taskbriefing.CandidateRejection{},
+		Memories: []contextBriefingMemory{{Memory: store.Observation{
+			ID: 1, Type: "decision", Title: "Complete memory", Content: strings.Repeat("useful memory content ", 80), Scope: "project",
+		}}},
+		Pipeline: taskbriefing.PipelineAccounting{EligibleInventory: 1, RetrievedCandidates: 1, RetrievalCountComplete: true, QualifiedCandidates: 1},
+		Fallback: fallback,
+	}
+	preferred := output
+	preferred.Fallback = nil
+	preferred.FallbackOmitted = true
+	preferred.FallbackOmissionReason = "output_budget"
+	preferredBytes, err := json.Marshal(preferred)
+	if err != nil {
+		t.Fatalf("marshal preferred output: %v", err)
+	}
+	withFallbackBytes, err := json.Marshal(output)
+	if err != nil {
+		t.Fatalf("marshal output with fallback: %v", err)
+	}
+	budget := len(preferredBytes) + 1
+	if len(withFallbackBytes)+1 <= budget {
+		t.Fatalf("test setup does not exceed budget: with fallback %d, budget %d", len(withFallbackBytes)+1, budget)
+	}
+
+	encoded, err := encodeContextBriefing(output, true, true, budget)
+	if err != nil {
+		t.Fatalf("encodeContextBriefing: %v", err)
+	}
+	var bounded contextBriefingOutput
+	if err := json.Unmarshal(encoded, &bounded); err != nil {
+		t.Fatalf("decode bounded output: %v", err)
+	}
+	if len(bounded.Memories) != 1 || bounded.BudgetOmissions != 0 {
+		t.Fatalf("bounded output = %#v, want the complete memory retained", bounded)
+	}
+	if bounded.Fallback != nil || !bounded.FallbackOmitted || bounded.FallbackOmissionReason != "output_budget" {
+		t.Fatalf("bounded output = %#v, want advisory fallback omitted first", bounded)
 	}
 }
 

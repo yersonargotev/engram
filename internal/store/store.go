@@ -3596,6 +3596,27 @@ func (s *Store) Search(query string, opts SearchOptions) ([]SearchResult, error)
 	return s.SearchContext(context.Background(), query, opts)
 }
 
+// CountSearchableObservations returns the number of non-deleted observations
+// available to Search for one project and optional scope.
+func (s *Store) CountSearchableObservations(project, scope string) (int, error) {
+	project, _ = NormalizeProject(project)
+	query := `SELECT COUNT(*) FROM observations WHERE deleted_at IS NULL`
+	args := []any{}
+	if project != "" {
+		query += ` AND LOWER(project) = ?`
+		args = append(args, project)
+	}
+	if scope != "" {
+		query += ` AND scope = ?`
+		args = append(args, normalizeScope(scope))
+	}
+	var count int
+	if err := s.db.QueryRow(query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // SearchContext searches observations while honoring cancellation from the
 // caller, including while materializing rows.
 func (s *Store) SearchContext(ctx context.Context, query string, opts SearchOptions) ([]SearchResult, error) {

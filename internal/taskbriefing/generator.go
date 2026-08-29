@@ -481,7 +481,7 @@ func buildSignals(input Input) ([]weightedSignal, []Diagnostic, *BaseResolution)
 		if len(terms) == 0 {
 			continue
 		}
-		identifiers := extractExactIdentifiers(boundedTermPrefix(raw.raw, raw.limit), raw.kind, raw.limit)
+		identifiers := extractExactIdentifiers(boundedIdentifierInput(raw.raw, raw.limit), raw.kind, raw.limit)
 		signals = append(signals, weightedSignal{
 			kind: raw.kind, terms: terms, identifiers: identifiers,
 			distinctiveTerms: distinctiveTerms(terms), weight: raw.weight,
@@ -526,7 +526,7 @@ func matchEvidence(memory store.Observation, group signalGroup) SelectionEvidenc
 	termMatches := make(map[string]struct{}, len(group.terms))
 	distinctiveSet := stringSet(group.distinctiveTerms)
 	for _, field := range fields {
-		boundedField := boundedTermPrefix(field.value, candidateFieldTermLimit)
+		boundedField := boundedIdentifierInput(field.value, candidateFieldTermLimit)
 		fieldIdentifiers := stringSet(extractMemoryIdentifiers(boundedField, field.name, candidateIdentifierLimit))
 		fieldTerms := stringSet(normalizeTerms(field.value, candidateFieldTermLimit))
 		remaining := candidateFieldContributionLimit

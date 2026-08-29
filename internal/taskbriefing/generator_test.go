@@ -24,7 +24,8 @@ func TestGenerateRetainsExactIdentifierAfterOversizedToken(t *testing.T) {
 		t.Fatalf("AddObservation: %v", err)
 	}
 
-	task := "alpha bravo charlie delta echo foxtrot " + strings.Repeat("x", maximumGitTermBytes+1) + " PR 56"
+	oversizedPR := "PR" + strings.Repeat("9", maximumGitTermBytes)
+	task := "alpha bravo charlie delta echo foxtrot " + oversizedPR + " PR 56"
 	result, err := New(memoryStore).Generate(Input{Project: "engram", TaskIntent: task})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)

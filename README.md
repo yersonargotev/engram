@@ -475,7 +475,7 @@ reached, JSON diagnostics include each source's `total_terms`, `analyzed_terms`,
 and `omitted_terms`; human output shows the same counts. Acquisition retains only
 the calibrated vocabulary; after that bound, `omitted_terms` counts eligible
 occurrences without retaining their values. Exact identifiers are extracted only
-from the retained input prefix, so an identifier in the omitted tail cannot affect
+from retained input; oversized fields and the omitted tail cannot affect
 selection. Git streams also have a deterministic
 one-MiB acquisition ceiling. `count_complete: false` marks prefix counts when
 that ceiling is reached, so partial analysis is never presented as complete.

@@ -46,8 +46,8 @@ Inputs are normalized and deduplicated before retrieval. The prototype retains
 at most 12 Task terms, 6 branch-name terms, 16 terms for each diff source, and
 12 terms for each path, commit-subject, or untracked-path source. Only retained
 vocabulary is tracked in memory; eligible occurrences after the bound are
-counted without retaining their values. Exact identifiers are extracted from the
-same retained prefix and never from a diagnosed omitted tail. Git streams stop at a deterministic
+counted without retaining their values. Exact identifiers exclude oversized
+fields and the diagnosed omitted tail. Git streams stop at a deterministic
 one-MiB acquisition ceiling and mark those prefix counts with
 `count_complete: false`. The
 `every_repository_source_is_bounded` scenario crosses every Repository limit;

@@ -6,9 +6,15 @@ import (
 	"io"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const maximumGitTermBytes = 64 * 1024
+
+type byteSpan struct {
+	start int
+	end   int
+}
 
 // collectTerms retains only the bounded vocabulary used for selection. Once the
 // vocabulary is full, omitted occurrences are counted without retaining their
@@ -80,18 +86,20 @@ func collectTerms(input io.Reader, limit int, byteLimit int64) ([]string, int, b
 	}
 }
 
-// boundedTermPrefix returns the portion of raw covered by the same unique-term
-// vocabulary bound as collectTerms. Exact identifiers are extracted only from
-// this prefix so values in a diagnosed omitted tail cannot influence selection.
-func boundedTermPrefix(raw string, limit int) string {
+// boundedIdentifierInput returns the portion of raw covered by the same
+// unique-term vocabulary bound as collectTerms. Oversized whitespace-delimited
+// fields are removed so omitted values cannot become exact identifier evidence,
+// while retained input after them remains available for parsing.
+func boundedIdentifierInput(raw string, limit int) string {
 	if limit <= 0 {
 		return ""
 	}
 	retained := make(map[string]struct{}, min(limit, 64))
+	omittedFields := make([]byteSpan, 0)
 	var token strings.Builder
 	tokenStart := -1
 	overflowed := false
-	flush := func() (int, bool) {
+	flush := func(tokenEnd int) (int, bool) {
 		if tokenStart < 0 {
 			return 0, false
 		}
@@ -100,6 +108,8 @@ func boundedTermPrefix(raw string, limit int) string {
 		if overflowed {
 			overflowed = false
 			token.Reset()
+			fieldStart, fieldEnd := whitespaceFieldBounds(raw, start, tokenEnd)
+			omittedFields = append(omittedFields, byteSpan{start: fieldStart, end: fieldEnd})
 			return 0, false
 		}
 		term := strings.ToLower(token.String())
@@ -119,8 +129,8 @@ func boundedTermPrefix(raw string, limit int) string {
 
 	for index, r := range raw {
 		if !unicode.IsLetter(r) && !unicode.IsNumber(r) {
-			if boundary, stopped := flush(); stopped {
-				return raw[:boundary]
+			if boundary, stopped := flush(index); stopped {
+				return omitByteSpans(raw, boundary, omittedFields)
 			}
 			continue
 		}
@@ -137,10 +147,52 @@ func boundedTermPrefix(raw string, limit int) string {
 		}
 		token.WriteRune(r)
 	}
-	if boundary, stopped := flush(); stopped {
-		return raw[:boundary]
+	if boundary, stopped := flush(len(raw)); stopped {
+		return omitByteSpans(raw, boundary, omittedFields)
 	}
-	return raw
+	return omitByteSpans(raw, len(raw), omittedFields)
+}
+
+func whitespaceFieldBounds(raw string, start, end int) (int, int) {
+	for start > 0 {
+		r, size := utf8.DecodeLastRuneInString(raw[:start])
+		if unicode.IsSpace(r) {
+			break
+		}
+		start -= size
+	}
+	for end < len(raw) {
+		r, size := utf8.DecodeRuneInString(raw[end:])
+		if unicode.IsSpace(r) {
+			break
+		}
+		end += size
+	}
+	return start, end
+}
+
+func omitByteSpans(raw string, end int, spans []byteSpan) string {
+	if len(spans) == 0 {
+		return raw[:end]
+	}
+	var sanitized strings.Builder
+	sanitized.Grow(min(end, maximumGitTermBytes))
+	cursor := 0
+	for _, span := range spans {
+		if span.start >= end {
+			break
+		}
+		spanStart := max(span.start, cursor)
+		spanEnd := min(span.end, end)
+		if spanEnd <= spanStart {
+			continue
+		}
+		sanitized.WriteString(raw[cursor:spanStart])
+		sanitized.WriteByte(' ')
+		cursor = spanEnd
+	}
+	sanitized.WriteString(raw[cursor:end])
+	return sanitized.String()
 }
 
 type byteBoundedReader struct {

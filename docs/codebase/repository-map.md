@@ -22,6 +22,7 @@
 | Change project detection | `internal/project/detect.go` | `internal/project/similar.go`, `docs/AGENT-SETUP.md` |
 | Change the TUI | `internal/tui/model.go` | `internal/tui/update.go`, `internal/tui/view.go`, `internal/tui/styles.go` |
 | Change Obsidian | `internal/obsidian/` | `plugin/obsidian/`, `docs/beta/obsidian-brain.md` |
+| Change the Codex activation evaluation | `internal/activationstudy/` | `evals/codex-activation/`, `cmd/engram/activation_study.go` |
 | Prepare a large feature | `openspec/changes/*` | `openspec/specs/*`, `CONTRIBUTING.md` |
 
 ## Package ownership
@@ -42,6 +43,7 @@
 | `internal/cloud/auth` | Bearer token, project-scope authorizer, signed dashboard sessions. | Create product rules outside its auth contract. |
 | `internal/project` | Project detection and normalization. | Access the store to correct data. |
 | `internal/setup` | Registry-driven agent installation: declarative adapters in `agents.go`, generic registry/injection machinery in `registry.go`, and custom installers in `setup.go`. | Orchestrate automatic cloud enrollment/login if it is not implemented and documented. |
+| `internal/activationstudy` | Frozen Codex activation contracts, disposable treatment fixtures, bounded event classification, deterministic analysis, and study cleanup. | Enable production integrations, retain raw run evidence, or mutate the real user home/store. |
 | `plugin/` | Thin adapters per agent/host. | Contain core behavior that should live in Go. |
 | `skills/` | Guardrails for contributor agents. | Replace specs, tests, or code. |
 | `docs/` | Usage, architecture, cloud, plugin, installation, and doctor guides. | Document unimplemented aspirations. |

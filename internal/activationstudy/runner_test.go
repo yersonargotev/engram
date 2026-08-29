@@ -18,7 +18,7 @@ func TestRunUsesDisposableStateAndReturnsOnlyBoundedEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := strings.TrimSpace(string(rootOutput))
-	revisionCommand := exec.Command("git", "-C", repo, "rev-parse", "6527374bfe7c45f3e54940f7496c05b677f1706c^{commit}")
+	revisionCommand := exec.Command("git", "-C", repo, "rev-parse", "HEAD^{commit}")
 	revisionOutput, err := revisionCommand.Output()
 	if err != nil {
 		t.Fatal(err)

@@ -679,8 +679,6 @@ func main() {
 		cmdDoctor(cfg)
 	case "context":
 		cmdContext(cfg)
-	case "admission":
-		cmdAdmission(cfg)
 	case "checkpoint":
 		cmdCheckpoint(cfg)
 	case "stats":
@@ -728,7 +726,7 @@ func shouldCheckForUpdates(args []string) bool {
 	}
 	command := strings.ToLower(strings.TrimSpace(args[0]))
 	switch command {
-	case "mcp", "serve", "protocol-mode", "admission", "activation-study":
+	case "mcp", "serve", "protocol-mode", "activation-study":
 		return false
 	case "checkpoint":
 		return len(args) >= 2 && strings.ToLower(strings.TrimSpace(args[1])) != "verify-stop"
@@ -772,40 +770,6 @@ func handleConfigFreeCommand(args []string) bool {
 			subcommand := strings.ToLower(strings.TrimSpace(args[1]))
 			if subcommand == "--help" || subcommand == "-h" || subcommand == "help" {
 				cmdCloud(store.Config{})
-				return true
-			}
-		}
-	case "admission":
-		isHelp := func(arg string) bool {
-			arg = strings.ToLower(strings.TrimSpace(arg))
-			return arg == "--help" || arg == "-h" || arg == "help"
-		}
-		if len(args) >= 2 && isHelp(args[1]) {
-			cmdAdmission(store.Config{})
-			return true
-		}
-		if len(args) >= 3 {
-			subcommand := strings.ToLower(strings.TrimSpace(args[1]))
-			if (subcommand == "preview" || subcommand == "shadow" || subcommand == "metrics") && isHelp(args[2]) {
-				cmdAdmission(store.Config{})
-				return true
-			}
-			if subcommand == "review" && isHelp(args[2]) {
-				cmdAdmission(store.Config{})
-				return true
-			}
-			if subcommand == "review" && args[2] == "list" && len(args) >= 4 && isHelp(args[3]) {
-				cmdAdmission(store.Config{})
-				return true
-			}
-			if subcommand == "review" && args[2] == "mark" &&
-				((len(args) >= 4 && isHelp(args[3])) || (len(args) >= 5 && isHelp(args[4]))) {
-				cmdAdmission(store.Config{})
-				return true
-			}
-			if (subcommand == "study" || subcommand == "omission") &&
-				((len(args) >= 3 && isHelp(args[2])) || (len(args) >= 4 && isHelp(args[3]))) {
-				cmdAdmission(store.Config{})
 				return true
 			}
 		}
@@ -3412,20 +3376,6 @@ Commands:
                        compare  <id-a> <id-b> --relation R --confidence N --reasoning TEXT [--json]
   doctor             Run read-only operational diagnostics [--json] [--project P] [--check CODE]
   context [project]  Show recent context from previous sessions [--scope SCOPE] [--json]
-  admission preview  Generate and assess Memory proposals without persisting them
-                       --project PROJECT (--input FILE|- | --session SESSION_ID) [--json]
-  admission shadow   Retain one explicit local shadow run for later review
-                       --project PROJECT --session SESSION_ID [--json]
-                       Add frozen study attribution with --study ID --study-version VERSION
-                       --cohort COHORT --adapter ADAPTER --project-type TYPE
-                       --session-shape SHAPE --consent-attestation ID
-                       [--independent-review-required]
-  admission study    Freeze a versioned study contract or clean up one exact version
-                       freeze --input FILE|- [--json]
-                       cleanup --study ID --study-version VERSION --yes [--json]
-  admission review   List or correct retained Memory proposals
-  admission omission Record a bounded, redacted omission for an attributed run
-  admission metrics  Report project-local or aggregate study evaluation metrics
   activation-study   Verify, run, or analyze the frozen Codex activation cohort
   checkpoint record  Record a root-turn Memory checkpoint
                        --host HOST --session-id ID --root-turn-id ID

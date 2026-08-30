@@ -1,7 +1,8 @@
 # Task Brief generic recall without weakening precision
 
-**Status:** research and proposal; not an architecture decision or implementation
-specification
+**Status:** historical research; proposal not adopted. [ADR-0009](../adr/0009-retire-task-briefing.md)
+retired Task Brief instead. The recommendations and implementation phases below
+record the pre-decision alternative and are not current product guidance.
 
 **Date:** 2026-08-29
 

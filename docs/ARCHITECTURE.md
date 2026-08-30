@@ -277,7 +277,7 @@ engram delete prompt <id>
 engram delete project <name> [--hard]
                           Cascade-delete a project: soft-deletes observations (or hard-deletes
                           with --hard, which also removes sessions); always removes prompts,
-                          Shadow admission runs, local proposals, and their checkpoints
+                          local Memory proposals, and their checkpoints
 engram timeline <obs_id>  Chronological context around an observation
 engram context [project]  Recent context from previous sessions
                           [--scope SCOPE] [--json]
@@ -292,8 +292,8 @@ engram conflicts <sub>    Inspect and manage memory conflict relations
                             list, show, stats, scan, deferred, judge, compare
 engram doctor             Run read-only operational diagnostics [--json] [--project P] [--check CODE]
 engram projects merge     Deterministic multi-source merge [--dry-run] [--yes] [--json]
-                          (includes local shadow-admission and Memory-proposal ownership;
-                           no local-review sync mutations)
+                          (includes local Memory-proposal and checkpoint ownership;
+                           no local-only checkpoint sync mutations)
 engram cloud status       Show cloud runtime/config status
 engram cloud config --server <url>
                           Configure cloud server URL

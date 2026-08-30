@@ -3247,7 +3247,7 @@ func (s *Store) GetObservation(id int64) (*Observation, error) {
 }
 
 func (s *Store) UpdateObservation(id int64, p UpdateObservationParams) (*Observation, error) {
-	// Admission runs before the transaction so a rejected update opens no
+	// Validation runs before the transaction so a rejected update opens no
 	// transaction, touches no row and enqueues no sync mutation. The title is
 	// checked post-strip so redaction cannot smuggle an empty one through.
 	if p.Title != nil {
@@ -8576,8 +8576,6 @@ func normalizeExistingSyncID(existing, prefix string) string {
 }
 
 // privateTagRegex preserves the established save/mem_save redaction contract.
-// Admission uses RedactPrivateBlocks directly because its retained-data contract
-// additionally covers nested and unclosed private blocks.
 var privateTagRegex = regexp.MustCompile(`(?is)<private>.*?</private>`)
 
 func stripPrivateTags(s string) string {

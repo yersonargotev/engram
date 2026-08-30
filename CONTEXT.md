@@ -13,61 +13,14 @@ _Avoid_: Note, record
 **Memory proposal**:
 Immutable local checkpoint audit evidence for a `needs_review` disposition. It
 contains an Engram-derived identity, project, creation time, and the caller's
-redacted title and content; it is not a Memory or Promotion candidate.
+redacted title and content. It is not a Memory, and no workflow converts it into
+one.
 _Avoid_: Memory candidate, draft memory
-
-**Protected proposal**:
-A Memory proposal whose false rejection blocks any move toward automatic rejection.
-_Avoid_: Critical memory, mandatory save
-
-**Evidence bundle**:
-Bounded, provenance-bearing evidence used to formulate or assess Memory proposals.
-_Avoid_: Transcript, session dump
-
-**Evidence acquisition**:
-A read-only operation that builds an Evidence bundle from explicitly selected,
-already-persisted sources and reports any omissions or truncation.
-_Avoid_: Session ingestion, automatic capture
-
-**Admission assessment**:
-An explainable `admit`, `review`, or `reject` recommendation for a Memory proposal.
-It does not itself create or discard a Memory.
-_Avoid_: Classifier result, admission decision
-
-**Shadow admission run**:
-An explicitly requested, local evaluation that retains Memory proposals and
-Admission assessments for later correction and measurement without promoting
-them to Memories.
-_Avoid_: Session capture, automatic admission
-
-**Admission study**:
-A frozen, versioned protocol that attributes explicit Shadow admission runs to
-separate cohorts and permits only declared aggregate evaluation outputs.
-_Avoid_: Session collection, admission experiment
-
-**Study cohort**:
-A predeclared calibration or held-out partition within one Admission study.
-_Avoid_: Dataset split, run group
 
 **Activation study**:
 A frozen, versioned matched-prompt evaluation that measures agent skill and CLI
 invocation across disposable repository treatments using bounded event evidence.
-_Avoid_: Admission study, activation experiment
-
-**Admission correction**:
-An append-only human verdict about one retained Memory proposal, attributed to
-a pseudonymous reviewer when it belongs to a study. It supplies evaluation
-evidence and does not itself promote, reject, or delete a Memory.
-_Avoid_: Memory review, approval
-
-**Omission annotation**:
-A bounded, redacted reviewer statement that an Admission assessment failed to
-propose a durable decision, root cause, invariant, constraint, or preference.
-_Avoid_: Missing Memory, raw evidence note
-
-**Promotion**:
-The explicit acceptance of a Memory proposal as a Memory.
-_Avoid_: Automatic save, candidate persistence
+_Avoid_: Agent benchmark, activation experiment
 
 **Memory operation**:
 An action that reads, creates, changes, organizes, reviews, or relates memories.
@@ -93,7 +46,7 @@ _Avoid_: Model turn, tool turn, session
 **Checkpoint verifier**:
 A host capability that detects a missing terminal Memory checkpoint for a root
 user turn without deciding what knowledge is durable.
-_Avoid_: Admission hook, memory judge, automatic save
+_Avoid_: Memory judge, automatic save
 
 **Checkpoint guarantee**:
 The promise that a host cannot complete a root user turn without a terminal
@@ -105,7 +58,7 @@ _Avoid_: Universal support, eventual capture
 A short, always-delivered host instruction that states the Memory checkpoint
 invariant and points to the canonical skill for the detailed rubric. It does not
 repeat the full memory protocol or decide the checkpoint outcome.
-_Avoid_: Full protocol, admission policy
+_Avoid_: Full protocol, Memory policy
 
 **Distribution authority**:
 The canonical source that identifies, versions, and publishes Engram setup and

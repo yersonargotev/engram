@@ -21,6 +21,17 @@ Breaking changes are always marked with a `type:breaking-change` label and docum
 
 <!-- Changes that are merged but not yet released are tracked here until the next tag. -->
 
+### Engram v3.0.0 breaking boundary
+
+- **breaking:** remove the complete Admission experiment in Engram v3.0.0 with
+  no deprecation window and no compatibility layer. The independent
+  `saved | skipped | needs_review` checkpoint contract remains; a
+  `needs_review` proposal is immutable local audit evidence, and opening a v3
+  database transactionally removes the retired experimental tables and data.
+  [ADR-0008](docs/adr/0008-retire-the-admission-experiment.md) is the normative
+  decision. Superseded ADRs and research under `docs/research/` remain
+  historical evidence rather than active product guidance.
+
 ### Memory checkpoints
 
 - **feat(memory):** add a local-only, idempotent checkpoint ledger plus equivalent CLI and MCP record/status surfaces for semantic `skipped` outcomes; checkpoint data is excluded from Memory search, context, counts, export, sync, cloud materialization, and Obsidian export.

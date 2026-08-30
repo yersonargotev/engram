@@ -145,19 +145,6 @@ func TestCLIProjectsMergeDryRunAndApplyJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateAdmissionShadowRun(store.CreateAdmissionShadowRunParams{
-		Project:          "old-project",
-		Mode:             "session",
-		EvidenceVersion:  "v1",
-		GeneratorVersion: "v1",
-		PolicyVersion:    "v1",
-		Proposals: []store.AdmissionShadowProposalInput{{
-			Type: "decision", Title: "shadow", Content: "shadow content", Scope: "project",
-			Category: "decision", Recommendation: "review", EvidenceRefs: []string{"prompt:1"},
-		}},
-	}); err != nil {
-		t.Fatalf("seed admission shadow run: %v", err)
-	}
 	proposalIdentity := store.CheckpointIdentity{Host: "codex", SessionID: "merge-proposal-session", RootTurnID: "merge-proposal-turn"}
 	if _, _, err := s.RecordNeedsReviewCheckpoint(store.RecordNeedsReviewCheckpointParams{
 		Identity: proposalIdentity,
@@ -175,8 +162,11 @@ func TestCLIProjectsMergeDryRunAndApplyJSON(t *testing.T) {
 		t.Fatalf("dry stderr=%q", stderr)
 	}
 	dry := decodeCLIJSON(t, stdout)
-	if dry["dry_run"] != true || dry["admission_shadow_runs_updated"] != float64(1) || dry["memory_proposals_updated"] != float64(1) {
+	if dry["dry_run"] != true || dry["memory_proposals_updated"] != float64(1) {
 		t.Fatalf("dry=%v", dry)
+	}
+	if _, exists := dry["admission_shadow_runs_updated"]; exists {
+		t.Fatalf("dry result retained Admission Shadow accounting: %v", dry)
 	}
 	withArgs(t, "engram", "projects", "merge", "--from", "old-project", "--to", "canonical", "--yes", "--json")
 	stdout, stderr = captureOutput(t, func() { cmdProjects(cfg) })
@@ -184,8 +174,11 @@ func TestCLIProjectsMergeDryRunAndApplyJSON(t *testing.T) {
 		t.Fatalf("apply stderr=%q", stderr)
 	}
 	applied := decodeCLIJSON(t, stdout)
-	if applied["dry_run"] != false || applied["admission_shadow_runs_updated"] != float64(1) || applied["memory_proposals_updated"] != float64(1) {
+	if applied["dry_run"] != false || applied["memory_proposals_updated"] != float64(1) {
 		t.Fatalf("applied=%v", applied)
+	}
+	if _, exists := applied["admission_shadow_runs_updated"]; exists {
+		t.Fatalf("applied result retained Admission Shadow accounting: %v", applied)
 	}
 	s, err = store.New(cfg)
 	if err != nil {
@@ -195,10 +188,6 @@ func TestCLIProjectsMergeDryRunAndApplyJSON(t *testing.T) {
 	results, err := s.Search("old", store.SearchOptions{Project: "canonical", Limit: 10})
 	if err != nil || len(results) != 1 {
 		t.Fatalf("merge results=%v err=%v", results, err)
-	}
-	runs, err := s.ListAdmissionShadowRuns("canonical")
-	if err != nil || len(runs) != 1 {
-		t.Fatalf("canonical shadow runs=%v err=%v", runs, err)
 	}
 	movedCheckpoint, err := s.GetMemoryCheckpoint(proposalIdentity)
 	if err != nil || movedCheckpoint.Proposal == nil || movedCheckpoint.Proposal.Project != "canonical" {

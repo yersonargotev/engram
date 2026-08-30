@@ -1485,10 +1485,9 @@ func cmdDeleteProject(cfg store.Config) {
 	if hard {
 		kind = "hard-deleted"
 	}
-	fmt.Printf("Project %q %s: %d observation(s), %d prompt(s), %d session(s), %d admission shadow run(s), %d Memory proposal(s), %d checkpoint(s)\n",
+	fmt.Printf("Project %q %s: %d observation(s), %d prompt(s), %d session(s), %d Memory proposal(s), %d checkpoint(s)\n",
 		result.Project, kind, result.ObservationsDeleted, result.PromptsDeleted,
-		result.SessionsDeleted, result.AdmissionShadowRunsDeleted,
-		result.MemoryProposalsDeleted, result.MemoryCheckpointsDeleted)
+		result.SessionsDeleted, result.MemoryProposalsDeleted, result.MemoryCheckpointsDeleted)
 }
 
 func cmdTimeline(cfg store.Config) {
@@ -2255,7 +2254,7 @@ func cmdProjectsMerge(cfg store.Config) {
 			_ = writeCLIJSON(preview)
 			return
 		}
-		fmt.Printf("Would merge %v into %q: %d observations, %d sessions, %d prompts, %d admission shadow runs, %d Memory proposals\n", preview.SourcesMerged, target, preview.ObservationsUpdated, preview.SessionsUpdated, preview.PromptsUpdated, preview.AdmissionShadowRunsUpdated, preview.MemoryProposalsUpdated)
+		fmt.Printf("Would merge %v into %q: %d observations, %d sessions, %d prompts, %d Memory proposals\n", preview.SourcesMerged, target, preview.ObservationsUpdated, preview.SessionsUpdated, preview.PromptsUpdated, preview.MemoryProposalsUpdated)
 		return
 	}
 	if !yes {
@@ -2280,7 +2279,7 @@ func cmdProjectsMerge(cfg store.Config) {
 		_ = writeCLIJSON(result)
 		return
 	}
-	fmt.Printf("Merged %v into %q: %d observations, %d sessions, %d prompts, %d admission shadow runs, %d Memory proposals\n", result.SourcesMerged, result.Canonical, result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated, result.AdmissionShadowRunsUpdated, result.MemoryProposalsUpdated)
+	fmt.Printf("Merged %v into %q: %d observations, %d sessions, %d prompts, %d Memory proposals\n", result.SourcesMerged, result.Canonical, result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated, result.MemoryProposalsUpdated)
 
 }
 
@@ -2681,7 +2680,6 @@ func cmdProjectsConsolidate(cfg store.Config) {
 		fmt.Printf("  Observations: %d\n", result.ObservationsUpdated)
 		fmt.Printf("  Sessions:     %d\n", result.SessionsUpdated)
 		fmt.Printf("  Prompts:      %d\n", result.PromptsUpdated)
-		fmt.Printf("  Shadow runs:  %d\n", result.AdmissionShadowRunsUpdated)
 		fmt.Printf("  Proposals:    %d\n", result.MemoryProposalsUpdated)
 		reportUnmergedSources(sources, result)
 		return
@@ -2805,9 +2803,9 @@ func cmdProjectsConsolidate(cfg store.Config) {
 			fmt.Printf("  Nothing merged into %q: the store moved no records for the %d selected project(s).\n",
 				mergeCanonical, len(sources))
 		} else {
-			fmt.Printf("  Merged: %d obs, %d sessions, %d prompts, %d shadow runs, %d proposals\n",
+			fmt.Printf("  Merged: %d obs, %d sessions, %d prompts, %d proposals\n",
 				result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated,
-				result.AdmissionShadowRunsUpdated, result.MemoryProposalsUpdated)
+				result.MemoryProposalsUpdated)
 			reportUnmergedSources(sources, result)
 		}
 

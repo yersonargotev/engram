@@ -1282,10 +1282,10 @@ func (s *Store) migrate() error {
 		return err
 	}
 
-	if err := s.migrateAdmissionShadow(); err != nil {
+	if err := s.migrateMemoryCheckpoints(); err != nil {
 		return err
 	}
-	if err := s.migrateMemoryCheckpoints(); err != nil {
+	if err := s.migrateAdmissionTombstone(); err != nil {
 		return err
 	}
 
@@ -2514,27 +2514,6 @@ func (s *Store) SessionObservations(sessionID string, limit int) ([]Observation,
 	return s.queryObservations(query, sessionID, limit)
 }
 
-// LatestSessionObservationByType returns the newest active observation of a
-// given type for one session. A missing match is represented by (nil, nil).
-func (s *Store) LatestSessionObservationByType(sessionID, typ string) (*Observation, error) {
-	row := s.db.QueryRow(
-		`SELECT `+observationSelectColumns+`
-		 FROM observations
-		 WHERE session_id = ? AND type = ? AND deleted_at IS NULL
-		 ORDER BY datetime(created_at) DESC, id DESC
-		 LIMIT 1`,
-		strings.TrimSpace(sessionID), strings.TrimSpace(typ),
-	)
-	var observation Observation
-	if err := scanObservationRow(row, &observation); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &observation, nil
-}
-
 // ─── Observations ────────────────────────────────────────────────────────────
 
 // ValidateObservationTitle is the one definition of "an observation has a
@@ -2729,34 +2708,6 @@ func (s *Store) RecentObservations(project, scope string, limit int) ([]Observat
 	args = append(args, limit)
 
 	return s.queryObservations(query, args...)
-}
-
-// ObservationContentExists reports whether an active observation has the same
-// normalized content within one project and scope. It is a read-only counterpart
-// to the duplicate check used by persistence flows.
-func (s *Store) ObservationContentExists(content, project, scope string) (bool, error) {
-	if strings.TrimSpace(content) == "" {
-		return false, nil
-	}
-	project, _ = NormalizeProject(project)
-	scope = normalizeScope(scope)
-
-	var exists bool
-	err := s.db.QueryRow(`
-		SELECT EXISTS(
-			SELECT 1
-			FROM observations
-			WHERE normalized_hash = ?
-			  AND LOWER(ifnull(project, '')) = ?
-			  AND scope = ?
-			  AND deleted_at IS NULL
-			LIMIT 1
-		)
-	`, hashNormalized(content), project, scope).Scan(&exists)
-	if err != nil {
-		return false, err
-	}
-	return exists, nil
 }
 
 func (s *Store) PinnedObservations(project, scope string) ([]Observation, error) {
@@ -3082,48 +3033,6 @@ func (s *Store) RecentPrompts(project string, limit int) ([]Prompt, error) {
 		results = append(results, p)
 	}
 	return results, rows.Err()
-}
-
-// SessionPrompts returns the latest bounded prompt window for one session in
-// chronological order, plus the exact number of prompts available.
-func (s *Store) SessionPrompts(sessionID string, limit int) ([]Prompt, int, error) {
-	sessionID = strings.TrimSpace(sessionID)
-	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE session_id = ?`, sessionID).Scan(&total); err != nil {
-		return nil, 0, err
-	}
-	if limit <= 0 || total == 0 {
-		return []Prompt{}, total, nil
-	}
-
-	rows, err := s.queryItHook(s.db, `
-		SELECT id, sync_id, session_id, content, project, created_at
-		FROM (
-			SELECT id, ifnull(sync_id, '') AS sync_id, session_id, content,
-			       ifnull(project, '') AS project, created_at
-			FROM user_prompts
-			WHERE session_id = ?
-			ORDER BY datetime(created_at) DESC, id DESC
-			LIMIT ?
-		)
-		ORDER BY datetime(created_at) ASC, id ASC`, sessionID, limit)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-
-	prompts := make([]Prompt, 0, min(limit, total))
-	for rows.Next() {
-		var prompt Prompt
-		if err := rows.Scan(&prompt.ID, &prompt.SyncID, &prompt.SessionID, &prompt.Content, &prompt.Project, &prompt.CreatedAt); err != nil {
-			return nil, 0, err
-		}
-		prompts = append(prompts, prompt)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, err
-	}
-	return prompts, total, nil
 }
 
 func (s *Store) compactionPrompts(sessionID, project string, limit int) ([]Prompt, error) {
@@ -3799,7 +3708,7 @@ func (s *Store) Stats() (*Stats, error) {
 // ─── Project Existence ───────────────────────────────────────────────────────
 
 // ProjectExists returns true if the named project has at least one record in
-// any of observations, sessions, prompts, enrollment, or local review tables.
+// any of observations, sessions, prompts, enrollment, or local checkpoint tables.
 // Uses a single UNION ALL LIMIT 1 query for efficiency (REQ-315).
 // The sync_enrolled_projects branch ensures a project enrolled via EnrollProject()
 // without any other data is still recognized (JC1).
@@ -3818,12 +3727,10 @@ SELECT 1 FROM (
   UNION ALL
   SELECT project FROM sync_enrolled_projects WHERE LOWER(project) = ?
   UNION ALL
-  SELECT project FROM admission_shadow_runs WHERE LOWER(project) = ?
-  UNION ALL
   SELECT project FROM memory_proposals WHERE LOWER(project) = ?
 ) LIMIT 1`
 	var dummy int
-	err := s.db.QueryRow(query, name, name, name, name, name, name).Scan(&dummy)
+	err := s.db.QueryRow(query, name, name, name, name, name).Scan(&dummy)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
@@ -5327,12 +5234,11 @@ func (s *Store) IsProjectEnrolled(project string) (bool, error) {
 // ─── Project Migration ───────────────────────────────────────────────────────
 
 type MigrateResult struct {
-	Migrated                   bool  `json:"migrated"`
-	ObservationsUpdated        int64 `json:"observations_updated"`
-	SessionsUpdated            int64 `json:"sessions_updated"`
-	PromptsUpdated             int64 `json:"prompts_updated"`
-	AdmissionShadowRunsUpdated int64 `json:"admission_shadow_runs_updated"`
-	MemoryProposalsUpdated     int64 `json:"memory_proposals_updated"`
+	Migrated               bool  `json:"migrated"`
+	ObservationsUpdated    int64 `json:"observations_updated"`
+	SessionsUpdated        int64 `json:"sessions_updated"`
+	PromptsUpdated         int64 `json:"prompts_updated"`
+	MemoryProposalsUpdated int64 `json:"memory_proposals_updated"`
 }
 
 // ProjectRescueParams identifies historical rows whose missing project ownership
@@ -5693,10 +5599,8 @@ func (s *Store) MigrateProject(oldName, newName string) (*MigrateResult, error) 
 			UNION ALL
 			SELECT 1 FROM user_prompts WHERE project = ?
 			UNION ALL
-			SELECT 1 FROM admission_shadow_runs WHERE project = ?
-			UNION ALL
 			SELECT 1 FROM memory_proposals WHERE project = ?
-		)`, oldName, oldName, oldName, oldName, oldName,
+		)`, oldName, oldName, oldName, oldName,
 	).Scan(&exists)
 	if err != nil {
 		return nil, fmt.Errorf("check old project: %w", err)
@@ -5726,12 +5630,6 @@ func (s *Store) MigrateProject(oldName, newName string) (*MigrateResult, error) 
 			return fmt.Errorf("migrate prompts: %w", err)
 		}
 		result.PromptsUpdated, _ = res.RowsAffected()
-
-		res, err = s.execHook(tx, `UPDATE admission_shadow_runs SET project = ? WHERE project = ?`, newName, oldName)
-		if err != nil {
-			return fmt.Errorf("migrate admission shadow runs: %w", err)
-		}
-		result.AdmissionShadowRunsUpdated, _ = res.RowsAffected()
 
 		if _, err := s.execHook(tx, `UPDATE memory_checkpoint_proposal_references SET project = ? WHERE project = ?`, newName, oldName); err != nil {
 			return fmt.Errorf("migrate Memory proposal references: %w", err)
@@ -5930,13 +5828,12 @@ func (s *Store) CountObservationsForProject(name string) (int, error) {
 // MergeResult summarizes the result of merging multiple project name variants
 // into a single canonical project name.
 type MergeResult struct {
-	Canonical                  string   `json:"canonical"`
-	SourcesMerged              []string `json:"sources_merged"`
-	ObservationsUpdated        int64    `json:"observations_updated"`
-	SessionsUpdated            int64    `json:"sessions_updated"`
-	PromptsUpdated             int64    `json:"prompts_updated"`
-	AdmissionShadowRunsUpdated int64    `json:"admission_shadow_runs_updated"`
-	MemoryProposalsUpdated     int64    `json:"memory_proposals_updated"`
+	Canonical              string   `json:"canonical"`
+	SourcesMerged          []string `json:"sources_merged"`
+	ObservationsUpdated    int64    `json:"observations_updated"`
+	SessionsUpdated        int64    `json:"sessions_updated"`
+	PromptsUpdated         int64    `json:"prompts_updated"`
+	MemoryProposalsUpdated int64    `json:"memory_proposals_updated"`
 }
 
 // PreviewMergeProjects reports the rows that MergeProjects would update without
@@ -5992,7 +5889,7 @@ func (s *Store) previewMergeProjects(sources []string, canonical string, allowNo
 		for i, v := range variants {
 			args[i] = v
 		}
-		var observations, sessions, prompts, shadowRuns, proposals int64
+		var observations, sessions, prompts, proposals int64
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM observations WHERE project IN (`+placeholders+`)`, args...).Scan(&observations); err != nil {
 			return nil, err
 		}
@@ -6002,19 +5899,15 @@ func (s *Store) previewMergeProjects(sources []string, canonical string, allowNo
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE project IN (`+placeholders+`)`, args...).Scan(&prompts); err != nil {
 			return nil, err
 		}
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM admission_shadow_runs WHERE project IN (`+placeholders+`)`, args...).Scan(&shadowRuns); err != nil {
-			return nil, err
-		}
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM memory_proposals WHERE project IN (`+placeholders+`)`, args...).Scan(&proposals); err != nil {
 			return nil, err
 		}
-		if observations+sessions+prompts+shadowRuns+proposals > 0 {
+		if observations+sessions+prompts+proposals > 0 {
 			result.SourcesMerged = append(result.SourcesMerged, normalized)
 		}
 		result.ObservationsUpdated += observations
 		result.SessionsUpdated += sessions
 		result.PromptsUpdated += prompts
-		result.AdmissionShadowRunsUpdated += shadowRuns
 		result.MemoryProposalsUpdated += proposals
 	}
 	return result, nil
@@ -6130,14 +6023,6 @@ func (s *Store) mergeProjects(sources []string, canonical string, allowNonEquiva
 			result.PromptsUpdated += n
 			sourceRowsUpdated += n
 
-			res, err = s.execHook(tx, `UPDATE admission_shadow_runs SET project = ? WHERE project IN (`+placeholders+`)`, args...)
-			if err != nil {
-				return fmt.Errorf("merge admission shadow runs %q → %q: %w", srcNormalized, canonical, err)
-			}
-			n, _ = res.RowsAffected()
-			result.AdmissionShadowRunsUpdated += n
-			sourceRowsUpdated += n
-
 			if _, err := s.execHook(tx, `UPDATE memory_checkpoint_proposal_references SET project = ? WHERE project IN (`+placeholders+`)`, args...); err != nil {
 				return fmt.Errorf("merge Memory proposal references %q → %q: %w", srcNormalized, canonical, err)
 			}
@@ -6225,9 +6110,8 @@ func (s *Store) hasOnlyLocalProjectArtifacts(project string) (bool, error) {
 			(SELECT COUNT(*) FROM observations WHERE project = ?) +
 			(SELECT COUNT(*) FROM sessions WHERE project = ?) +
 			(SELECT COUNT(*) FROM user_prompts WHERE project = ?),
-			(SELECT COUNT(*) FROM admission_shadow_runs WHERE project = ?) +
 			(SELECT COUNT(*) FROM memory_proposals WHERE project = ?)
-	`, project, project, project, project, project).Scan(&durable, &local); err != nil {
+	`, project, project, project, project).Scan(&durable, &local); err != nil {
 		return false, err
 	}
 	return durable == 0 && local > 0, nil
@@ -6240,9 +6124,8 @@ func (s *Store) projectHasNoArtifacts(project string) (bool, error) {
 			(SELECT COUNT(*) FROM observations WHERE project = ?) +
 			(SELECT COUNT(*) FROM sessions WHERE project = ?) +
 			(SELECT COUNT(*) FROM user_prompts WHERE project = ?) +
-			(SELECT COUNT(*) FROM admission_shadow_runs WHERE project = ?) +
 			(SELECT COUNT(*) FROM memory_proposals WHERE project = ?)
-	`, project, project, project, project, project).Scan(&count); err != nil {
+	`, project, project, project, project).Scan(&count); err != nil {
 		return false, err
 	}
 	return count == 0, nil
@@ -6382,14 +6265,13 @@ func (s *Store) PruneProject(project string) (*PruneResult, error) {
 
 // DeleteProjectResult summarises a cascade project deletion.
 type DeleteProjectResult struct {
-	Project                    string `json:"project"`
-	ObservationsDeleted        int64  `json:"observations_deleted"`
-	PromptsDeleted             int64  `json:"prompts_deleted"`
-	SessionsDeleted            int64  `json:"sessions_deleted"`
-	AdmissionShadowRunsDeleted int64  `json:"admission_shadow_runs_deleted"`
-	MemoryProposalsDeleted     int64  `json:"memory_proposals_deleted"`
-	MemoryCheckpointsDeleted   int64  `json:"memory_checkpoints_deleted"`
-	HardDelete                 bool   `json:"hard_delete"`
+	Project                  string `json:"project"`
+	ObservationsDeleted      int64  `json:"observations_deleted"`
+	PromptsDeleted           int64  `json:"prompts_deleted"`
+	SessionsDeleted          int64  `json:"sessions_deleted"`
+	MemoryProposalsDeleted   int64  `json:"memory_proposals_deleted"`
+	MemoryCheckpointsDeleted int64  `json:"memory_checkpoints_deleted"`
+	HardDelete               bool   `json:"hard_delete"`
 }
 
 // DeleteProject removes all data associated with a project in a single
@@ -6417,7 +6299,7 @@ func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectRe
 	result := &DeleteProjectResult{Project: project, HardDelete: hardDelete}
 
 	err := s.withTx(func(tx *sql.Tx) error {
-		// Existence check: at least one durable, lifecycle, or local shadow row
+		// Existence check: at least one durable, lifecycle, or local checkpoint row
 		// must exist for this project.
 		var sessionCount int
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM sessions WHERE project = ?`, project).Scan(&sessionCount); err != nil {
@@ -6427,15 +6309,11 @@ func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectRe
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM observations WHERE project = ?`, project).Scan(&obsCount); err != nil {
 			return fmt.Errorf("delete project: count observations: %w", err)
 		}
-		var shadowRunCount int
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM admission_shadow_runs WHERE project = ?`, project).Scan(&shadowRunCount); err != nil {
-			return fmt.Errorf("delete project: count admission shadow runs: %w", err)
-		}
 		var proposalCount int
 		if err := tx.QueryRow(`SELECT COUNT(*) FROM memory_proposals WHERE project = ?`, project).Scan(&proposalCount); err != nil {
 			return fmt.Errorf("delete project: count Memory proposals: %w", err)
 		}
-		if sessionCount == 0 && obsCount == 0 && shadowRunCount == 0 && proposalCount == 0 {
+		if sessionCount == 0 && obsCount == 0 && proposalCount == 0 {
 			return fmt.Errorf("%w: %q", ErrProjectNotFound, project)
 		}
 
@@ -6476,15 +6354,7 @@ func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectRe
 		}
 		result.PromptsDeleted, _ = res.RowsAffected()
 
-		// 3. Delete local-only admission shadow runs. Proposal snapshots and
-		//    corrections cascade from the run and never enter sync/export.
-		res, err = s.execHook(tx, `DELETE FROM admission_shadow_runs WHERE project = ?`, project)
-		if err != nil {
-			return fmt.Errorf("delete project: delete admission shadow runs: %w", err)
-		}
-		result.AdmissionShadowRunsDeleted, _ = res.RowsAffected()
-
-		// 4. Remove terminal checkpoints that own proposal references for this
+		// 3. Remove terminal checkpoints that own proposal references for this
 		//    project, then remove both referenced and standalone local proposals.
 		res, err = s.execHook(tx, `
 			DELETE FROM memory_checkpoints
@@ -6505,7 +6375,7 @@ func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectRe
 		}
 		result.MemoryProposalsDeleted, _ = res.RowsAffected()
 
-		// 5. Delete sessions — only when hard-deleting, because observation rows
+		// 4. Delete sessions — only when hard-deleting, because observation rows
 		//    reference sessions via a NOT NULL FK and soft-deleted rows are still
 		//    present in the table.
 		if hardDelete {

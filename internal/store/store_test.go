@@ -8323,30 +8323,6 @@ func TestMigrateProjectNoOp(t *testing.T) {
 	}
 }
 
-func TestMigrateProjectMovesShadowOnlyProject(t *testing.T) {
-	s := newTestStore(t)
-	run := mustCreateAdmissionShadowRun(t, s, "shadow-old", "proposal")
-
-	result, err := s.MigrateProject("shadow-old", "shadow-new")
-	if err != nil {
-		t.Fatalf("MigrateProject: %v", err)
-	}
-	if !result.Migrated || result.AdmissionShadowRunsUpdated != 1 {
-		t.Fatalf("migration result = %#v, want one shadow run moved", result)
-	}
-	oldRuns, err := s.ListAdmissionShadowRuns("shadow-old")
-	if err != nil {
-		t.Fatalf("list old shadow runs: %v", err)
-	}
-	newRuns, err := s.ListAdmissionShadowRuns("shadow-new")
-	if err != nil {
-		t.Fatalf("list new shadow runs: %v", err)
-	}
-	if len(oldRuns) != 0 || len(newRuns) != 1 || newRuns[0].ID != run.ID {
-		t.Fatalf("shadow ownership after migration: old=%#v new=%#v", oldRuns, newRuns)
-	}
-}
-
 func TestMigrateProjectIdempotent(t *testing.T) {
 	s := newTestStore(t)
 	old, new_ := "old-proj", "new-proj"
@@ -8719,53 +8695,6 @@ func TestMergeProjectsIdempotent(t *testing.T) {
 	}
 	if result.ObservationsUpdated != 0 {
 		t.Errorf("expected 0 observations updated for nonexistent source, got %d", result.ObservationsUpdated)
-	}
-}
-
-func TestMergeProjectsMovesShadowOnlyProjectAndPreviewMatches(t *testing.T) {
-	s := newTestStore(t)
-	run := mustCreateAdmissionShadowRun(t, s, "shadow-source", "proposal")
-	beforeMutations := admissionShadowScalarInt(t, s, `SELECT COUNT(*) FROM sync_mutations`)
-
-	preview, err := s.PreviewMergeProjects([]string{"shadow-source"}, "canonical")
-	if err != nil {
-		t.Fatalf("PreviewMergeProjects: %v", err)
-	}
-	if len(preview.SourcesMerged) != 1 || preview.SourcesMerged[0] != "shadow-source" || preview.AdmissionShadowRunsUpdated != 1 {
-		t.Fatalf("preview = %#v, want one shadow source", preview)
-	}
-	if runs, err := s.ListAdmissionShadowRuns("shadow-source"); err != nil || len(runs) != 1 {
-		t.Fatalf("preview mutated source: runs=%#v err=%v", runs, err)
-	}
-
-	result, err := s.MergeProjects([]string{"shadow-source"}, "canonical")
-	if err != nil {
-		t.Fatalf("MergeProjects: %v", err)
-	}
-	if len(result.SourcesMerged) != 1 || result.SourcesMerged[0] != preview.SourcesMerged[0] || result.AdmissionShadowRunsUpdated != preview.AdmissionShadowRunsUpdated {
-		t.Fatalf("merge result = %#v, preview = %#v", result, preview)
-	}
-	oldRuns, err := s.ListAdmissionShadowRuns("shadow-source")
-	if err != nil {
-		t.Fatalf("list old runs: %v", err)
-	}
-	newRuns, err := s.ListAdmissionShadowRuns("canonical")
-	if err != nil {
-		t.Fatalf("list canonical runs: %v", err)
-	}
-	if len(oldRuns) != 0 || len(newRuns) != 1 || newRuns[0].ID != run.ID {
-		t.Fatalf("shadow ownership after merge: old=%#v canonical=%#v", oldRuns, newRuns)
-	}
-	if got := admissionShadowScalarInt(t, s, `SELECT COUNT(*) FROM sync_mutations`); got != beforeMutations {
-		t.Fatalf("shadow-only merge created sync mutations: before=%d after=%d", beforeMutations, got)
-	}
-
-	repeated, err := s.MergeProjects([]string{"shadow-source"}, "canonical")
-	if err != nil {
-		t.Fatalf("repeat MergeProjects: %v", err)
-	}
-	if repeated.SourcesMerged == nil || len(repeated.SourcesMerged) != 0 || repeated.AdmissionShadowRunsUpdated != 0 {
-		t.Fatalf("repeat merge = %#v, want no-op", repeated)
 	}
 }
 

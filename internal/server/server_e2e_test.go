@@ -364,38 +364,34 @@ func TestDeleteSessionPropagatesForCloudEnrolledProjectE2E(t *testing.T) {
 	}
 }
 
-func TestMigrateProjectMovesShadowOnlyProjectE2E(t *testing.T) {
+func TestMigrateProjectMovesProposalOnlyProjectE2E(t *testing.T) {
 	st, ts := newE2EServer(t)
-	run, err := st.CreateAdmissionShadowRun(store.CreateAdmissionShadowRunParams{
-		Project:          "shadow-old",
-		Mode:             "session",
-		EvidenceVersion:  "v1",
-		GeneratorVersion: "v1",
-		PolicyVersion:    "v1",
-	})
-	if err != nil {
-		t.Fatalf("create admission shadow run: %v", err)
+	identity := store.CheckpointIdentity{Host: "codex", SessionID: "e2e-proposal-session", RootTurnID: "e2e-proposal-turn"}
+	if _, _, err := st.RecordNeedsReviewCheckpoint(store.RecordNeedsReviewCheckpointParams{
+		Identity: identity,
+		Project:  "proposal-old",
+		Proposal: &store.MemoryProposalInput{Title: "migrate proposal", Content: "migrate proposal content"},
+	}); err != nil {
+		t.Fatalf("create Memory proposal checkpoint: %v", err)
 	}
 
 	response := postJSON(t, ts.Client(), ts.URL+"/projects/migrate", map[string]any{
-		"old_project": "shadow-old",
-		"new_project": "shadow-new",
+		"old_project": "proposal-old",
+		"new_project": "proposal-new",
 	})
 	if response.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 migrating shadow-only project, got %d", response.StatusCode)
+		t.Fatalf("expected 200 migrating proposal-only project, got %d", response.StatusCode)
 	}
 	body := decodeJSON[map[string]any](t, response)
-	if body["status"] != "migrated" || body["admission_shadow_runs"] != float64(1) {
+	if body["status"] != "migrated" || body["memory_proposals"] != float64(1) {
 		t.Fatalf("migration response = %#v", body)
 	}
-
-	runs, err := st.ListAdmissionShadowRuns("shadow-new")
-	if err != nil || len(runs) != 1 || runs[0].ID != run.ID {
-		t.Fatalf("migrated shadow runs = %#v, err=%v", runs, err)
+	if _, exists := body["admission_shadow_runs"]; exists {
+		t.Fatalf("migration response retained Admission Shadow accounting: %#v", body)
 	}
-	oldRuns, err := st.ListAdmissionShadowRuns("shadow-old")
-	if err != nil || len(oldRuns) != 0 {
-		t.Fatalf("old shadow runs = %#v, err=%v", oldRuns, err)
+	moved, err := st.GetMemoryCheckpoint(identity)
+	if err != nil || moved.Proposal == nil || moved.Proposal.Project != "proposal-new" {
+		t.Fatalf("migrated proposal checkpoint = %#v, err=%v", moved, err)
 	}
 }
 

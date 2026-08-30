@@ -250,6 +250,9 @@ func TestPrintUsage(t *testing.T) {
 			t.Fatalf("usage exposes removed command %q: %q", removed, stdout)
 		}
 	}
+	if strings.Contains(strings.ToLower(stdout), "shadow run") {
+		t.Fatalf("usage exposes removed Admission persistence: %q", stdout)
+	}
 	for _, agent := range []string{"opencode", "pi", "claude-code", "gemini-cli", "codex", "antigravity-cli", "windsurf", "qwen", "kiro", "cursor", "vscode-copilot", "kilocode"} {
 		if !strings.Contains(stdout, agent) {
 			t.Fatalf("usage missing setup agent %q: %q", agent, stdout)
@@ -1891,6 +1894,9 @@ func TestCmdProjectsConsolidateCaseOnlyVariantReportsMovedRecords(t *testing.T) 
 			t.Fatalf("expected %q in merge report, got: %q", want, stdout)
 		}
 	}
+	if strings.Contains(strings.ToLower(stdout), "shadow") || strings.Contains(strings.ToLower(stdout), "admission") {
+		t.Fatalf("merge report retained Admission Shadow accounting: %q", stdout)
+	}
 
 	// The reported counts must match the records that actually moved.
 	if obs, sessions, prompts := projectRecordCounts(t, cfg, "ENGRAM"); obs+sessions+prompts != 0 {
@@ -2977,6 +2983,9 @@ func TestCmdDeleteProjectSuccess(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "1 Memory proposal(s), 1 checkpoint(s)") {
 		t.Fatalf("expected local proposal deletion counts in stdout, got: %q", stdout)
+	}
+	if strings.Contains(strings.ToLower(stdout), "admission") || strings.Contains(strings.ToLower(stdout), "shadow") {
+		t.Fatalf("delete report retained Admission Shadow accounting: %q", stdout)
 	}
 }
 

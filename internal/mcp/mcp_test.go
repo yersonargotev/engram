@@ -322,6 +322,24 @@ func TestHandleMergeProjectsRejectsNonEquivalentSourceWithoutMutation(t *testing
 	}
 }
 
+func TestHandleMergeProjectsOmitsAdmissionAccounting(t *testing.T) {
+	s := newMCPTestStore(t)
+	if _, err := s.DB().Exec(`INSERT INTO sessions (id, project, directory) VALUES ('legacy-merge', 'Engram', '/tmp/engram')`); err != nil {
+		t.Fatalf("seed legacy project: %v", err)
+	}
+
+	result, err := handleMergeProjects(s)(context.Background(), mcppkg.CallToolRequest{
+		Params: mcppkg.CallToolParams{Arguments: map[string]any{"from": "Engram", "to": "engram"}},
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("handle merge projects: err=%v result=%q", err, callResultText(t, result))
+	}
+	text := callResultText(t, result)
+	if strings.Contains(strings.ToLower(text), "admission") || strings.Contains(strings.ToLower(text), "shadow") {
+		t.Fatalf("merge result retained Admission Shadow accounting: %q", text)
+	}
+}
+
 func TestHandleSuggestTopicKeyReturnsFamilyBasedKey(t *testing.T) {
 	h := handleSuggestTopicKey()
 	req := mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{

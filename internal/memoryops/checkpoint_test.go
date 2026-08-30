@@ -515,7 +515,7 @@ func TestNeedsReviewCheckpointCreatesOneInspectableProposalWithoutPromotion(t *t
 		t.Fatalf("proposal snapshot = %#v", proposal)
 	}
 
-	for _, table := range []string{"observations", "sync_mutations", "admission_shadow_runs", "admission_shadow_reviews"} {
+	for _, table := range []string{"observations", "sync_mutations"} {
 		var count int
 		if err := service.store.DB().QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
 			t.Fatalf("count %s: %v", table, err)

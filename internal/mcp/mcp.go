@@ -2278,7 +2278,6 @@ func handleMergeProjects(s *store.Store) server.ToolHandlerFunc {
 		msg += fmt.Sprintf("  Observations moved: %d\n", result.ObservationsUpdated)
 		msg += fmt.Sprintf("  Sessions moved:     %d\n", result.SessionsUpdated)
 		msg += fmt.Sprintf("  Prompts moved:      %d\n", result.PromptsUpdated)
-		msg += fmt.Sprintf("  Admission shadow runs moved: %d\n", result.AdmissionShadowRunsUpdated)
 		msg += fmt.Sprintf("  Memory proposals moved: %d\n", result.MemoryProposalsUpdated)
 
 		return mcp.NewToolResultText(msg), nil

@@ -106,8 +106,7 @@ func TestVerifyCheckpointAcceptsEveryTerminalDisposition(t *testing.T) {
 			Host: "codex", SessionID: "session-terminal-review", RootTurnID: "turn-terminal-review",
 			Disposition: store.CheckpointDispositionNeedsReview, Project: "engram",
 			Proposal: &CheckpointProposalInput{
-				Type: "decision", Title: "Terminal review checkpoint", Content: "Review before admitting this Memory.",
-				Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
+				Title: "Terminal review checkpoint", Content: "Review before admitting this Memory.",
 			},
 		},
 	}
@@ -483,8 +482,7 @@ func TestSavedCheckpointRejectsIllegalTerminalTransitions(t *testing.T) {
 
 func validCheckpointProposal() *CheckpointProposalInput {
 	return &CheckpointProposalInput{
-		Type: "decision", Title: "Transition proposal", Content: "Use this proposal to exercise transitions.",
-		Scope: "project", Category: string(ProposalDecision), ReasonCodes: []string{ReasonRequiresReview},
+		Title: "Transition proposal", Content: "Use this proposal to exercise transitions.",
 	}
 }
 
@@ -497,14 +495,8 @@ func TestNeedsReviewCheckpointCreatesOneInspectableProposalWithoutPromotion(t *t
 		Disposition: store.CheckpointDispositionNeedsReview,
 		Project:     "engram",
 		Proposal: &CheckpointProposalInput{
-			Type:         "decision",
-			Title:        "Review checkpoint ownership",
-			Content:      "The checkpoint may own a local Memory proposal.",
-			Scope:        "project",
-			Category:     string(ProposalDecision),
-			Protected:    true,
-			EvidenceRefs: []string{"session-summary"},
-			ReasonCodes:  []string{ReasonRequiresReview},
+			Title:   "Review checkpoint ownership",
+			Content: "The checkpoint may own local audit evidence.",
 		},
 	}
 
@@ -514,22 +506,13 @@ func TestNeedsReviewCheckpointCreatesOneInspectableProposalWithoutPromotion(t *t
 	}
 	if created.Idempotency != CheckpointIdempotencyCreated || created.Checkpoint == nil ||
 		created.Checkpoint.Disposition != store.CheckpointDispositionNeedsReview ||
-		len(created.Checkpoint.References) != 1 {
+		len(created.Checkpoint.References) != 0 || created.Checkpoint.Proposal == nil {
 		t.Fatalf("created result = %#v", created)
 	}
-	reference := created.Checkpoint.References[0]
-	if reference.Kind != store.CheckpointReferenceKindProposal || reference.ProposalID == "" || reference.Project != "engram" {
-		t.Fatalf("proposal reference = %#v", reference)
-	}
-	proposal, err := service.store.GetMemoryProposal(reference.ProposalID)
-	if err != nil {
-		t.Fatalf("get created proposal: %v", err)
-	}
-	if proposal.Project != "engram" || proposal.Title != input.Proposal.Title ||
-		proposal.Content != input.Proposal.Content || proposal.Category != input.Proposal.Category ||
-		!proposal.Protected || !reflect.DeepEqual(proposal.EvidenceRefs, input.Proposal.EvidenceRefs) ||
-		!reflect.DeepEqual(proposal.ReasonCodes, input.Proposal.ReasonCodes) {
-		t.Fatalf("created proposal = %#v", proposal)
+	proposal := created.Checkpoint.Proposal
+	if proposal.ID == "" || proposal.Project != "engram" || proposal.Title != input.Proposal.Title ||
+		proposal.Content != input.Proposal.Content || proposal.CreatedAt == "" {
+		t.Fatalf("proposal snapshot = %#v", proposal)
 	}
 
 	for _, table := range []string{"observations", "sync_mutations", "admission_shadow_runs", "admission_shadow_reviews"} {
@@ -543,30 +526,22 @@ func TestNeedsReviewCheckpointCreatesOneInspectableProposalWithoutPromotion(t *t
 	}
 }
 
-func TestNeedsReviewCheckpointAttachesAnExistingProposalAndReplaysOriginalReference(t *testing.T) {
+func TestNeedsReviewCheckpointReplaysOriginalSnapshotWithoutPayload(t *testing.T) {
 	service := newTestService(t)
-	proposal, err := service.store.CreateMemoryProposal("engram", store.MemoryProposalInput{
-		Type: "discovery", Title: "Existing proposal", Content: "Review this existing proposal.",
-		Scope: "project", Category: string(ProposalLearning), ReasonCodes: []string{ReasonRequiresReview},
-	})
-	if err != nil {
-		t.Fatalf("create existing proposal: %v", err)
-	}
 	input := CheckpointRecordInput{
 		Host: "codex", SessionID: "session-needs-review-existing", RootTurnID: "turn-needs-review-existing",
-		Disposition: store.CheckpointDispositionNeedsReview, Project: "engram", ProposalID: proposal.ID,
+		Disposition: store.CheckpointDispositionNeedsReview, Project: "engram",
+		Proposal: &CheckpointProposalInput{Title: "Original proposal", Content: "Replay must preserve this snapshot."},
 	}
 
 	created, err := service.RecordCheckpoint(input)
 	if err != nil {
 		t.Fatalf("record needs-review checkpoint: %v", err)
 	}
-	wantReference := []store.CheckpointReference{{
-		Kind: store.CheckpointReferenceKindProposal, ProposalID: proposal.ID, Project: "engram",
-	}}
-	if !reflect.DeepEqual(created.Checkpoint.References, wantReference) {
-		t.Fatalf("created references = %#v, want %#v", created.Checkpoint.References, wantReference)
+	if created.Checkpoint.Proposal == nil {
+		t.Fatalf("created checkpoint = %#v", created.Checkpoint)
 	}
+	wantProposal := *created.Checkpoint.Proposal
 
 	replayed, err := service.RecordCheckpoint(CheckpointRecordInput{
 		Host: input.Host, SessionID: input.SessionID, RootTurnID: input.RootTurnID,
@@ -576,54 +551,26 @@ func TestNeedsReviewCheckpointAttachesAnExistingProposalAndReplaysOriginalRefere
 		t.Fatalf("replay needs-review checkpoint: %v", err)
 	}
 	if replayed.Idempotency != CheckpointIdempotencyAlreadyRecorded ||
-		!reflect.DeepEqual(replayed.Checkpoint, created.Checkpoint) {
+		!reflect.DeepEqual(replayed.Checkpoint, created.Checkpoint) ||
+		!reflect.DeepEqual(replayed.Checkpoint.Proposal, &wantProposal) {
 		t.Fatalf("replayed result = %#v, want original %#v", replayed, created)
 	}
 }
 
 func TestNeedsReviewCheckpointRejectsInvalidReferencesWithoutChangingState(t *testing.T) {
 	service := newTestService(t)
-	engramProposal, err := service.store.CreateMemoryProposal("engram", store.MemoryProposalInput{
-		Type: "decision", Title: "Engram proposal", Content: "This proposal belongs to Engram.",
-		Scope: "project", Category: string(ProposalDecision), ReasonCodes: []string{ReasonRequiresReview},
-	})
-	if err != nil {
-		t.Fatalf("create Engram proposal: %v", err)
-	}
-	otherProposal, err := service.store.CreateMemoryProposal("other", store.MemoryProposalInput{
-		Type: "decision", Title: "Other proposal", Content: "This proposal belongs to another project.",
-		Scope: "project", Category: string(ProposalDecision), ReasonCodes: []string{ReasonRequiresReview},
-	})
-	if err != nil {
-		t.Fatalf("create other proposal: %v", err)
-	}
-	validInline := &CheckpointProposalInput{
-		Type: "decision", Title: "Inline proposal", Content: "Review this proposal.",
-		Scope: "project", Category: string(ProposalDecision), ReasonCodes: []string{ReasonRequiresReview},
-	}
+	validInline := &CheckpointProposalInput{Title: "Inline proposal", Content: "Review this proposal."}
 	tests := []struct {
-		name       string
-		project    string
-		proposalID string
-		proposal   *CheckpointProposalInput
-		reason     string
-		wantErr    error
-		wantCode   string
+		name     string
+		project  string
+		proposal *CheckpointProposalInput
+		reason   string
 	}{
-		{name: "empty", project: "engram", wantErr: store.ErrCheckpointInvalidReferences, wantCode: CheckpointErrorCodeInvalidReferences},
-		{name: "both existing and inline", project: "engram", proposalID: engramProposal.ID, proposal: validInline, wantErr: store.ErrCheckpointInvalidReferences, wantCode: CheckpointErrorCodeInvalidReferences},
-		{name: "missing project", proposalID: engramProposal.ID, wantErr: store.ErrCheckpointInvalidReferences, wantCode: CheckpointErrorCodeInvalidReferences},
-		{name: "nonexistent", project: "engram", proposalID: "proposal-missing", wantErr: store.ErrCheckpointProposalNotFound, wantCode: CheckpointErrorCodeProposalNotFound},
-		{name: "invalid proposal id", project: "engram", proposalID: " proposal-with-spaces ", wantErr: store.ErrCheckpointInvalidReferences, wantCode: CheckpointErrorCodeInvalidReferences},
-		{name: "cross project", project: "engram", proposalID: otherProposal.ID, wantErr: store.ErrCheckpointProposalProjectMismatch, wantCode: CheckpointErrorCodeProjectMismatch},
-		{name: "invalid inline", project: "engram", proposal: &CheckpointProposalInput{Type: "decision", Title: "Missing content", Scope: "project", Category: string(ProposalDecision)}, wantErr: store.ErrCheckpointInvalidReferences, wantCode: CheckpointErrorCodeInvalidReferences},
-		{name: "unknown type", project: "engram", proposal: &CheckpointProposalInput{Type: "not-a-type", Title: "Unknown type", Content: "Review this proposal.", Scope: "project", Category: string(ProposalDecision)}, wantErr: store.ErrCheckpointInvalidReferences, wantCode: CheckpointErrorCodeInvalidReferences},
-		{name: "unknown scope", project: "engram", proposal: &CheckpointProposalInput{Type: "decision", Title: "Unknown scope", Content: "Review this proposal.", Scope: "not-a-scope", Category: string(ProposalDecision)}, wantErr: store.ErrCheckpointInvalidReferences, wantCode: CheckpointErrorCodeInvalidReferences},
-		{name: "unknown category", project: "engram", proposal: &CheckpointProposalInput{Type: "decision", Title: "Unknown category", Content: "Review this proposal.", Scope: "project", Category: "not-a-category"}, wantErr: store.ErrCheckpointInvalidReferences, wantCode: CheckpointErrorCodeInvalidReferences},
-		{name: "unknown reason code", project: "engram", proposal: &CheckpointProposalInput{Type: "decision", Title: "Unknown reason", Content: "Review this proposal.", Scope: "project", Category: string(ProposalDecision), ReasonCodes: []string{"invented_reason"}}, wantErr: store.ErrCheckpointInvalidReferences, wantCode: CheckpointErrorCodeInvalidReferences},
-		{name: "free form reason", project: "engram", proposal: &CheckpointProposalInput{Type: "decision", Title: "Bounded reason", Content: "Review this proposal.", Scope: "project", Category: string(ProposalDecision), ReasonCodes: []string{"free form rationale"}}, wantErr: store.ErrCheckpointInvalidReferences, wantCode: CheckpointErrorCodeInvalidReferences},
-		{name: "raw evidence reference", project: "engram", proposal: &CheckpointProposalInput{Type: "decision", Title: "Bounded evidence", Content: "Review this proposal.", Scope: "project", Category: string(ProposalDecision), EvidenceRefs: []string{"raw transcript evidence"}}, wantErr: store.ErrCheckpointInvalidReferences, wantCode: CheckpointErrorCodeInvalidReferences},
-		{name: "reason is forbidden", project: "engram", proposal: validInline, reason: store.CheckpointSkipReasonNoDurableKnowledge, wantErr: store.ErrCheckpointInvalidReferences, wantCode: CheckpointErrorCodeInvalidReferences},
+		{name: "empty", project: "engram"},
+		{name: "missing project", proposal: validInline},
+		{name: "missing title", project: "engram", proposal: &CheckpointProposalInput{Content: "Missing title."}},
+		{name: "missing content", project: "engram", proposal: &CheckpointProposalInput{Title: "Missing content"}},
+		{name: "reason is forbidden", project: "engram", proposal: validInline, reason: store.CheckpointSkipReasonNoDurableKnowledge},
 	}
 
 	for _, tt := range tests {
@@ -635,24 +582,22 @@ func TestNeedsReviewCheckpointRejectsInvalidReferencesWithoutChangingState(t *te
 			_, err := service.RecordCheckpoint(CheckpointRecordInput{
 				Host: identity.Host, SessionID: identity.SessionID, RootTurnID: identity.RootTurnID,
 				Disposition: store.CheckpointDispositionNeedsReview, Project: tt.project,
-				ProposalID: tt.proposalID, Proposal: tt.proposal, ReasonCode: tt.reason,
+				Proposal: tt.proposal, ReasonCode: tt.reason,
 			})
-			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("error = %v, want %v", err, tt.wantErr)
+			if !errors.Is(err, store.ErrCheckpointInvalidReferences) {
+				t.Fatalf("error = %v, want ErrCheckpointInvalidReferences", err)
 			}
-			if got := CheckpointErrorCode(err); got != tt.wantCode {
-				t.Fatalf("error code = %q, want %q", got, tt.wantCode)
+			if got := CheckpointErrorCode(err); got != CheckpointErrorCodeInvalidReferences {
+				t.Fatalf("error code = %q, want %q", got, CheckpointErrorCodeInvalidReferences)
 			}
 			if _, statusErr := service.CheckpointStatus(identity); !errors.Is(statusErr, store.ErrCheckpointNotFound) {
 				t.Fatalf("checkpoint changed after rejection: %v", statusErr)
 			}
 		})
 	}
-	if _, err := service.store.GetMemoryProposal(engramProposal.ID); err != nil {
-		t.Fatalf("Engram proposal changed after rejection: %v", err)
-	}
-	if _, err := service.store.GetMemoryProposal(otherProposal.ID); err != nil {
-		t.Fatalf("other proposal changed after rejection: %v", err)
+	var proposals int
+	if err := service.store.DB().QueryRow(`SELECT COUNT(*) FROM memory_proposals`).Scan(&proposals); err != nil || proposals != 0 {
+		t.Fatalf("proposal rows after rejection = %d, err = %v", proposals, err)
 	}
 }
 
@@ -664,28 +609,11 @@ func TestCheckpointRejectsProposalFieldsOutsideNeedsReview(t *testing.T) {
 		input CheckpointRecordInput
 	}{
 		{
-			name: "skipped proposal id",
-			input: CheckpointRecordInput{
-				Disposition: store.CheckpointDispositionSkipped,
-				ReasonCode:  store.CheckpointSkipReasonNoDurableKnowledge,
-				ProposalID:  "proposal-missing",
-			},
-		},
-		{
 			name: "skipped inline proposal",
 			input: CheckpointRecordInput{
 				Disposition: store.CheckpointDispositionSkipped,
 				ReasonCode:  store.CheckpointSkipReasonNoDurableKnowledge,
 				Proposal:    proposal,
-			},
-		},
-		{
-			name: "saved proposal id",
-			input: CheckpointRecordInput{
-				Disposition: store.CheckpointDispositionSaved,
-				Project:     "engram",
-				MemoryIDs:   []int64{1},
-				ProposalID:  "proposal-missing",
 			},
 		},
 		{
@@ -733,8 +661,7 @@ func TestNeedsReviewCheckpointRollsBackCreatedProposalAndCheckpointOnReferenceFa
 		Host: "codex", SessionID: "session-proposal-rollback", RootTurnID: "turn-proposal-rollback",
 		Disposition: store.CheckpointDispositionNeedsReview, Project: "engram",
 		Proposal: &CheckpointProposalInput{
-			Type: "decision", Title: "Atomic proposal canary", Content: "This proposal must roll back.",
-			Scope: "project", Category: string(ProposalDecision), ReasonCodes: []string{ReasonRequiresReview},
+			Title: "Atomic proposal canary", Content: "This proposal must roll back.",
 		},
 	})
 	if err == nil {
@@ -771,15 +698,13 @@ func TestNeedsReviewCheckpointAndProposalPersistAcrossReopen(t *testing.T) {
 		Host: "codex", SessionID: "session-proposal-reopen", RootTurnID: "turn-proposal-reopen",
 		Disposition: store.CheckpointDispositionNeedsReview, Project: "engram",
 		Proposal: &CheckpointProposalInput{
-			Type: "discovery", Title: "Reopen proposal", Content: "This proposal must survive reopen.",
-			Scope: "project", Category: string(ProposalLearning), ReasonCodes: []string{ReasonRequiresReview},
+			Title: "Reopen proposal", Content: "This proposal must survive reopen.",
 		},
 	}
 	created, err := New(firstStore).RecordCheckpoint(input)
 	if err != nil {
 		t.Fatalf("record needs-review checkpoint: %v", err)
 	}
-	proposalID := created.Checkpoint.References[0].ProposalID
 	if err := firstStore.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
 	}
@@ -798,11 +723,8 @@ func TestNeedsReviewCheckpointAndProposalPersistAcrossReopen(t *testing.T) {
 	if !reflect.DeepEqual(status.Checkpoint, created.Checkpoint) {
 		t.Fatalf("reopened checkpoint = %#v, want %#v", status.Checkpoint, created.Checkpoint)
 	}
-	proposal, err := reopenedStore.GetMemoryProposal(proposalID)
-	if err != nil {
-		t.Fatalf("proposal after reopen: %v", err)
-	}
-	if proposal.Title != input.Proposal.Title || proposal.Content != input.Proposal.Content {
-		t.Fatalf("reopened proposal = %#v", proposal)
+	if status.Checkpoint.Proposal == nil || status.Checkpoint.Proposal.Title != input.Proposal.Title ||
+		status.Checkpoint.Proposal.Content != input.Proposal.Content {
+		t.Fatalf("reopened proposal = %#v", status.Checkpoint.Proposal)
 	}
 }

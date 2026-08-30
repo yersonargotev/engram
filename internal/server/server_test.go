@@ -2922,12 +2922,13 @@ func TestMigrateProjectMovesShadowOnlyProject(t *testing.T) {
 func TestMigrateProjectMovesProposalOnlyProject(t *testing.T) {
 	st := newServerTestStore(t)
 	h := New(st, 0).Handler()
-	proposal, err := st.CreateMemoryProposal("proposal-old", store.MemoryProposalInput{
-		Type: "decision", Title: "migrate proposal", Content: "migrate proposal content",
-		Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
-	})
-	if err != nil {
-		t.Fatalf("create Memory proposal: %v", err)
+	identity := store.CheckpointIdentity{Host: "codex", SessionID: "server-proposal-session", RootTurnID: "server-proposal-turn"}
+	if _, _, err := st.RecordNeedsReviewCheckpoint(store.RecordNeedsReviewCheckpointParams{
+		Identity: identity,
+		Project:  "proposal-old",
+		Proposal: &store.MemoryProposalInput{Title: "migrate proposal", Content: "migrate proposal content"},
+	}); err != nil {
+		t.Fatalf("create Memory proposal checkpoint: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/projects/migrate", strings.NewReader(
@@ -2946,8 +2947,8 @@ func TestMigrateProjectMovesProposalOnlyProject(t *testing.T) {
 	if response["status"] != "migrated" || response["memory_proposals"] != float64(1) {
 		t.Fatalf("migration response = %#v", response)
 	}
-	moved, err := st.GetMemoryProposal(proposal.ID)
-	if err != nil || moved.Project != "proposal-new" {
-		t.Fatalf("migrated proposal = %#v, err=%v", moved, err)
+	moved, err := st.GetMemoryCheckpoint(identity)
+	if err != nil || moved.Proposal == nil || moved.Proposal.Project != "proposal-new" {
+		t.Fatalf("migrated proposal checkpoint = %#v, err=%v", moved, err)
 	}
 }

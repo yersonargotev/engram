@@ -22,7 +22,6 @@ type checkpointCLIOptions struct {
 	Project     string
 	MemoryIDs   []int64
 	Memories    []memoryops.CheckpointMemoryInput
-	ProposalID  string
 	Proposal    *memoryops.CheckpointProposalInput
 	JSONMode    bool
 	Help        bool
@@ -73,7 +72,6 @@ func cmdCheckpoint(cfg store.Config) {
 			Project:     opts.Project,
 			MemoryIDs:   opts.MemoryIDs,
 			Memories:    opts.Memories,
-			ProposalID:  opts.ProposalID,
 			Proposal:    opts.Proposal,
 			CWD:         currentCWD(),
 		})
@@ -89,7 +87,7 @@ func cmdCheckpoint(cfg store.Config) {
 		case store.CheckpointDispositionSaved:
 			fmt.Printf("Memory checkpoint %s: saved (%d Memories)\n", result.Idempotency, len(result.Checkpoint.References))
 		case store.CheckpointDispositionNeedsReview:
-			fmt.Printf("Memory checkpoint %s: needs_review (proposal %s)\n", result.Idempotency, result.Checkpoint.References[0].ProposalID)
+			fmt.Printf("Memory checkpoint %s: needs_review (proposal %s)\n", result.Idempotency, result.Checkpoint.Proposal.ID)
 		default:
 			fmt.Printf("Memory checkpoint %s: %s (%s)\n", result.Idempotency, result.Checkpoint.Disposition, result.Checkpoint.ReasonCode)
 		}
@@ -115,7 +113,7 @@ func cmdCheckpoint(cfg store.Config) {
 			}
 		case store.CheckpointDispositionNeedsReview:
 			fmt.Printf("Memory checkpoint: needs_review (proposal %s, project %s)\n",
-				result.Checkpoint.References[0].ProposalID, result.Checkpoint.References[0].Project)
+				result.Checkpoint.Proposal.ID, result.Checkpoint.Proposal.Project)
 		default:
 			fmt.Printf("Memory checkpoint: %s (%s)\n", result.Checkpoint.Disposition, result.Checkpoint.ReasonCode)
 		}
@@ -275,12 +273,9 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 			}
 			opts.Memories = append(opts.Memories, memory)
 		case "--proposal-id":
-			if opts.ProposalID != "" {
-				return opts, &checkpointArgumentError{
-					Code: memoryops.CheckpointErrorCodeInvalidReferences, Message: "invalid checkpoint references: proposal_id may be provided once",
-				}
+			return opts, &checkpointArgumentError{
+				Code: memoryops.CheckpointErrorCodeInvalidReferences, Message: "invalid checkpoint references: proposal_id is not supported",
 			}
-			opts.ProposalID = value
 		case "--proposal-json":
 			if opts.Proposal != nil {
 				return opts, &checkpointArgumentError{
@@ -299,10 +294,10 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 			return opts, &checkpointArgumentError{Message: fmt.Sprintf("unknown checkpoint flag %s", arg)}
 		}
 	}
-	if opts.Action == "status" && (opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.ProposalID != "" || opts.Proposal != nil) {
+	if opts.Action == "status" && (opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.Proposal != nil) {
 		return opts, &checkpointArgumentError{Message: "checkpoint status accepts only identity flags"}
 	}
-	if opts.Action == "verify-stop" && (opts.SessionID != "" || opts.RootTurnID != "" || opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.ProposalID != "" || opts.Proposal != nil || opts.JSONMode) {
+	if opts.Action == "verify-stop" && (opts.SessionID != "" || opts.RootTurnID != "" || opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.Proposal != nil || opts.JSONMode) {
 		return opts, &checkpointArgumentError{Message: "checkpoint verify-stop accepts only --host"}
 	}
 	return opts, nil
@@ -317,7 +312,7 @@ func printCheckpointUsage() {
 	  [--memory-id ID ...] [--memory-json JSON ...] [--json]
 	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
 	  --disposition needs_review --project PROJECT \
-	  (--proposal-id ID | --proposal-json JSON) [--json]
+	  --proposal-json '{"title":"...","content":"..."}' [--json]
 	engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
 	engram checkpoint verify-stop --host HOST`)
 }

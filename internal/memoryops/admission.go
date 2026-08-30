@@ -56,26 +56,28 @@ type EvidenceBundle struct {
 	Items   []EvidenceItem `json:"items"`
 }
 
-type ProposalCategory = store.MemoryProposalCategory
+// ProposalCategory is Admission-owned vocabulary retained only while the
+// experimental runtime remains present.
+type ProposalCategory string
 
 const (
-	ProposalExplicitRequest = store.MemoryProposalExplicitRequest
-	ProposalDecision        = store.MemoryProposalDecision
-	ProposalRootCause       = store.MemoryProposalRootCause
-	ProposalInvariant       = store.MemoryProposalInvariant
-	ProposalConstraint      = store.MemoryProposalConstraint
-	ProposalPreference      = store.MemoryProposalPreference
-	ProposalLearning        = store.MemoryProposalLearning
+	ProposalExplicitRequest ProposalCategory = "explicit_request"
+	ProposalDecision        ProposalCategory = "decision"
+	ProposalRootCause       ProposalCategory = "root_cause"
+	ProposalInvariant       ProposalCategory = "invariant"
+	ProposalConstraint      ProposalCategory = "constraint"
+	ProposalPreference      ProposalCategory = "preference"
+	ProposalLearning        ProposalCategory = "learning"
 )
 
 const (
-	ReasonExplicitUserRequest      = store.MemoryProposalReasonExplicitUserRequest
-	ReasonStructuredSection        = store.MemoryProposalReasonStructuredSection
-	ReasonProtectedProposal        = store.MemoryProposalReasonProtectedProposal
-	ReasonEmptyContent             = store.MemoryProposalReasonEmptyContent
-	ReasonNormalizedExactDuplicate = store.MemoryProposalReasonNormalizedExactDuplicate
-	ReasonRedactedOnly             = store.MemoryProposalReasonRedactedOnly
-	ReasonRequiresReview           = store.MemoryProposalReasonRequiresReview
+	ReasonExplicitUserRequest      = "explicit_user_request"
+	ReasonStructuredSection        = "structured_section"
+	ReasonProtectedProposal        = "protected_proposal"
+	ReasonEmptyContent             = "empty_content"
+	ReasonNormalizedExactDuplicate = "normalized_exact_duplicate"
+	ReasonRedactedOnly             = "redacted_only"
+	ReasonRequiresReview           = "requires_review"
 )
 
 // MemoryProposal is potentially durable knowledge. It is never persisted by a

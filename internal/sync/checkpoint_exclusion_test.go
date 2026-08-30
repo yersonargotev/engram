@@ -25,8 +25,7 @@ func TestChunkExportExcludesMemoryCheckpoints(t *testing.T) {
 		},
 		Project: "engram",
 		Proposal: &store.MemoryProposalInput{
-			Type: "decision", Title: "Proposal chunk canary", Content: "Proposal chunk canary content",
-			Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
+			Title: "Proposal chunk canary", Content: "Proposal chunk canary content",
 		},
 	})
 	if err != nil {

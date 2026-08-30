@@ -105,9 +105,9 @@ user turn:
 ```
 
 For `saved`, pass one or more `memory_ids` or inline `memories` and the exact
-project. For `needs_review`, pass exactly one `proposal_id` or inline `proposal`
-and the exact project. Do not attach Memory or proposal references to a skipped
-checkpoint.
+project. For `needs_review`, pass exactly one inline `proposal` containing
+`title` and `content`, plus the exact project. Do not attach Memory or proposal
+references to a skipped checkpoint.
 
 If MCP is unavailable, use the equivalent CLI adapter:
 

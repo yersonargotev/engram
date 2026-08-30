@@ -54,7 +54,7 @@ For other docs:
 - **sync_apply_deferred** — holds pulled mutations that could not be applied locally due to a missing FK dependency (e.g. relation references an observation not yet present); columns: `sync_id` (TEXT PK), `entity`, `payload`, `apply_status` (`deferred` | `applied` | `dead`), `retry_count`, `last_error`, `last_attempted_at`, `first_seen_at`. Rows with `apply_status='dead'` have exceeded the retry cap (5 attempts) and will not be retried automatically.
 - **memory_checkpoints** — local-only root-turn dispositions keyed by unique `(host, session_id, root_turn_id)`. Stores only opaque identity, `disposition`, the versioned `reason_code`, `reason_version`, and timestamps. It has no Memory FTS or sync triggers and is excluded from Memory search, context, counts, JSON/project/chunk exports, pending mutations, cloud materialization, and Obsidian output. The v1 skip vocabulary contains only `no_durable_knowledge`; integration or processing failures are validation errors, never semantic skips.
 - **memory_checkpoint_references** — ordered, typed local-only references from a checkpoint to the immutable ID, sync ID, and project identity of every attached Memory. The table has no sync triggers and is excluded from normal Memory and replication surfaces.
-- **memory_proposals** — immutable local checkpoint audit evidence for `needs_review`. Stores only an Engram-derived ID, normalized project, redacted `title` and `content`, and creation time. It is separate from both `observations` and experimental `admission_shadow_*` rows, has no FTS or sync triggers, and never enters Memory search, context, counts, export/import, sync, cloud, Obsidian, or automatic Admission/Promotion. Project rename, merge, and delete operations update or remove it together with its checkpoint reference.
+- **memory_proposals** — immutable local checkpoint audit evidence for `needs_review`. Stores only an Engram-derived ID, normalized project, redacted `title` and `content`, and creation time. It is separate from `observations`, has no FTS or sync triggers, and never enters Memory search, context, counts, export/import, sync, cloud, or Obsidian. No workflow converts a proposal into a Memory. Project rename, merge, and delete operations update or remove it together with its checkpoint reference.
 - **memory_checkpoint_proposal_references** — one local proposal reference per `needs_review` checkpoint. Stores only checkpoint ID, proposal ID, and normalized project; it is excluded from all Memory and replication surfaces.
 
 ### SQLite Configuration
@@ -133,7 +133,7 @@ inside the same transaction as the proposal reference and checkpoint. Record,
 idempotent replay, and status return the immutable `proposal` snapshot with
 `id`, `project`, `title`, `content`, and `created_at`. `--proposal-id` and removed
 proposal fields are rejected. Proposal fields are also rejected for `saved` and
-`skipped`. This disposition creates no Memory, sync mutation, or promotion path.
+`skipped`. This disposition creates no Memory, sync mutation, or review workflow.
 
 `save` exits successfully after the memory is persisted even when its response
 contains `judgment_required: true`; callers can resolve each returned candidate
@@ -960,7 +960,7 @@ A saved result exposes an ordered `references` array containing `kind: "memory"`
 A needs-review result exposes one immutable `proposal` snapshot containing `id`,
 `project`, `title`, `content`, and `created_at`. Engram derives the identity,
 normalized ownership, and timestamp while proposal creation, its reference, and
-the checkpoint commit atomically; no Admission recommendation or Promotion runs
+the checkpoint commit atomically; no Memory creation or review workflow runs
 implicitly.
 
 The first call returns `idempotency: "created"`; replaying the same root-turn identity and disposition returns `idempotency: "already_recorded"` with the original checkpoint, references, proposal snapshot, and timestamps without creating Memories, proposals, or mutations again. Once the identity and disposition match, replay payload fields are ignored rather than revalidated, so retries cannot replace the original references or depend on payload availability. Invalid or empty sets on first finalization fail without changing state. Stable reference-validation codes are `invalid_checkpoint_references`, `checkpoint_memory_not_found`, and `checkpoint_project_mismatch`; terminal changes return `checkpoint_conflict`. Unknown skip reasons, including integration and processing failure labels, return `invalid_checkpoint_reason`.

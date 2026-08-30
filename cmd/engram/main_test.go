@@ -1155,6 +1155,27 @@ func TestRemovedAdmissionCommandUsesUnknownCommandContractWithoutCreatingDatabas
 	}
 }
 
+func TestRemainingCommandDispatchesThroughCLIProcess(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), ".engram")
+	cmd := exec.Command(os.Args[0], "-test.run=TestMainExitHelper")
+	cmd.Env = append(os.Environ(),
+		"GO_WANT_HELPER_PROCESS=1",
+		"HELPER_CASE=remaining-checkpoint-help",
+		"ENGRAM_DATA_DIR="+dataDir,
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("remaining command exit = %v; output=%q", err, string(out))
+	}
+	if !strings.Contains(string(out), "engram checkpoint record") {
+		t.Fatalf("remaining command did not dispatch: %q", string(out))
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "engram.db")); !os.IsNotExist(err) {
+		t.Fatalf("checkpoint help must not create the store, stat err=%v", err)
+	}
+}
+
 func TestMainExitHelper(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
@@ -1177,6 +1198,8 @@ func TestMainExitHelper(t *testing.T) {
 		os.Args = []string{"engram", "admission", "--help"}
 	case "removed-admission-preview-help":
 		os.Args = []string{"engram", "admission", "preview", "--help"}
+	case "remaining-checkpoint-help":
+		os.Args = []string{"engram", "checkpoint", "--help"}
 	default:
 		os.Args = []string{"engram", "--help"}
 	}

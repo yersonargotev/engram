@@ -41,7 +41,6 @@ import (
 	"github.com/yersonargotev/engram/internal/setup"
 	"github.com/yersonargotev/engram/internal/store"
 	engramsync "github.com/yersonargotev/engram/internal/sync"
-	"github.com/yersonargotev/engram/internal/taskbriefing"
 	"github.com/yersonargotev/engram/internal/timeutil"
 	"github.com/yersonargotev/engram/internal/tui"
 	versioncheck "github.com/yersonargotev/engram/internal/version"
@@ -121,17 +120,11 @@ var (
 	storeTimeline     = func(s *store.Store, observationID int64, before, after int) (*store.TimelineResult, error) {
 		return s.Timeline(observationID, before, after)
 	}
-	storeFormatContext   = func(s *store.Store, project, scope string) (string, error) { return s.FormatContext(project, scope) }
-	storeProjectExists   = func(s *store.Store, project string) (bool, error) { return s.ProjectExists(project) }
-	storeListProjects    = func(s *store.Store) ([]string, error) { return s.ListProjectNames() }
-	generateTaskBriefing = func(s *store.Store, input taskbriefing.Input) (taskbriefing.Result, error) {
-		return taskbriefing.New(s).Generate(input)
-	}
-	taskBriefingWorkingDirectory = currentCWD
-	storeStats                   = func(s *store.Store) (*store.Stats, error) { return s.Stats() }
-	storeExport                  = func(s *store.Store) (*store.ExportData, error) { return s.Export() }
-	jsonMarshalIndent            = json.MarshalIndent
-	runDiagnostics               = func(ctx context.Context, s *store.Store, project, check string) (diagnostic.Report, error) {
+	storeFormatContext = func(s *store.Store, project, scope string) (string, error) { return s.FormatContext(project, scope) }
+	storeStats         = func(s *store.Store) (*store.Stats, error) { return s.Stats() }
+	storeExport        = func(s *store.Store) (*store.ExportData, error) { return s.Export() }
+	jsonMarshalIndent  = json.MarshalIndent
+	runDiagnostics     = func(ctx context.Context, s *store.Store, project, check string) (diagnostic.Report, error) {
 		runner := diagnostic.NewRunner()
 		scope := diagnostic.Scope{Store: s, Project: project, Now: time.Now()}
 		if strings.TrimSpace(check) != "" {
@@ -1624,57 +1617,11 @@ func cmdTimeline(cfg store.Config) {
 func cmdContext(cfg store.Config) {
 	project := ""
 	scope := ""
-	task := ""
-	base := ""
-	brief := false
-	taskSet := false
-	baseSet := false
-	limitSet := false
-	limit := 0
 	jsonMode := hasArg("--json")
 
 	for i := 2; i < len(os.Args); i++ {
 		switch os.Args[i] {
 		case "--json":
-		case "--brief":
-			brief = true
-		case "--task":
-			if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
-				failCLI(jsonMode, "invalid_arguments", "--task requires a non-empty value", nil)
-				return
-			}
-			taskSet = true
-			task = strings.TrimSpace(os.Args[i+1])
-			i++
-			if task == "" {
-				failCLI(jsonMode, "invalid_arguments", "--task requires a non-empty value", nil)
-				return
-			}
-		case "--base":
-			if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
-				failCLI(jsonMode, "invalid_arguments", "--base requires a non-empty ref", nil)
-				return
-			}
-			baseSet = true
-			base = strings.TrimSpace(os.Args[i+1])
-			i++
-			if base == "" {
-				failCLI(jsonMode, "invalid_arguments", "--base requires a non-empty ref", nil)
-				return
-			}
-		case "--limit":
-			if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
-				failCLI(jsonMode, "invalid_arguments", "--limit requires an integer value", nil)
-				return
-			}
-			parsed, parseErr := strconv.Atoi(os.Args[i+1])
-			if parseErr != nil || parsed < 1 || parsed > taskbriefing.CalibratedDefaults.MaximumResultCount {
-				failCLI(jsonMode, "invalid_arguments", fmt.Sprintf("--limit must be between 1 and %d", taskbriefing.CalibratedDefaults.MaximumResultCount), nil)
-				return
-			}
-			limitSet = true
-			limit = parsed
-			i++
 		case "--scope":
 			if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
 				failCLI(jsonMode, "invalid_arguments", "--scope requires a value", nil)
@@ -1695,32 +1642,6 @@ func cmdContext(cfg store.Config) {
 			}
 		}
 	}
-	if !brief && (taskSet || baseSet || limitSet) {
-		failCLI(jsonMode, "invalid_arguments", "--task, --base, and --limit require --brief", nil)
-		return
-	}
-	if brief && scope != "" && scope != "project" && scope != "personal" {
-		failCLI(jsonMode, "invalid_arguments", "--scope must be project or personal", nil)
-		return
-	}
-	if brief {
-		if project == "" {
-			resolved := detectProjectFull(currentCWD())
-			if resolved.Error != nil {
-				failCLI(jsonMode, "ambiguous_project", resolved.Error.Error(), map[string]any{
-					"available_projects": resolved.AvailableProjects,
-					"project_source":     resolved.Source,
-				})
-				return
-			}
-			project = strings.TrimSpace(resolved.Project)
-		}
-		project, _ = store.NormalizeProject(project)
-		if strings.TrimSpace(project) == "" {
-			failCLI(jsonMode, "project_not_resolved", "task briefing requires exactly one project", nil)
-			return
-		}
-	}
 
 	s, err := storeNew(cfg)
 	if err != nil {
@@ -1728,48 +1649,6 @@ func cmdContext(cfg store.Config) {
 		return
 	}
 	defer s.Close()
-	if brief {
-		exists, projectErr := storeProjectExists(s, project)
-		if projectErr != nil {
-			failCLI(jsonMode, "project_resolution_failed", projectErr.Error(), nil)
-			return
-		}
-		if !exists {
-			availableProjects, listErr := storeListProjects(s)
-			if listErr != nil {
-				failCLI(jsonMode, "project_resolution_failed", listErr.Error(), nil)
-				return
-			}
-			failCLI(jsonMode, "unknown_project", fmt.Sprintf("unknown project: %s", project), map[string]any{
-				"available_projects": availableProjects,
-			})
-			return
-		}
-		result, generateErr := generateTaskBriefing(s, taskbriefing.Input{
-			Project:          project,
-			Scope:            scope,
-			TaskIntent:       task,
-			Limit:            limit,
-			WorkingDirectory: taskBriefingWorkingDirectory(),
-			ExplicitBase:     base,
-		})
-		if generateErr != nil {
-			code := string(taskbriefing.ErrorCode(generateErr))
-			if code == "" {
-				code = "task_briefing_failed"
-			}
-			failCLI(jsonMode, code, generateErr.Error(), nil)
-			return
-		}
-		output := newContextBriefingOutput(project, scope, result)
-		encoded, encodeErr := encodeContextBriefing(output, jsonMode, taskSet, taskbriefing.CalibratedDefaults.TotalOutputBudget)
-		if encodeErr != nil {
-			failCLI(jsonMode, "output_budget_failure", encodeErr.Error(), nil)
-			return
-		}
-		fmt.Fprint(os.Stdout, string(encoded))
-		return
-	}
 
 	ctx, err := storeFormatContext(s, project, scope)
 	if err != nil {
@@ -3532,10 +3411,7 @@ Commands:
                        judge    <judgment-id> --relation R [--confidence N] [--json]
                        compare  <id-a> <id-b> --relation R --confidence N --reasoning TEXT [--json]
   doctor             Run read-only operational diagnostics [--json] [--project P] [--check CODE]
-  context [project]  Show recent context from previous sessions
-                       --brief [--task INTENT] [--base REF] [--scope project|personal]
-                               [--limit 1..5] [--json]
-                       Select complete durable memories for a task or clean feature branch.
+  context [project]  Show recent context from previous sessions [--scope SCOPE] [--json]
   admission preview  Generate and assess Memory proposals without persisting them
                        --project PROJECT (--input FILE|- | --session SESSION_ID) [--json]
   admission shadow   Retain one explicit local shadow run for later review

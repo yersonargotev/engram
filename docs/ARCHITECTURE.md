@@ -280,8 +280,7 @@ engram delete project <name> [--hard]
                           Shadow admission runs, local proposals, and their checkpoints
 engram timeline <obs_id>  Chronological context around an observation
 engram context [project]  Recent context from previous sessions
-                          [--brief [--task INTENT] [--base REF] [--scope project|personal]
-                           [--limit 1..5] [--json]]
+                          [--scope SCOPE] [--json]
 engram admission preview  Generate and assess Memory proposals without persisting them
                           --project PROJECT (--input FILE|- | --session SESSION_ID) [--json]
 engram admission shadow   Explicitly retain derived local snapshots from one session
@@ -324,30 +323,6 @@ engram projects rescue-ownership --project <name> [--session <id>] [--observatio
 engram obsidian-export    Export memories to Obsidian vault (beta)
 engram version            Show version
 ```
-
-### Task briefing diagnostic boundary
-
-`internal/taskbriefing.Generator.Generate` owns the complete local selection
-pipeline: bounded signal grouping and retrieval, lifecycle filtering, Task or
-Repository qualification, thresholding, ranking, result limiting, privacy-safe
-rejection telemetry, empty-result classification, and targeted-search fallback
-construction. The Store supplies searchable inventory, FTS results, and relation
-state; it does not decide Task relevance. The CLI adapter owns human/JSON
-rendering and the exact 4,096-byte stdout budget, including deterministic
-rejection-detail and whole-Memory omission.
-
-Pipeline counts always name their population. Retrieval reports are complete
-only when a signal query returns below its ceiling; hitting the ceiling produces
-a lower bound with `count_complete: false`. Rejection details are bounded IDs and
-reason metrics, never rejected Memory bodies or raw Repository signals. A
-structured fallback is advisory: `Generate` returns a read-only `engram search`
-command/argument vector but never executes the second query or persists its
-transient inputs. The generator excludes anchors over its fixed byte bound, and
-the CLI drops fallback metadata whole with an explicit omission reason if it
-cannot fit the output budget. Fallback metadata uses `all_scopes` when its
-invocation intentionally has no scope filter; explicit scopes are represented
-by the matching `--scope` argument. Under output pressure, an advisory fallback
-is omitted before any complete selected Memory.
 
 ### Attributable Admission study boundary
 

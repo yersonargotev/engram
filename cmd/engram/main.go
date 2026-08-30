@@ -3359,7 +3359,7 @@ Commands:
                      Delete a prompt by ID (permanent)
   delete project <name> [--hard]
                      Cascade-delete a project: soft-deletes observations (or hard if --hard),
-                     removes prompts and local shadow runs; with --hard also removes sessions
+                     removes prompts; with --hard also removes sessions
   timeline <obs_id>  Show chronological context around an observation [--before N] [--after N]
   conflicts <sub>   Inspect and manage memory conflict relations
                        list     [--project P]  [--status S]  [--since RFC3339]  [--limit N]

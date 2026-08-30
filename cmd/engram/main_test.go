@@ -250,6 +250,9 @@ func TestPrintUsage(t *testing.T) {
 			t.Fatalf("usage exposes removed command %q: %q", removed, stdout)
 		}
 	}
+	if strings.Contains(strings.ToLower(stdout), "shadow run") {
+		t.Fatalf("usage exposes removed Admission persistence: %q", stdout)
+	}
 	for _, agent := range []string{"opencode", "pi", "claude-code", "gemini-cli", "codex", "antigravity-cli", "windsurf", "qwen", "kiro", "cursor", "vscode-copilot", "kilocode"} {
 		if !strings.Contains(stdout, agent) {
 			t.Fatalf("usage missing setup agent %q: %q", agent, stdout)

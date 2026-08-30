@@ -1,8 +1,11 @@
 package memoryops
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/yersonargotev/engram/internal/store"
@@ -17,7 +20,6 @@ const (
 	CheckpointErrorCodeInvalidReason      = "invalid_checkpoint_reason"
 	CheckpointErrorCodeInvalidReferences  = "invalid_checkpoint_references"
 	CheckpointErrorCodeMemoryNotFound     = "checkpoint_memory_not_found"
-	CheckpointErrorCodeProposalNotFound   = "checkpoint_proposal_not_found"
 	CheckpointErrorCodeProjectMismatch    = "checkpoint_project_mismatch"
 	CheckpointErrorCodeConflict           = "checkpoint_conflict"
 	CheckpointErrorCodeNotFound           = "checkpoint_not_found"
@@ -37,7 +39,6 @@ type CheckpointRecordInput struct {
 	Project     string                   `json:"project,omitempty"`
 	MemoryIDs   []int64                  `json:"memory_ids,omitempty"`
 	Memories    []CheckpointMemoryInput  `json:"memories,omitempty"`
-	ProposalID  string                   `json:"proposal_id,omitempty"`
 	Proposal    *CheckpointProposalInput `json:"proposal,omitempty"`
 	CWD         string                   `json:"-"`
 }
@@ -45,14 +46,28 @@ type CheckpointRecordInput struct {
 // CheckpointProposalInput is one local Memory proposal to retain atomically
 // for explicit review without creating or assessing a Memory.
 type CheckpointProposalInput struct {
-	Type         string   `json:"type"`
-	Title        string   `json:"title"`
-	Content      string   `json:"content"`
-	Scope        string   `json:"scope"`
-	Category     string   `json:"category"`
-	Protected    bool     `json:"protected,omitempty"`
-	EvidenceRefs []string `json:"evidence_refs,omitempty"`
-	ReasonCodes  []string `json:"reason_codes,omitempty"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
+}
+
+// UnmarshalJSON rejects stale Admission-derived proposal fields instead of
+// silently discarding them at an adapter boundary.
+func (p *CheckpointProposalInput) UnmarshalJSON(data []byte) error {
+	type proposalInput CheckpointProposalInput
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var decoded proposalInput
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple proposal values")
+		}
+		return err
+	}
+	*p = CheckpointProposalInput(decoded)
+	return nil
 }
 
 // CheckpointMemoryInput is one Memory to create as part of an atomic saved
@@ -115,7 +130,7 @@ func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointReco
 	switch input.Disposition {
 	case store.CheckpointDispositionSkipped:
 		if input.Project != "" || len(input.MemoryIDs) > 0 || len(input.Memories) > 0 ||
-			input.ProposalID != "" || input.Proposal != nil {
+			input.Proposal != nil {
 			return nil, store.ErrCheckpointInvalidReferences
 		}
 		checkpoint, alreadyRecorded, err = s.store.RecordSkippedCheckpoint(store.RecordSkippedCheckpointParams{
@@ -125,7 +140,7 @@ func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointReco
 		if input.ReasonCode != "" {
 			return nil, store.ErrCheckpointInvalidReason
 		}
-		if input.ProposalID != "" || input.Proposal != nil {
+		if input.Proposal != nil {
 			return nil, store.ErrCheckpointInvalidReferences
 		}
 		memories := make([]store.AddObservationParams, 0, len(input.Memories))
@@ -154,13 +169,11 @@ func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointReco
 		var proposal *store.MemoryProposalInput
 		if input.Proposal != nil {
 			proposal = &store.MemoryProposalInput{
-				Type: input.Proposal.Type, Title: input.Proposal.Title, Content: input.Proposal.Content,
-				Scope: input.Proposal.Scope, Category: input.Proposal.Category, Protected: input.Proposal.Protected,
-				EvidenceRefs: input.Proposal.EvidenceRefs, ReasonCodes: input.Proposal.ReasonCodes,
+				Title: input.Proposal.Title, Content: input.Proposal.Content,
 			}
 		}
 		checkpoint, alreadyRecorded, err = s.store.RecordNeedsReviewCheckpoint(store.RecordNeedsReviewCheckpointParams{
-			Identity: identity, Project: input.Project, ProposalID: input.ProposalID, Proposal: proposal,
+			Identity: identity, Project: input.Project, Proposal: proposal,
 		})
 	default:
 		return nil, ErrCheckpointInvalidDisposition
@@ -227,9 +240,7 @@ func CheckpointErrorCode(err error) string {
 		return CheckpointErrorCodeInvalidReferences
 	case errors.Is(err, store.ErrCheckpointMemoryNotFound):
 		return CheckpointErrorCodeMemoryNotFound
-	case errors.Is(err, store.ErrCheckpointProposalNotFound):
-		return CheckpointErrorCodeProposalNotFound
-	case errors.Is(err, store.ErrCheckpointProjectMismatch), errors.Is(err, store.ErrCheckpointProposalProjectMismatch):
+	case errors.Is(err, store.ErrCheckpointProjectMismatch):
 		return CheckpointErrorCodeProjectMismatch
 	case errors.Is(err, store.ErrCheckpointConflict):
 		return CheckpointErrorCodeConflict

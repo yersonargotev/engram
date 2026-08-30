@@ -101,16 +101,14 @@ func TestCmdCheckpointStatusHumanOutputExposesSavedReferences(t *testing.T) {
 	}
 }
 
-func TestCmdCheckpointStatusHumanOutputExposesProposalReference(t *testing.T) {
+func TestCmdCheckpointStatusHumanOutputExposesProposalSnapshot(t *testing.T) {
 	cfg := testConfig(t)
 	identity := checkpointParityIdentity{"codex", "session-human-needs-review", "turn-human-needs-review"}
 	created := runCheckpointCLIRecordProposal(t, cfg, identity, "engram", "", map[string]any{
-		"type": "decision", "title": "Human review proposal", "content": "Review this proposal.",
-		"scope": "project", "category": "decision",
+		"title": "Human review proposal", "content": "Review this proposal.",
 	})
 	checkpoint := created["checkpoint"].(map[string]any)
-	references := checkpoint["references"].([]any)
-	proposalID := references[0].(map[string]any)["proposal_id"].(string)
+	proposalID := checkpoint["proposal"].(map[string]any)["id"].(string)
 
 	withArgs(t,
 		"engram", "checkpoint", "status",
@@ -184,8 +182,11 @@ func TestCheckpointCLIProcessJSONContract(t *testing.T) {
 		t.Fatalf("needs-review stdout=%q stderr=%q", stdout, stderr)
 	}
 	checkpoint, _ := decodeCLIJSON(t, stdout)["checkpoint"].(map[string]any)
-	references, _ := checkpoint["references"].([]any)
-	if checkpoint["disposition"] != store.CheckpointDispositionNeedsReview || len(references) != 1 {
+	proposal, _ := checkpoint["proposal"].(map[string]any)
+	if checkpoint["disposition"] != store.CheckpointDispositionNeedsReview || len(proposal) != 5 ||
+		proposal["id"] == "" || proposal["project"] != "engram" ||
+		proposal["title"] != "Review process proposal" || proposal["content"] != "Keep this local until review." ||
+		proposal["created_at"] == "" {
 		t.Fatalf("needs-review checkpoint=%#v", checkpoint)
 	}
 }
@@ -233,7 +234,7 @@ func TestCheckpointProcessHelper(t *testing.T) {
 			"--root-turn-id=turn-process-needs-review",
 			"--disposition=needs_review",
 			"--project=engram",
-			`--proposal-json={"type":"decision","title":"Review process proposal","content":"Keep this local until review.","scope":"project","category":"decision","reason_codes":["requires_review"]}`,
+			`--proposal-json={"title":"Review process proposal","content":"Keep this local until review."}`,
 			"--json",
 		}
 	default:
@@ -320,13 +321,17 @@ func TestCheckpointHelpDocumentsAllTerminalDispositions(t *testing.T) {
 		store.CheckpointDispositionSaved,
 		store.CheckpointDispositionSkipped,
 		store.CheckpointDispositionNeedsReview,
-		"--proposal-id",
 		"--proposal-json",
+		`"title"`,
+		`"content"`,
 		"checkpoint verify-stop --host HOST",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("checkpoint help %q does not contain %q", stdout, want)
 		}
+	}
+	if strings.Contains(stdout, "--proposal-id") {
+		t.Fatalf("checkpoint help still exposes proposal_id: %q", stdout)
 	}
 }
 

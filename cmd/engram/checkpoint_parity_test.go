@@ -181,9 +181,7 @@ func TestCheckpointCLIAndMCPParityForMalformedSavedReferences(t *testing.T) {
 func TestCheckpointCLIAndMCPParityForNeedsReviewProposals(t *testing.T) {
 	cfg := testConfig(t)
 	proposal := map[string]any{
-		"type": "decision", "title": "Created review proposal", "content": "Keep this local until review.",
-		"scope": "project", "category": "decision", "protected": true,
-		"evidence_refs": []string{"session-summary"}, "reason_codes": []string{"requires_review"},
+		"title": "Created review proposal", "content": "Keep this local until review.",
 	}
 	cliIdentity := checkpointParityIdentity{"codex", "session-cli-needs-review", "turn-cli-needs-review"}
 	mcpIdentity := checkpointParityIdentity{"codex", "session-mcp-needs-review", "turn-mcp-needs-review"}
@@ -196,6 +194,10 @@ func TestCheckpointCLIAndMCPParityForNeedsReviewProposals(t *testing.T) {
 	if got, want := normalizedCreatedCheckpointEnvelope(cliCreated), normalizedCreatedCheckpointEnvelope(mcpCreated); !reflect.DeepEqual(got, want) {
 		t.Fatalf("created proposal envelopes differ\nCLI=%#v\nMCP=%#v", got, want)
 	}
+	cliProposal := checkpointProposalSnapshot(t, cliCreated)
+	mcpProposal := checkpointProposalSnapshot(t, mcpCreated)
+	assertCompleteCheckpointProposal(t, cliProposal, "engram", proposal)
+	assertCompleteCheckpointProposal(t, mcpProposal, "engram", proposal)
 
 	cliReplayed := runCheckpointCLIRecordProposal(t, cfg, cliIdentity, "", "", nil)
 	mcpReplayed := callCheckpointMCP(t, mcpRecord, map[string]any{
@@ -205,29 +207,29 @@ func TestCheckpointCLIAndMCPParityForNeedsReviewProposals(t *testing.T) {
 	if got, want := normalizedCreatedCheckpointEnvelope(cliReplayed), normalizedCreatedCheckpointEnvelope(mcpReplayed); !reflect.DeepEqual(got, want) {
 		t.Fatalf("replayed proposal envelopes differ\nCLI=%#v\nMCP=%#v", got, want)
 	}
+	if replayed := checkpointProposalSnapshot(t, cliReplayed); !reflect.DeepEqual(replayed, cliProposal) {
+		t.Fatalf("CLI replay proposal = %#v, want %#v", replayed, cliProposal)
+	}
+	if replayed := checkpointProposalSnapshot(t, mcpReplayed); !reflect.DeepEqual(replayed, mcpProposal) {
+		t.Fatalf("MCP replay proposal = %#v, want %#v", replayed, mcpProposal)
+	}
 
 	cliStatus := runCheckpointCLIStatus(t, cfg, cliIdentity)
 	mcpStatus := callCheckpointMCP(t, engrammcp.CheckpointStatusToolHandler(s), checkpointParityIdentityArguments(mcpIdentity), false)
 	if got, want := normalizedCreatedCheckpointEnvelope(cliStatus), normalizedCreatedCheckpointEnvelope(mcpStatus); !reflect.DeepEqual(got, want) {
 		t.Fatalf("proposal status envelopes differ\nCLI=%#v\nMCP=%#v", got, want)
 	}
+	if statusProposal := checkpointProposalSnapshot(t, cliStatus); !reflect.DeepEqual(statusProposal, cliProposal) {
+		t.Fatalf("CLI status proposal = %#v, want %#v", statusProposal, cliProposal)
+	}
+	if statusProposal := checkpointProposalSnapshot(t, mcpStatus); !reflect.DeepEqual(statusProposal, mcpProposal) {
+		t.Fatalf("MCP status proposal = %#v, want %#v", statusProposal, mcpProposal)
+	}
 }
 
-func TestCheckpointCLIAndMCPParityForExistingAndInvalidNeedsReviewProposals(t *testing.T) {
+func TestCheckpointCLIAndMCPParityRejectsMissingAndStaleNeedsReviewInputs(t *testing.T) {
 	cfg := testConfig(t)
-	proposalIDs := seedCheckpointParityProposals(t, cfg, "engram", 2)
-	otherProposalIDs := seedCheckpointParityProposals(t, cfg, "other", 2)
-
-	cliIdentity := checkpointParityIdentity{"codex", "session-cli-proposal-existing", "turn-cli-proposal-existing"}
-	mcpIdentity := checkpointParityIdentity{"codex", "session-mcp-proposal-existing", "turn-mcp-proposal-existing"}
-	cliCreated := runCheckpointCLIRecordProposal(t, cfg, cliIdentity, "engram", proposalIDs[0], nil)
 	s := openCheckpointParityStore(t, cfg)
-	mcpCreated := callCheckpointMCP(t, engrammcp.CheckpointToolHandler(s),
-		checkpointParityProposalArguments(mcpIdentity, "engram", proposalIDs[1], nil), false)
-	if got, want := normalizedCreatedCheckpointEnvelope(cliCreated), normalizedCreatedCheckpointEnvelope(mcpCreated); !reflect.DeepEqual(got, want) {
-		t.Fatalf("existing proposal envelopes differ\nCLI=%#v\nMCP=%#v", got, want)
-	}
-
 	tests := []struct {
 		name          string
 		cliProposalID string
@@ -236,19 +238,16 @@ func TestCheckpointCLIAndMCPParityForExistingAndInvalidNeedsReviewProposals(t *t
 		proposal      any
 	}{
 		{name: "empty", project: "engram"},
-		{name: "nonexistent", project: "engram", cliProposalID: "proposal-cli-missing", mcpProposalID: "proposal-mcp-missing"},
-		{name: "cross-project", project: "engram", cliProposalID: otherProposalIDs[0], mcpProposalID: otherProposalIDs[1]},
-		{name: "both", project: "engram", cliProposalID: proposalIDs[0], mcpProposalID: proposalIDs[1], proposal: map[string]any{
-			"type": "decision", "title": "Second proposal", "content": "Exactly one proposal is allowed.",
-			"scope": "project", "category": "decision",
-		}},
+		{name: "removed proposal id", project: "engram", cliProposalID: "proposal-cli-stale", mcpProposalID: "proposal-mcp-stale"},
 		{name: "invalid-inline", project: "engram", proposal: map[string]any{
-			"type": "decision", "title": "Missing content", "scope": "project", "category": "decision",
+			"title": "Missing content",
 		}},
-		{name: "invalid-vocabulary", project: "engram", proposal: map[string]any{
-			"type": "not-a-type", "title": "Invalid vocabulary", "content": "Reject this proposal.",
-			"scope": "not-a-scope", "category": "not-a-category", "reason_codes": []string{"invented_reason"},
-		}},
+		{name: "removed type", project: "engram", proposal: staleCheckpointProposal("type", "decision")},
+		{name: "removed scope", project: "engram", proposal: staleCheckpointProposal("scope", "project")},
+		{name: "removed category", project: "engram", proposal: staleCheckpointProposal("category", "decision")},
+		{name: "removed protected", project: "engram", proposal: staleCheckpointProposal("protected", true)},
+		{name: "removed evidence refs", project: "engram", proposal: staleCheckpointProposal("evidence_refs", []string{"session-summary"})},
+		{name: "removed reason codes", project: "engram", proposal: staleCheckpointProposal("reason_codes", []string{"requires_review"})},
 		{name: "malformed", project: "engram", proposal: "not-an-object"},
 	}
 	for _, tt := range tests {
@@ -266,6 +265,14 @@ func TestCheckpointCLIAndMCPParityForExistingAndInvalidNeedsReviewProposals(t *t
 			}
 		})
 	}
+}
+
+func staleCheckpointProposal(field string, value any) map[string]any {
+	proposal := map[string]any{
+		"title": "Stale proposal", "content": "Reject removed Admission metadata.",
+	}
+	proposal[field] = value
+	return proposal
 }
 
 func TestCheckpointCLIAndMCPParityRejectsProposalFieldsOutsideNeedsReview(t *testing.T) {
@@ -663,6 +670,7 @@ func normalizedCheckpointEnvelope(envelope map[string]any) map[string]any {
 		"reason_code":    checkpoint["reason_code"],
 		"reason_version": checkpoint["reason_version"],
 		"references":     checkpoint["references"],
+		"proposal":       checkpoint["proposal"],
 	}
 	return normalized
 }
@@ -680,7 +688,42 @@ func normalizedCreatedCheckpointEnvelope(envelope map[string]any) map[string]any
 		})
 	}
 	checkpoint["references"] = semantics
+	if proposal, ok := checkpoint["proposal"].(map[string]any); ok {
+		checkpoint["proposal"] = map[string]any{
+			"project": proposal["project"],
+			"title":   proposal["title"],
+			"content": proposal["content"],
+		}
+	}
 	return normalized
+}
+
+func checkpointProposalSnapshot(t *testing.T, envelope map[string]any) map[string]any {
+	t.Helper()
+	checkpoint, ok := envelope["checkpoint"].(map[string]any)
+	if !ok {
+		t.Fatalf("checkpoint envelope = %#v", envelope)
+	}
+	proposal, ok := checkpoint["proposal"].(map[string]any)
+	if !ok {
+		t.Fatalf("checkpoint proposal = %#v", checkpoint["proposal"])
+	}
+	return proposal
+}
+
+func assertCompleteCheckpointProposal(t *testing.T, got map[string]any, project string, input map[string]any) {
+	t.Helper()
+	for _, field := range []string{"id", "project", "title", "content", "created_at"} {
+		if value, ok := got[field].(string); !ok || value == "" {
+			t.Fatalf("proposal %s = %#v, want non-empty string in %#v", field, got[field], got)
+		}
+	}
+	if got["project"] != project || got["title"] != input["title"] || got["content"] != input["content"] {
+		t.Fatalf("proposal snapshot = %#v, want project %q and input %#v", got, project, input)
+	}
+	if len(got) != 5 {
+		t.Fatalf("proposal snapshot fields = %#v, want only id, project, title, content, created_at", got)
+	}
 }
 
 func seedCheckpointParityMemories(t *testing.T, cfg store.Config, project string, count int) []int64 {
@@ -710,31 +753,6 @@ func seedCheckpointParityMemories(t *testing.T, cfg store.Config, project string
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("close seed store: %v", err)
-	}
-	return ids
-}
-
-func seedCheckpointParityProposals(t *testing.T, cfg store.Config, project string, count int) []string {
-	t.Helper()
-	s, err := store.New(cfg)
-	if err != nil {
-		t.Fatalf("open proposal seed store: %v", err)
-	}
-	ids := make([]string, 0, count)
-	for index := 0; index < count; index++ {
-		proposal, err := s.CreateMemoryProposal(project, store.MemoryProposalInput{
-			Type: "decision", Title: fmt.Sprintf("Parity proposal %d", index+1),
-			Content: fmt.Sprintf("Review parity proposal %d.", index+1),
-			Scope:   "project", Category: "decision", ReasonCodes: []string{"requires_review"},
-		})
-		if err != nil {
-			_ = s.Close()
-			t.Fatalf("create seed proposal: %v", err)
-		}
-		ids = append(ids, proposal.ID)
-	}
-	if err := s.Close(); err != nil {
-		t.Fatalf("close proposal seed store: %v", err)
 	}
 	return ids
 }

@@ -2899,8 +2899,7 @@ func TestCmdDeleteProjectSuccess(t *testing.T) {
 		Identity: store.CheckpointIdentity{Host: "codex", SessionID: "delete-project-session", RootTurnID: "delete-project-turn"},
 		Project:  "proj-cascade",
 		Proposal: &store.MemoryProposalInput{
-			Type: "decision", Title: "Delete project proposal", Content: "Delete this with the project.",
-			Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
+			Title: "Delete project proposal", Content: "Delete this with the project.",
 		},
 	}); err != nil {
 		_ = s.Close()

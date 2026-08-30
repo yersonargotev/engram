@@ -15,6 +15,9 @@ import (
 // and for adapter-parity tests.
 func CheckpointToolHandler(s *store.Store) server.ToolHandlerFunc {
 	return func(_ context.Context, req mcppkg.CallToolRequest) (*mcppkg.CallToolResult, error) {
+		if _, exists := req.GetArguments()["proposal_id"]; exists {
+			return checkpointToolError(fmt.Errorf("%w: proposal_id is not supported", store.ErrCheckpointInvalidReferences)), nil
+		}
 		memoryIDs, err := checkpointMemoryIDsArg(req, "memory_ids")
 		if err != nil {
 			return checkpointToolError(err), nil
@@ -36,7 +39,6 @@ func CheckpointToolHandler(s *store.Store) server.ToolHandlerFunc {
 			Project:     checkpointStringArg(req, "project"),
 			MemoryIDs:   memoryIDs,
 			Memories:    memories,
-			ProposalID:  checkpointStringArg(req, "proposal_id"),
 			Proposal:    proposal,
 			CWD:         currentWorkingDirectory(),
 		})

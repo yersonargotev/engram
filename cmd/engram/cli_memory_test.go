@@ -158,12 +158,13 @@ func TestCLIProjectsMergeDryRunAndApplyJSON(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed admission shadow run: %v", err)
 	}
-	proposal, err := s.CreateMemoryProposal("old-project", store.MemoryProposalInput{
-		Type: "decision", Title: "merge proposal", Content: "merge proposal content",
-		Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
-	})
-	if err != nil {
-		t.Fatalf("seed Memory proposal: %v", err)
+	proposalIdentity := store.CheckpointIdentity{Host: "codex", SessionID: "merge-proposal-session", RootTurnID: "merge-proposal-turn"}
+	if _, _, err := s.RecordNeedsReviewCheckpoint(store.RecordNeedsReviewCheckpointParams{
+		Identity: proposalIdentity,
+		Project:  "old-project",
+		Proposal: &store.MemoryProposalInput{Title: "merge proposal", Content: "merge proposal content"},
+	}); err != nil {
+		t.Fatalf("seed Memory proposal checkpoint: %v", err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatalf("close seed store: %v", err)
@@ -199,9 +200,9 @@ func TestCLIProjectsMergeDryRunAndApplyJSON(t *testing.T) {
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("canonical shadow runs=%v err=%v", runs, err)
 	}
-	movedProposal, err := s.GetMemoryProposal(proposal.ID)
-	if err != nil || movedProposal.Project != "canonical" {
-		t.Fatalf("canonical Memory proposal=%#v err=%v", movedProposal, err)
+	movedCheckpoint, err := s.GetMemoryCheckpoint(proposalIdentity)
+	if err != nil || movedCheckpoint.Proposal == nil || movedCheckpoint.Proposal.Project != "canonical" {
+		t.Fatalf("canonical Memory proposal checkpoint=%#v err=%v", movedCheckpoint, err)
 	}
 }
 

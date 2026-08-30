@@ -24,9 +24,7 @@ var (
 	ErrCheckpointInvalidReason           = errors.New("invalid checkpoint reason")
 	ErrCheckpointInvalidReferences       = errors.New("invalid checkpoint references")
 	ErrCheckpointMemoryNotFound          = errors.New("checkpoint Memory not found")
-	ErrCheckpointProposalNotFound        = errors.New("checkpoint Memory proposal not found")
 	ErrCheckpointProjectMismatch         = errors.New("checkpoint Memory belongs to a different project")
-	ErrCheckpointProposalProjectMismatch = errors.New("checkpoint Memory proposal belongs to a different project")
 	ErrCheckpointConflict                = errors.New("checkpoint already recorded with a different terminal result")
 	ErrCheckpointNotFound                = errors.New("checkpoint not found")
 )
@@ -48,22 +46,19 @@ type MemoryCheckpoint struct {
 	ReasonCode    string                `json:"reason_code,omitempty"`
 	ReasonVersion int                   `json:"reason_version,omitempty"`
 	References    []CheckpointReference `json:"references,omitempty"`
+	Proposal      *MemoryProposal       `json:"proposal,omitempty"`
 	CreatedAt     string                `json:"created_at"`
 	UpdatedAt     string                `json:"updated_at"`
 }
 
-const (
-	CheckpointReferenceKindMemory   = "memory"
-	CheckpointReferenceKindProposal = "proposal"
-)
+const CheckpointReferenceKindMemory = "memory"
 
-// CheckpointReference is an immutable, local-only pointer from a terminal
-// checkpoint to the Memory or Memory proposal that justified its disposition.
+// CheckpointReference is an immutable, local-only pointer from a saved
+// checkpoint to one Memory that justified its disposition.
 type CheckpointReference struct {
 	Kind         string `json:"kind"`
 	MemoryID     int64  `json:"memory_id,omitempty"`
 	MemorySyncID string `json:"memory_sync_id,omitempty"`
-	ProposalID   string `json:"proposal_id,omitempty"`
 	Project      string `json:"project"`
 }
 
@@ -81,10 +76,9 @@ type RecordSavedCheckpointParams struct {
 }
 
 type RecordNeedsReviewCheckpointParams struct {
-	Identity   CheckpointIdentity
-	Project    string
-	ProposalID string
-	Proposal   *MemoryProposalInput
+	Identity CheckpointIdentity
+	Project  string
+	Proposal *MemoryProposalInput
 }
 
 // migrateMemoryCheckpoints creates the local-only checkpoint ledger. The table
@@ -92,17 +86,11 @@ type RecordNeedsReviewCheckpointParams struct {
 func (s *Store) migrateMemoryCheckpoints() error {
 	_, err := s.execHook(s.db, `
 		CREATE TABLE IF NOT EXISTS memory_proposals (
-			id            TEXT PRIMARY KEY,
-			project       TEXT    NOT NULL,
-			type          TEXT    NOT NULL,
-			title         TEXT    NOT NULL,
-			content       TEXT    NOT NULL,
-			scope         TEXT    NOT NULL,
-			category      TEXT    NOT NULL,
-			protected     BOOLEAN NOT NULL DEFAULT 0,
-			evidence_refs TEXT    NOT NULL DEFAULT '[]',
-			reason_codes  TEXT    NOT NULL DEFAULT '[]',
-			created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+			id         TEXT PRIMARY KEY,
+			project    TEXT NOT NULL,
+			title      TEXT NOT NULL,
+			content    TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		);
 
 		CREATE TABLE IF NOT EXISTS memory_checkpoints (
@@ -140,12 +128,96 @@ func (s *Store) migrateMemoryCheckpoints() error {
 			project       TEXT NOT NULL
 		);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.rebuildLegacyMemoryProposals()
 }
 
-// RecordNeedsReviewCheckpoint attaches one existing or newly created local
-// Memory proposal to a terminal needs_review disposition. The proposal,
-// reference, and checkpoint commit in one transaction.
+func (s *Store) rebuildLegacyMemoryProposals() error {
+	rows, err := s.queryHook(s.db, `PRAGMA table_info(memory_proposals)`)
+	if err != nil {
+		return fmt.Errorf("inspect Memory proposal schema: %w", err)
+	}
+	var columns []string
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, typ string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("inspect Memory proposal column: %w", err)
+		}
+		columns = append(columns, name)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("inspect Memory proposal columns: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close Memory proposal schema: %w", err)
+	}
+	wantColumns := []string{"id", "project", "title", "content", "created_at"}
+	if len(columns) == len(wantColumns) {
+		minimal := true
+		for index := range wantColumns {
+			if columns[index] != wantColumns[index] {
+				minimal = false
+				break
+			}
+		}
+		if minimal {
+			return nil
+		}
+	}
+
+	return s.withTx(func(tx *sql.Tx) error {
+		if _, err := s.execHook(tx, `
+			CREATE TABLE memory_proposals_v3 (
+				id         TEXT PRIMARY KEY,
+				project    TEXT NOT NULL,
+				title      TEXT NOT NULL,
+				content    TEXT NOT NULL,
+				created_at TEXT NOT NULL DEFAULT (datetime('now'))
+			);
+			INSERT INTO memory_proposals_v3 (id, project, title, content, created_at)
+			SELECT id, project, title, content, created_at FROM memory_proposals;
+
+			CREATE TABLE memory_checkpoint_proposal_references_v3 (
+				checkpoint_id INTEGER PRIMARY KEY REFERENCES memory_checkpoints(id) ON DELETE CASCADE,
+				proposal_id   TEXT NOT NULL REFERENCES memory_proposals_v3(id) ON DELETE RESTRICT,
+				project       TEXT NOT NULL
+			);
+			INSERT INTO memory_checkpoint_proposal_references_v3 (checkpoint_id, proposal_id, project)
+			SELECT checkpoint_id, proposal_id, project FROM memory_checkpoint_proposal_references;
+
+			DROP TABLE memory_checkpoint_proposal_references;
+			DROP TABLE memory_proposals;
+			ALTER TABLE memory_proposals_v3 RENAME TO memory_proposals;
+			ALTER TABLE memory_checkpoint_proposal_references_v3
+				RENAME TO memory_checkpoint_proposal_references;
+		`); err != nil {
+			return fmt.Errorf("rebuild Memory proposal schema: %w", err)
+		}
+
+		violations, err := s.queryHook(tx, `PRAGMA foreign_key_check(memory_checkpoint_proposal_references)`)
+		if err != nil {
+			return fmt.Errorf("verify Memory proposal references: %w", err)
+		}
+		defer violations.Close()
+		if violations.Next() {
+			return fmt.Errorf("verify Memory proposal references: foreign key violation")
+		}
+		if err := violations.Err(); err != nil {
+			return fmt.Errorf("verify Memory proposal references: %w", err)
+		}
+		return nil
+	})
+}
+
+// RecordNeedsReviewCheckpoint creates and attaches one local Memory proposal to
+// a terminal needs_review disposition. The proposal, reference, and checkpoint
+// commit in one transaction.
 func (s *Store) RecordNeedsReviewCheckpoint(p RecordNeedsReviewCheckpointParams) (*MemoryCheckpoint, bool, error) {
 	if err := validateCheckpointIdentity(p.Identity); err != nil {
 		return nil, false, err
@@ -168,9 +240,7 @@ func (s *Store) RecordNeedsReviewCheckpoint(p RecordNeedsReviewCheckpointParams)
 		}
 
 		project, _ := NormalizeProject(p.Project)
-		proposalID := strings.TrimSpace(p.ProposalID)
-		if project == "" || (proposalID == "") == (p.Proposal == nil) ||
-			(p.ProposalID != "" && (proposalID != p.ProposalID || len(p.ProposalID) > maxCheckpointOpaqueIDBytes)) {
+		if project == "" || p.Proposal == nil {
 			return ErrCheckpointInvalidReferences
 		}
 
@@ -200,23 +270,9 @@ func (s *Store) RecordNeedsReviewCheckpoint(p RecordNeedsReviewCheckpointParams)
 			return nil
 		}
 
-		var proposal *MemoryProposal
-		if p.Proposal != nil {
-			proposal, err = createMemoryProposalTx(tx, project, *p.Proposal)
-			if err != nil {
-				return err
-			}
-		} else {
-			proposal, err = loadMemoryProposal(tx, proposalID)
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrCheckpointProposalNotFound
-			}
-			if err != nil {
-				return err
-			}
-			if proposal.Project != project {
-				return ErrCheckpointProposalProjectMismatch
-			}
+		proposal, err := createMemoryProposalTx(tx, project, *p.Proposal)
+		if err != nil {
+			return err
 		}
 
 		var checkpointID int64
@@ -508,17 +564,17 @@ func loadMemoryCheckpoint(q checkpointQuerier, identity CheckpointIdentity) (*Me
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	var proposalReference CheckpointReference
+	var proposal MemoryProposal
 	err = q.QueryRow(`
-		SELECT r.proposal_id, r.project
+		SELECT p.id, p.project, p.title, p.content, p.created_at
 		FROM memory_checkpoint_proposal_references r
 		JOIN memory_checkpoints c ON c.id = r.checkpoint_id
+		JOIN memory_proposals p ON p.id = r.proposal_id
 		WHERE c.host = ? AND c.session_id = ? AND c.root_turn_id = ?`,
 		identity.Host, identity.SessionID, identity.RootTurnID,
-	).Scan(&proposalReference.ProposalID, &proposalReference.Project)
+	).Scan(&proposal.ID, &proposal.Project, &proposal.Title, &proposal.Content, &proposal.CreatedAt)
 	if err == nil {
-		proposalReference.Kind = CheckpointReferenceKindProposal
-		checkpoint.References = append(checkpoint.References, proposalReference)
+		checkpoint.Proposal = &proposal
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}

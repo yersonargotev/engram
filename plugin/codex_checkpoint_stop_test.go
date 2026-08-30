@@ -202,7 +202,7 @@ func TestCodexCheckpointAcceptanceUsesRealCLIAndScripts(t *testing.T) {
 			recordArgs: []string{
 				"--disposition=needs_review",
 				"--project=engram",
-				`--proposal-json={"type":"decision","title":"Review Codex acceptance proposal","content":"Keep this proposal local until review.","scope":"project","category":"decision","reason_codes":["requires_review"]}`,
+				`--proposal-json={"title":"Review Codex acceptance proposal","content":"Keep this proposal local until review."}`,
 			},
 		},
 	}

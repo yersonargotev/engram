@@ -11,7 +11,9 @@ of the coding session that produced it.
 _Avoid_: Note, record
 
 **Memory proposal**:
-Potentially durable knowledge that has not been accepted as a Memory.
+Immutable local checkpoint audit evidence for a `needs_review` disposition. It
+contains an Engram-derived identity, project, creation time, and the caller's
+redacted title and content; it is not a Memory or Promotion candidate.
 _Avoid_: Memory candidate, draft memory
 
 **Protected proposal**:

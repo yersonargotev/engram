@@ -39,7 +39,7 @@ The memory flow does not start in the database. It starts with the agent decidin
 | `sync_mutations` | Queue of changes for sync/autosync. | `internal/store/store.go`, `internal/sync/sync.go`, `internal/cloud/autosync/manager.go` |
 | `sync_apply_deferred` | Pull mutations deferred because dependencies are missing. | `internal/store/sync_apply_test.go`, `internal/server/server.go` |
 | `memory_checkpoints` / checkpoint reference tables | Local-only root-turn dispositions and typed Memory or Memory-proposal references, excluded from every durable-Memory and replication surface. | `internal/store/checkpoint.go`, `internal/memoryops/checkpoint.go` |
-| `memory_proposals` | Local-only, redacted potential Memories retained for explicit checkpoint review without entering Shadow admission metrics or Promotion. | `internal/store/memory_proposal.go` |
+| `memory_proposals` | Immutable local `needs_review` checkpoint audit snapshots that remain outside Memory retrieval, Shadow admission metrics, and Promotion. | `internal/store/memory_proposal.go` |
 
 For schema details, use [DOCS.md — Database Schema](../../DOCS.md#database-schema).
 

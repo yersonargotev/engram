@@ -202,10 +202,8 @@ func TestNeedsReviewProposalIsRedactedAndExcludedFromMemorySurfacesAfterReopen(t
 		Host: "codex-proposal-canary", SessionID: "session-proposal-canary", RootTurnID: "turn-proposal-canary",
 	}
 	input := MemoryProposalInput{
-		Type: "decision", Title: "Proposal privacy canary",
+		Title:   "Proposal privacy canary",
 		Content: "Keep this reviewable. <private>proposal-secret-canary</private>",
-		Scope:   "project", Category: "decision", EvidenceRefs: []string{"session-summary"},
-		ReasonCodes: []string{"requires_review"},
 	}
 
 	s, err := New(cfg)
@@ -218,10 +216,7 @@ func TestNeedsReviewProposalIsRedactedAndExcludedFromMemorySurfacesAfterReopen(t
 	if err != nil {
 		t.Fatalf("record needs-review checkpoint: %v", err)
 	}
-	proposal, err := s.GetMemoryProposal(checkpoint.References[0].ProposalID)
-	if err != nil {
-		t.Fatalf("get proposal: %v", err)
-	}
+	proposal := checkpoint.Proposal
 	if strings.Contains(proposal.Content, "proposal-secret-canary") || !strings.Contains(proposal.Content, "[REDACTED]") {
 		t.Fatalf("proposal content was not redacted: %q", proposal.Content)
 	}
@@ -241,9 +236,6 @@ func TestNeedsReviewProposalIsRedactedAndExcludedFromMemorySurfacesAfterReopen(t
 	}
 	if !reflect.DeepEqual(reopenedCheckpoint, checkpoint) {
 		t.Fatalf("reopened checkpoint = %#v, want %#v", reopenedCheckpoint, checkpoint)
-	}
-	if _, err := reopened.GetMemoryProposal(proposal.ID); err != nil {
-		t.Fatalf("get proposal after reopen: %v", err)
 	}
 	assertCheckpointExcludedFromMemorySurfaces(t, reopened, "Proposal privacy canary")
 }
@@ -319,13 +311,194 @@ func TestNeedsReviewMigrationExtendsTheSavedCheckpointSchema(t *testing.T) {
 		Identity: CheckpointIdentity{Host: "codex", SessionID: "new-session", RootTurnID: "new-turn"},
 		Project:  "engram",
 		Proposal: &MemoryProposalInput{
-			Type: "decision", Title: "Migrated proposal", Content: "Review after migration.",
-			Scope: "project", Category: "decision",
+			Title: "Migrated proposal", Content: "Review after migration.",
 		},
 	})
-	if err != nil || created.References[0].ProposalID == "" {
+	if err != nil || created.Proposal == nil || created.Proposal.ID == "" {
 		t.Fatalf("needs-review checkpoint after migration = %#v, err = %v", created, err)
 	}
+}
+
+func TestMemoryProposalMigrationRebuildsMinimalSchemaAndPreservesCheckpointSnapshot(t *testing.T) {
+	cfg := mustDefaultConfig(t)
+	cfg.DataDir = t.TempDir()
+	raw := createLegacyMemoryProposalFixture(t, cfg)
+	if err := raw.Close(); err != nil {
+		t.Fatalf("close v2 proposal fixture: %v", err)
+	}
+
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatalf("open v3 store: %v", err)
+	}
+	identity := CheckpointIdentity{Host: "codex", SessionID: "session-v2-proposal", RootTurnID: "turn-v2-proposal"}
+	checkpoint, err := s.GetMemoryCheckpoint(identity)
+	if err != nil {
+		_ = s.Close()
+		t.Fatalf("get migrated checkpoint: %v", err)
+	}
+	wantProposal := &MemoryProposal{
+		ID: "proposal-v2-preserved", Project: "engram", Title: "Preserved title",
+		Content: "Preserved content", CreatedAt: "2026-08-29 12:34:56",
+	}
+	if !reflect.DeepEqual(checkpoint.Proposal, wantProposal) || len(checkpoint.References) != 0 {
+		_ = s.Close()
+		t.Fatalf("migrated checkpoint = %#v, want proposal %#v", checkpoint, wantProposal)
+	}
+
+	rows, err := s.DB().Query(`PRAGMA table_info(memory_proposals)`)
+	if err != nil {
+		_ = s.Close()
+		t.Fatalf("proposal table info: %v", err)
+	}
+	var columns []string
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, typ string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			_ = s.Close()
+			t.Fatalf("scan proposal column: %v", err)
+		}
+		columns = append(columns, name)
+	}
+	if err := rows.Close(); err != nil {
+		_ = s.Close()
+		t.Fatalf("close proposal columns: %v", err)
+	}
+	if want := []string{"id", "project", "title", "content", "created_at"}; !reflect.DeepEqual(columns, want) {
+		_ = s.Close()
+		t.Fatalf("proposal columns = %v, want %v", columns, want)
+	}
+
+	violations, err := s.DB().Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		_ = s.Close()
+		t.Fatalf("foreign key check: %v", err)
+	}
+	if violations.Next() {
+		_ = violations.Close()
+		_ = s.Close()
+		t.Fatal("foreign key check reported a violation")
+	}
+	if err := violations.Close(); err != nil {
+		_ = s.Close()
+		t.Fatalf("close foreign key check: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close migrated store: %v", err)
+	}
+
+	reopened, err := New(cfg)
+	if err != nil {
+		t.Fatalf("reopen migrated store: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	replayed, err := reopened.GetMemoryCheckpoint(identity)
+	if err != nil || !reflect.DeepEqual(replayed, checkpoint) {
+		t.Fatalf("reopened checkpoint = %#v, err = %v, want %#v", replayed, err, checkpoint)
+	}
+}
+
+func TestMemoryProposalMigrationRollsBackAfterPartialRebuildFailure(t *testing.T) {
+	cfg := mustDefaultConfig(t)
+	cfg.DataDir = t.TempDir()
+	raw := createLegacyMemoryProposalFixture(t, cfg)
+	t.Cleanup(func() { _ = raw.Close() })
+
+	s := &Store{db: raw, cfg: cfg, hooks: defaultStoreHooks()}
+	exec := s.hooks.exec
+	s.hooks.exec = func(db execer, query string, args ...any) (sql.Result, error) {
+		if strings.Contains(query, "CREATE TABLE memory_proposals_v3") {
+			query = strings.Replace(query, "DROP TABLE memory_proposals;", "SELECT * FROM injected_missing_table;\nDROP TABLE memory_proposals;", 1)
+		}
+		return exec(db, query, args...)
+	}
+
+	if err := s.rebuildLegacyMemoryProposals(); err == nil {
+		t.Fatal("proposal migration succeeded after injected rebuild failure")
+	}
+	var proposals, references int
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM memory_proposals WHERE id = 'proposal-v2-preserved'`).Scan(&proposals); err != nil || proposals != 1 {
+		t.Fatalf("legacy proposals after rollback = %d, err = %v", proposals, err)
+	}
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM memory_checkpoint_proposal_references WHERE proposal_id = 'proposal-v2-preserved'`).Scan(&references); err != nil || references != 1 {
+		t.Fatalf("legacy references after rollback = %d, err = %v", references, err)
+	}
+	for _, table := range []string{"memory_proposals_v3", "memory_checkpoint_proposal_references_v3"} {
+		var count int
+		if err := raw.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("temporary table %s after rollback = %d, err = %v", table, count, err)
+		}
+	}
+	var legacyType string
+	if err := raw.QueryRow(`SELECT type FROM memory_proposals WHERE id = 'proposal-v2-preserved'`).Scan(&legacyType); err != nil || legacyType != "decision" {
+		t.Fatalf("legacy metadata after rollback = %q, err = %v", legacyType, err)
+	}
+}
+
+func createLegacyMemoryProposalFixture(t *testing.T, cfg Config) *sql.DB {
+	t.Helper()
+	raw, err := sql.Open("sqlite", filepath.Join(cfg.DataDir, "engram.db"))
+	if err != nil {
+		t.Fatalf("open v2 proposal schema: %v", err)
+	}
+	raw.SetMaxOpenConns(1)
+	_, err = raw.Exec(`
+		PRAGMA foreign_keys = ON;
+		CREATE TABLE memory_proposals (
+			id TEXT PRIMARY KEY,
+			project TEXT NOT NULL,
+			type TEXT NOT NULL,
+			title TEXT NOT NULL,
+			content TEXT NOT NULL,
+			scope TEXT NOT NULL,
+			category TEXT NOT NULL,
+			protected BOOLEAN NOT NULL DEFAULT 0,
+			evidence_refs TEXT NOT NULL DEFAULT '[]',
+			reason_codes TEXT NOT NULL DEFAULT '[]',
+			created_at TEXT NOT NULL DEFAULT (datetime('now'))
+		);
+		CREATE TABLE memory_checkpoints (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			host TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			root_turn_id TEXT NOT NULL,
+			disposition TEXT NOT NULL,
+			reason_code TEXT,
+			reason_version INTEGER,
+			created_at TEXT NOT NULL DEFAULT (datetime('now')),
+			updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+			UNIQUE (host, session_id, root_turn_id)
+		);
+		CREATE TABLE memory_checkpoint_proposal_references (
+			checkpoint_id INTEGER PRIMARY KEY REFERENCES memory_checkpoints(id) ON DELETE CASCADE,
+			proposal_id TEXT NOT NULL REFERENCES memory_proposals(id) ON DELETE RESTRICT,
+			project TEXT NOT NULL
+		);
+		INSERT INTO memory_proposals (
+			id, project, type, title, content, scope, category, protected,
+			evidence_refs, reason_codes, created_at
+		) VALUES (
+			'proposal-v2-preserved', 'engram', 'decision', 'Preserved title',
+			'Preserved content', 'project', 'decision', 1,
+			'["session-summary"]', '["requires_review"]', '2026-08-29 12:34:56'
+		);
+		INSERT INTO memory_checkpoints (
+			id, host, session_id, root_turn_id, disposition, created_at, updated_at
+		) VALUES (
+			41, 'codex', 'session-v2-proposal', 'turn-v2-proposal', 'needs_review',
+			'2026-08-29 12:35:00', '2026-08-29 12:35:00'
+		);
+		INSERT INTO memory_checkpoint_proposal_references (checkpoint_id, proposal_id, project)
+		VALUES (41, 'proposal-v2-preserved', 'engram');
+	`)
+	if err != nil {
+		_ = raw.Close()
+		t.Fatalf("create v2 proposal fixture: %v", err)
+	}
+	return raw
 }
 
 func assertCheckpointExcludedFromMemorySurfaces(t *testing.T, s *Store, canaryQuery string) {
@@ -384,18 +557,16 @@ func assertCheckpointExcludedFromMemorySurfaces(t *testing.T, s *Store, canaryQu
 func TestMemoryProposalFollowsProjectLifecycleWithoutEnteringSync(t *testing.T) {
 	s := newTestStore(t)
 	identity := CheckpointIdentity{Host: "codex", SessionID: "proposal-lifecycle-session", RootTurnID: "proposal-lifecycle-turn"}
-	created, _, err := s.RecordNeedsReviewCheckpoint(RecordNeedsReviewCheckpointParams{
+	_, _, err := s.RecordNeedsReviewCheckpoint(RecordNeedsReviewCheckpointParams{
 		Identity: identity,
 		Project:  "proposal-old",
 		Proposal: &MemoryProposalInput{
-			Type: "decision", Title: "Proposal lifecycle", Content: "Keep project ownership coherent.",
-			Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
+			Title: "Proposal lifecycle", Content: "Keep project ownership coherent.",
 		},
 	})
 	if err != nil {
 		t.Fatalf("create proposal checkpoint: %v", err)
 	}
-	proposalID := created.References[0].ProposalID
 	exists, err := s.ProjectExists("proposal-old")
 	if err != nil || !exists {
 		t.Fatalf("proposal-only project exists = %v, err = %v", exists, err)
@@ -408,12 +579,8 @@ func TestMemoryProposalFollowsProjectLifecycleWithoutEnteringSync(t *testing.T) 
 	if !migrated.Migrated || migrated.MemoryProposalsUpdated != 1 {
 		t.Fatalf("migration result = %#v, want one proposal moved", migrated)
 	}
-	proposal, err := s.GetMemoryProposal(proposalID)
-	if err != nil || proposal.Project != "proposal-intermediate" {
-		t.Fatalf("proposal after migration = %#v, err = %v", proposal, err)
-	}
 	checkpoint, err := s.GetMemoryCheckpoint(identity)
-	if err != nil || checkpoint.References[0].Project != "proposal-intermediate" {
+	if err != nil || checkpoint.Proposal.Project != "proposal-intermediate" {
 		t.Fatalf("checkpoint after migration = %#v, err = %v", checkpoint, err)
 	}
 
@@ -432,7 +599,7 @@ func TestMemoryProposalFollowsProjectLifecycleWithoutEnteringSync(t *testing.T) 
 		t.Fatalf("merge result = %#v, preview = %#v", merged, preview)
 	}
 	checkpoint, err = s.GetMemoryCheckpoint(identity)
-	if err != nil || checkpoint.References[0].Project != "proposal-canonical" {
+	if err != nil || checkpoint.Proposal.Project != "proposal-canonical" {
 		t.Fatalf("checkpoint after merge = %#v, err = %v", checkpoint, err)
 	}
 
@@ -442,9 +609,6 @@ func TestMemoryProposalFollowsProjectLifecycleWithoutEnteringSync(t *testing.T) 
 	}
 	if deleted.MemoryProposalsDeleted != 1 || deleted.MemoryCheckpointsDeleted != 1 {
 		t.Fatalf("delete result = %#v, want proposal and checkpoint deleted", deleted)
-	}
-	if _, err := s.GetMemoryProposal(proposalID); !errors.Is(err, ErrCheckpointProposalNotFound) {
-		t.Fatalf("proposal after delete error = %v, want not found", err)
 	}
 	if _, err := s.GetMemoryCheckpoint(identity); !errors.Is(err, ErrCheckpointNotFound) {
 		t.Fatalf("checkpoint after delete error = %v, want not found", err)

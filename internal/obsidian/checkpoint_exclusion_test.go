@@ -52,8 +52,7 @@ func TestObsidianExportExcludesMemoryCheckpointsFromRealStore(t *testing.T) {
 		},
 		Project: "engram",
 		Proposal: &store.MemoryProposalInput{
-			Type: "decision", Title: "Proposal Obsidian canary", Content: "proposal-obsidian-canary",
-			Scope: "project", Category: "decision", ReasonCodes: []string{"requires_review"},
+			Title: "Proposal Obsidian canary", Content: "proposal-obsidian-canary",
 		},
 	})
 	if err != nil {

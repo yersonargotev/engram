@@ -141,14 +141,8 @@ func TestCheckpointToolCreatesNeedsReviewProposalAndExposesReference(t *testing.
 		"disposition":  store.CheckpointDispositionNeedsReview,
 		"project":      "engram",
 		"proposal": map[string]any{
-			"type":          "decision",
-			"title":         "Review MCP proposal",
-			"content":       "This proposal must remain local until review.",
-			"scope":         "project",
-			"category":      string(memoryops.ProposalDecision),
-			"protected":     true,
-			"evidence_refs": []any{"session-summary"},
-			"reason_codes":  []any{memoryops.ReasonRequiresReview},
+			"title":   "Review MCP proposal",
+			"content": "This proposal must remain local until review.",
 		},
 	}
 
@@ -160,23 +154,34 @@ func TestCheckpointToolCreatesNeedsReviewProposalAndExposesReference(t *testing.
 	if err := json.Unmarshal([]byte(callResultText(t, response)), &created); err != nil {
 		t.Fatalf("decode record response: %v", err)
 	}
-	if created.Checkpoint == nil || len(created.Checkpoint.References) != 1 ||
-		created.Checkpoint.References[0].Kind != store.CheckpointReferenceKindProposal ||
-		created.Checkpoint.References[0].ProposalID == "" {
+	if created.Checkpoint == nil || created.Checkpoint.Proposal == nil ||
+		created.Checkpoint.Proposal.ID == "" || created.Checkpoint.Proposal.Project != "engram" ||
+		created.Checkpoint.Proposal.Title != "Review MCP proposal" ||
+		created.Checkpoint.Proposal.Content != "This proposal must remain local until review." ||
+		created.Checkpoint.Proposal.CreatedAt == "" {
 		t.Fatalf("created result = %#v", created)
 	}
 }
 
-func TestCheckpointToolSchemaExposesNeedsReviewProposalInputs(t *testing.T) {
+func TestCheckpointToolSchemaExposesOnlyMinimalInlineNeedsReviewProposal(t *testing.T) {
 	s := newMCPTestStore(t)
 	tool := NewServerWithTools(s, map[string]bool{"mem_checkpoint": true}).GetTool("mem_checkpoint")
 	if tool == nil {
 		t.Fatal("mem_checkpoint not registered")
 	}
-	for _, field := range []string{"proposal_id", "proposal"} {
-		if _, ok := tool.Tool.InputSchema.Properties[field]; !ok {
-			t.Fatalf("mem_checkpoint schema missing %q", field)
-		}
+	if _, ok := tool.Tool.InputSchema.Properties["proposal_id"]; ok {
+		t.Fatal("mem_checkpoint schema still exposes proposal_id")
+	}
+	proposal, ok := tool.Tool.InputSchema.Properties["proposal"].(map[string]any)
+	if !ok {
+		t.Fatalf("mem_checkpoint proposal schema = %#v", tool.Tool.InputSchema.Properties["proposal"])
+	}
+	properties, ok := proposal["properties"].(map[string]any)
+	if !ok || len(properties) != 2 || properties["title"] == nil || properties["content"] == nil {
+		t.Fatalf("mem_checkpoint proposal properties = %#v", proposal["properties"])
+	}
+	if proposal["additionalProperties"] != false || proposal["minProperties"] != 2 || proposal["maxProperties"] != 2 {
+		t.Fatalf("mem_checkpoint proposal bounds = %#v", proposal)
 	}
 	if !strings.Contains(tool.Tool.Description, store.CheckpointDispositionNeedsReview) {
 		t.Fatalf("mem_checkpoint description = %q", tool.Tool.Description)

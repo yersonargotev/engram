@@ -75,3 +75,21 @@ func TestAdmissionRetirementDeclaresV3BreakingReleaseContract(t *testing.T) {
 		}
 	}
 }
+
+func TestAdmissionRetirementDeclaresFrozenEvaluationsHistorical(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("..", "..", "evals", "README.md"))
+	if err != nil {
+		t.Fatalf("read evals/README.md: %v", err)
+	}
+
+	index := strings.Join(strings.Fields(strings.ToLower(string(content))), " ")
+	for _, required := range []string{
+		"frozen historical evidence",
+		"not active product guidance",
+		"must remain unchanged",
+	} {
+		if !strings.Contains(index, required) {
+			t.Errorf("evals/README.md is missing the historical-evidence token %q", required)
+		}
+	}
+}

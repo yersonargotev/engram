@@ -54,16 +54,16 @@ that record them, not inferred from code.
 
 | Surface | Purpose | Verified state |
 | --- | --- | --- |
-| `preview` | Run deterministic generation and assessment on bounded Evidence without persistence or a `mem_save` change. | Still public and intentionally advisory/non-persisting. [ADR-0004, lines 7-35](../adr/0004-calibrate-memory-admission-offline.md#validate-memory-admission-through-a-local-non-persisting-preview); [DOCS.md, lines 161-173](../../DOCS.md#L161). |
+| `preview` | Run deterministic generation and assessment on bounded Evidence without persistence or a `mem_save` change. | Still public and intentionally advisory/non-persisting. [ADR-0004, lines 7-35](../adr/0004-calibrate-memory-admission-offline.md#validate-memory-admission-through-a-local-non-persisting-preview); [DOCS.md, lines 161-173](https://github.com/yersonargotev/engram/blob/acc8c0d0835f1e59431ba3ec38c52dfb9dd53faa/DOCS.md?plain=1#L161-L173). |
 | `shadow` + review/metrics | Retain derived local snapshots from one session for human correction and metrics. | Explicit, local, and isolated: no hooks, sync, search, FTS, export, cloud, or Promotion. [ADR-0005, lines 7-21](../adr/0005-explicit-local-shadow-admission.md#measure-memory-admission-with-explicit-local-shadow-runs). |
-| `study` + omission | Freeze an attributable contract, calibration/held-out cohorts, and gates before real-session collection. | Immutable contract and aggregate metrics; `automatic_admission_enabled` remains false. [ADR-0007, lines 7-31](../adr/0007-freeze-attributable-admission-studies.md#freeze-attributable-admission-studies-before-collection); [DOCS.md, lines 190-251](../../DOCS.md#L190). |
+| `study` + omission | Freeze an attributable contract, calibration/held-out cohorts, and gates before real-session collection. | Immutable contract and aggregate metrics; `automatic_admission_enabled` remains false. [ADR-0007, lines 7-31](../adr/0007-freeze-attributable-admission-studies.md#freeze-attributable-admission-studies-before-collection); [DOCS.md, lines 190-251](https://github.com/yersonargotev/engram/blob/acc8c0d0835f1e59431ba3ec38c52dfb9dd53faa/DOCS.md?plain=1#L190-L251). |
 
 The boundary was sound: V1 policy is deterministic and conservative. It recommends
 `admit` only for explicit requests, `reject` for a few unprotected cases, and
-`review` otherwise. [ADR-0004, lines 16-22](../adr/0004-calibrate-memory-admission-offline.md#L16).
+`review` otherwise. [ADR-0004, lines 16-22](https://github.com/yersonargotev/engram/blob/acc8c0d0835f1e59431ba3ec38c52dfb9dd53faa/docs/adr/0004-calibrate-memory-admission-offline.md?plain=1#L16-L22).
 There is no production write path: `RunAdmissionShadow` calls `PreviewAdmission`
 and persists separate snapshots; it neither saves a Memory nor calls Promotion.
-[internal/memoryops/admission_shadow.go, lines 76-161](../../internal/memoryops/admission_shadow.go#L76).
+[internal/memoryops/admission_shadow.go, lines 76-161](../../internal/memoryops/admission_shadow.go#L76-L161).
 
 ## Empirical result: the study answered its question
 
@@ -119,17 +119,17 @@ The concrete risks are:
 
 - **Product:** metrics and `go` do not change user behavior; the result explicitly
   contains `automatic_admission_enabled: false`.
-  [internal/memoryops/admission_study.go, lines 140-152](../../internal/memoryops/admission_study.go#L140)
-  and [DOCS.md, lines 238-251](../../DOCS.md#L238). Documented commands can imply a
+  [internal/memoryops/admission_study.go, lines 140-152](../../internal/memoryops/admission_study.go#L140-L152)
+  and [DOCS.md, lines 238-251](https://github.com/yersonargotev/engram/blob/acc8c0d0835f1e59431ba3ec38c52dfb9dd53faa/DOCS.md?plain=1#L238-L251). Documented commands can imply a
   product capability that does not exist.
 - **Maintenance:** versioned contracts, manifests, cohorts, consent, retention,
   two review modes, Wilson metrics, and gates enlarge the regression surface. The
   metric types track distributions across cohort, adapter, project, and session
-  shape plus seven gates. [internal/memoryops/admission_study.go, lines 51-152](../../internal/memoryops/admission_study.go#L51).
+  shape plus seven gates. [internal/memoryops/admission_study.go, lines 51-152](../../internal/memoryops/admission_study.go#L51-L152).
 - **Privacy and support:** the design minimizes data and remains local-only, but it
   retains redacted proposals, references, and corrections. Redaction, project
-  deletion, migration, and cleanup must remain correct. [ADR-0005, lines 23-43](../adr/0005-explicit-local-shadow-admission.md#L23);
-  [DOCS.md, lines 229-251](../../DOCS.md#L229).
+  deletion, migration, and cleanup must remain correct. [ADR-0005, lines 23-43](https://github.com/yersonargotev/engram/blob/acc8c0d0835f1e59431ba3ec38c52dfb9dd53faa/docs/adr/0005-explicit-local-shadow-admission.md?plain=1#L23-L43);
+  [DOCS.md, lines 229-251](https://github.com/yersonargotev/engram/blob/acc8c0d0835f1e59431ba3ec38c52dfb9dd53faa/DOCS.md?plain=1#L229-L251).
 - **Research:** a legitimate new study cannot reuse the retired held-out source or
   lower gates retrospectively. It needs a newly consented source, prospective
   contract, candidate policy, and two genuinely independent reviewers. That is a

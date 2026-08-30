@@ -12,7 +12,10 @@ runtime as a compatibility layer. The real-session evaluation reached a
 terminal no-go and established research and safety value rather than a product
 path; preserving the experiment would therefore add ongoing public and
 persistence complexity without current user value. This decision supersedes
-ADR-0004, ADR-0005, and ADR-0007. The removal defines Engram v3.0.0.
+[ADR-0004](0004-calibrate-memory-admission-offline.md),
+[ADR-0005](0005-explicit-local-shadow-admission.md), and
+[ADR-0007](0007-freeze-attributable-admission-studies.md). The removal defines
+Engram v3.0.0.
 
 The independent Memory checkpoint contract remains `saved | skipped |
 needs_review`. Its local Memory proposal survives only as checkpoint audit
@@ -45,6 +48,7 @@ failure aborts startup without leaving a partial Admission schema.
 V3 removes Admission commands, examples, behavior descriptions, and domain
 terms from active product and contributor documentation in the same change as
 the code. `Memory proposal` remains in the glossary with its checkpoint-audit
-meaning. Superseded ADR-0004, ADR-0005, and ADR-0007, the Admission research
-reports, historical CHANGELOG entries, and closed Issues remain as explicitly
-historical evidence rather than deprecated product guidance.
+meaning. Superseded ADR-0004, ADR-0005, and ADR-0007, the
+[Admission disposition research report](../research/admission-shadow-disposition.md),
+historical CHANGELOG entries, and closed Issues remain as explicitly historical
+evidence rather than deprecated product guidance.

@@ -53,7 +53,6 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     skip_upload: auto
-    directory: Formula
     name: engram
     homepage: "https://github.com/yersonargotev/engram"
     description: "Persistent memory for AI coding agents. Agent-agnostic, single binary, zero dependencies."

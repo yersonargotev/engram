@@ -119,7 +119,7 @@ The concrete risks are:
 
 - **Product:** metrics and `go` do not change user behavior; the result explicitly
   contains `automatic_admission_enabled: false`.
-  [internal/memoryops/admission_study.go, lines 140-152](https://github.com/yersonargotev/engram/blob/acc8c0d0835f1e59431ba3ec38c52dfb9dd53faa/internal/memoryops/admission_study.go?plain=1#L140-L152)
+  [internal/memoryops/admission_study.go, lines 269-274](https://github.com/yersonargotev/engram/blob/acc8c0d0835f1e59431ba3ec38c52dfb9dd53faa/internal/memoryops/admission_study.go?plain=1#L269-L274)
   and [DOCS.md, lines 238-251](https://github.com/yersonargotev/engram/blob/acc8c0d0835f1e59431ba3ec38c52dfb9dd53faa/DOCS.md?plain=1#L238-L251). Documented commands can imply a
   product capability that does not exist.
 - **Maintenance:** versioned contracts, manifests, cohorts, consent, retention,

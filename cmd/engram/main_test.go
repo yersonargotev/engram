@@ -242,8 +242,8 @@ func TestPrintUsage(t *testing.T) {
 	if !strings.Contains(stdout, "save <title> <content>") || !strings.Contains(stdout, "save --title TITLE --content CONTENT") {
 		t.Fatalf("usage missing save input forms: %q", stdout)
 	}
-	if !strings.Contains(stdout, "--brief [--task INTENT] [--base REF]") || !strings.Contains(stdout, "--limit 1..5") {
-		t.Fatalf("usage missing task briefing flags: %q", stdout)
+	if !strings.Contains(stdout, "context [project]") || strings.Contains(stdout, "--brief") || strings.Contains(stdout, "--task INTENT") {
+		t.Fatalf("usage exposes removed task briefing flags: %q", stdout)
 	}
 	if !strings.Contains(stdout, "admission preview") || !strings.Contains(stdout, "--project PROJECT (--input FILE|- | --session SESSION_ID)") {
 		t.Fatalf("usage missing admission preview command: %q", stdout)
@@ -860,6 +860,29 @@ func TestCmdContextAndStats(t *testing.T) {
 	}
 	if !strings.Contains(statsOut, "Engram Memory Stats") || !strings.Contains(statsOut, "project-x") {
 		t.Fatalf("unexpected stats output: %q", statsOut)
+	}
+}
+
+func TestCmdContextRejectsRemovedTaskBriefFlags(t *testing.T) {
+	cfg := testConfig(t)
+	stubExitWithPanic(t)
+
+	for _, args := range [][]string{
+		{"engram", "context", "--brief", "--json"},
+		{"engram", "context", "--task", "removed", "--json"},
+		{"engram", "context", "--base", "main", "--json"},
+		{"engram", "context", "--limit", "5", "--json"},
+	} {
+		t.Run(args[2], func(t *testing.T) {
+			withArgs(t, args...)
+			stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdContext(cfg) })
+			if stdout != "" || recovered == nil {
+				t.Fatalf("stdout = %q, exit = %v", stdout, recovered)
+			}
+			if failure := decodeCLIJSON(t, stderr); failure["code"] != "unknown_flag" {
+				t.Fatalf("failure = %#v", failure)
+			}
+		})
 	}
 }
 

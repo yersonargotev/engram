@@ -397,7 +397,7 @@ Your production engram is fully untouched throughout.
 | `engram delete prompt <id>`                | Delete a prompt by ID (permanent)                                     |
 | `engram delete project <name> [--hard]`    | Cascade-delete a project and its local review data; soft-deletes observations by default (`--hard` also removes sessions) |
 | `engram timeline <obs_id>`                 | Chronological context                                           |
-| `engram context [project]`                 | Recent session context; add `--brief` for task selection         |
+| `engram context [project]`                 | Recent session context                                           |
 | `engram admission preview`                 | Preview deterministic Memory proposals and assessments without persisting them |
 | `engram admission study freeze\|cleanup`   | Freeze or explicitly remove one attributable local study version |
 | `engram admission shadow`                  | Retain a legacy project run or an attributable study run from an existing session |
@@ -419,124 +419,6 @@ Your production engram is fully untouched throughout.
 | `engram version`                           | Show version                                                    |
 
 Full CLI with all flags → [docs/ARCHITECTURE.md#cli-reference](docs/ARCHITECTURE.md#cli-reference)
-
-### Task briefings
-
-Chronological context remains the default. `--brief` selects a small,
-deterministic set of complete durable memories. An explicit Task intent is
-authoritative when supplied:
-
-```bash
-engram context --brief --task "implement deterministic task briefing selection"
-engram context --brief --base main
-engram context engram --brief --task "implement deterministic task briefing selection" --scope project --limit 3 --json
-engram context engram --brief --scope personal --json
-```
-
-Engram derives transient Repository signals from the branch name, committed diff, affected paths, and commit subjects, plus staged changes, unstaged changes, and untracked paths. Staged and unstaged diffs contribute bounded terms and affected paths; untracked files contribute paths only—Engram never opens their content. The comparison base resolves in this order: an explicit `--base REF`, a configured upstream that represents a distinct comparison lineage, then the remote default branch. A same-branch tracking upstream is not a comparison base because its head normally matches the feature branch; Engram skips it and continues to the remote default.
-
-Repository signals are used only when the cwd repository resolves to the selected
-project. A mismatch disables them and reports `repository_project_mismatch`;
-Task intent can still produce a task-only briefing, while an invocation without
-Task intent returns a successful empty briefing. All Memory scopes stored under
-the selected project are eligible by default, while `--scope project` or
-`--scope personal` narrows selection.
-
-Selection preserves exact compound identities instead of reducing them to
-unrelated words. Issue and PR references (`#43`, `issue 43`, `PR 56`), named
-branches, commit hashes, paths, and topic keys contribute typed identifier
-evidence. Common stop words and workflow labels such as `and`, `for`, `merge`,
-`pr`, `issue`, `branch`, `commit`, `path`, and `topic` do not independently
-qualify a Memory or inflate the Task gate. Other bounded terms are distinctive
-evidence. Exact identifiers have greater ranking strength than distinctive
-terms; more exact agreement sorts before title and local-ID tie-breaking.
-
-The historical inclusion threshold still decides whether a candidate has enough
-corroborated evidence before match-strength bonuses affect ordering. With an
-explicit Task, Repository signals can reinforce only a Memory that first has
-strong Task evidence; generic Repository overlap cannot rescue it. Without a
-Task, generic Repository overlap can contribute only after another Repository
-source supplies exact or distinctive evidence. Each Memory field contributes at
-most six matched identifiers or terms per signal, so repeated or long prose
-cannot dominate selection.
-
-The result limit is a cap, not a quota: weak matches are excluded, and at most
-five memories are returned. Relevant pins may improve ordering but cannot force
-an unrelated memory into a briefing. Deleted and superseded memories stay out;
-selected judged conflicts remain visible. Identical normalized evidence from
-multiple Repository sources remains traceable under every source but contributes
-only its strongest weight during ranking. Memories are emitted whole, and a
-lower-ranked memory that does not fit the bounded output is omitted and counted.
-
-Every briefing reports bounded pipeline accounting in human and JSON output.
-The stages and their candidate sets are distinct:
-
-| JSON field | Meaning |
-| --- | --- |
-| `pipeline.eligible_inventory` | Non-deleted memories in the selected project/scope before signal retrieval and relation filtering. |
-| `pipeline.retrieved_candidates` | Unique memories in the bounded union returned by signal searches. |
-| `pipeline.retrievals[]` | Per-query signal sources, the fixed retrieval `limit`, returned lower bound, and `count_complete`. A query that reaches its ceiling is incomplete; Engram never substitutes an unknown total with zero. |
-| `pipeline.task_gate_rejections` | Retrieved memories that lacked the required exact/distinctive Task evidence. |
-| `pipeline.repository_gate_rejections` | Retrieved memories that lacked qualifying Repository evidence when no Task was supplied. |
-| `pipeline.lifecycle_rejections` | Retrieved memories excluded by judged supersession. |
-| `pipeline.threshold_rejections` | Gate-qualified memories whose pre-ranking score remained below the inclusion threshold. |
-| `pipeline.qualified_candidates` | Memories that passed lifecycle, gate, and threshold checks before the result cap. |
-| `result_limit_omissions` | Qualified memories removed after ranking by the requested or calibrated result cap. |
-| `budget_omissions` | Selected complete memories removed only while enforcing the final stdout byte budget. |
-
-JSON includes at most eight privacy-safe `rejections`: each entry contains the
-Memory ID, rejection stage/reason, matched versus required Task evidence when
-applicable, and score versus threshold for threshold failures. It never includes
-the rejected Memory body or raw Repository evidence. Additional entries are
-reported by `rejection_details_omitted`; if stdout needs further bounding,
-rejection details are removed deterministically before complete selected
-Memories, and the same counter increases.
-
-An empty result uses `empty_result_reason` to distinguish
-`project_has_no_memories`, `no_candidates_matched`, `candidates_filtered`, and
-`candidates_below_threshold` (with `no_usable_signals` retained for the existing
-signal-absence case). When a targeted search is a safe next step, `fallback`
-contains one to three bounded normalized anchors, project/scope, a stable reason
-code, and a safe structured invocation (`command` plus `args`). Exact issue/PR,
-topic-key, branch/path, and other distinctive terms are preferred; generic stop
-words alone never become anchors, and anchors over the fixed byte bound are
-excluded. Fallback reasons cover no matches, incomplete
-retrieval, filtering, threshold rejection, result limiting, and output-budget
-omission. The recommendation is advisory and read-only: Task Brief neither runs
-the search nor persists Task/Repository evidence. If fallback metadata itself
-cannot fit stdout, it is omitted whole and JSON reports `fallback_omitted` with
-`fallback_omission_reason: "output_budget"`.
-An unfiltered fallback reports scope as `all_scopes`; an explicit Task Brief
-scope is copied into both the fallback metadata and its `--scope` argument.
-
-Task intent and Repository signals are transient: they are used only for local
-deterministic selection and are never saved as memories. Raw diff content is not
-echoed in briefing output, and untracked file content is neither read nor emitted.
-Every input source has a calibrated deterministic term bound. If a bound is
-reached, JSON diagnostics include each source's `total_terms`, `analyzed_terms`,
-and `omitted_terms`; human output shows the same counts. Acquisition retains only
-the calibrated vocabulary; after that bound, `omitted_terms` counts eligible
-occurrences without retaining their values. Exact identifiers are extracted only
-from retained input; oversized tokens and the omitted tail cannot affect
-selection. Git streams also have a deterministic
-one-MiB acquisition ceiling. `count_complete: false` marks prefix counts when
-that ceiling is reached, so partial analysis is never presented as complete.
-Both human and compact JSON output
-are measured as their exact stdout byte streams and are limited to 4,096 bytes.
-A failed optional
-signal-acquisition Git operation reports its source and preserves all other usable
-Task or Repository signals; failed base resolution reports
-`branch_base_unresolved`. If
-no Repository signal is usable and no Task intent is supplied, `--brief` succeeds
-with an empty briefing and suggests `--task`; memory-store failures remain command
-errors. Human and JSON briefings expose the resolved base, source-level Selection
-evidence—including `matched_identifiers` and `matched_distinctive_terms`—typed
-degradations, pipeline/rejection accounting, structured fallback, and
-result/output omissions. Supported briefing
-flags are `--task INTENT`, `--base REF`, `--scope project|personal`, `--limit 1..5`,
-and `--json`; `--task`, `--base`, and `--limit` require `--brief`. Without `--brief`,
-the existing chronological human and JSON contracts are unchanged. The four
-examples above are executed as CLI contract tests.
 
 ### Memory admission preview
 

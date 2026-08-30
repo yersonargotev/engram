@@ -71,7 +71,7 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 engram current-project --json >/dev/null || exit 70
-engram context activation-study-fixture --brief --task "synthetic recall" --scope project --limit 5 --json >/dev/null || exit 71
+engram search "COBALT-MAPLE-731" --project activation-study-fixture --scope project --match-mode all --limit 5 --json >/dev/null || exit 71
 engram save --title "Synthetic preference" --content "What: EVAL-PRESERVE-731" --project activation-study-fixture --json >/dev/null || exit 72
 printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"sed -n 1,120p /private/.agents/skills/engram-memory-cli/SKILL.md","exit_code":0}}'
 printf '%s\n' '{"type":"turn.completed"}'
@@ -107,7 +107,7 @@ printf '%s\n' 'COBALT-MAPLE-731' > "$output"
 		t.Fatal("Codex prompt-input discovery was not verified")
 	}
 	for _, record := range eventSet.Records {
-		if !record.Events["user_skill_read"] || !record.Events["current_project_invoked"] || !record.Events["task_brief_invoked"] || !record.Events["memory_write_succeeded"] {
+		if !record.Events["user_skill_read"] || !record.Events["current_project_invoked"] || !record.Events["targeted_search_invoked"] || !record.Events["memory_write_succeeded"] {
 			t.Fatalf("cell %s events = %#v", record.CellID, record.Events)
 		}
 		if record.Events["integration_failure"] {

@@ -164,9 +164,9 @@ control for the ranking experiments below.
 The evaluation used the installed `engram 2.2.1` against the existing local
 database. Briefs were run both in the Engram checkout and from `/tmp` with the
 project explicitly set to `engram`. The second form deliberately removes Git
-signals. This matters because Task Brief always inspects the current working
-tree before building evidence ([`generator.go:186`](../../internal/taskbriefing/generator.go#L186),
-[`repository.go:32`](../../internal/taskbriefing/repository.go#L32)).
+signals. This matters because Task Brief always inspected the current working
+tree before building evidence ([`generator.go:186`](https://github.com/yersonargotev/engram/blob/v2.2.1/internal/taskbriefing/generator.go#L186),
+[`repository.go:32`](https://github.com/yersonargotev/engram/blob/v2.2.1/internal/taskbriefing/repository.go#L32)).
 
 Creating this report itself changed the in-repository result: its untracked path
 contributed `untracked_path` terms such as `engram`, `skill`, `cli`, and `md`.
@@ -192,24 +192,24 @@ The behavior is deterministic, not random and not an intentional preference for
 old memories:
 
 1. Task terms are lowercased and deduplicated by the bounded collector
-   ([`terms.go:13`](../../internal/taskbriefing/terms.go#L13)), and the calibrated
+   ([`terms.go:13`](https://github.com/yersonargotev/engram/blob/v2.2.1/internal/taskbriefing/terms.go#L13)), and the calibrated
    task vocabulary is prefix-capped at 12
-   ([`generator.go:88`](../../internal/taskbriefing/generator.go#L88)). The merge
+   ([`generator.go:88`](https://github.com/yersonargotev/engram/blob/v2.2.1/internal/taskbriefing/generator.go#L88)). The merge
    task had 14 normalized terms, so `protected validation` was omitted.
 2. A memory must match at least half of the retained task terms before any
    repository evidence can help it. #84 matched exactly 6 of 12 generic terms:
    `merge`, `pr`, `for`, `issue`, `and`, and `its`. #155 matched only 4:
    `and`, `clean`, `for`, and `only`, so it failed the task gate
-   ([`generator.go:237`](../../internal/taskbriefing/generator.go#L237)).
+   ([`generator.go:237`](https://github.com/yersonargotev/engram/blob/v2.2.1/internal/taskbriefing/generator.go#L237)).
 3. #84 then matched branch, branch-diff, affected-path, and commit-subject
    signals and reached a score of 35. The repository evidence was itself heavily
    truncated: 15,037 branch-diff terms and 15 affected-path terms were omitted.
 4. Recency is deliberately not a relevance signal
-   ([`CALIBRATION.md:55`](../../internal/taskbriefing/prototype/CALIBRATION.md#L55)).
+   ([`CALIBRATION.md:55`](https://github.com/yersonargotev/engram/blob/v2.2.1/internal/taskbriefing/prototype/CALIBRATION.md#L55)).
    Once scores tie, the deterministic ordering uses title and ID rather than
-   freshness ([`generator.go:275`](../../internal/taskbriefing/generator.go#L275)).
+   freshness ([`generator.go:275`](https://github.com/yersonargotev/engram/blob/v2.2.1/internal/taskbriefing/generator.go#L275)).
 5. The CLI then removes complete, lowest-ranked memories until the full response
-   fits 4096 bytes ([`context_briefing.go:56`](../../cmd/engram/context_briefing.go#L56)).
+   fits 4096 bytes ([`context_briefing.go:56`](https://github.com/yersonargotev/engram/blob/v2.2.1/cmd/engram/context_briefing.go#L56)).
 
 The diagnostics correctly report input truncation, result-cap omissions, and
 budget omissions. They do **not** report memories rejected by the task gate,

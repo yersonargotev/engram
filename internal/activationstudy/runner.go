@@ -529,11 +529,6 @@ func writeShim(path string) error {
 operation="other"
 case "$1" in
   current-project) operation="current_project" ;;
-  context)
-    for argument in "$@"; do
-      if [ "$argument" = "--brief" ]; then operation="task_brief"; fi
-    done
-    ;;
   search) operation="targeted_search" ;;
   save) operation="save" ;;
   checkpoint) operation="checkpoint" ;;

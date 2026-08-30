@@ -689,9 +689,6 @@ func TestUpdateChecksSkipCriticalStartupCommands(t *testing.T) {
 	if shouldCheckForUpdates([]string{"protocol-mode", "claude-code"}) {
 		t.Fatal("protocol-mode startup must not run update check")
 	}
-	if shouldCheckForUpdates([]string{"admission", "preview"}) {
-		t.Fatal("admission preview must not run update check")
-	}
 	if !shouldCheckForUpdates([]string{"version"}) {
 		t.Fatal("normal commands should keep update output")
 	}
@@ -712,50 +709,6 @@ func TestMainCloudHelpDoesNotCreateLocalDatabase(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dataDir, "engram.db")); err == nil {
 		t.Fatal("cloud help should not create local database")
-	}
-}
-
-func TestMainAdmissionHelpDoesNotCreateLocalDatabase(t *testing.T) {
-	for _, args := range [][]string{
-		{"engram", "admission", "--help"},
-		{"engram", "admission", "preview", "--help"},
-		{"engram", "admission", "shadow", "--help"},
-		{"engram", "admission", "review", "list", "--help"},
-		{"engram", "admission", "review", "mark", "--help"},
-		{"engram", "admission", "metrics", "--help"},
-		{"engram", "admission", "study", "freeze", "--help"},
-		{"engram", "admission", "study", "cleanup", "--help"},
-		{"engram", "admission", "omission", "record", "--help"},
-	} {
-		t.Run(strings.Join(args[2:], "_"), func(t *testing.T) {
-			stubRuntimeHooks(t)
-			dataDir := filepath.Join(t.TempDir(), ".engram")
-			t.Setenv("ENGRAM_DATA_DIR", dataDir)
-			withArgs(t, args...)
-
-			stdout, stderr, recovered := captureOutputAndRecover(t, func() { main() })
-			if recovered != nil || stderr != "" {
-				t.Fatalf("admission help should return cleanly, panic=%v stderr=%q stdout=%q", recovered, stderr, stdout)
-			}
-			for _, want := range []string{
-				"usage: engram admission preview",
-				"engram admission shadow",
-				"engram admission review list",
-				"engram admission review mark",
-				"engram admission metrics",
-				"engram admission study freeze",
-				"engram admission omission record",
-				"--session SESSION_ID",
-				"shadow retains derived local snapshots",
-			} {
-				if !strings.Contains(stdout, want) {
-					t.Fatalf("admission help missing %q: %q", want, stdout)
-				}
-			}
-			if _, err := os.Stat(filepath.Join(dataDir, "engram.db")); err == nil {
-				t.Fatal("admission help should not create local database")
-			}
-		})
 	}
 }
 
@@ -2910,11 +2863,6 @@ func TestMainDispatchRemainingCommands(t *testing.T) {
 	if err := os.WriteFile(importFile, []byte(`{"version":"0.1.0","exported_at":"2026-01-01T00:00:00Z","sessions":[],"observations":[],"prompts":[]}`), 0644); err != nil {
 		t.Fatalf("write import file: %v", err)
 	}
-	admissionInput := filepath.Join(t.TempDir(), "admission.json")
-	if err := os.WriteFile(admissionInput, []byte(`{"version":"v1","items":[{"reference":"prompt-1","source":"user_prompt","content":"Remember this: Dispatch admission preview through the real binary."}]}`), 0600); err != nil {
-		t.Fatalf("write admission input: %v", err)
-	}
-
 	setupInstallAgent = func(agent string, _ setup.InstallOptions) (*setup.Result, error) {
 		return &setup.Result{Agent: agent, Destination: "/tmp/dest", Files: 1}, nil
 	}
@@ -2927,7 +2875,6 @@ func TestMainDispatchRemainingCommands(t *testing.T) {
 		{name: "save", args: []string{"engram", "save", "t", "c", "--project", "main-proj"}},
 		{name: "timeline", args: []string{"engram", "timeline", fmt.Sprintf("%d", focusID)}},
 		{name: "context", args: []string{"engram", "context", "main-proj"}},
-		{name: "admission", args: []string{"engram", "admission", "preview", "--project", "main-proj", "--input", admissionInput, "--json"}},
 		{name: "stats", args: []string{"engram", "stats"}},
 		{name: "export", args: []string{"engram", "export", filepath.Join(t.TempDir(), "exp.json")}},
 		{name: "import", args: []string{"engram", "import", importFile}},

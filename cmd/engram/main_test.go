@@ -245,11 +245,10 @@ func TestPrintUsage(t *testing.T) {
 	if !strings.Contains(stdout, "context [project]") || strings.Contains(stdout, "--brief") || strings.Contains(stdout, "--task INTENT") {
 		t.Fatalf("usage exposes removed task briefing flags: %q", stdout)
 	}
-	if !strings.Contains(stdout, "admission preview") || !strings.Contains(stdout, "--project PROJECT (--input FILE|- | --session SESSION_ID)") {
-		t.Fatalf("usage missing admission preview command: %q", stdout)
-	}
-	if !strings.Contains(stdout, "admission study") || !strings.Contains(stdout, "admission omission") || !strings.Contains(stdout, "--study-version VERSION") {
-		t.Fatalf("usage missing admission study commands: %q", stdout)
+	for _, removed := range []string{"admission preview", "admission shadow", "admission study", "admission review", "admission omission", "admission metrics"} {
+		if strings.Contains(stdout, removed) {
+			t.Fatalf("usage exposes removed command %q: %q", removed, stdout)
+		}
 	}
 	for _, agent := range []string{"opencode", "pi", "claude-code", "gemini-cli", "codex", "antigravity-cli", "windsurf", "qwen", "kiro", "cursor", "vscode-copilot", "kilocode"} {
 		if !strings.Contains(stdout, agent) {
@@ -1126,6 +1125,36 @@ func TestMainExitPaths(t *testing.T) {
 	}
 }
 
+func TestRemovedAdmissionCommandUsesUnknownCommandContractWithoutCreatingDatabase(t *testing.T) {
+	if testing.CoverMode() != "" {
+		t.Skip("expected non-zero helper subprocess exits corrupt Go coverage output")
+	}
+
+	for _, helperCase := range []string{"removed-admission", "removed-admission-help", "removed-admission-preview-help"} {
+		t.Run(helperCase, func(t *testing.T) {
+			dataDir := filepath.Join(t.TempDir(), ".engram")
+			cmd := exec.Command(os.Args[0], "-test.run=TestMainExitHelper")
+			cmd.Env = append(os.Environ(),
+				"GO_WANT_HELPER_PROCESS=1",
+				"HELPER_CASE="+helperCase,
+				"ENGRAM_DATA_DIR="+dataDir,
+			)
+
+			out, err := cmd.CombinedOutput()
+			exitErr, ok := err.(*exec.ExitError)
+			if !ok || exitErr.ExitCode() != 1 {
+				t.Fatalf("exit = %v, want 1; output=%q", err, string(out))
+			}
+			if !strings.Contains(string(out), "unknown command: admission") {
+				t.Fatalf("output missing unknown-command error: %q", string(out))
+			}
+			if _, err := os.Stat(filepath.Join(dataDir, "engram.db")); !os.IsNotExist(err) {
+				t.Fatalf("removed command must not create the store, stat err=%v", err)
+			}
+		})
+	}
+}
+
 func TestMainExitHelper(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
@@ -1142,6 +1171,12 @@ func TestMainExitHelper(t *testing.T) {
 		os.Args = []string{"engram", "cloud", "nope"}
 	case "cloud-enroll-missing":
 		os.Args = []string{"engram", "cloud", "enroll"}
+	case "removed-admission":
+		os.Args = []string{"engram", "admission"}
+	case "removed-admission-help":
+		os.Args = []string{"engram", "admission", "--help"}
+	case "removed-admission-preview-help":
+		os.Args = []string{"engram", "admission", "preview", "--help"}
 	default:
 		os.Args = []string{"engram", "--help"}
 	}

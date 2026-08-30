@@ -50,8 +50,8 @@ type CheckpointProposalInput struct {
 	Content string `json:"content"`
 }
 
-// UnmarshalJSON rejects stale Admission-derived proposal fields instead of
-// silently discarding them at an adapter boundary.
+// UnmarshalJSON rejects stale proposal fields instead of silently discarding
+// them at an adapter boundary.
 func (p *CheckpointProposalInput) UnmarshalJSON(data []byte) error {
 	type proposalInput CheckpointProposalInput
 	decoder := json.NewDecoder(bytes.NewReader(data))

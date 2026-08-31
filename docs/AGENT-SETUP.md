@@ -431,7 +431,9 @@ engram setup status codex --json
 
 The command does not install, upgrade, repair, start an MCP server, rewrite configuration, or save Memory. It uses bounded read-only probes (`--version`, plugin inventory, filesystem/configuration inspection, and `checkpoint --help`) and reports these surfaces independently:
 
-- `engram_cli` and `codex_cli`: availability, resolved executable path, and version.
+- `compatibility`: the Managed Pack version, Engram binary version, Codex plugin version, and monotonic Protocol contract version are separate axes. Each distributable reports attributable provenance and an inclusive `supported_protocol` range. Readiness uses the intersection of those ranges, never equality between the three distributable versions.
+
+- `engram_cli` and `codex_cli`: availability, resolved executable path, and version. The Engram binary also reports its embedded source revision when available; the real CLI path fails compatibility provenance closed when that revision is malformed.
 - `skill`: every relevant repository, user, administrator, or plugin-provided Engram memory skill, including scope, resolved path, SHA-256 identity, optional version, and disabled state when configured.
 - `marketplace` and `plugin`: registration is kept separate from installed/enabled plugin state; attributable source, requested ref, installed version, and resolved revision are included when known.
 - `mcp_configuration` and `mcp_readiness`: a present registration is kept separate from an executable that passes the non-starting checkpoint CLI preflight. Missing, invalid, customized, and unavailable states remain distinct; status does not claim that a live stdio transport was contacted.
@@ -444,10 +446,12 @@ The stable `mode` field is conservative:
 | `manual_skill_cli` | Engram and Codex CLIs plus at least one enabled standalone skill are available, without an attributable plugin or MCP registration. |
 | `mcp_only` | The supported MCP registration and non-starting executable preflight are ready, but the complete plugin contract is not. |
 | `partial_plugin` | Attributable plugin state exists, but one or more required capabilities are missing, unavailable, or unverified. |
-| `checkpoint_ready` | The attributable plugin, MCP configuration/readiness, prompt/session hooks, activation cue, and Stop verifier are all ready. |
+| `checkpoint_ready` | The attributable Managed Pack, binary, plugin, and Protocol ranges intersect, and the plugin, MCP configuration/readiness, prompt/session hooks, activation cue, and Stop verifier are all ready. |
 | `unknown` | The observed combination does not safely match another mode, including marketplace-only and customized states. |
 
-JSON output uses the additive schema `codex-integration-status-v1`. Every check contains `capability`, `status`, `reason_code`, a bounded human reason, and bounded named evidence. Output is deterministic for unchanged local state.
+JSON output uses the additive schema `codex-integration-status-v1`. Its `compatibility` object uses `protocol-compatibility-v1`, contains all four axes and their provenance, and returns either `protocol_compatible`, `legacy_compatible`, or a stable incompatible reason such as `managed_pack_missing`, `managed_pack_unprovenanced`, `managed_pack_protocol_range_malformed`, or `no_protocol_intersection`. Every capability check contains `capability`, `status`, `reason_code`, a bounded human reason, and bounded named evidence. Output is deterministic for unchanged local state.
+
+The expand path recognizes the exact previously supported Managed Pack `3.1.2` and Codex plugin `0.1.5` fingerprints as Protocol v1 declarations. Managed Pack `3.2.0`, the current binary contract, and Codex plugin `0.1.6` also declare `legacy_compatible`: this compatibility slice publishes and verifies the target contract without changing current Recall, Capture, MCP-profile, or checkpoint defaults. A mixed upgrade remains ready while every attributable range still intersects. Status does not rewrite that installation, and an unknown artifact with the same version is not admitted by version alone. Later behavior changes must remove the legacy flag only after their projections satisfy the target contract.
 
 Status describes installed capability only. It is not evidence that Codex loaded or invoked a skill, that hooks ran in the current session, or that the model created a Memory. Use session and checkpoint evidence for those claims.
 

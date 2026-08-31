@@ -40,6 +40,7 @@ Breaking changes are always marked with a `type:breaking-change` label and docum
 - **feat(codex):** activate one canonical checkpoint skill and minimal model-visible `SessionStart` cue, forward Codex root-turn identity through `UserPromptSubmit`, and verify the installed activation assets without editing shared instruction files.
 - **feat(codex):** enforce terminal root-turn checkpoints on Unix and Windows with one synchronous `Stop` verifier, one identity-preserving recovery continuation, loop prevention, visible integration failures, and exact installed-asset verification.
 - **chore(codex):** retire exact-owned legacy instruction and compaction activation through recoverable staging only after the canonical skill, cue, checkpoint CLI/MCP adapters, and Stop verifier are ready; preserve customized or ambiguous state and keep failed upgrades on the prior working path.
+- **feat(protocol):** expose Core-owned Protocol contract v1, distribute one parity fixture, declare Managed Pack and Codex plugin support ranges, and gate read-only Codex readiness on the attributable four-axis range intersection. The current and exact prior tuples report `legacy_compatible` because this slice does not change Recall, Capture, MCP-profile, or checkpoint defaults.
 
 ### Memory core
 

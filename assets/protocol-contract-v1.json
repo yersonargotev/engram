@@ -1,0 +1,90 @@
+{
+  "schema_version": "engram-protocol-contract-v1",
+  "protocol": {
+    "version": 1,
+    "identity_fields": [
+      "host",
+      "session_id",
+      "root_turn_id"
+    ],
+    "checkpoint_dispositions": [
+      "saved",
+      "needs_review",
+      "skipped"
+    ],
+    "checkpoint_persistence": "local_only",
+    "minimum_tools": [
+      "mem_current_project",
+      "mem_search",
+      "mem_get_observation",
+      "mem_checkpoint",
+      "mem_checkpoint_status"
+    ],
+    "recall_default": "agent_initiated",
+    "capture_default": "disabled",
+    "required_vocabulary": [
+      "Protocol contract",
+      "Memory checkpoint",
+      "Root user turn",
+      "Activation cue",
+      "Compatibility tuple",
+      "Terminal Memory commit",
+      "Content capture"
+    ],
+    "cue_markers": [
+      "<!-- engram:checkpoint-cue:start -->",
+      "<!-- engram:checkpoint-cue:end -->"
+    ],
+    "mcp_initialization_guidance": [
+      "Engram provides persistent memory that survives across sessions and compactions.",
+      "mem_current_project",
+      "mem_search",
+      "mem_get_observation",
+      "mem_checkpoint",
+      "mem_checkpoint_status"
+    ],
+    "checkpoint_descriptions": {
+      "mem_checkpoint": "Record the terminal Memory checkpoint for one settled root user turn. Use saved with one or more existing memory_ids or inline memories, needs_review with exactly one inline proposal containing title and content, or skipped with reason=no_durable_knowledge.",
+      "mem_checkpoint_status": "Inspect the terminal Memory checkpoint for one exact root user turn."
+    }
+  },
+  "distributions": {
+    "managed_pack": {
+      "version": "3.2.0",
+      "skill_sha256": "817248be55234f3c7dbb31f4890886e251c1e430cc61d35dd60ef5215e8ec6a6",
+      "legacy_compatible": true,
+      "supported_protocol": {
+        "minimum": 1,
+        "maximum": 1
+      }
+    },
+    "engram_binary": {
+      "legacy_compatible": true,
+      "supported_protocol": {
+        "minimum": 1,
+        "maximum": 1
+      }
+    },
+    "codex_plugin": {
+      "version": "0.1.6",
+      "legacy_compatible": true,
+      "supported_protocol": {
+        "minimum": 1,
+        "maximum": 1
+      }
+    }
+  },
+  "legacy_compatibility": {
+    "managed_pack": {
+      "version": "3.1.2",
+      "sha256": "2b570eda04db214ed496d14c09d287f5b1c0750dc2f0ff1928b8b314e257e20c"
+    },
+    "engram_binary": {
+      "version": "3.0.0"
+    },
+    "codex_plugin": {
+      "version": "0.1.5",
+      "sha256": "b3ee231a8ba88ae54b018365af392d1976b1e8a02c2ea8c60d9e4464f824c4ed"
+    }
+  }
+}

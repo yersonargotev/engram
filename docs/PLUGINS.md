@@ -226,11 +226,21 @@ complete only when both activation and checkpoint verification are ready.
 It reports standalone and plugin-provided skills, marketplace registration,
 installed/enabled plugin provenance, MCP configuration and executable preflight,
 prompt/session hooks, the canonical activation cue, and the Stop verifier as
-separate checks. Its `manual_skill_cli`, `mcp_only`, `partial_plugin`,
+separate checks. It also reports Managed Pack, binary, plugin, and Protocol
+contract versions separately, with attributable range declarations and their
+computed intersection. Its `manual_skill_cli`, `mcp_only`, `partial_plugin`,
 `checkpoint_ready`, and `unknown` modes never promote marketplace registration
-or customized state to full readiness. The result is an installed-capability
+or customized, missing, malformed, ambiguous, or non-overlapping Protocol state
+to full readiness. The result is an installed-capability
 snapshot; it does not prove that Codex invoked the skill or created a Memory in
 a particular session.
+
+Protocol v1 is Core-owned in `internal/protocolcontract`. The single parity
+fixture at `assets/protocol-contract-v1.json` is distributed by the Managed Pack
+and validated against the five minimum MCP tools, MCP initialization guidance,
+checkpoint tool descriptions, canonical cue markers, plugin metadata, and setup
+compatibility. Editorial skill prose remains hand-authored; the fixture detects
+contract drift rather than generating that prose.
 
 ---
 

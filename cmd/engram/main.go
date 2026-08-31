@@ -106,7 +106,7 @@ var (
 
 	setupSupportedAgents        = setup.SupportedAgents
 	setupInstallAgent           = setup.InstallWithOptions
-	setupInspectCodexStatus     = setup.InspectCodexStatus
+	setupInspectCodexStatus     = setup.InspectCodexStatusWithRevision
 	setupAddClaudeCodeAllowlist = setup.AddClaudeCodeAllowlist
 	scanInputLine               = fmt.Scanln
 
@@ -3052,7 +3052,7 @@ func cmdSetupStatusCodex(args []string) {
 		}
 	}
 
-	status, err := setupInspectCodexStatus(version, currentCWD())
+	status, err := setupInspectCodexStatus(version, commit, currentCWD())
 	if err != nil {
 		failCLI(jsonMode, "codex_status_failed", err.Error(), nil)
 		return
@@ -3068,6 +3068,30 @@ func cmdSetupStatusCodex(args []string) {
 
 func printCodexIntegrationStatus(status setup.CodexIntegrationStatus) {
 	fmt.Printf("Codex integration mode: %s\n", status.Mode)
+	if status.Compatibility.SchemaVersion != "" {
+		fmt.Printf("Protocol compatibility: %s (%s) — %s\n", status.Compatibility.Status, status.Compatibility.ReasonCode, status.Compatibility.Reason)
+		for _, axis := range status.Compatibility.Axes {
+			label := strings.ReplaceAll(axis.Name, "_", " ")
+			switch axis.Name {
+			case "managed_pack":
+				label = "Managed Pack"
+			case "engram_binary":
+				label = "Engram binary"
+			case "codex_plugin":
+				label = "Codex plugin"
+			case "protocol_contract":
+				label = "Protocol contract"
+			}
+			rangeText := "undeclared"
+			if axis.Supported != nil {
+				rangeText = fmt.Sprintf("%d..%d", axis.Supported.Minimum, axis.Supported.Maximum)
+			}
+			fmt.Printf("  - %s: %s; Protocol %s; %s\n", label, axis.Version, rangeText, axis.Provenance)
+		}
+		if status.Compatibility.Intersection != nil {
+			fmt.Printf("  Protocol intersection: %d..%d\n", status.Compatibility.Intersection.Minimum, status.Compatibility.Intersection.Maximum)
+		}
+	}
 	for _, check := range status.Checks {
 		fmt.Printf("  - %s: %s — %s\n", check.Capability, check.Status, check.Reason)
 		for _, evidence := range check.Evidence {

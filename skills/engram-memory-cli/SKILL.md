@@ -1,6 +1,8 @@
 ---
 name: engram-memory-cli
 description: Recall and preserve durable project memory with Engram's CLI. Use before work that may depend on prior project knowledge, after work produces durable project knowledge, or for explicit memory curation. Scope this skill to project memory.
+metadata:
+  version: "3.2.0"
 ---
 
 # Engram Memory CLI

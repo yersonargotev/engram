@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/yersonargotev/engram/internal/protocolcontract"
 	"golang.org/x/mod/semver"
 )
 
@@ -60,15 +61,26 @@ type CodexIntegrationCheck struct {
 
 // CodexIntegrationStatus is a deterministic, read-only capability snapshot.
 type CodexIntegrationStatus struct {
-	SchemaVersion string                  `json:"schema_version"`
-	Agent         string                  `json:"agent"`
-	Mode          CodexOperatingMode      `json:"mode"`
-	Checks        []CodexIntegrationCheck `json:"checks"`
+	SchemaVersion string                               `json:"schema_version"`
+	Agent         string                               `json:"agent"`
+	Mode          CodexOperatingMode                   `json:"mode"`
+	Compatibility protocolcontract.CompatibilityReport `json:"compatibility"`
+	Checks        []CodexIntegrationCheck              `json:"checks"`
 }
 
 // InspectCodexStatus inspects the active Codex integration without installing,
 // repairing, starting, or persisting anything.
 func InspectCodexStatus(runningVersion, workingDirectory string) (CodexIntegrationStatus, error) {
+	return inspectCodexStatus(runningVersion, "", workingDirectory)
+}
+
+// InspectCodexStatusWithRevision adds the running binary's build revision to
+// the attributable, read-only compatibility evidence.
+func InspectCodexStatusWithRevision(runningVersion, runningRevision, workingDirectory string) (CodexIntegrationStatus, error) {
+	return inspectCodexStatus(runningVersion, runningRevision, workingDirectory)
+}
+
+func inspectCodexStatus(runningVersion, runningRevision, workingDirectory string) (CodexIntegrationStatus, error) {
 	checks := make([]CodexIntegrationCheck, 0, 11)
 
 	runningPath, runningErr := osExecutable()
@@ -78,11 +90,17 @@ func InspectCodexStatus(runningVersion, workingDirectory string) (CodexIntegrati
 			"The running Engram executable path could not be resolved.",
 		))
 	} else {
+		evidence := []CodexIntegrationEvidence{
+			codexEvidence("path", filepath.Clean(runningPath)),
+			codexEvidence("version", strings.TrimSpace(runningVersion)),
+		}
+		if strings.TrimSpace(runningRevision) != "" {
+			evidence = append(evidence, codexEvidence("revision", strings.TrimSpace(runningRevision)))
+		}
 		checks = append(checks, codexStatusCheck(
 			"engram_cli", CodexCheckReady, "engram_cli_available",
 			"The running Engram CLI is available.",
-			codexEvidence("path", filepath.Clean(runningPath)),
-			codexEvidence("version", strings.TrimSpace(runningVersion)),
+			evidence...,
 		))
 	}
 
@@ -117,6 +135,7 @@ func InspectCodexStatus(runningVersion, workingDirectory string) (CodexIntegrati
 	marketplaceCheck := marketplace.Check
 
 	plugin := inspectCodexPluginStatus(codexPath, configPath, marketplace)
+	compatibility := inspectCodexProtocolCompatibility(runningVersion, runningRevision, runningPath, skillChecks, plugin)
 	if plugin.Skill != nil {
 		if len(skillChecks) == 1 && skillChecks[0].Status == CodexCheckMissing {
 			skillChecks[0] = *plugin.Skill
@@ -140,10 +159,15 @@ func InspectCodexStatus(runningVersion, workingDirectory string) (CodexIntegrati
 		codexPluginCapabilityCheck(plugin, "stop_verifier", plugin.Capabilities.VerifierReady),
 	)
 
+	mode := deriveCodexOperatingMode(checks)
+	if mode == CodexModeCheckpointReady && compatibility.Status != protocolcontract.CompatibilityReady {
+		mode = CodexModePartialPlugin
+	}
 	return CodexIntegrationStatus{
 		SchemaVersion: CodexIntegrationStatusSchemaVersion,
 		Agent:         "codex",
-		Mode:          deriveCodexOperatingMode(checks),
+		Mode:          mode,
+		Compatibility: compatibility,
 		Checks:        checks,
 	}, nil
 }

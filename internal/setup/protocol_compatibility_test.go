@@ -1,7 +1,9 @@
 package setup
 
 import (
-	"fmt"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,13 +32,22 @@ func TestProtocolFixtureMatchesSetupCompatibilityCoordinates(t *testing.T) {
 		!fixture.Distributions.ManagedPack.LegacyCompatible || !fixture.Distributions.CodexPlugin.LegacyCompatible {
 		t.Fatalf("setup compatibility coordinates drifted from fixture: %#v", fixture)
 	}
+
+	assertFileSHA256(t, filepath.Join("..", "..", "pack.json"), currentManagedPackManifestSHA256)
+	assertFileSHA256(t, filepath.Join("..", "..", "skills", "engram-memory-cli", "SKILL.md"), currentManagedPackSkillSHA256)
+	assertFileSHA256(t, filepath.Join("..", "..", "assets", "protocol-contract-v1.json"), currentManagedPackFixtureSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "managed-pack-3.1.2.json"), legacyManagedPackManifestSHA256)
 }
 
 func TestProtocolCompatibilityAcceptsVerifiedLegacyTupleDuringExpand(t *testing.T) {
 	resetSetupSeams(t)
 	bundleRoot := t.TempDir()
 	manifestPath := filepath.Join(bundleRoot, "packs", "engram", "pack.json")
-	writeStatusTestFile(t, manifestPath, fmt.Sprintf(`{"schema_version":1,"id":"engram","version":%q,"resources":[]}`, legacyManagedPackVersion))
+	legacyManifest, err := os.ReadFile(filepath.Join("testdata", "managed-pack-3.1.2.json"))
+	if err != nil {
+		t.Fatalf("read legacy Pack manifest: %v", err)
+	}
+	writeStatusTestFile(t, manifestPath, string(legacyManifest))
 	skillPath := filepath.Join(bundleRoot, "skills", "engram-memory-cli", "SKILL.md")
 	packCheck := codexStatusCheck("skill", CodexCheckReady, "engram_skill_discovered", "ready",
 		codexEvidence("source", "standalone"),
@@ -65,20 +76,16 @@ func TestManagedPackProtocolInspectionRejectsMalformedAndAmbiguousMetadata(t *te
 	resetSetupSeams(t)
 	bundleRoot := t.TempDir()
 	manifestPath := filepath.Join(bundleRoot, "packs", "engram", "pack.json")
-	writeStatusTestFile(t, manifestPath, fmt.Sprintf(`{
-  "schema_version": 1,
-  "id": "engram",
-  "version": %q,
-  "resources": [
-    {"kind":"skill","id":"engram-memory-cli","source":"skills/engram-memory-cli"},
-    {"kind":"asset","id":"protocol-contract-v1","source":"assets/protocol-contract-v1.json"}
-  ]
-}`, currentManagedPackVersion))
+	currentManifest, err := os.ReadFile(filepath.Join("..", "..", "pack.json"))
+	if err != nil {
+		t.Fatalf("read current Pack manifest: %v", err)
+	}
+	writeStatusTestFile(t, manifestPath, string(currentManifest))
 	skillPath := filepath.Join(bundleRoot, "skills", "engram-memory-cli", "SKILL.md")
 	check := codexStatusCheck("skill", CodexCheckReady, "engram_skill_discovered", "ready",
 		codexEvidence("source", "standalone"),
 		codexEvidence("path", skillPath),
-		codexEvidence("sha256", "current-skill"),
+		codexEvidence("sha256", currentManagedPackSkillSHA256),
 		codexEvidence("version", currentManagedPackVersion),
 	)
 
@@ -92,6 +99,55 @@ func TestManagedPackProtocolInspectionRejectsMalformedAndAmbiguousMetadata(t *te
 	report = protocolcontract.Evaluate(ambiguous, validProtocolDeclaration("3.0.1"), validProtocolDeclaration("0.1.6"))
 	if report.ReasonCode != "managed_pack_unprovenanced" {
 		t.Fatalf("ambiguous pack report = %#v", report)
+	}
+}
+
+func TestManagedPackProtocolInspectionRejectsSelfConsistentCustomizedBundle(t *testing.T) {
+	resetSetupSeams(t)
+	bundleRoot := t.TempDir()
+	manifestPath := filepath.Join(bundleRoot, "packs", "engram", "pack.json")
+	currentManifest, err := os.ReadFile(filepath.Join("..", "..", "pack.json"))
+	if err != nil {
+		t.Fatalf("read current Pack manifest: %v", err)
+	}
+	writeStatusTestFile(t, manifestPath, string(currentManifest))
+
+	skillPath := filepath.Join(bundleRoot, "skills", "engram-memory-cli", "SKILL.md")
+	customSkill := []byte("---\nname: engram-memory-cli\nversion: 3.2.0\n---\nCustomized but internally consistent.\n")
+	writeStatusTestFile(t, skillPath, string(customSkill))
+	customSkillDigest := sha256.Sum256(customSkill)
+	customSkillSHA256 := hex.EncodeToString(customSkillDigest[:])
+
+	fixtureRaw, err := os.ReadFile(filepath.Join("..", "..", "assets", "protocol-contract-v1.json"))
+	if err != nil {
+		t.Fatalf("read current Protocol fixture: %v", err)
+	}
+	var customizedFixture map[string]any
+	if err := json.Unmarshal(fixtureRaw, &customizedFixture); err != nil {
+		t.Fatalf("decode current Protocol fixture: %v", err)
+	}
+	distributions := customizedFixture["distributions"].(map[string]any)
+	managedPack := distributions["managed_pack"].(map[string]any)
+	managedPack["skill_sha256"] = customSkillSHA256
+	customFixtureRaw, err := json.MarshalIndent(customizedFixture, "", "  ")
+	if err != nil {
+		t.Fatalf("encode customized Protocol fixture: %v", err)
+	}
+	writeStatusTestFile(t, filepath.Join(bundleRoot, "assets", "protocol-contract-v1.json"), string(customFixtureRaw)+"\n")
+
+	check := codexStatusCheck("skill", CodexCheckReady, "engram_skill_discovered", "ready",
+		codexEvidence("source", "standalone"),
+		codexEvidence("path", skillPath),
+		codexEvidence("sha256", customSkillSHA256),
+		codexEvidence("version", currentManagedPackVersion),
+	)
+	declaration := inspectManagedPackProtocolDeclaration([]CodexIntegrationCheck{check})
+	if declaration.Provenance != "" {
+		t.Fatalf("customized Pack asserted provenance: %#v", declaration)
+	}
+	report := protocolcontract.Evaluate(declaration, validProtocolDeclaration("3.0.1"), validProtocolDeclaration(currentCodexPluginVersion))
+	if report.Status != protocolcontract.CompatibilityIncompatible || report.ReasonCode != "managed_pack_unprovenanced" {
+		t.Fatalf("customized Pack compatibility = %#v", report)
 	}
 }
 
@@ -130,5 +186,17 @@ func validProtocolDeclaration(version string) protocolcontract.Declaration {
 		Version:    version,
 		Provenance: "verified:" + version,
 		Supported:  &protocolcontract.VersionRange{Minimum: 1, Maximum: 1},
+	}
+}
+
+func assertFileSHA256(t *testing.T, path, want string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	digest := sha256.Sum256(raw)
+	if got := hex.EncodeToString(digest[:]); got != want {
+		t.Fatalf("sha256(%s) = %s, want %s", path, got, want)
 	}
 }

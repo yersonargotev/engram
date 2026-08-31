@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "id": "engram",
+  "version": "3.1.2",
+  "description": "Upstream Engram CLI memory workflows for agent work",
+  "selectable": true,
+  "surfaces": [
+    "codex"
+  ],
+  "readiness_obligations": [
+    "runtime-usability",
+    "surface-authorization"
+  ],
+  "external_requirements": [
+    "engram"
+  ],
+  "origins": [],
+  "resources": [
+    {
+      "kind": "notice",
+      "id": "mit",
+      "source": "notices/engram-mit",
+      "description": "Preserve the upstream Engram MIT license and attribution",
+      "requires": [],
+      "conflicts": [],
+      "bindings": [],
+      "surface_exclusions": [],
+      "license": "MIT",
+      "attribution": "Copyright (c) 2026 Alan Buscaglia"
+    },
+    {
+      "kind": "skill",
+      "id": "engram-memory-cli",
+      "source": "skills/engram-memory-cli",
+      "description": "Uses Engram project memory safely through the CLI",
+      "requires": [],
+      "conflicts": [],
+      "notices": [
+        "notice:mit"
+      ],
+      "bindings": [
+        {
+          "surface": "codex",
+          "projection": "skill",
+          "name": "engram-memory-cli",
+          "invocation": "$engram-memory-cli",
+          "mode": "native",
+          "sharing": "exclusive",
+          "capabilities": [
+            {
+              "type": "external-executable-acquisition",
+              "external_executable_acquisition": {
+                "tool": "engram"
+              }
+            }
+          ]
+        }
+      ],
+      "surface_exclusions": []
+    }
+  ]
+}

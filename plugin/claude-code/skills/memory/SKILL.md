@@ -1,129 +1,75 @@
 ---
 name: engram-memory
-description: "ALWAYS ACTIVE — Persistent memory protocol. You MUST save decisions, conventions, bugs, and discoveries to engram proactively. Do NOT wait for the user to ask."
+description: "Commit one terminal Memory disposition for each settled root user turn: saved, needs_review, or skipped(no_durable_knowledge)."
 ---
 
-# Engram Persistent Memory — Protocol
+# Engram Terminal Memory protocol
 
-You have access to Engram, a persistent memory system that survives across sessions and compactions.
-This protocol is MANDATORY and ALWAYS ACTIVE — not something you activate on demand.
+For every settled root user turn, make exactly one Terminal Memory commit:
+`saved`, `needs_review`, or `skipped(no_durable_knowledge)`. A root turn ends
+only after all agent, tool, subagent, compaction, and continuation work caused
+by the user's message has settled. Subagents and lifecycle events do not create
+independent commits.
 
-## AVAILABLE TOOLS
+## Default tools
 
-Core tools are loaded automatically at session start by the UserPromptSubmit hook.
-They are available immediately — no manual ToolSearch needed.
+The default agent profile contains exactly these tools:
 
-- `mem_save`, `mem_search`, `mem_context`, `mem_session_summary`
-- `mem_get_observation`, `mem_suggest_topic_key`, `mem_update`
-- `mem_session_start`, `mem_session_end`, `mem_save_prompt`
+- `mem_current_project` establishes project scope and write authority.
+- `mem_search` recalls prior Memory when it can change the current work.
+- `mem_get_observation` retrieves complete content for a selected result.
+- `mem_checkpoint` commits the terminal disposition and durable result.
+- `mem_checkpoint_status` inspects the exact root-turn checkpoint.
 
-**Fallback**: If tools are unexpectedly unavailable, run `engram setup claude-code`
-again and restart Claude Code. Setup repairs the durable MCP config and
-permissions allowlist for both current (`mcp__engram__...`) and older
-plugin-scoped (`mcp__plugin_engram_engram__...`) server ids.
+Use deferred curation, lifecycle, or admin profiles only for an explicit
+specialized workflow. `mem_save` is an independent curation operation, not the
+default commit. `mem_session_summary` is optional curation for an explicit
+handoff with material loss risk; it is not an agent lifecycle requirement.
 
-Admin tools (deferred — use ToolSearch only if needed):
-- `mem_stats`, `mem_delete`, `mem_timeline`, `mem_capture_passive`
+## Authority and recall
 
-Local context curation (deferred — use ToolSearch only if needed):
-- `mem_pin` puts an observation before recent memories in context.
-- `mem_unpin` returns it to normal recency order.
-- Pins are local to this device and never sync.
+Current user intent, maintained source, and runtime evidence override Memory.
+Recall is selective, and an empty result is successful. Treat the supplied
+`host`, `session_id`, and `root_turn_id` as opaque; reuse them unchanged across
+compaction or verifier continuations and never invent replacements.
 
-## PROACTIVE SAVE TRIGGERS (mandatory — do NOT wait for user to ask)
+## Choose a disposition
 
-Call `mem_save` IMMEDIATELY and WITHOUT BEING ASKED after any of these:
+- Choose `saved` for durable knowledge worth recalling later, such as a
+  reasoned decision, non-obvious root cause and verified fix, reusable
+  invariant, configuration constraint, preference, or significant artifact.
+  Prefer inline `memories` so creation and the checkpoint are atomic.
+- Choose `needs_review` for potentially durable knowledge that is ambiguous,
+  incomplete, conflicting, or sensitive. Attach exactly one bounded, redacted
+  inline `proposal`; this disposition is not a fallback for tool failure.
+- Choose `skipped` only when there is no durable knowledge. Its only reason is
+  `no_durable_knowledge`. Missing tools, invalid identity, timeouts, and
+  persistence failures are not skip dispositions.
 
-### After decisions or conventions
-- Architecture or design decision made
-- Team convention documented or established
-- Workflow change agreed upon
-- Tool or library choice made with tradeoffs
+Do not save secrets, raw transcripts, routine activity logs, or capture output
+merely because a lifecycle event occurred.
 
-### After completing work
-- Bug fix completed (include root cause)
-- Feature implemented with non-obvious approach
-- Notion/Jira/GitHub artifact created or updated with significant content
-- Configuration change or environment setup done
+## Finalize idempotently
 
-### After discoveries
-- Non-obvious discovery about the codebase
-- Gotcha, edge case, or unexpected behavior found
-- Pattern established (naming, structure, convention)
-- User preference or constraint learned
+After all causal work settles, call `mem_checkpoint` once with the exact root
+identity. A `created` or matching `already_recorded` result completes the
+protocol. Surface a conflict or integration failure; never overwrite it or
+record a second identity.
 
-### After user confirmation or rejection
-- User confirms a recommendation you made ("go with that", "let's do that", "sounds good", "agreed", "perfect", or the equivalent in the user's language)
-- User rejects an option or approach ("no, better X", "not that one", or the equivalent in the user's language)
-- User expresses a preference ("I prefer X over Y", "always do it this way", or the equivalent in the user's language)
-- User makes a decision after you presented tradeoffs or options
-- A discussion concludes with a clear direction chosen — even if the agent proposed it
+```json
+{
+  "host": "claude-code",
+  "session_id": "<opaque session id>",
+  "root_turn_id": "<opaque original turn id>",
+  "disposition": "skipped",
+  "reason": "no_durable_knowledge"
+}
+```
 
-### Self-check — ask yourself after EVERY task:
-> "Did I or the user just make a decision, confirm a recommendation, express a preference, fix a bug, learn something non-obvious, or establish a convention? If yes, call mem_save NOW."
+For `saved`, include the exact project plus one or more `memory_ids` or inline
+`memories`. For `needs_review`, include the exact project and one inline
+`proposal` with `title` and `content`.
 
-Format for `mem_save`:
-- **title**: Verb + what — short, searchable (e.g. "Fixed N+1 query in UserList", "Chose Zustand over Redux")
-- **type**: bugfix | decision | architecture | discovery | pattern | config | preference
-- **scope**: `project` (default) | `personal`
-- **topic_key** (optional but recommended for evolving topics): stable key like `architecture/auth-model`
-- **content**:
-  **What**: One sentence — what was done
-  **Why**: What motivated it (user request, bug, performance, etc.)
-  **Where**: Files or paths affected
-  **Learned**: Gotchas, edge cases, things that surprised you (omit if none)
-
-### Topic update rules (mandatory)
-
-- Different topics MUST NOT overwrite each other (example: architecture decision vs bugfix)
-- If the same topic evolves, call `mem_save` with the same `topic_key` so memory is updated (upsert) instead of creating a new observation
-- If unsure about the key, call `mem_suggest_topic_key` first, then reuse that key consistently
-- If you already know the exact ID to fix, use `mem_update`
-
-## WHEN TO SEARCH MEMORY
-
-When the user asks to recall something — any variation of "remember", "recall", "what did we do",
-"how did we solve", or the equivalent in the user's language, or references to past work:
-1. First call `mem_context` — checks recent session history (fast, cheap)
-2. If not found, call `mem_search` with relevant keywords (FTS5 full-text search)
-3. If you find a match, use `mem_get_observation` for full untruncated content
-
-Also search memory PROACTIVELY when:
-- Starting work on something that might have been done before
-- The user mentions a topic you have no context on — check if past sessions covered it
-- The user's FIRST message references the project, a feature, or a problem — call `mem_search` with keywords from their message to check for prior work before responding
-
-## SESSION CLOSE PROTOCOL (mandatory)
-
-Before ending a session or saying "done" / "that's it", you MUST:
-1. Call `mem_session_summary` with this structure:
-
-## Goal
-[What we were working on this session]
-
-## Instructions
-[User preferences or constraints discovered — skip if none]
-
-## Discoveries
-- [Technical findings, gotchas, non-obvious learnings]
-
-## Accomplished
-- [Completed items with key details]
-
-## Next Steps
-- [What remains to be done — for the next session]
-
-## Relevant Files
-- path/to/file — [what it does or what changed]
-
-This is NOT optional. If you skip this, the next session starts blind.
-
-## AFTER COMPACTION
-
-If you see a message about compaction or context reset:
-1. IMMEDIATELY call `mem_session_summary` with the compacted summary content — this persists what was done before compaction
-2. Then call `mem_context` to recover any additional context from previous sessions
-3. Only THEN continue working
-
-Do not skip step 1. Without it, everything done before compaction is lost from memory.
-All core tools are loaded automatically by the hook at session start. If they are unexpectedly missing, rerun `engram setup claude-code` and restart Claude Code.
+After compaction, recover only what is needed to continue and finalize the same
+root turn after its remaining work settles. Compaction does not require a
+Session summary or create a new checkpoint identity.

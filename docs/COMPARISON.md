@@ -30,8 +30,8 @@
 
 **Engram** lets the agent decide what's worth remembering. The agent already has the LLM, the context, and understands what just happened. Why run a separate compression pipeline?
 
-- `mem_save` after a bugfix: *"Fixed N+1 query — added eager loading in UserList"*
-- `mem_session_summary` at session end: structured Goal/Discoveries/Accomplished/Files
+- Terminal `saved` checkpoint with an inline Memory: *"Fixed N+1 query — added eager loading in UserList"*
+- Optional `mem_session_summary` for an explicitly requested curation workflow
 - No noise, no compression step, no extra API calls
 - Works with ANY agent via standard MCP
 

@@ -37,11 +37,6 @@
     ],
     "mcp_initialization_guidance": [
       "Engram provides persistent memory that survives across sessions and compactions.",
-      "Terminal Memory commit",
-      "saved",
-      "needs_review",
-      "skipped(no_durable_knowledge)",
-      "Current user intent, maintained source, and runtime evidence override Memory.",
       "mem_current_project",
       "mem_search",
       "mem_get_observation",
@@ -55,8 +50,8 @@
   },
   "distributions": {
     "managed_pack": {
-      "version": "3.3.0",
-      "skill_sha256": "465bdbc07b1a78f1edb2a6f4c6307ec9ff5474760c62acd7bfe0145ae90fc107",
+      "version": "3.2.0",
+      "skill_sha256": "817248be55234f3c7dbb31f4890886e251c1e430cc61d35dd60ef5215e8ec6a6",
       "legacy_compatible": true,
       "supported_protocol": {
         "minimum": 1,
@@ -71,7 +66,7 @@
       }
     },
     "codex_plugin": {
-      "version": "0.1.7",
+      "version": "0.1.6",
       "legacy_compatible": true,
       "supported_protocol": {
         "minimum": 1,

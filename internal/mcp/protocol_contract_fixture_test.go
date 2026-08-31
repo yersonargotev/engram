@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,10 +21,15 @@ func TestProtocolFixtureValidatesMCPAndCanonicalCueProjections(t *testing.T) {
 		t.Fatalf("parse Protocol fixture: %v", err)
 	}
 
-	for _, tool := range protocolcontract.MinimumTools() {
+	expectedAgentTools := make(map[string]bool, len(fixture.Protocol.MinimumTools))
+	for _, tool := range fixture.Protocol.MinimumTools {
+		expectedAgentTools[tool] = true
 		if !ProfileAgent[tool] {
 			t.Errorf("minimum Protocol tool %q is absent from the agent profile", tool)
 		}
+	}
+	if !maps.Equal(ProfileAgent, expectedAgentTools) {
+		t.Errorf("agent profile = %#v, want exactly Protocol tools %#v", ProfileAgent, expectedAgentTools)
 	}
 	for _, guidance := range fixture.Protocol.MCPInitializationGuidance {
 		if !strings.Contains(serverInstructions, guidance) {
@@ -45,6 +51,27 @@ func TestProtocolFixtureValidatesMCPAndCanonicalCueProjections(t *testing.T) {
 	skillRaw, err := os.ReadFile(filepath.Join(root, "plugin", "codex", "skills", "memory", "SKILL.md"))
 	if err != nil {
 		t.Fatalf("read canonical memory skill: %v", err)
+	}
+	guidanceMarkers := make(map[string]bool, len(fixture.Protocol.MCPInitializationGuidance))
+	for _, guidance := range fixture.Protocol.MCPInitializationGuidance {
+		guidanceMarkers[guidance] = true
+	}
+	for _, marker := range []string{
+		"Terminal Memory commit",
+		"saved",
+		"needs_review",
+		"skipped(no_durable_knowledge)",
+		"Current user intent, maintained source, and runtime evidence override Memory.",
+	} {
+		if !guidanceMarkers[marker] {
+			t.Errorf("Protocol fixture is missing contractual initialization marker %q", marker)
+		}
+		if !strings.Contains(serverInstructions, marker) {
+			t.Errorf("MCP initialization guidance is missing contractual marker %q", marker)
+		}
+		if !strings.Contains(string(skillRaw), marker) {
+			t.Errorf("canonical skill is missing contractual initialization marker %q", marker)
+		}
 	}
 	for _, marker := range fixture.Protocol.CueMarkers {
 		if strings.Count(string(skillRaw), marker) != 1 {

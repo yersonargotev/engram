@@ -47,22 +47,21 @@ The plugin:
 - **Consumes core project identity** from `/project/current`; weak identities remain readable but cannot trigger session or memory writes
 - **Auto-imports** git-synced memories from `.engram/manifest.json` only when the current project has strong write authority
 - **Creates sessions** on-demand via `ensureSession()` (resilient to restarts/reconnects)
-- **Injects the Memory Protocol** into the agent's system prompt via `chat.system.transform` — strict rules for when to save, when to search, and a mandatory session close protocol. The protocol is concatenated into the existing system message (not pushed as a separate one), ensuring compatibility with models that only accept a single system block (Qwen, Mistral/Ministral via llama.cpp, etc.)
+- **Injects the Memory Protocol** into the agent's system prompt via `chat.system.transform` — selective Recall plus one terminal Memory checkpoint per settled root user turn. The protocol is concatenated into the existing system message (not pushed as a separate one), ensuring compatibility with models that only accept a single system block (Qwen, Mistral/Ministral via llama.cpp, etc.)
 - **Injects session-only runtime context** into the compaction prompt; manual `mem_context` and `GET /context` remain project/scope-scoped
-- **Instructs the compressor** to tell the new agent to persist the compacted summary via `mem_session_summary`
+- **Carries compaction context** without turning compaction into a new root user turn or disposition
 - **Strips `<private>` tags** before sending data
 - **Enables** `opencode-subagent-statusline` in `tui.json` or `tui.jsonc` during `engram setup opencode`, adding a live sub-agent monitor to OpenCode's sidebar/home footer. To disable it later, remove `"opencode-subagent-statusline"` from the `"plugin"` array in your TUI config and restart OpenCode.
 
-**No raw tool call recording** — the agent handles memory through curated saves such as `mem_save` and `mem_session_summary`. `mem_save` may best-effort attach prompt context, but only when that prompt was already fed to the same MCP process lifecycle.
+**No raw tool call recording** — the agent commits durable Memory through the
+canonical terminal checkpoint. Independent saves and optional Session summaries
+remain explicit curation operations.
 
 ### Memory Protocol (injected via system prompt)
 
-The plugin injects a strict protocol into every agent message:
-
-- **WHEN TO SAVE**: Mandatory after bugfixes, decisions, discoveries, config changes, patterns, preferences
-- **WHEN TO SEARCH**: Reactive (user says "remember"/"recordar") + proactive (starting work that might overlap past sessions)
-- **SESSION CLOSE**: Mandatory `mem_session_summary` before ending — "This is NOT optional. If you skip this, the next session starts blind."
-- **AFTER COMPACTION**: Immediately call `mem_context` to recover state
+The plugin injects the canonical terminal policy: selective Recall when prior
+Memory can change the work, followed by exactly one `saved`, `needs_review`, or
+`skipped(no_durable_knowledge)` checkpoint after the root turn settles.
 
 ### Three Layers of Memory Resilience
 
@@ -71,8 +70,8 @@ The OpenCode plugin uses a defense-in-depth strategy to ensure memories survive 
 | Layer | Mechanism | Survives Compaction? |
 |-------|-----------|---------------------|
 | **System Prompt** | `MEMORY_INSTRUCTIONS` concatenated into existing system prompt via `chat.system.transform` | Always present |
-| **Compaction Hook** | Auto-saves checkpoint + injects context + reminds compressor | Fires during compaction |
-| **Agent Config** | "After compaction, call `mem_context`" in agent prompt | Always present |
+| **Compaction Hook** | Injects session-bound context and preserves the same root-turn checkpoint cue | Fires during compaction |
+| **Canonical skill** | Keeps selective Recall optional and commits once only after the root turn settles | Always present |
 
 ---
 
@@ -96,14 +95,16 @@ claude --plugin-dir ./plugin/claude-code
 
 | Feature | Bare MCP | Plugin |
 |---------|----------|--------|
-| MCP tools available | 24 default (`engram mcp`) | 20 agent-profile tools (`engram mcp --tools=agent`) |
+| MCP tools available | 24 with `engram mcp --tools=all` | Five agent-profile tools (`engram mcp --tools=agent`) |
 | Session tracking (auto-start) | ✗ | ✓ |
 | Auto-import git-synced memories | ✗ | ✓ |
 | Compaction recovery | ✗ | ✓ |
 | Memory Protocol skill | ✗ | ✓ |
 | Previous session context injection | ✗ | ✓ |
 
-The agent profile includes deferred `mem_pin` and `mem_unpin` tools for local context curation. Pins affect only the current device and are not synchronized.
+The agent profile contains exactly `mem_current_project`, `mem_search`,
+`mem_get_observation`, `mem_checkpoint`, and `mem_checkpoint_status`.
+Local-only pins are available through the `curation` profile.
 
 ### Plugin Structure
 
@@ -119,7 +120,7 @@ plugin/claude-code/
 │   ├── user-prompt-submit.ps1     # Optional Windows-native fallback for locked-down endpoints
 │   ├── subagent-stop.sh           # Passive capture trigger on subagent completion
 │   └── session-stop.sh            # Logs end-of-session event
-└── skills/memory/SKILL.md         # Memory Protocol (when to save, search, close, recover)
+└── skills/memory/SKILL.md         # Canonical terminal Memory policy
 ```
 
 ### How It Works
@@ -131,9 +132,9 @@ plugin/claude-code/
 4. Injects previous session context into Claude's initial context
 
 **On compaction** (`compact`):
-1. Injects the previous session context + compacted summary
-2. Tells the agent: "FIRST ACTION REQUIRED — call `mem_session_summary` with this content before doing anything else"
-3. This ensures no work is lost when context is compressed
+1. Injects the previous session context and compacted summary.
+2. Preserves the original root-turn identity across the continuation.
+3. Leaves disposition selection to the canonical skill after causal work settles.
 
 **On user prompt submit**:
 1. The hook resolves `/project/current` and persists only when `project_strength` is `strong` or `explicit`; weak identities fail closed without blocking the user prompt.
@@ -168,10 +169,11 @@ PowerShell local override/testing example for locked-down Windows endpoints:
 ```
 
 **Memory Protocol skill** (always available):
-- Strict rules for **when to save** (mandatory after bugfixes, decisions, discoveries)
-- **When to search** memory (reactive + proactive)
-- **Session close protocol** — mandatory `mem_session_summary` before ending
-- **After compaction** — 3-step recovery: persist summary → load context → continue
+
+- Owns the single `saved`, `needs_review`, or `skipped(no_durable_knowledge)` rubric.
+- Uses selective Recall only when it can change the work.
+- Commits one terminal checkpoint per settled root user turn, including across compaction.
+- Reserves independent save and optional Session summary for explicit curation.
 
 ---
 
@@ -246,7 +248,9 @@ contract drift rather than generating that prose.
 
 ## MCP Tool Reference — mem_judge
 
-`mem_judge` is available in the `agent` profile (`engram mcp --tools=agent`). It is NOT exposed in the `admin` profile.
+`mem_judge` is available in the `curation` profile
+(`engram mcp --tools=curation`). It is not exposed in the default `agent` or
+`admin` profiles.
 
 ### Purpose
 
@@ -391,7 +395,9 @@ All six `/conflicts/*` endpoints are served by `engram serve` on the local runti
 
 ## MCP Tool Reference — mem_compare
 
-`mem_compare` is available in the `agent` profile (`engram mcp --tools=agent`). It is NOT exposed in the `admin` profile.
+`mem_compare` is available in the `curation` profile
+(`engram mcp --tools=curation`). It is not exposed in the default `agent` or
+`admin` profiles.
 
 ### Purpose
 

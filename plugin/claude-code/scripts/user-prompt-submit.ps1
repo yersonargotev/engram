@@ -19,7 +19,7 @@ function Write-EmptyHookResponse {
 }
 
 function Write-ToolSearchMessage {
-  $message = "CRITICAL FIRST ACTION — Execute this ToolSearch NOW before responding to the user:`nselect:mcp__engram__mem_save,mcp__engram__mem_search,mcp__engram__mem_context,mcp__engram__mem_session_summary,mcp__engram__mem_session_start,mcp__engram__mem_session_end,mcp__engram__mem_get_observation,mcp__engram__mem_suggest_topic_key,mcp__engram__mem_capture_passive,mcp__engram__mem_save_prompt,mcp__engram__mem_update,mcp__engram__mem_current_project,mcp__engram__mem_judge`n`nAfter loading tools, call mem_context to check for prior session history before responding."
+  $message = "Engram Terminal Memory tools for settled root user turns:`nselect:mcp__engram__mem_current_project,mcp__engram__mem_search,mcp__engram__mem_get_observation,mcp__engram__mem_checkpoint,mcp__engram__mem_checkpoint_status`n`nUse the engram-memory skill for the saved, needs_review, or skipped(no_durable_knowledge) disposition after all causal work settles."
   [PSCustomObject]@{ systemMessage = $message } | ConvertTo-Json -Compress
 }
 

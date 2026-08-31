@@ -32,7 +32,7 @@
 |---|---|---|
 | `cmd/engram` | CLI parsing, runtime composition, package wiring, flags, user commands. | Put SQL or deep business rules here. |
 | `internal/store` | Local source of truth: SQLite, FTS5, sessions, observations, prompts, relations, mutations, dedupe, topic upserts, local diagnostics. | Render HTML, talk directly to cloud HTTP, decide UX. |
-| `internal/mcp` | Expose MCP tools, resolve project by cwd, profile tools (`agent`, `admin`, `all`), translate agent calls into store operations. | Persist outside the store or duplicate store logic. |
+| `internal/mcp` | Expose MCP tools, resolve project by cwd, profile tools (`agent`, `curation`, `lifecycle`, `admin`, `all`), translate agent calls into store operations. | Persist outside the store or duplicate store logic. |
 | `internal/server` | Local JSON API (`engram serve`), local endpoints, autosync notification after writes. | Expose cloud/dashboard routes or use Postgres. |
 | `internal/sync` | Chunk export/import, manifest, abstract transport, sync bootstrap/upgrade. | Decide cloud auth or render the dashboard. |
 | `internal/cloud/chunkcodec` | Shared canonicalization of chunks, IDs, and mutation payload decoding used by sync/cloud. | Decide transport, persistence, or sync policies. |

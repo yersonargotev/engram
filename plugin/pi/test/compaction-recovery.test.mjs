@@ -15,15 +15,15 @@ test("extractCompactedSummary supports top-level and nested summary fields", () 
   assert.equal(extractCompactedSummary({ compaction: { content: "content summary" } }), "content summary");
 });
 
-test("recoveryInstruction keeps manual FIRST ACTION REQUIRED fallback", () => {
+test("recoveryInstruction keeps the same root-turn Terminal Memory contract", () => {
   const notice = recoveryInstruction("engram");
-  assert.match(notice, /FIRST ACTION REQUIRED/);
-  assert.match(notice, /mem_session_summary/);
-  assert.match(notice, /gentle-engram and the Engram MCP tools are installed and active/);
-  assert.match(notice, /If mem_session_summary is unavailable/);
+  assert.match(notice, /Terminal Memory/);
+  assert.match(notice, /same root user turn/);
+  assert.match(notice, /saved, needs_review, or skipped\(no_durable_knowledge\)/);
+  assert.doesNotMatch(notice, /FIRST ACTION REQUIRED|mem_session_summary/);
 });
 
 test("buildRecoveryNotice prefixes context when available", () => {
-  assert.equal(buildRecoveryNotice("engram", "existing context").startsWith("existing context\n\nCRITICAL"), true);
-  assert.equal(buildRecoveryNotice("engram", "").startsWith("CRITICAL"), true);
+  assert.equal(buildRecoveryNotice("engram", "existing context").startsWith("existing context\n\nEngram Terminal Memory"), true);
+  assert.equal(buildRecoveryNotice("engram", "").startsWith("Engram Terminal Memory"), true);
 });

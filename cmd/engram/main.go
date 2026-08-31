@@ -3399,8 +3399,9 @@ Commands:
   serve [port]       Start HTTP API server (default: 7437)
   mcp [--tools=PROFILE] [--project NAME]
                      Start MCP server (stdio transport, for any AI agent)
-                       Profiles: agent (20 tools), admin (4 tools), all (default, 24)
-                       Combine: --tools=agent,admin or pick individual tools
+                       Profiles: agent (5 tools), curation (11 tools), lifecycle (4 tools),
+                                 admin (4 tools), all (default, 24)
+                       Combine: --tools=agent,curation,lifecycle,admin or pick individual tools
                        Example: engram mcp --tools=agent
                        --project NAME  Set process-level default project (overrides cwd detection).
                                        Also accepted as ENGRAM_PROJECT=NAME env var.

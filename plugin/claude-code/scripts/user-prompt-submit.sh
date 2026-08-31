@@ -1,17 +1,7 @@
 #!/bin/bash
 # Engram — UserPromptSubmit hook for Claude Code
 #
-# On the FIRST message of a session: injects a ToolSearch instruction to force
-# Claude Code to load all engram memory tools (which are deferred by default).
-#
-# On subsequent messages: checks when the last mem_save was for the current
-# project. If it's been > 15 minutes AND the session has been active > 5
-# minutes, injects a nudge reminding the agent to save.
-#
-# The nudge is debounced per session: once shown, it stays quiet for
-# ENGRAM_NUDGE_COOLDOWN_SECS (default 900s) before it can fire again. Without
-# this, an agent that genuinely has nothing to save never resets the
-# last-save clock, so the reminder would fire on every single message forever.
+# On the first message of a session, load the exact five-tool default profile.
 #
 # MUST exit 0 always and output valid JSON — otherwise Claude Code blocks the message.
 
@@ -56,7 +46,7 @@ sanitize_session_key_part() {
 }
 
 print_toolsearch_message() {
-  printf '%s\n' '{"systemMessage":"CRITICAL FIRST ACTION — Execute this ToolSearch NOW before responding to the user:\nselect:mcp__engram__mem_save,mcp__engram__mem_search,mcp__engram__mem_context,mcp__engram__mem_session_summary,mcp__engram__mem_session_start,mcp__engram__mem_session_end,mcp__engram__mem_get_observation,mcp__engram__mem_suggest_topic_key,mcp__engram__mem_capture_passive,mcp__engram__mem_save_prompt,mcp__engram__mem_update,mcp__engram__mem_current_project,mcp__engram__mem_judge\n\nAfter loading tools, call mem_context to check for prior session history before responding."}'
+  printf '%s\n' '{"systemMessage":"Engram Terminal Memory tools for settled root user turns:\nselect:mcp__engram__mem_current_project,mcp__engram__mem_search,mcp__engram__mem_get_observation,mcp__engram__mem_checkpoint,mcp__engram__mem_checkpoint_status\n\nUse the engram-memory skill for the saved, needs_review, or skipped(no_durable_knowledge) disposition after all causal work settles."}'
 }
 
 if is_windows_bash && [ "${ENGRAM_CLAUDE_WINDOWS_BASH_SAFE_MODE:-auto}" != "0" ]; then
@@ -100,8 +90,7 @@ PROJECT=""
 # ──────────────────────────────────────────────────────────────────────────────
 # PROMPT PERSIST
 #
-# Every user message is captured to POST /prompts so mem_save can attach the
-# originating prompt via SessionActivity. The canonical project is resolved by
+# Every user message is captured to POST /prompts for SessionActivity. The canonical project is resolved by
 # the server before this script writes. Fire-and-forget: never blocks and never
 # fails the hook.
 # ──────────────────────────────────────────────────────────────────────────────
@@ -185,7 +174,7 @@ if [ ! -f "$STATE_FILE" ]; then
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
-# SUBSEQUENT MESSAGES — existing save-nudge logic
+# SUBSEQUENT MESSAGES — legacy timing path retained without save instructions
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Resolve the project only after the first-message path has had a chance to return.
@@ -252,8 +241,7 @@ fi
 NOW_EPOCH=$(date "+%s")
 ELAPSED=$(( NOW_EPOCH - LAST_EPOCH ))
 
-# Nudge if last save was > 15 minutes ago (900 seconds), but debounce so we do
-# not repeat the reminder on every message while the agent has nothing to save.
+# If activity is stale, remind the agent of the terminal root-turn contract.
 if [ "$ELAPSED" -gt 900 ]; then
   NUDGE_COOLDOWN="${ENGRAM_NUDGE_COOLDOWN_SECS:-900}"
   NUDGE_STATE_FILE="${STATE_FILE%-tools-loaded}-last-nudge"
@@ -270,7 +258,7 @@ if [ "$ELAPSED" -gt 900 ]; then
   if [ -z "$LAST_NUDGE_EPOCH" ] || [ "$(( NOW_EPOCH - LAST_NUDGE_EPOCH ))" -ge "$NUDGE_COOLDOWN" ]; then
     printf '%s' "$NOW_EPOCH" > "$NUDGE_STATE_FILE" 2>/dev/null || true
     OUTPUT=$(jq -n \
-      '{"systemMessage": "MEMORY REMINDER: It'\''s been over 15 minutes since your last save. If you'\''ve made decisions, discoveries, or completed significant work, call mem_save now."}')
+      '{"systemMessage": "Engram Terminal Memory: after all work caused by this root user turn settles, use the canonical skill to commit saved, needs_review, or skipped(no_durable_knowledge) once."}')
   fi
 fi
 

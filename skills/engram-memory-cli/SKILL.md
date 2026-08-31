@@ -1,8 +1,8 @@
 ---
 name: engram-memory-cli
-description: Recall and preserve durable project memory with Engram's CLI. Use before work that may depend on prior project knowledge, after work produces durable project knowledge, or for explicit memory curation. Scope this skill to project memory.
+description: Recall and finalize durable project Memory with Engram's CLI. Use for history-dependent work, Terminal Memory commits, explicit curation, or material loss-risk handoffs. Scope this skill to project memory.
 metadata:
-  version: "3.2.0"
+  version: "3.3.0"
 ---
 
 # Engram Memory CLI
@@ -64,40 +64,40 @@ Use `--all-projects` only for an explicitly cross-project request. Complete
 recall when every relevant result is accounted for, or when up to two targeted
 searches are empty and chronological context was either unnecessary or checked.
 
-## Preserve
+## Terminal Memory commit
 
-Preserve after the primary work produces reusable project knowledge.
+For normal agent work, preserve reusable project knowledge through the root
+turn's Terminal Memory commit. Use the opaque identity supplied by the host;
+never synthesize a replacement identity.
 
-1. Save only non-obvious decisions, root causes, conventions, configurations,
-   or discoveries. Content must be safe to persist, free of secrets and personal
-   facts, and not already maintained in project documentation.
-2. Save one concise subject with `What`, `Why`, `Where`, and `Learned`:
-
-   ```bash
-   engram save --title "<concise title>" --content "What: <durable result>
-   Why: <future value>
-   Where: <subsystem or path>
-   Learned: <non-obvious implication>" --project "<project>" --json
-   ```
-
-3. An older binary without named save inputs can return `unknown_flag`. Retry
-   once with `engram save "<same title>" "<same content>" ...` only when the
-   JSON error names `--title` or `--content`; preserve every remaining flag.
-   Other failures follow the best-effort protocol.
-4. Add `--topic-key <stable-key>` only for an evolving subject that later
-   observations should update or group. When a stable key is warranted but
-   unclear, run:
+1. Apply the canonical `engram-memory` disposition rubric after all causal work
+   settles.
+2. For `saved`, attach existing Memory IDs or create concise Memories atomically
+   with repeatable `--memory-json` values:
 
    ```bash
-   engram suggest-topic-key --title "<title>" --content "<content>" --json
+   engram checkpoint record --host '<host>' --session-id '<session>' \
+     --root-turn-id '<root-turn>' --disposition saved --project '<project>' \
+     --memory-json '{"title":"<concise title>","content":"What: <durable result>\nWhy: <future value>\nWhere: <subsystem or path>\nLearned: <non-obvious implication>"}' --json
    ```
-5. Inspect `judgment_required` after every save. For each candidate, inspect the
-   candidate memory and resolve its own `judgment_id` as described in
-   [references/curation.md](references/curation.md).
+3. Use `skipped --reason no_durable_knowledge` only when the rubric finds no
+   durable result. Use `needs_review` with one redacted `--proposal-json` when
+   potentially durable knowledge cannot be admitted directly.
+4. Treat `created` and same-disposition `already_recorded` as success. Surface
+   conflicts and persistence failures rather than changing the disposition.
 
-Complete preservation when the durable result is saved and every returned
-candidate is resolved or explicitly raised to the user. Routine or low-value
-work completes without a write.
+Complete normal preservation only when the exact root-turn identity has one
+terminal result.
+
+## Independent save
+
+Use `engram save` only for explicit curation or a long-running, material
+loss-risk handoff that must preserve knowledge before the root turn settles.
+The later Terminal Memory commit still finalizes the root turn and may attach
+the saved Memory by ID.
+
+For this branch, read [references/curation.md](references/curation.md) and follow
+its save, topic-key, candidate-judgment, and authorization rules.
 
 ## Curate
 

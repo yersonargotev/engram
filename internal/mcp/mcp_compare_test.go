@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yersonargotev/engram/internal/store"
 	mcppkg "github.com/mark3labs/mcp-go/mcp"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 // seedCompareFixture creates a session and two observations.
@@ -243,11 +243,11 @@ func TestHandleCompare_Idempotency(t *testing.T) {
 	}
 }
 
-// TestHandleCompare_ProfileAgent — mem_compare is in ProfileAgent.
-// Tool count: ProfileAgent should contain mem_compare after Phase G.
-func TestHandleCompare_ProfileAgent(t *testing.T) {
-	if !ProfileAgent["mem_compare"] {
-		t.Errorf("expected mem_compare in ProfileAgent, but it is absent")
+// TestHandleCompare_ProfileCuration — mem_compare remains explicitly available
+// after leaving the default five-tool agent profile.
+func TestHandleCompare_ProfileCuration(t *testing.T) {
+	if !ProfileCuration["mem_compare"] {
+		t.Errorf("expected mem_compare in ProfileCuration, but it is absent")
 	}
 }
 

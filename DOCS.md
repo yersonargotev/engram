@@ -220,6 +220,17 @@ Engram is local-first: local SQLite is authoritative; cloud features are optiona
   - `409` when session still has observations (delete/migrate observations first)
   - For cloud-enrolled projects: returns `200` and additionally enqueues a `session/delete` mutation that propagates the deletion to cloud replicas
 
+### Terminal Memory Checkpoints
+
+- `POST /checkpoints` — Atomically record one root-turn checkpoint. Body: `{host, session_id, root_turn_id, disposition, reason_code?, project?, memory_ids?, memories?, proposal?}`
+  - `201` with `{checkpoint, idempotency: "created"}` for a new commit
+  - `200` with `{checkpoint, idempotency: "already_recorded"}` for an exact replay
+  - `400` for malformed input or invalid identity, disposition, reason, or references
+  - `409` when the identity already owns a different terminal result
+- `GET /checkpoints/status` — Inspect one exact checkpoint. Query: `?host=X&session_id=Y&root_turn_id=Z`
+  - `404` when no checkpoint exists
+- Checkpoint errors use `{code, message, details}` so HTTP adapters preserve the same stable domain code exposed by CLI and MCP.
+
 ### Observations
 
 - `POST /observations` — Add observation. Body: `{session_id, type, title, content, tool_name?, project?, scope?, topic_key?}`
@@ -957,6 +968,11 @@ explicit ambiguity choice.
 
 ## MCP Tools (24 tools)
 
+The full registry contains 24 tools. `--tools=agent` selects only the five-tool
+default listed in [Default and specialized MCP profiles](#default-and-specialized-mcp-profiles).
+Select `curation`, `lifecycle`, `admin`, `all`, or explicit tool names for the
+specialized operations documented below.
+
 ### mem_checkpoint
 
 Record the terminal Memory checkpoint for one settled root user turn. `host`, `session_id`, `root_turn_id`, and `disposition` are always required.
@@ -1024,7 +1040,8 @@ Update an observation by ID. Public schema supports partial updates for `title`,
 
 ### mem_review
 
-Review observation lifecycle state. Available in the `agent` profile (`engram mcp --tools=agent`).
+Review observation lifecycle state. Available in the `curation` profile
+(`engram mcp --tools=curation`).
 
 Actions:
 
@@ -1035,13 +1052,15 @@ Actions:
 
 ### mem_pin
 
-Pin an observation by ID so it appears before recent observations in `mem_context`. The tool is available in the `agent` profile and is deferred, so load it with ToolSearch when needed.
+Pin an observation by ID so it appears before recent observations in
+`mem_context`. The tool is available in the `curation` profile.
 
 Pins are local to the current device. They are not included in sync payloads and do not propagate to other machines.
 
 ### mem_unpin
 
-Remove a local pin by observation ID so the memory returns to normal recency order in `mem_context`. The tool is available in the `agent` profile and is deferred, so load it with ToolSearch when needed.
+Remove a local pin by observation ID so the memory returns to normal recency
+order in `mem_context`. The tool is available in the `curation` profile.
 
 Like `mem_pin`, unpinning is local-only and is not synced.
 
@@ -1078,7 +1097,9 @@ Get full untruncated content of a specific observation by ID.
 
 ### mem_session_summary
 
-Save comprehensive end-of-session summary:
+Optionally save a curated Session summary when a user or specialized workflow
+requests one. It is not an agent-lifecycle completion signal and does not
+replace the root turn's terminal Memory checkpoint:
 
 ```
 ## Goal
@@ -1133,7 +1154,7 @@ Search results subsequently expose annotation lines like `supersedes: #<id> (<ti
 
 Records a verdict on a semantic comparison between two memories. The agent reads both memories, judges the relationship using its LLM reasoning, and calls `mem_compare` to persist the verdict. Unlike `mem_judge` (which resolves a pre-existing `pending` candidate surfaced by `mem_save`), `mem_compare` creates a new relation row directly — useful for proactive semantic analysis that goes beyond FTS5 lexical matching.
 
-Available in the `agent` profile (`engram mcp --tools=agent`).
+Available in the `curation` profile (`engram mcp --tools=curation`).
 
 Parameters:
 
@@ -1155,103 +1176,42 @@ Behavior:
 
 ## Memory Protocol
 
-The Memory Protocol teaches agents **when** and **how** to use Engram's MCP tools. Without it, the agent has the tools but no behavioral guidance. Add this to your agent's prompt file (see [Agent Setup](docs/AGENT-SETUP.md) for per-agent locations).
+The canonical [`engram-memory`](plugin/codex/skills/memory/SKILL.md) skill is the
+single source of truth for the root-turn disposition rubric, Recall, compaction,
+and terminal finalization. Agent-specific setup projects that skill or its short
+activation cue; adapters do not maintain another policy copy.
 
-### WHEN TO SAVE (mandatory)
+Normal work ends in one **Terminal Memory commit** after the root user turn and
+all causal work settle:
 
-Call `mem_save` IMMEDIATELY after any of these:
+- `saved` atomically commits one or more existing or inline Memories;
+- `needs_review` atomically commits one bounded, redacted proposal;
+- `skipped(no_durable_knowledge)` records that the settled turn produced no
+  durable result.
 
-- Bug fix completed
-- Architecture or design decision made
-- Non-obvious discovery about the codebase
-- Configuration change or environment setup
-- Pattern established (naming, structure, convention)
-- User preference or constraint learned
+Independent save is reserved for explicit curation or a long-running,
+material loss-risk handoff. `mem_session_summary` is an optional curation
+operation. Neither operation replaces the terminal checkpoint.
 
-Format for `mem_save`:
+### Default and specialized MCP profiles
 
-- **title**: Verb + what — short, searchable (e.g. "Fixed N+1 query in UserList", "Chose Zustand over Redux")
-- **type**: `bugfix` | `decision` | `architecture` | `discovery` | `pattern` | `config` | `preference`
-- **scope**: `project` (default) | `personal` | `global`
-- **topic_key** (optional, recommended for evolving decisions): stable key like `architecture/auth-model`
-- **content**:
-  ```
-  **What**: One sentence — what was done
-  **Why**: What motivated it (user request, bug, performance, etc.)
-  **Where**: Files or paths affected
-  **Learned**: Gotchas, edge cases, things that surprised you (omit if none)
-  ```
+The `agent` profile exposes exactly five tools:
 
-### Topic update rules (mandatory)
+- `mem_current_project`
+- `mem_search`
+- `mem_get_observation`
+- `mem_checkpoint`
+- `mem_checkpoint_status`
 
-- Different topics must not overwrite each other (e.g. architecture vs bugfix)
-- Reuse the same `topic_key` to update an evolving topic instead of creating new observations
-- If unsure about the key, call `mem_suggest_topic_key` first and then reuse it
-- Use `mem_update` when you have an exact observation ID to correct
+Use `curation` for independent authoring, optional Session summaries, context,
+review, relations, diagnosis, and pins. Use `lifecycle` for host session events,
+prompt save, and passive Content capture. Use `admin` for destructive and
+operational maintenance. `all` and explicit tool-name selection preserve
+compatibility for deliberate broad integrations.
 
-### WHEN TO SEARCH MEMORY
-
-When the user asks to recall something — any variation of "remember", "recall", "what did we do", "how did we solve", "recordar", "acordate", or references to past work:
-
-1. First call `mem_context` — checks recent session history (fast, cheap)
-2. If not found, call `mem_search` with relevant keywords (FTS5 full-text search)
-3. If you find a match, use `mem_get_observation` for full untruncated content
-
-Also search memory PROACTIVELY when:
-
-- Starting work on something that might have been done before
-- The user mentions a topic you have no context on — check if past sessions covered it
-
-### SESSION CLOSE PROTOCOL (mandatory)
-
-Before ending a session or saying "done" / "listo" / "that's it", you MUST call `mem_session_summary` with this structure:
-
-```
-## Goal
-[What we were working on this session]
-
-## Instructions
-[User preferences or constraints discovered — skip if none]
-
-## Discoveries
-- [Technical findings, gotchas, non-obvious learnings]
-
-## Accomplished
-- [Completed items with key details]
-
-## Next Steps
-- [What remains to be done — for the next session]
-
-## Relevant Files
-- path/to/file — [what it does or what changed]
-```
-
-This is NOT optional. If you skip this, the next session starts blind.
-
-### PASSIVE CAPTURE
-
-When completing a task, include a `## Key Learnings:` section at the end of your response with numbered items. Engram will automatically extract and save these as observations.
-
-Example:
-
-```
-## Key Learnings:
-
-1. bcrypt cost=12 is the right balance for our server performance
-2. JWT refresh tokens need atomic rotation to prevent race conditions
-```
-
-You can also call `mem_capture_passive(content)` directly with any text that contains a learning section.
-
-### AFTER COMPACTION
-
-If you see a message about compaction or context reset:
-
-1. IMMEDIATELY call `mem_session_summary` with the compacted summary content
-2. Then call `mem_context` to recover additional context from previous sessions
-3. Only THEN continue working
-
-Do not skip step 1. Without it, everything done before compaction is lost from memory.
+A **Memory operation** reads or changes durable Memory or checkpoint state. An
+**agent lifecycle operation** reports host activity or captures Content. A
+lifecycle operation never selects or implies a Memory disposition.
 
 ---
 
@@ -1372,7 +1332,7 @@ Instead of a separate LLM service, the agent itself compresses observations. The
 **Two levels:**
 
 - **Per-action** (`mem_save`): Structured summaries (What/Why/Where/Learned)
-- **Session summary** (`mem_session_summary`): Comprehensive end-of-session summary (Goal/Instructions/Discoveries/Accomplished/Next Steps/Files)
+- **Optional Session summary** (`mem_session_summary`): Explicitly curated Goal/Instructions/Discoveries/Accomplished/Next Steps/Files context
 
 ### No Raw Tool-Call Auto-Capture
 

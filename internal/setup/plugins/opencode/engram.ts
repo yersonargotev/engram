@@ -47,85 +47,25 @@ const SESSION_ATTRIBUTED_WRITE_TOOLS = new Set([
 ])
 
 // ─── Memory Instructions ─────────────────────────────────────────────────────
-// These get injected into the agent's context so it knows to call mem_save.
+// This concise projection points agents to the canonical Terminal Memory rubric.
 
-const MEMORY_INSTRUCTIONS = `## Engram Persistent Memory — Protocol
+const MEMORY_INSTRUCTIONS = `## Engram Terminal Memory protocol
 
-You have access to Engram, a persistent memory system that survives across sessions and compactions.
+For every settled root user turn, make exactly one Terminal Memory commit:
+\`saved\`, \`needs_review\`, or \`skipped(no_durable_knowledge)\`. Finalize only
+after all causal agent, tool, subagent, compaction, and continuation work settles.
 
-### WHEN TO SAVE (mandatory — not optional)
+### DEFAULT AGENT TOOLS — exactly five
+\`mem_current_project\`, \`mem_search\`, \`mem_get_observation\`, \`mem_checkpoint\`, \`mem_checkpoint_status\`
 
-Call \`mem_save\` IMMEDIATELY after any of these:
-- Bug fix completed
-- Architecture or design decision made
-- Non-obvious discovery about the codebase
-- Configuration change or environment setup
-- Pattern established (naming, structure, convention)
-- User preference or constraint learned
+Current user intent, maintained source, and runtime evidence override Memory.
+Recall only when it can change the work; empty Recall is successful. Reuse the
+supplied opaque root-turn identity across continuations. The canonical
+engram-memory skill owns the durability and disposition rubric.
 
-Format for \`mem_save\`:
-- **title**: Verb + what — short, searchable (e.g. "Fixed N+1 query in UserList", "Chose Zustand over Redux")
-- **type**: bugfix | decision | architecture | discovery | pattern | config | preference
-- **scope**: \`project\` (default) | \`personal\`
-- **topic_key** (optional, recommended for evolving decisions): stable key like \`architecture/auth-model\`
-- **content**:
-  **What**: One sentence — what was done
-  **Why**: What motivated it (user request, bug, performance, etc.)
-  **Where**: Files or paths affected
-  **Learned**: Gotchas, edge cases, things that surprised you (omit if none)
-
-Topic rules:
-- Different topics must not overwrite each other (e.g. architecture vs bugfix)
-- Reuse the same \`topic_key\` to update an evolving topic instead of creating new observations
-- If unsure about the key, call \`mem_suggest_topic_key\` first and then reuse it
-- Use \`mem_update\` when you have an exact observation ID to correct
-
-### WHEN TO SEARCH MEMORY
-
-When the user asks to recall something — any variation of "remember", "recall", "what did we do",
-"how did we solve", or the equivalent in the user's language, or references to past work:
-1. First call \`mem_context\` — checks recent session history (fast, cheap)
-2. If not found, call \`mem_search\` with relevant keywords (FTS5 full-text search)
-3. If you find a match, use \`mem_get_observation\` for full untruncated content
-
-Also search memory PROACTIVELY when:
-- Starting work on something that might have been done before
-- The user mentions a topic you have no context on — check if past sessions covered it
-- The user's FIRST message references the project, a feature, or a problem — call \`mem_search\` with keywords from their message to check for prior work before responding
-
-### SESSION CLOSE PROTOCOL (mandatory)
-
-Before ending a session or saying "done" / "that's it", you MUST:
-1. Call \`mem_session_summary\` with this structure:
-
-## Goal
-[What we were working on this session]
-
-## Instructions
-[User preferences or constraints discovered — skip if none]
-
-## Discoveries
-- [Technical findings, gotchas, non-obvious learnings]
-
-## Accomplished
-- [Completed items with key details]
-
-## Next Steps
-- [What remains to be done — for the next session]
-
-## Relevant Files
-- path/to/file — [what it does or what changed]
-
-This is NOT optional. If you skip this, the next session starts blind.
-
-### AFTER COMPACTION
-
-If you see a message about compaction or context reset, or if you see "FIRST ACTION REQUIRED" in your context:
-1. IMMEDIATELY call \`mem_session_summary\` with the compacted summary content — this persists what was done before compaction
-2. The session-only compaction context has already been injected. Do not automatically call \`mem_context\`, which is project-scoped; use it only when explicitly requested.
-3. Only THEN continue working
-
-Do not skip step 1. Without it, everything done before compaction is lost from memory.
+Session summary and independent save are optional curation workflows, not
+default lifecycle requirements. Capture and lifecycle operations are outside
+the default agent profile and run only when explicitly selected.
 `
 
 // ─── HTTP Client ─────────────────────────────────────────────────────────────
@@ -192,7 +132,7 @@ export const Engram: Plugin = async (ctx) => {
   // Track tool counts per session (in-memory only, not critical)
   const toolCounts = new Map<string, number>()
 
-  // Track last nudge time per session to debounce save reminders
+  // Track last nudge time per session to debounce checkpoint reminders
   const lastNudgeTime = new Map<string, number>() // sessionID -> epoch seconds
 
   // Track which sessions we've already ensured exist in engram
@@ -580,7 +520,7 @@ export const Engram: Plugin = async (ctx) => {
       }
 
       // ── Save nudge ──────────────────────────────────────────────────────────
-      // If it has been a long time since the last mem_save, append a reminder
+      // If activity is stale, append a reminder for the terminal checkpoint.
       // to the system prompt so the agent notices. All fetches are fire-and-
       // forget with short timeouts — any failure silently skips the nudge.
       try {
@@ -652,7 +592,7 @@ export const Engram: Plugin = async (ctx) => {
         const nudge =
           "\n\nMEMORY REMINDER: It's been over 15 minutes since your last memory save. " +
           "If you've made decisions, discoveries, completed significant work, or found non-obvious things, " +
-          "call mem_save now."
+          "make one Terminal Memory commit after the settled root user turn."
         if (output.system.length > 0) {
           output.system[output.system.length - 1] += nudge
         } else {
@@ -664,13 +604,11 @@ export const Engram: Plugin = async (ctx) => {
       }
     },
 
-    // ─── Compaction Hook: Persist memory + inject context ──────────
+    // ─── Compaction Hook: Preserve root-turn cue + inject context ────
     // Compaction is triggered by the system (not the agent) when context
     // gets too long. The old agent "dies" and a new one starts with the
     // compacted summary. This is our chance to:
-    // 1. Auto-save a session checkpoint (the agent can't do this itself)
-    // 2. Inject context from previous sessions into the compaction prompt
-    // 3. Tell the compressor to remind the new agent to save memories
+    // Inject session-bound context and preserve the root-turn checkpoint cue.
 
     "experimental.session.compacting": async (input, output) => {
       let sessionId = ""
@@ -690,16 +628,10 @@ export const Engram: Plugin = async (ctx) => {
         }
       }
 
-      // Tell the compressor to instruct the new agent to persist the
-      // compacted summary to Engram. The new agent reads the compacted
-      // summary and this instruction, then saves it as a session summary.
       output.context.push(
-        `CRITICAL INSTRUCTION FOR COMPACTED SUMMARY:\n` +
-        `The agent has access to Engram persistent memory via MCP tools.\n` +
-        `You MUST include the following instruction at the TOP of the compacted summary:\n\n` +
-        `"FIRST ACTION REQUIRED: Call mem_session_summary with the content of this compacted summary. ` +
-        `Use project: '${project}'. This preserves what was accomplished before compaction. Do this BEFORE any other work."\n\n` +
-        `This is NOT optional. Without this, everything done before compaction is lost from memory.`
+        `Continue the same root user turn after compaction. Reuse its opaque identity and make one ` +
+        `Terminal Memory commit only after all remaining causal work settles. The dispositions are ` +
+        `saved, needs_review, and skipped(no_durable_knowledge). Project hint: '${project}'.`
       )
     },
   }

@@ -6,6 +6,29 @@ import { test } from "node:test";
 
 const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8").replaceAll("\r\n", "\n");
 
+test("default Pi profile exposes exactly the five Terminal Memory tools", () => {
+  const match = source.match(/const DEFAULT_ENGRAM_TOOLS = \[([\s\S]*?)\] as const;/);
+  assert.ok(match, "default tool profile not found");
+  const tools = [...match[1].matchAll(/"(mem_[^"]+)"/g)].map((entry) => entry[1]);
+  assert.deepEqual(tools, [
+    "mem_current_project",
+    "mem_search",
+    "mem_get_observation",
+    "mem_checkpoint",
+    "mem_checkpoint_status",
+  ]);
+  assert.match(source, /ENGRAM_PI_TOOL_PROFILE === "all"/);
+});
+
+test("model instructions use Terminal Memory without legacy save mandates", () => {
+  const instructions = source.match(/const MEMORY_INSTRUCTIONS = `([\s\S]*?)`;/)?.[1] ?? "";
+  assert.match(instructions, /Terminal Memory commit/);
+  assert.match(instructions, /saved/);
+  assert.match(instructions, /needs_review/);
+  assert.match(instructions, /skipped\(no_durable_knowledge\)/);
+  assert.doesNotMatch(instructions, /FIRST ACTION REQUIRED|mem_session_summary|mem_save/);
+});
+
 function extractFunctionBody(name, marker) {
   const signatureIndex = source.indexOf(`function ${name}`);
   assert.notEqual(signatureIndex, -1, `${name} signature not found`);
@@ -319,10 +342,10 @@ test("ambiguous_project error maps to actionable status label, not generic 'erro
   assert.doesNotMatch(source, /setStatus\?\.\("engram",\s*`🧠 \$\{project\} · error`\)/);
 });
 
-test("memory protocol declares gentle-engram as the Pi-native provider", () => {
+test("Terminal Memory protocol declares gentle-engram as the Pi-native provider", () => {
   assert.match(source, /These instructions are injected by gentle-engram, the Pi-native memory provider/);
-  assert.match(source, /Use the memory tools named in this section as the authoritative Pi memory contract/);
-  assert.match(source, /Do not infer alternative Engram tool names from other integrations/);
+  assert.match(source, /authoritative default Pi Memory contract/);
+  assert.match(source, /do not infer alternative tool names from other integrations/);
 });
 
 test("an inconclusive health probe still attempts the spawn", async () => {
@@ -1161,7 +1184,8 @@ test("mem_review is registered as a Pi-native executable memory tool", () => {
   assert.match(source, /case "mem_review":[\s\S]*action === "list"[\s\S]*engramFetch\(`\/review\$\{queryString\(\{ project: params\.project, limit: params\.limit \}\)\}`\)/);
   assert.match(source, /case "mem_review":[\s\S]*action === "mark_reviewed"[\s\S]*engramFetch\("\/review\/mark_reviewed"/);
   assert.match(source, /case "mem_review":[\s\S]*body: \{ observation_id: params\.observation_id \|\| params\.id \}/);
-  assert.match(source, /for \(const toolName of ENGRAM_TOOLS\)[\s\S]*executeMemoryTool\(toolName/);
+  assert.match(source, /SPECIALIZED_ENGRAM_TOOLS = \[[\s\S]*"mem_review"/);
+  assert.match(source, /for \(const toolName of selectedEngramTools\(\)\)[\s\S]*executeMemoryTool\(toolName/);
 });
 
 test("best-effort capture failures are surfaced instead of silently discarded", () => {

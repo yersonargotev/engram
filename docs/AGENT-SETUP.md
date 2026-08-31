@@ -28,13 +28,24 @@ Engram works with **any MCP-compatible agent**. Pick your agent below.
 | Cursor          | `engram setup cursor`                                                                        | [Details](#cursor)                                 |
 | VS Code Copilot | `engram setup vscode-copilot`                                                                | [Details](#vs-code-copilot--claude-code-extension) |
 | Kilo Code       | `engram setup kilocode`                                                                      | [Details](#kilo-code)                              |
-| Any MCP agent   | `engram mcp` (stdio)                                                                         | [Details](#any-other-mcp-agent)                    |
+| Any MCP agent   | `engram mcp --tools=agent` (stdio)                                                           | [Details](#any-other-mcp-agent)                    |
 
 > **Native setup for all agents above.** `engram setup <agent>` writes the right
 > MCP registration (handling each client's config format — `mcpServers`,
 > `servers`, or OpenCode's `mcp` object) plus the Memory Protocol into that
 > agent's instruction surface, idempotently. The per-agent sections below describe
 > the exact files each command touches and the manual equivalent.
+
+The `agent` profile exposes exactly `mem_current_project`, `mem_search`,
+`mem_get_observation`, `mem_checkpoint`, and `mem_checkpoint_status`. Add
+`curation` for independent authoring, optional Session summary, context, review,
+relations, diagnosis, and pins; `lifecycle` for host session and Content-capture
+operations; or `admin` for destructive and operational maintenance. `all`
+retains all 24 tools for deliberate broad integrations.
+
+A Memory operation reads or changes durable Memory or checkpoint state. An
+agent lifecycle operation reports host activity or captures Content and never
+selects the root turn's disposition.
 
 ## Pi
 
@@ -223,7 +234,7 @@ engram setup opencode
 This does three things:
 
 1. Copies the plugin to `~/.config/opencode/plugins/engram.ts` (session tracking, Memory Protocol, compaction recovery)
-2. Adds the `engram` MCP server entry to your `opencode.json` with `--tools=agent` (20 agent-facing tools)
+2. Adds the `engram` MCP server entry to your `opencode.json` with `--tools=agent` (five agent-facing tools)
 3. Adds `opencode-subagent-statusline` to your `tui.json` or `tui.jsonc` so OpenCode shows sub-agent activity in the sidebar/home footer
 
 The plugin auto-starts the HTTP server if needed for session tracking. If your environment blocks background processes, run it manually:
@@ -232,7 +243,10 @@ The plugin auto-starts the HTTP server if needed for session tracking. If your e
 engram serve &
 ```
 
-The agent profile includes deferred `mem_pin` and `mem_unpin` tools for local context curation. A pin changes only this device's context ordering and is not synchronized.
+The default `agent` profile contains exactly `mem_current_project`,
+`mem_search`, `mem_get_observation`, `mem_checkpoint`, and
+`mem_checkpoint_status`. Local-only `mem_pin` and `mem_unpin` are available
+through the `curation` profile.
 
 > **Windows**: OpenCode uses `~/.config/opencode/` on Windows too (it does not read `%APPDATA%\opencode\`). `engram setup opencode` writes to `~/.config/opencode/plugins/` and `~/.config/opencode/opencode.json`. To run the server in the background: `Start-Process engram -ArgumentList "serve" -WindowStyle Hidden` (PowerShell) or just run `engram serve` in a separate terminal.
 
@@ -378,7 +392,7 @@ engram setup gemini-cli
 - Writes `~/.gemini/system.md` with the Engram Memory Protocol (includes post-compaction recovery)
 - Ensures `~/.gemini/.env` contains `GEMINI_SYSTEM_MD=1` so Gemini actually loads that system prompt
 
-> `engram setup gemini-cli` automatically writes the full Memory Protocol to `~/.gemini/system.md`, so the agent knows exactly when to save, search, and close sessions. No additional configuration needed.
+> `engram setup gemini-cli` automatically writes the full Memory Protocol to `~/.gemini/system.md`, so the agent knows when selective Recall can change the work and how to make one Terminal Memory commit after the root turn settles. No additional configuration needed.
 
 Manual alternative: add to your `~/.gemini/settings.json` (global) or `.gemini/settings.json` (project); on Windows: `%APPDATA%\gemini\settings.json`:
 
@@ -387,7 +401,7 @@ Manual alternative: add to your `~/.gemini/settings.json` (global) or `.gemini/s
   "mcpServers": {
     "engram": {
       "command": "engram",
-      "args": ["mcp"]
+      "args": ["mcp", "--tools=agent"]
     }
   }
 }
@@ -396,7 +410,7 @@ Manual alternative: add to your `~/.gemini/settings.json` (global) or `.gemini/s
 Or via the CLI:
 
 ```bash
-gemini mcp add engram engram mcp
+gemini mcp add engram engram mcp --tools=agent
 ```
 
 ---
@@ -451,7 +465,7 @@ The stable `mode` field is conservative:
 
 JSON output uses the additive schema `codex-integration-status-v1`. Its `compatibility` object uses `protocol-compatibility-v1`, contains all four axes and their provenance, and returns either `protocol_compatible`, `legacy_compatible`, or a stable incompatible reason such as `managed_pack_missing`, `managed_pack_unprovenanced`, `managed_pack_protocol_range_malformed`, or `no_protocol_intersection`. Every capability check contains `capability`, `status`, `reason_code`, a bounded human reason, and bounded named evidence. Output is deterministic for unchanged local state.
 
-The expand path recognizes the exact previously supported Managed Pack `3.1.2` and Codex plugin `0.1.5` fingerprints as Protocol v1 declarations. Managed Pack `3.2.0`, the current binary contract, and Codex plugin `0.1.6` also declare `legacy_compatible`: this compatibility slice publishes and verifies the target contract without changing current Recall, Capture, MCP-profile, or checkpoint defaults. A mixed upgrade remains ready while every attributable range still intersects. Status does not rewrite that installation, and an unknown artifact with the same version is not admitted by version alone. Later behavior changes must remove the legacy flag only after their projections satisfy the target contract.
+The expand path recognizes the exact legacy Managed Pack `3.1.2` and Codex plugin `0.1.5` fingerprints as Protocol v1 declarations. It also preserves the verified previous Pack `3.2.0` and plugin `0.1.6` coordinates. The current Managed Pack `3.3.0`, binary contract, and Codex plugin `0.1.7` project the terminal Memory policy and five-tool agent profile while still declaring `legacy_compatible`; later Capture and lifecycle slices remain independently staged. A mixed upgrade remains ready while every attributable range still intersects. Status does not rewrite that installation, and an unknown artifact with the same version is not admitted by version alone. Remove the legacy flag only after every remaining projection satisfies the target contract.
 
 Status describes installed capability only. It is not evidence that Codex loaded or invoked a skill, that hooks ran in the current session, or that the model created a Memory. Use session and checkpoint evidence for those claims.
 
@@ -552,7 +566,7 @@ Add to `.vscode/mcp.json` in your project:
   "servers": {
     "engram": {
       "command": "engram",
-      "args": ["mcp"]
+      "args": ["mcp", "--tools=agent"]
     }
   }
 }
@@ -570,18 +584,20 @@ Add to `.vscode/mcp.json` in your project:
 **Option C: CLI one-liner:**
 
 ```bash
-code --add-mcp "{\"name\":\"engram\",\"command\":\"engram\",\"args\":[\"mcp\"]}"
+code --add-mcp "{\"name\":\"engram\",\"command\":\"engram\",\"args\":[\"mcp\",\"--tools=agent\"]}"
 ```
 
 > **Using Claude Code extension in VS Code?** The Claude Code extension runs inside VS Code but uses its own MCP config. Follow the [Claude Code](#claude-code) instructions above — the `.claude/settings.json` config works whether you use Claude Code as a CLI or as a VS Code extension.
 
 > **Windows**: Make sure `engram.exe` is in your `PATH`. VS Code resolves MCP commands from the system PATH.
 
-**Adding the Memory Protocol** (recommended — teaches the agent when to save and search memories):
+**Adding the Memory Protocol** (recommended — teaches selective Recall and one terminal commit):
 
-Without the Memory Protocol, the agent has the tools but doesn't know WHEN to use them. Add these instructions to your agent's prompt:
+Without the Memory Protocol, the agent has the tools but not the canonical durability and Recall policy. Add these instructions to your agent's prompt:
 
-**For Copilot:** Create a `.instructions.md` file in the VS Code User `prompts/` folder and paste the Memory Protocol from [DOCS.md](../DOCS.md#memory-protocol-full-text).
+**For Copilot:** Create a `.instructions.md` file in the VS Code User `prompts/`
+folder and add the canonical pointer described in
+[DOCS.md](../DOCS.md#memory-protocol).
 
 Recommended file path:
 
@@ -591,14 +607,14 @@ Recommended file path:
 
 **For any VS Code chat extension:** Add the Memory Protocol text to your extension's custom instructions or system prompt configuration.
 
-The Memory Protocol tells the agent:
+The Memory Protocol tells the agent to use selective Recall and make one
+terminal `saved`, `needs_review`, or `skipped(no_durable_knowledge)` checkpoint
+after each settled root user turn. The canonical skill owns the detailed rubric.
+Independent save and optional Session summary remain explicit curation
+workflows.
 
-- **When to save** — after bugfixes, decisions, discoveries, config changes, patterns
-- **When to search** — reactive ("remember", "recall") + proactive (overlapping past work)
-- **Session close** — mandatory `mem_session_summary` before ending
-- **After compaction** — recover state with `mem_context`
-
-See [Surviving Compaction](#surviving-compaction-recommended) for the minimal version, or [DOCS.md](../DOCS.md#memory-protocol-full-text) for the full Memory Protocol text you can copy-paste.
+See [Surviving Compaction](#surviving-compaction-recommended) for the minimal
+pointer and [DOCS.md](../DOCS.md#memory-protocol) for the canonical policy.
 
 ### Project detection in VS Code, WSL, and CI
 
@@ -671,7 +687,8 @@ This registers `mcpServers.engram` in the shared `~/.gemini/config/mcp_config.js
 }
 ```
 
-Then add the Memory Protocol as a global rule in `~/.gemini/GEMINI.md`. See [DOCS.md](../DOCS.md#memory-protocol-full-text) for the full text.
+Then add the canonical Memory pointer as a global rule in
+`~/.gemini/GEMINI.md`. See [DOCS.md](../DOCS.md#memory-protocol).
 
 > **Note:** Antigravity has its own skill, rule, and MCP systems separate from VS Code. Do not use `.vscode/mcp.json`. This is distinct from `engram setup gemini-cli`, which writes the Gemini CLI's own `settings.json` / `system.md`.
 
@@ -707,7 +724,7 @@ This registers `mcpServers.engram` in the global `~/.cursor/mcp.json` and writes
 > - **Project-specific:** `.cursor/rules/engram.mdc` — commit to git so your whole team gets it
 > - **Global (all projects):** `~/.cursor/rules/engram.mdc` (Windows: `%USERPROFILE%\.cursor\rules\engram.mdc`) — create the directory if it doesn't exist
 >
-> See [DOCS.md](../DOCS.md#memory-protocol-full-text) for the full text, or use the minimal version from [Surviving Compaction](#surviving-compaction-recommended).
+> See [DOCS.md](../DOCS.md#memory-protocol) for the canonical policy, or use the minimal pointer from [Surviving Compaction](#surviving-compaction-recommended).
 >
 > **Note:** The legacy `.cursorrules` file at the project root is still recognized by Cursor but is deprecated. Prefer `.cursor/rules/` for all new setups.
 
@@ -736,7 +753,7 @@ This registers `mcpServers.engram` in `~/.codeium/windsurf/mcp_config.json` (Cas
 }
 ```
 
-> **Memory Protocol:** Add the Memory Protocol to `~/.codeium/windsurf/memories/global_rules.md`. See [DOCS.md](../DOCS.md#memory-protocol-full-text) for the full text.
+> **Memory Protocol:** Add the canonical Memory pointer to `~/.codeium/windsurf/memories/global_rules.md`. See [DOCS.md](../DOCS.md#memory-protocol).
 
 ---
 
@@ -778,7 +795,9 @@ Registers the engram server under the OpenCode-style `mcp` object in `~/.config/
 
 ## Any other MCP agent
 
-The pattern is always the same — point your agent's MCP config to `engram mcp` via stdio transport.
+The pattern is always the same — point your agent's MCP config to
+`engram mcp --tools=agent` via stdio transport. Select a specialized profile
+only when that integration owns the corresponding workflow.
 
 ---
 
@@ -786,24 +805,23 @@ The pattern is always the same — point your agent's MCP config to `engram mcp`
 
 > **Is this step required?** No — `engram setup` handles all the MCP wiring. These snippets are an optional resilience layer. Add them if your agent forgets about Engram after long sessions or context resets. They are especially useful for agents that do not have a full plugin (VS Code, Cursor, Windsurf, Antigravity) and have no automated session tracking.
 
-When your agent compacts (summarizes long conversations to free context), it starts fresh — and might forget about Engram. To make memory truly resilient, add this to your agent's system prompt or config file:
+When an agent does not support the complete Engram plugin, add this compact
+pointer to its persistent instruction surface:
 
 **For Claude Code** (`CLAUDE.md`):
 
 ```markdown
 ## Memory
 
-You have access to Engram persistent memory via MCP tools (mem_save, mem_search, mem_session_summary, etc.).
-
-- Save proactively after significant work — don't wait to be asked.
-- After any compaction or context reset, call `mem_context` to recover session state before continuing.
+Use the canonical Engram Memory skill. After each settled root user turn, commit
+one terminal Memory checkpoint. Recall prior Memory only when it can change the work.
 ```
 
 **For OpenCode** (agent prompt in `opencode.json`):
 
 ```
-After any compaction or context reset, call mem_context to recover session state before continuing.
-Save memories proactively with mem_save after significant work.
+Use the canonical Engram Memory skill. After each settled root user turn, commit
+one terminal Memory checkpoint. Recall prior Memory only when it can change the work.
 ```
 
 **For Gemini CLI** (`GEMINI.md`):
@@ -811,10 +829,8 @@ Save memories proactively with mem_save after significant work.
 ```markdown
 ## Memory
 
-You have access to Engram persistent memory via MCP tools (mem_save, mem_search, mem_session_summary, etc.).
-
-- Save proactively after significant work — don't wait to be asked.
-- After any compaction or context reset, call `mem_context` to recover session state before continuing.
+Use the canonical Engram Memory skill. After each settled root user turn, commit
+one terminal Memory checkpoint. Recall prior Memory only when it can change the work.
 ```
 
 **For VS Code** (`Code/User/prompts/*.instructions.md` or custom instructions):
@@ -822,10 +838,8 @@ You have access to Engram persistent memory via MCP tools (mem_save, mem_search,
 ```markdown
 ## Memory
 
-You have access to Engram persistent memory via MCP tools (mem_save, mem_search, mem_session_summary, etc.).
-
-- Save proactively after significant work — don't wait to be asked.
-- After any compaction or context reset, call `mem_context` to recover session state before continuing.
+Use the canonical Engram Memory skill. After each settled root user turn, commit
+one terminal Memory checkpoint. Recall prior Memory only when it can change the work.
 ```
 
 **For Antigravity** (`~/.gemini/GEMINI.md` or `.agent/rules/`):
@@ -833,10 +847,8 @@ You have access to Engram persistent memory via MCP tools (mem_save, mem_search,
 ```markdown
 ## Memory
 
-You have access to Engram persistent memory via MCP tools (mem_save, mem_search, mem_session_summary, etc.).
-
-- Save proactively after significant work — don't wait to be asked.
-- After any compaction or context reset, call `mem_context` to recover session state before continuing.
+Use the canonical Engram Memory skill. After each settled root user turn, commit
+one terminal Memory checkpoint. Recall prior Memory only when it can change the work.
 ```
 
 **For Cursor** (`.cursor/rules/engram.mdc` or `~/.cursor/rules/engram.mdc`):
@@ -848,15 +860,15 @@ The `alwaysApply: true` frontmatter tells Cursor to load this rule in every conv
 alwaysApply: true
 ---
 
-You have access to Engram persistent memory (mem_save, mem_search, mem_context).
-Save proactively after significant work. After context resets, call mem_context to recover state.
+Use the canonical Engram Memory skill. Commit one terminal Memory checkpoint for
+each settled root user turn and use selective Recall when it can change the work.
 ```
 
 **For Windsurf** (`.windsurfrules`):
 
 ```
-You have access to Engram persistent memory (mem_save, mem_search, mem_context).
-Save proactively after significant work. After context resets, call mem_context to recover state.
+Use the canonical Engram Memory skill. Commit one terminal Memory checkpoint for
+each settled root user turn and use selective Recall when it can change the work.
 ```
 
 This is the **nuclear option** — system prompts survive everything, including compaction. Use it when you want guaranteed agent behavior without relying on plugin hooks. It is optional for agents that have a full plugin (Claude Code, OpenCode, Gemini CLI, Codex) and required for agents that do not (VS Code, Cursor, Windsurf, Antigravity).
@@ -928,7 +940,10 @@ Nothing breaks if `mem_judge` is never called — pending relations accumulate u
 
 ### Proactive semantic comparison (mem_compare)
 
-Agents can also proactively judge the relationship between any two memories using `mem_compare` (also available in the agent profile). Unlike `mem_judge`, which resolves a candidate surfaced by `mem_save`, `mem_compare` lets the agent compare any two observation IDs it has already read, and persist a verdict directly. This is useful for agent-initiated semantic audit workflows.
+Agents can also judge the relationship between any two memories using
+`mem_compare` from the `curation` profile. Unlike `mem_judge`, which resolves a
+candidate surfaced by `mem_save`, `mem_compare` lets the agent compare any two
+observation IDs it has already read and persist a verdict directly.
 
 See [Plugins → mem_compare reference](PLUGINS.md#mcp-tool-reference--mem_compare) for parameters and behavior.
 

@@ -13,6 +13,8 @@ const TOOL_LABELS = {
   mem_session_start: "start session",
   mem_session_end: "end session",
   mem_current_project: "current project",
+  mem_checkpoint: "checkpoint",
+  mem_checkpoint_status: "checkpoint status",
   mem_doctor: "doctor",
   mem_capture_passive: "capture passive",
   mem_judge: "judge",
@@ -35,6 +37,8 @@ const ARG_KEYS = {
   mem_session_start: ["id"],
   mem_session_end: ["id"],
   mem_current_project: ["cwd"],
+  mem_checkpoint: ["disposition", "root_turn_id"],
+  mem_checkpoint_status: ["root_turn_id"],
   mem_doctor: ["check", "project"],
   mem_capture_passive: ["source", "content"],
   mem_judge: ["judgment_id", "relation"],
@@ -126,6 +130,8 @@ export function compactResultStatus(toolName, result, options = {}) {
   if (toolName === "mem_session_start") return "✓ started";
   if (toolName === "mem_session_end") return "✓ ended";
   if (toolName === "mem_current_project") return data?.project ? `✓ ${data.project}` : "✓ detected";
+  if (toolName === "mem_checkpoint") return data?.idempotency ? `✓ ${data.idempotency}` : "✓ committed";
+  if (toolName === "mem_checkpoint_status") return data?.checkpoint?.disposition ? `✓ ${data.checkpoint.disposition}` : "✓ inspected";
   if (toolName === "mem_doctor") return data?.status ? `✓ ${data.status}` : "✓ checked";
   if (toolName === "mem_capture_passive") return `✓ captured ${data?.saved ?? count ?? 0}`;
   if (toolName === "mem_judge") return data?.relation?.sync_id ? `✓ judged ${data.relation.sync_id}` : "✓ judged";

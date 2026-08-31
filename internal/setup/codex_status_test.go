@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/yersonargotev/engram/internal/protocolcontract"
 )
 
 func TestInspectCodexStatusEmptyProfileIsConservativeAndReadOnly(t *testing.T) {
@@ -156,6 +158,7 @@ func TestInspectCodexStatusCompleteSupportedPluginIsCheckpointReady(t *testing.T
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
 		t.Fatalf("create repository marker: %v", err)
 	}
+	installCurrentManagedPackStatusFixture(t, home)
 
 	const engramPath = "/opt/engram/bin/engram"
 	osExecutable = func() (string, error) { return engramPath, nil }
@@ -176,7 +179,7 @@ args = ["mcp", "--tools=agent"]
 	marketplaceRoot := t.TempDir()
 	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
 	writeCanonicalCodexActivationFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"))
-	installedPath := filepath.Join(home, ".codex", "plugins", "cache", "engram", "engram", "0.1.5")
+	installedPath := filepath.Join(home, ".codex", "plugins", "cache", "engram", "engram", "0.1.6")
 	writeCanonicalCodexActivationFixture(t, installedPath)
 
 	lookPathFn = func(name string) (string, error) {
@@ -199,7 +202,7 @@ args = ["mcp", "--tools=agent"]
 		case slices.Equal(args, []string{"--version"}):
 			return []byte("codex-cli 0.150.1\n"), nil
 		case slices.Equal(args, []string{"plugin", "list", "--json"}):
-			return []byte(fmt.Sprintf(`{"installed":[{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.5","installed":true,"enabled":true,"source":{"source":"local","path":%q},"marketplaceSource":{"sourceType":"git","source":"https://github.com/yersonargotev/engram.git"}}],"available":[]}`, filepath.Join(marketplaceRoot, "plugin", "codex"))), nil
+			return []byte(fmt.Sprintf(`{"installed":[{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.6","installed":true,"enabled":true,"source":{"source":"local","path":%q},"marketplaceSource":{"sourceType":"git","source":"https://github.com/yersonargotev/engram.git"}}],"available":[]}`, filepath.Join(marketplaceRoot, "plugin", "codex"))), nil
 		default:
 			return nil, fmt.Errorf("unexpected Codex command: %v", args)
 		}
@@ -221,6 +224,11 @@ args = ["mcp", "--tools=agent"]
 	if status.Mode != CodexModeCheckpointReady {
 		t.Fatalf("mode = %q, checks=%#v", status.Mode, status.Checks)
 	}
+	if status.Compatibility.Status != protocolcontract.CompatibilityReady ||
+		status.Compatibility.ReasonCode != protocolcontract.ReasonLegacyCompatible ||
+		status.Compatibility.Intersection == nil || len(status.Compatibility.Axes) != 4 {
+		t.Fatalf("Protocol compatibility = %#v", status.Compatibility)
+	}
 	for _, capability := range []string{"marketplace", "plugin", "mcp_configuration", "mcp_readiness", "prompt_hook", "session_hook", "activation_cue", "stop_verifier"} {
 		matches := statusChecksByCapability(status.Checks, capability)
 		if len(matches) != 1 || matches[0].Status != CodexCheckReady {
@@ -228,11 +236,11 @@ args = ["mcp", "--tools=agent"]
 		}
 	}
 	plugin := statusChecksByCapability(status.Checks, "plugin")[0]
-	if evidenceValue(plugin, "installed_version") != "0.1.5" || evidenceValue(plugin, "installed_revision") != testReleaseCommit || evidenceValue(plugin, "enabled") != "true" {
+	if evidenceValue(plugin, "installed_version") != "0.1.6" || evidenceValue(plugin, "installed_revision") != testReleaseCommit || evidenceValue(plugin, "enabled") != "true" {
 		t.Fatalf("plugin provenance = %#v", plugin.Evidence)
 	}
 	pluginSkills := statusChecksByCapability(status.Checks, "skill")
-	if len(pluginSkills) != 1 || evidenceValue(pluginSkills[0], "source") != "plugin" || evidenceValue(pluginSkills[0], "name") != "engram-memory" {
+	if len(pluginSkills) != 2 || evidenceValue(pluginSkills[1], "source") != "plugin" || evidenceValue(pluginSkills[1], "name") != "engram-memory" {
 		t.Fatalf("plugin skill checks = %#v", pluginSkills)
 	}
 	if probeCalls != 1 {
@@ -548,7 +556,7 @@ enabled = false
 	marketplaceRoot := t.TempDir()
 	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
 	writeCanonicalCodexActivationFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"))
-	installedPath := filepath.Join(home, ".codex", "plugins", "cache", "engram", "engram", "0.1.5")
+	installedPath := filepath.Join(home, ".codex", "plugins", "cache", "engram", "engram", "0.1.6")
 	writeCanonicalCodexActivationFixture(t, installedPath)
 
 	lookPathFn = func(name string) (string, error) {
@@ -562,7 +570,7 @@ enabled = false
 		case name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"--version"}):
 			return []byte("codex-cli 0.150.1\n"), nil
 		case name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"plugin", "list", "--json"}):
-			return []byte(fmt.Sprintf(`{"installed":[{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.5","installed":true,"enabled":false,"source":{"source":"local","path":%q},"marketplaceSource":{"sourceType":"git","source":"https://github.com/yersonargotev/engram.git"}}]}`, filepath.Join(marketplaceRoot, "plugin", "codex"))), nil
+			return []byte(fmt.Sprintf(`{"installed":[{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.6","installed":true,"enabled":false,"source":{"source":"local","path":%q},"marketplaceSource":{"sourceType":"git","source":"https://github.com/yersonargotev/engram.git"}}]}`, filepath.Join(marketplaceRoot, "plugin", "codex"))), nil
 		default:
 			t.Fatalf("disabled plugin profile executed unexpected command: %s %v", name, args)
 			return nil, nil
@@ -582,7 +590,7 @@ enabled = false
 		t.Fatalf("disabled plugin check = %#v", plugin)
 	}
 	if evidenceValue(plugin, "installed") != "true" || evidenceValue(plugin, "enabled") != "false" ||
-		evidenceValue(plugin, "installed_version") != "0.1.5" || evidenceValue(plugin, "installed_revision") != testReleaseCommit {
+		evidenceValue(plugin, "installed_version") != "0.1.6" || evidenceValue(plugin, "installed_revision") != testReleaseCommit {
 		t.Fatalf("disabled plugin evidence = %#v", plugin.Evidence)
 	}
 	if status.Mode != CodexModePartialPlugin {
@@ -699,6 +707,30 @@ func prepareBasicCodexStatusProfile(t *testing.T) (home, repo string) {
 		return nil, nil
 	}
 	return home, repo
+}
+
+func installCurrentManagedPackStatusFixture(t *testing.T, home string) {
+	t.Helper()
+	bundleRoot := t.TempDir()
+	files := map[string]string{
+		filepath.Join("packs", "engram", "pack.json"):            filepath.Join("..", "..", "pack.json"),
+		filepath.Join("assets", "protocol-contract-v1.json"):     filepath.Join("..", "..", "assets", "protocol-contract-v1.json"),
+		filepath.Join("skills", "engram-memory-cli", "SKILL.md"): filepath.Join("..", "..", "skills", "engram-memory-cli", "SKILL.md"),
+	}
+	for destination, source := range files {
+		raw, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatalf("read Managed Pack fixture %s: %v", source, err)
+		}
+		writeStatusTestFile(t, filepath.Join(bundleRoot, destination), string(raw))
+	}
+	userSkillRoot := filepath.Join(home, ".agents", "skills")
+	if err := os.MkdirAll(userSkillRoot, 0o755); err != nil {
+		t.Fatalf("create user skill root: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(bundleRoot, "skills", "engram-memory-cli"), filepath.Join(userSkillRoot, "engram-memory-cli")); err != nil {
+		t.Fatalf("link Managed Pack skill projection: %v", err)
+	}
 }
 
 func snapshotStatusTestTree(t *testing.T, root string) []string {

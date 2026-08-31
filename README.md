@@ -67,7 +67,7 @@ Full per-agent config, Memory Protocol, and compaction survival → [docs/AGENT-
 
 **What `engram setup` does** — it writes MCP config and plugin files for the chosen agent. After a complete setup, restart your agent and it is ready. Codex reports plugin, checkpoint-capable CLI/MCP, activation-cue, and verifier readiness separately and does not claim completion while any required capability is unavailable. Once those replacements are verified, it retires only exact-owned legacy instruction and compaction activation; customized or ambiguous state is preserved and reported. No server to start manually.
 
-To inspect Codex without installing or repairing anything, run `engram setup status codex` (add `--json` for automation). It reports CLI, skill, marketplace, plugin, MCP, hook, activation-cue, and Stop-verifier state independently, then derives a conservative operating mode. This is a capability snapshot, not proof that the model invoked a skill or created a Memory in a particular session.
+To inspect Codex without installing or repairing anything, run `engram setup status codex` (add `--json` for automation). It reports the Managed Pack, Engram binary, Codex plugin, and Protocol contract as four independent version axes, computes their declared Protocol-range intersection, and reports CLI, skill, marketplace, MCP, hook, activation-cue, and Stop-verifier state independently. `checkpoint_ready` requires attributable compatible metadata; missing, malformed, ambiguous, or non-overlapping declarations fail closed. This is a capability snapshot, not proof that the model invoked a skill or created a Memory in a particular session.
 
 > **Do I need to run `engram serve` or `engram mcp` myself?**
 >

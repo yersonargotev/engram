@@ -31,6 +31,7 @@ import (
 
 	atomicfile "github.com/natefinch/atomic"
 	"github.com/yersonargotev/engram/internal/mcp"
+	"github.com/yersonargotev/engram/internal/protocolcontract"
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 )
@@ -2252,6 +2253,9 @@ type codexListedPlugin struct {
 
 type installedCodexPlugin struct {
 	Version            string
+	Protocol           *protocolcontract.VersionRange
+	ProtocolLegacy     bool
+	ManifestSHA256     string
 	MCPReady           bool
 	PromptHookReady    bool
 	SessionHookReady   bool
@@ -2281,9 +2285,14 @@ func verifyCodexPluginAtLocation(version, installedPath string, verifiedPluginAs
 		return installedCodexPlugin{}, fmt.Errorf("verify installed plugin manifest: %w", err)
 	}
 	var manifest struct {
-		Name       string `json:"name"`
-		Version    string `json:"version"`
-		Repository string `json:"repository"`
+		Name           string `json:"name"`
+		Version        string `json:"version"`
+		Repository     string `json:"repository"`
+		EngramProtocol *struct {
+			Minimum          int  `json:"minimum"`
+			Maximum          int  `json:"maximum"`
+			LegacyCompatible bool `json:"legacyCompatible"`
+		} `json:"engramProtocol"`
 	}
 	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
 		return installedCodexPlugin{}, fmt.Errorf("verify installed plugin manifest: %w", err)
@@ -2295,7 +2304,18 @@ func verifyCodexPluginAtLocation(version, installedPath string, verifiedPluginAs
 		return installedCodexPlugin{}, fmt.Errorf("installed plugin does not match the verified marketplace checkout: %w", err)
 	}
 
-	capabilities := installedCodexPlugin{Version: version}
+	manifestDigest := sha256.Sum256(manifestRaw)
+	capabilities := installedCodexPlugin{
+		Version:        version,
+		ManifestSHA256: hex.EncodeToString(manifestDigest[:]),
+	}
+	if manifest.EngramProtocol != nil {
+		capabilities.Protocol = &protocolcontract.VersionRange{
+			Minimum: manifest.EngramProtocol.Minimum,
+			Maximum: manifest.EngramProtocol.Maximum,
+		}
+		capabilities.ProtocolLegacy = manifest.EngramProtocol.LegacyCompatible
+	}
 	mcpRaw, err := readFileFn(filepath.Join(installedPath, ".mcp.json"))
 	if err == nil {
 		var mcpManifest struct {

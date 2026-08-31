@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yersonargotev/engram/internal/protocolcontract"
 	"github.com/yersonargotev/engram/internal/setup"
 	"github.com/yersonargotev/engram/internal/store"
 )
@@ -17,16 +18,25 @@ func TestCmdSetupStatusCodexJSONDoesNotInstall(t *testing.T) {
 		t.Fatal("setup status must not execute installation")
 		return nil, nil
 	}
-	setupInspectCodexStatus = func(runningVersion, cwd string) (setup.CodexIntegrationStatus, error) {
+	setupInspectCodexStatus = func(runningVersion, runningRevision, cwd string) (setup.CodexIntegrationStatus, error) {
 		if runningVersion != version {
 			t.Fatalf("running version = %q, want %q", runningVersion, version)
+		}
+		if runningRevision != commit {
+			t.Fatalf("running revision = %q, want %q", runningRevision, commit)
 		}
 		if strings.TrimSpace(cwd) == "" {
 			t.Fatal("working directory must be forwarded to skill discovery")
 		}
+		compatibility := protocolcontract.Evaluate(
+			protocolcontract.Declaration{Version: "3.2.0", Provenance: "pack:abc", Supported: &protocolcontract.VersionRange{Minimum: 1, Maximum: 1}},
+			protocolcontract.Declaration{Version: runningVersion, Provenance: "binary:/usr/local/bin/engram", Supported: &protocolcontract.VersionRange{Minimum: 1, Maximum: 1}},
+			protocolcontract.Declaration{Version: "0.1.6", Provenance: "plugin:def", Supported: &protocolcontract.VersionRange{Minimum: 1, Maximum: 1}},
+		)
 		return setup.CodexIntegrationStatus{
 			SchemaVersion: setup.CodexIntegrationStatusSchemaVersion,
 			Mode:          setup.CodexModeManualSkillCLI,
+			Compatibility: compatibility,
 			Checks: []setup.CodexIntegrationCheck{
 				{
 					Capability: "engram_cli",
@@ -58,13 +68,16 @@ func TestCmdSetupStatusCodexJSONDoesNotInstall(t *testing.T) {
 	if len(got.Checks) != 1 || got.Checks[0].Capability != "engram_cli" {
 		t.Fatalf("setup status checks = %#v", got.Checks)
 	}
+	if got.Compatibility.Status != protocolcontract.CompatibilityReady || len(got.Compatibility.Axes) != 4 {
+		t.Fatalf("setup status compatibility = %#v", got.Compatibility)
+	}
 }
 
 func TestSetupStatusCodexRunsBeforeUpdateChecksAndStoreResolution(t *testing.T) {
 	stubRuntimeHooks(t)
 	stubExitWithPanic(t)
 
-	setupInspectCodexStatus = func(string, string) (setup.CodexIntegrationStatus, error) {
+	setupInspectCodexStatus = func(string, string, string) (setup.CodexIntegrationStatus, error) {
 		return setup.CodexIntegrationStatus{
 			SchemaVersion: setup.CodexIntegrationStatusSchemaVersion,
 			Agent:         "codex",
@@ -92,10 +105,37 @@ func TestSetupStatusCodexRunsBeforeUpdateChecksAndStoreResolution(t *testing.T) 
 	}
 }
 
+func TestPrintCodexIntegrationStatusReportsTheFourVersionAxes(t *testing.T) {
+	stubRuntimeHooks(t)
+	report := protocolcontract.Evaluate(
+		protocolcontract.Declaration{Version: "3.2.0", Provenance: "pack:abc", Supported: &protocolcontract.VersionRange{Minimum: 1, Maximum: 1}},
+		protocolcontract.Declaration{Version: "3.0.1", Provenance: "binary:/opt/engram", Supported: &protocolcontract.VersionRange{Minimum: 1, Maximum: 1}},
+		protocolcontract.Declaration{Version: "0.1.6", Provenance: "plugin:def", Supported: &protocolcontract.VersionRange{Minimum: 1, Maximum: 1}},
+	)
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() {
+		printCodexIntegrationStatus(setup.CodexIntegrationStatus{Mode: setup.CodexModeCheckpointReady, Compatibility: report})
+	})
+	if recovered != nil || stderr != "" {
+		t.Fatalf("print status failed: panic=%v stderr=%q", recovered, stderr)
+	}
+	for _, want := range []string{
+		"Protocol compatibility: ready (protocol_compatible)",
+		"Managed Pack: 3.2.0; Protocol 1..1; pack:abc",
+		"Engram binary: 3.0.1; Protocol 1..1; binary:/opt/engram",
+		"Codex plugin: 0.1.6; Protocol 1..1; plugin:def",
+		"Protocol contract: 1; Protocol 1..1; engram-core",
+		"Protocol intersection: 1..1",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("human status output does not contain %q:\n%s", want, stdout)
+		}
+	}
+}
+
 func TestCmdSetupStatusCodexUnknownArgumentHonorsJSONModeAnywhere(t *testing.T) {
 	stubRuntimeHooks(t)
 	stubExitWithPanic(t)
-	setupInspectCodexStatus = func(string, string) (setup.CodexIntegrationStatus, error) {
+	setupInspectCodexStatus = func(string, string, string) (setup.CodexIntegrationStatus, error) {
 		t.Fatal("invalid status arguments must fail before inspection")
 		return setup.CodexIntegrationStatus{}, nil
 	}
@@ -116,7 +156,7 @@ func TestCmdSetupStatusCodexUnknownArgumentHonorsJSONModeAnywhere(t *testing.T) 
 func TestCmdSetupHelpDocumentsReadOnlyCodexStatus(t *testing.T) {
 	stubRuntimeHooks(t)
 	stubExitWithPanic(t)
-	setupInspectCodexStatus = func(string, string) (setup.CodexIntegrationStatus, error) {
+	setupInspectCodexStatus = func(string, string, string) (setup.CodexIntegrationStatus, error) {
 		t.Fatal("setup help must not inspect the profile")
 		return setup.CodexIntegrationStatus{}, nil
 	}

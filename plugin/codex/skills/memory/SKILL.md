@@ -6,11 +6,24 @@ description: "Checkpoint each settled root user turn as saved, skipped(no_durabl
 # Engram Memory checkpoint protocol
 
 <!-- engram:checkpoint-cue:start -->
-For every root user turn, use the engram-memory skill to finalize exactly one Engram checkpoint: `saved`, `skipped(no_durable_knowledge)`, or `needs_review`. Reuse the supplied Codex checkpoint identity across continuations; subagents do not create checkpoints.
+For every root user turn, use the engram-memory skill to make exactly one Terminal Memory commit after all causal work settles: `saved`, `skipped(no_durable_knowledge)`, or `needs_review`. Current user intent, maintained source, and runtime evidence override Memory. Reuse the supplied Codex checkpoint identity across continuations; subagents do not create checkpoints.
 <!-- engram:checkpoint-cue:end -->
 
 The cue above is the canonical model-visible activation text. Host adapters may
 extract and deliver it, but must not maintain their own Memory rubric.
+
+## Terminal Memory commit
+
+The default write path for normal agent work is one terminal Memory commit:
+choose the root turn's disposition after its causal work settles, then commit
+the checkpoint and any new durable Memories atomically. Do not create a
+separate Memory first when the terminal commit can carry the same result.
+
+Independent save is reserved for explicit curation or a long-running,
+material loss-risk handoff that must preserve knowledge before the root turn
+can settle. It does not replace the later terminal checkpoint for that turn.
+An optional Session summary is also a curation operation, not a root-turn
+completion requirement.
 
 ## Workflow
 
@@ -40,8 +53,15 @@ that message has settled.
 
 ## Recall when it can change the work
 
-Before similar or history-dependent work, use `mem_context` and then a targeted
-`mem_search` if needed. Recall is selective: a routine self-contained turn does
+Current user intent, maintained source, and runtime evidence override Memory.
+Memory is advisory; surface unresolved conflicts, and treat empty Recall as a
+successful result rather than inventing context.
+
+Before similar or history-dependent work, use a targeted `mem_search` when prior
+Memory can change the task. Follow a selected result with
+`mem_get_observation` when its full content matters. `mem_context` is an
+optional curation operation for explicitly requested chronological review, not
+part of the default five-tool Recall path. A routine self-contained turn does
 not require a search merely to satisfy the checkpoint protocol.
 
 ## Choose a disposition
@@ -61,7 +81,7 @@ future session, such as:
 
 Keep each Memory concise, safe to persist, and independently useful. Use an
 existing Memory reference when it already contains the durable result. When
-creating new Memories for the checkpoint, prefer the inline `memories` input so
+creating new Memories for the checkpoint, use the inline `memories` input so
 the core creates the Memories and checkpoint atomically. Do not save secrets,
 raw transcripts, or routine activity logs.
 

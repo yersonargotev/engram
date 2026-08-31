@@ -18,6 +18,7 @@ import (
 	mcppkg "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/yersonargotev/engram/internal/project"
+	"github.com/yersonargotev/engram/internal/protocolcontract"
 	"github.com/yersonargotev/engram/internal/store"
 )
 
@@ -2244,37 +2245,41 @@ func TestResolveToolsAgentProfile(t *testing.T) {
 		t.Fatal("expected non-nil allowlist for 'agent'")
 	}
 
-	expectedTools := []string{
-		"mem_save", "mem_search", "mem_context", "mem_session_summary",
-		"mem_session_start", "mem_session_end", "mem_get_observation",
-		"mem_suggest_topic_key", "mem_capture_passive", "mem_save_prompt",
-		"mem_update",            // skills explicitly say "use mem_update when you have an exact ID to correct"
-		"mem_current_project",   // added REQ-313: discovery tool recommended first call
-		"mem_judge",             // REQ-003: conflict verdict tool (Phase D)
-		"mem_compare",           // REQ-011: persist agent-judged semantic verdict (Phase G)
-		"mem_doctor",            // read-only operational diagnostics
-		"mem_checkpoint",        // terminal root-turn disposition
-		"mem_checkpoint_status", // exact root-turn inspection
-		"mem_review",            // lifecycle review list/maintenance
-		"mem_pin",               // local context priority
-		"mem_unpin",             // local context priority
-	}
+	expectedTools := protocolcontract.MinimumTools()
 	for _, tool := range expectedTools {
 		if !result[tool] {
 			t.Errorf("agent profile missing tool: %s", tool)
 		}
 	}
 
-	// Admin-only tools should NOT be in agent profile
-	adminOnly := []string{"mem_delete", "mem_stats", "mem_timeline"}
-	for _, tool := range adminOnly {
-		if result[tool] {
-			t.Errorf("agent profile should NOT contain admin tool: %s", tool)
-		}
-	}
-
 	if len(result) != len(expectedTools) {
 		t.Errorf("agent profile has %d tools, expected %d", len(result), len(expectedTools))
+	}
+}
+
+func TestSpecializedProfilesPreserveNonDefaultMemoryOperations(t *testing.T) {
+	for profile, expectedTools := range map[string][]string{
+		"curation": {
+			"mem_save", "mem_context", "mem_session_summary", "mem_suggest_topic_key",
+			"mem_update", "mem_judge", "mem_compare", "mem_doctor", "mem_review",
+			"mem_pin", "mem_unpin",
+		},
+		"lifecycle": {
+			"mem_session_start", "mem_session_end", "mem_save_prompt", "mem_capture_passive",
+		},
+	} {
+		resolved := ResolveTools(profile)
+		if resolved == nil {
+			t.Fatalf("%s profile resolved to all tools", profile)
+		}
+		for _, tool := range expectedTools {
+			if !resolved[tool] {
+				t.Errorf("%s profile missing %s", profile, tool)
+			}
+		}
+		if len(resolved) != len(expectedTools) {
+			t.Errorf("%s profile has %d tools, want %d: %#v", profile, len(resolved), len(expectedTools), resolved)
+		}
 	}
 }
 
@@ -2297,7 +2302,7 @@ func TestResolveToolsAdminProfile(t *testing.T) {
 }
 
 func TestResolveToolsCombinedProfiles(t *testing.T) {
-	result := ResolveTools("agent,admin")
+	result := ResolveTools("agent,curation,lifecycle,admin")
 	if result == nil {
 		t.Fatal("expected non-nil allowlist for combined profiles")
 	}
@@ -2363,8 +2368,8 @@ func TestResolveToolsWhitespace(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected non-nil for agent with whitespace")
 	}
-	if !result["mem_save"] {
-		t.Error("agent profile should include mem_save")
+	if !result["mem_current_project"] {
+		t.Error("agent profile should include mem_current_project")
 	}
 }
 
@@ -2780,11 +2785,11 @@ func TestHandleSearch_NoRelationsUnchanged(t *testing.T) {
 	}
 }
 
-// D.4b — mem_judge registered in ProfileAgent (tool registration test).
+// D.4b — mem_judge remains available in the curation profile.
 // REQ-003 | Design §6.5
-func TestHandleJudge_RegisteredInAgentProfile(t *testing.T) {
-	if !ProfileAgent["mem_judge"] {
-		t.Fatalf("mem_judge must be registered in ProfileAgent")
+func TestHandleJudge_RegisteredInCurationProfile(t *testing.T) {
+	if !ProfileCuration["mem_judge"] {
+		t.Fatalf("mem_judge must be registered in ProfileCuration")
 	}
 }
 
@@ -2830,25 +2835,21 @@ func TestNewServerWithToolsAgentProfile(t *testing.T) {
 
 	tools := srv.ListTools()
 
-	// Agent tools should be present.
-	agentTools := []string{
-		"mem_save", "mem_search", "mem_context", "mem_session_summary",
-		"mem_session_start", "mem_session_end", "mem_get_observation",
-		"mem_suggest_topic_key", "mem_capture_passive", "mem_save_prompt",
-		"mem_update", "mem_checkpoint", "mem_checkpoint_status",
-	}
+	// Exactly the five Protocol tools should be present.
+	agentTools := protocolcontract.MinimumTools()
 	for _, name := range agentTools {
 		if tools[name] == nil {
 			t.Errorf("agent profile: expected tool %q to be registered", name)
 		}
 	}
 
-	// Admin-only tools should NOT be present
-	adminTools := []string{"mem_delete", "mem_stats", "mem_timeline"}
-	for _, name := range adminTools {
+	for _, name := range []string{"mem_save", "mem_context", "mem_session_summary", "mem_save_prompt", "mem_judge", "mem_doctor", "mem_delete"} {
 		if tools[name] != nil {
-			t.Errorf("agent profile: tool %q should NOT be registered", name)
+			t.Errorf("agent profile: specialized tool %q should NOT be registered", name)
 		}
+	}
+	if len(tools) != len(agentTools) {
+		t.Errorf("agent profile registered %d tools, want %d", len(tools), len(agentTools))
 	}
 }
 
@@ -2928,14 +2929,14 @@ func TestNewServerWithToolsIndividualSelection(t *testing.T) {
 	}
 }
 
-func TestMemDoctorRegisteredAndReturnsEnvelope(t *testing.T) {
+func TestMemDoctorRegisteredInCurationProfileAndReturnsEnvelope(t *testing.T) {
 	s := newMCPTestStore(t)
 	if err := s.CreateSession("manual-save-engram", "engram", "/work/engram"); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	srv := NewServerWithTools(s, ResolveTools("agent"))
+	srv := NewServerWithTools(s, ResolveTools("curation"))
 	if srv.ListTools()["mem_doctor"] == nil {
-		t.Fatal("expected mem_doctor in agent profile")
+		t.Fatal("expected mem_doctor in curation profile")
 	}
 	res, err := handleDoctor(s, MCPConfig{})(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{"project": "engram", "check": "manual_session_name_project_mismatch"}}})
 	if err != nil {
@@ -3008,25 +3009,18 @@ func TestNewServerBackwardsCompatible(t *testing.T) {
 }
 
 func TestProfileConsistency(t *testing.T) {
-	// Verify that agent + admin = all 24 tools
+	// Verify that the four disjoint profiles cover all 24 tools.
 	combined := make(map[string]bool)
-	for tool := range ProfileAgent {
-		combined[tool] = true
-	}
-	for tool := range ProfileAdmin {
-		combined[tool] = true
-	}
-
-	// 20 agent + 4 admin = 24 total.
-	if len(combined) != 24 {
-		t.Errorf("agent + admin should cover all 24 tools, got %d", len(combined))
-	}
-
-	// Verify no overlap between profiles
-	for tool := range ProfileAgent {
-		if ProfileAdmin[tool] {
-			t.Errorf("tool %q appears in both agent and admin profiles", tool)
+	for name, profile := range Profiles {
+		for tool := range profile {
+			if combined[tool] {
+				t.Errorf("tool %q appears in more than one profile (including %s)", tool, name)
+			}
+			combined[tool] = true
 		}
+	}
+	if len(combined) != 24 {
+		t.Errorf("profiles should cover all 24 tools, got %d", len(combined))
 	}
 }
 
@@ -3036,8 +3030,8 @@ func TestServerInstructionsConstantIsNonEmpty(t *testing.T) {
 	if serverInstructions == "" {
 		t.Fatal("serverInstructions should not be empty — it drives Tool Search discovery")
 	}
-	// Must mention key tool names so Tool Search can index them
-	for _, keyword := range []string{"mem_save", "mem_search", "mem_context", "mem_session_summary"} {
+	// Must mention the complete default Protocol surface.
+	for _, keyword := range protocolcontract.MinimumTools() {
 		if !strings.Contains(serverInstructions, keyword) {
 			t.Errorf("serverInstructions should mention %q for Tool Search indexing", keyword)
 		}
@@ -3051,11 +3045,7 @@ func TestCoreToolsAreNotDeferred(t *testing.T) {
 	srv := NewServer(s)
 	tools := srv.ListTools()
 
-	coreTools := []string{
-		"mem_save", "mem_search", "mem_context", "mem_session_summary",
-		"mem_get_observation", "mem_save_prompt", "mem_current_project",
-		"mem_checkpoint", "mem_checkpoint_status",
-	}
+	coreTools := protocolcontract.MinimumTools()
 	for _, name := range coreTools {
 		tool := tools[name]
 		if tool == nil {
@@ -3073,20 +3063,36 @@ func TestNonCoreToolsAreDeferred(t *testing.T) {
 	srv := NewServer(s)
 	tools := srv.ListTools()
 
-	deferredTools := []string{
-		"mem_update", "mem_suggest_topic_key",
-		"mem_session_start", "mem_session_end",
-		"mem_stats", "mem_delete", "mem_timeline",
-		"mem_capture_passive", "mem_merge_projects",
+	coreTools := make(map[string]bool)
+	for _, name := range protocolcontract.MinimumTools() {
+		coreTools[name] = true
 	}
-	for _, name := range deferredTools {
-		tool := tools[name]
-		if tool == nil {
-			t.Errorf("deferred tool %q should be registered", name)
-			continue
+	for name, tool := range tools {
+		if !coreTools[name] && !tool.Tool.DeferLoading {
+			t.Errorf("non-default tool %q should have DeferLoading=true", name)
 		}
-		if !tool.Tool.DeferLoading {
-			t.Errorf("non-core tool %q should have DeferLoading=true", name)
+	}
+}
+
+func TestSpecializedMemoryDescriptionsDeferToTerminalPolicy(t *testing.T) {
+	s := newMCPTestStore(t)
+	tools := NewServer(s).ListTools()
+	for toolName, required := range map[string][]string{
+		"mem_save":            {"Terminal Memory commit", "explicit curation", "material loss-risk handoff"},
+		"mem_session_summary": {"optional Session summary", "explicit curation", "not lifecycle completion"},
+		"mem_save_prompt":     {"Content capture", "lifecycle"},
+		"mem_capture_passive": {"specialized lifecycle", "Content capture"},
+	} {
+		description := tools[toolName].Tool.Description
+		for _, phrase := range required {
+			if !strings.Contains(description, phrase) {
+				t.Errorf("%s description missing %q", toolName, phrase)
+			}
+		}
+		for _, legacy := range []string{"PROACTIVELY", "MANDATORY", "after each of these"} {
+			if strings.Contains(description, legacy) {
+				t.Errorf("%s description retains legacy mandate %q", toolName, legacy)
+			}
 		}
 	}
 }
@@ -7072,17 +7078,16 @@ func TestAllTools_ReadResponseEnvelope_WithAssertions(t *testing.T) {
 
 // ─── Phase E — Conflict Surfacing Instructions ────────────────────────────────
 
-// TestServerInstructions_ConflictSurfacingBlock verifies that serverInstructions
-// contains the CONFLICT SURFACING section with all required guidance phrases.
-// This is the RED→GREEN test for Phase E (E.1).
-func TestServerInstructions_ConflictSurfacingBlock(t *testing.T) {
+// TestCurationToolDescription_ConflictSurfacing verifies that the specialized
+// mem_judge tool retains the conflict workflow after leaving the default profile.
+func TestCurationToolDescription_ConflictSurfacing(t *testing.T) {
+	s := newMCPTestStore(t)
+	tool := NewServerWithTools(s, ResolveTools("mem_judge")).ListTools()["mem_judge"]
+	if tool == nil {
+		t.Fatal("mem_judge should remain explicitly selectable")
+	}
+	description := tool.Tool.Description
 	required := []string{
-		// Section header — agents must be able to grep for it
-		"## CONFLICT SURFACING",
-
-		// Core trigger condition
-		"judgment_required",
-
 		// The action: iterate candidates and call mem_judge
 		"candidates[]",
 		"mem_judge",
@@ -7095,16 +7100,16 @@ func TestServerInstructions_ConflictSurfacingBlock(t *testing.T) {
 		"conflicts_with",
 		"architecture",
 
-		// Conversational (not blocking) resolution pattern
-		"conversationally",
+		// User-visible resolution pattern for low-confidence/high-stakes findings.
+		"surface to user",
 
 		// Post-resolution: persist via mem_judge with evidence
 		"evidence",
 	}
 
 	for _, phrase := range required {
-		if !strings.Contains(serverInstructions, phrase) {
-			t.Errorf("serverInstructions is missing required phrase %q in CONFLICT SURFACING block", phrase)
+		if !strings.Contains(description, phrase) {
+			t.Errorf("mem_judge description is missing required phrase %q", phrase)
 		}
 	}
 }

@@ -17,8 +17,10 @@ Do not put core behavior in the command if it can live in a testable package. Th
 | Profile | Use |
 |---|---|
 | `all` | Default for `engram mcp`; registers all tools. |
-| `agent` | Normal agent tools, such as save/search/context/session summary/current project/judge/doctor. |
-| `admin` | Manual curation: stats, delete, timeline, merge. |
+| `agent` | Exactly current project, search, get observation, checkpoint, and checkpoint status. |
+| `curation` | Explicit authoring, optional Session summary, context, review, relations, diagnosis, and pins. |
+| `lifecycle` | Host session start/end, prompt save, and passive Content capture. |
+| `admin` | Destructive and operational maintenance: delete, stats, timeline, merge. |
 
 Important points:
 
@@ -55,7 +57,7 @@ The TUI uses Bubbletea and reads from the local store. The separation is classic
 
 - [ ] The tool uses store as the source of truth.
 - [ ] Project resolution respects `.engram/config.json`, cwd, and the `ambiguous_project` flow.
-- [ ] The `agent`/`admin` profile remains intentional.
+- [ ] The `agent`/`curation`/`lifecycle`/`admin` profile remains intentional.
 - [ ] Errors return useful envelopes for agents.
 - [ ] Tests in `internal/mcp/*_test.go` cover the contract.
 - [ ] `docs/AGENT-SETUP.md`, `docs/ARCHITECTURE.md`, or `DOCS.md` are updated if visible behavior changes.

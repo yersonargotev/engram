@@ -31,8 +31,15 @@ const ENGRAM_STARTUP_POLL_MS = 100;
 const ENGRAM_STARTUP_RETRY_BASE_MS = 1000;
 const ENGRAM_STARTUP_RETRY_MAX_MS = 60000;
 
-const ENGRAM_TOOLS = [
+const DEFAULT_ENGRAM_TOOLS = [
+  "mem_current_project",
   "mem_search",
+  "mem_get_observation",
+  "mem_checkpoint",
+  "mem_checkpoint_status",
+] as const;
+
+const SPECIALIZED_ENGRAM_TOOLS = [
   "mem_save",
   "mem_update",
   "mem_delete",
@@ -42,10 +49,8 @@ const ENGRAM_TOOLS = [
   "mem_context",
   "mem_stats",
   "mem_timeline",
-  "mem_get_observation",
   "mem_session_start",
   "mem_session_end",
-  "mem_current_project",
   "mem_doctor",
   "mem_capture_passive",
   "mem_review",
@@ -53,50 +58,34 @@ const ENGRAM_TOOLS = [
   "mem_compare",
 ] as const;
 
+const ENGRAM_TOOLS = [...DEFAULT_ENGRAM_TOOLS, ...SPECIALIZED_ENGRAM_TOOLS] as const;
 const ENGRAM_TOOL_NAMES = new Set<string>(ENGRAM_TOOLS);
 
-const MEMORY_INSTRUCTIONS = `## Engram Persistent Memory — Protocol
+function selectedEngramTools(): readonly string[] {
+  return process.env.ENGRAM_PI_TOOL_PROFILE === "all" ? ENGRAM_TOOLS : DEFAULT_ENGRAM_TOOLS;
+}
 
-You have access to Engram, a persistent memory system that survives across sessions and compactions.
-These instructions are injected by gentle-engram, the Pi-native memory provider. Use the memory tools named in this section as the authoritative Pi memory contract. Do not infer alternative Engram tool names from other integrations unless the user explicitly asks you to use them.
+const MEMORY_INSTRUCTIONS = `## Engram Terminal Memory protocol
 
-### WHEN TO SAVE (mandatory — not optional)
+These instructions are injected by gentle-engram, the Pi-native memory provider.
+Use the five tools named below as the authoritative default Pi Memory contract;
+do not infer alternative tool names from other integrations.
 
-Call \`mem_save\` IMMEDIATELY after any of these:
-- Bug fix completed
-- Architecture or design decision made
-- Non-obvious discovery about the codebase
-- Configuration change or environment setup
-- Pattern established (naming, structure, convention)
-- User preference or constraint learned
+For every settled root user turn, make exactly one Terminal Memory commit:
+\`saved\`, \`needs_review\`, or \`skipped(no_durable_knowledge)\`. Finalize only
+after all causal agent, tool, subagent, compaction, and continuation work settles.
 
-Format for \`mem_save\`:
-- **title**: Verb + what — short, searchable
-- **type**: bugfix | decision | architecture | discovery | pattern | config | preference
-- **scope**: \`project\` (default) | \`personal\`
-- **topic_key**: stable key for evolving decisions when relevant
-- **content**:
-  **What**: One sentence — what was done
-  **Why**: What motivated it
-  **Where**: Files or paths affected
-  **Learned**: Gotchas, edge cases, things that surprised you
+### DEFAULT AGENT TOOLS — exactly five
+\`mem_current_project\`, \`mem_search\`, \`mem_get_observation\`, \`mem_checkpoint\`, \`mem_checkpoint_status\`
 
-### WHEN TO SEARCH MEMORY
+Current user intent, maintained source, and runtime evidence override Memory.
+Recall only when it can change the work; empty Recall is successful. Reuse the
+supplied opaque root-turn identity across continuations. The canonical
+engram-memory skill owns the durability and disposition rubric.
 
-When the user asks to recall past work, first call \`mem_context\`. If not found,
-call \`mem_search\`, then \`mem_get_observation\` for full content.
-
-### SESSION CLOSE PROTOCOL
-
-Before ending a session or saying "done", call \`mem_session_summary\`
-with Goal, Instructions, Discoveries, Accomplished, Next Steps, and Relevant Files.
-If \`mem_session_summary\` fails because Engram cannot detect a project, ask the user
-which project should receive the summary, then retry with \`project: "<name>"\`.
-
-### AFTER COMPACTION
-
-If you see "FIRST ACTION REQUIRED" or a compacted summary, save it immediately
-with \`mem_session_summary\`, then call \`mem_context\` before continuing.
+Session summary and independent save are optional curation workflows. Capture
+and lifecycle operations stay outside the default profile. Set
+\`ENGRAM_PI_TOOL_PROFILE=all\` only for an explicit specialized workflow.
 `;
 
 interface FetchOptions {
@@ -238,7 +227,9 @@ async function engramFetch<TResponse = unknown>(path: string, opts: FetchOptions
   if (!res.ok) {
     const message = data && typeof data === "object" && "error" in data && typeof data.error === "string"
       ? data.error
-      : `Engram request failed with HTTP ${res.status}`;
+      : data && typeof data === "object" && "message" in data && typeof data.message === "string"
+        ? data.message
+        : `Engram request failed with HTTP ${res.status}`;
     throw new EngramHttpError(message, res.status, data);
   }
 
@@ -836,6 +827,31 @@ const MEMORY_TOOL_SCHEMAS: Record<string, ReturnType<typeof Type.Object>> = {
   mem_get_observation: Type.Object({
     id: Type.Number({ description: "Observation ID to retrieve" }),
   }),
+  mem_checkpoint: Type.Object({
+    host: Type.String({ description: "Opaque host identity supplied for the root turn" }),
+    session_id: Type.String({ description: "Opaque root session identity" }),
+    root_turn_id: Type.String({ description: "Opaque original root-turn identity" }),
+    disposition: Type.String({ description: "Terminal disposition: saved, needs_review, or skipped" }),
+    reason: optionalString("Required reason for skipped: no_durable_knowledge"),
+    project: optionalString("Required project for saved and needs_review"),
+    memory_ids: Type.Optional(Type.Array(Type.Number({ description: "Existing Memory ID" }))),
+    memories: Type.Optional(Type.Array(Type.Object({
+      title: Type.String({ description: "Short, searchable Memory title" }),
+      content: Type.String({ description: "Bounded durable Memory content" }),
+      type: optionalString("Memory type/category"),
+      scope: optionalString("Memory scope: project or personal"),
+      topic_key: optionalString("Stable topic key"),
+    }))),
+    proposal: Type.Optional(Type.Object({
+      title: Type.String({ description: "Short proposal title" }),
+      content: Type.String({ description: "Bounded, redacted proposal content" }),
+    })),
+  }),
+  mem_checkpoint_status: Type.Object({
+    host: Type.String({ description: "Opaque host identity supplied for the root turn" }),
+    session_id: Type.String({ description: "Opaque root session identity" }),
+    root_turn_id: Type.String({ description: "Opaque original root-turn identity" }),
+  }),
   mem_session_start: Type.Object({
     id: Type.String({ description: "Unique session identifier" }),
     directory: optionalString("Working directory"),
@@ -935,6 +951,34 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
       return engramFetch(`/timeline${queryString({ observation_id: params.observation_id, before: params.before, after: params.after, project: params.project })}`);
     case "mem_get_observation":
       return engramFetch(`/observations/${encodeURIComponent(String(params.id))}`);
+    case "mem_checkpoint": {
+      const disposition = String(params.disposition || "");
+      let checkpointProject = typeof params.project === "string" && params.project ? params.project : undefined;
+      if ((disposition === "saved" || disposition === "needs_review") && !checkpointProject) {
+        requireWriteProject();
+        checkpointProject = project;
+      }
+      return engramFetch("/checkpoints", {
+        method: "POST",
+        body: {
+          host: params.host,
+          session_id: params.session_id,
+          root_turn_id: params.root_turn_id,
+          disposition,
+          reason_code: params.reason,
+          project: checkpointProject,
+          memory_ids: params.memory_ids,
+          memories: params.memories,
+          proposal: params.proposal,
+        },
+      });
+    }
+    case "mem_checkpoint_status":
+      return engramFetch(`/checkpoints/status${queryString({
+        host: params.host,
+        session_id: params.session_id,
+        root_turn_id: params.root_turn_id,
+      })}`);
     case "mem_save": {
       if (!requestedProject) requireWriteProject();
       const activeSessionId = runtimeSessionForWrite();
@@ -1116,7 +1160,7 @@ async function executeMemoryTool(toolName: string, params: Record<string, unknow
 }
 
 function registerMemoryTools(pi: ExtensionAPI): void {
-  for (const toolName of ENGRAM_TOOLS) {
+  for (const toolName of selectedEngramTools()) {
     pi.registerTool({
       name: toolName,
       label: `Engram: ${humanToolName(toolName)}`,

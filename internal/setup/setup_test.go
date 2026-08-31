@@ -236,8 +236,14 @@ func TestInstallGeminiCLIInjectsMCPConfig(t *testing.T) {
 	if !strings.Contains(systemText, "### AFTER COMPACTION") {
 		t.Fatalf("expected AFTER COMPACTION section in system prompt")
 	}
-	if !strings.Contains(systemText, "FIRST ACTION REQUIRED") {
-		t.Fatalf("expected FIRST ACTION REQUIRED guidance in system prompt")
+	if !strings.Contains(systemText, "### TERMINAL MEMORY COMMIT") {
+		t.Fatalf("expected Terminal Memory policy in system prompt")
+	}
+	if strings.Contains(systemText, "FIRST ACTION REQUIRED") {
+		t.Fatalf("system prompt retains retired FIRST ACTION REQUIRED guidance")
+	}
+	if !strings.Contains(systemText, "Current user intent, maintained source, and runtime evidence override Memory") {
+		t.Fatalf("expected Memory authority order in system prompt")
 	}
 
 	// GEMINI_SYSTEM_MD should NOT be set (it breaks Gemini outside $HOME)
@@ -251,6 +257,65 @@ func TestInstallGeminiCLIInjectsMCPConfig(t *testing.T) {
 
 	if _, err := Install("gemini-cli"); err != nil {
 		t.Fatalf("second install should be idempotent: %v", err)
+	}
+}
+
+func TestMemoryProtocolUsesTerminalPolicyAndFiveDefaultTools(t *testing.T) {
+	for _, required := range []string{
+		"### TERMINAL MEMORY COMMIT",
+		"saved",
+		"needs_review",
+		"skipped(no_durable_knowledge)",
+		"Current user intent, maintained source, and runtime evidence override Memory",
+		"Session summaries and independent Memory saves are optional curation operations",
+	} {
+		if !strings.Contains(memoryProtocolMarkdown, required) {
+			t.Errorf("Memory Protocol missing %q", required)
+		}
+	}
+
+	defaultStart := strings.Index(memoryProtocolMarkdown, "### DEFAULT AGENT TOOLS")
+	defaultEnd := strings.Index(memoryProtocolMarkdown, "### SELECTIVE RECALL")
+	if defaultStart == -1 || defaultEnd <= defaultStart {
+		t.Fatal("Memory Protocol is missing a bounded DEFAULT AGENT TOOLS section")
+	}
+	defaultSection := memoryProtocolMarkdown[defaultStart:defaultEnd]
+	toolLines := 0
+	for _, line := range strings.Split(defaultSection, "\n") {
+		if strings.HasPrefix(line, "- mem_") {
+			toolLines++
+		}
+	}
+	if toolLines != 5 {
+		t.Fatalf("default agent section lists %d tools, want exactly 5", toolLines)
+	}
+	for _, tool := range []string{
+		"mem_current_project", "mem_search", "mem_get_observation",
+		"mem_checkpoint", "mem_checkpoint_status",
+	} {
+		if !strings.Contains(defaultSection, "- "+tool+" ") {
+			t.Errorf("default agent section missing %s", tool)
+		}
+	}
+
+	for _, retired := range []string{
+		"SESSION CLOSE PROTOCOL", "FIRST ACTION REQUIRED", "WHEN TO SAVE (mandatory",
+		"search memory PROACTIVELY", "next session starts blind",
+	} {
+		if strings.Contains(memoryProtocolMarkdown, retired) {
+			t.Errorf("Memory Protocol retains retired policy %q", retired)
+		}
+		if strings.Contains(codexCompactPromptMarkdown, retired) {
+			t.Errorf("compact prompt retains retired policy %q", retired)
+		}
+	}
+	for _, required := range []string{
+		"original root user turn", "exact opaque checkpoint identity",
+		"saved, needs_review, or skipped(no_durable_knowledge)",
+	} {
+		if !strings.Contains(codexCompactPromptMarkdown, required) {
+			t.Errorf("compact prompt missing %q", required)
+		}
 	}
 }
 
@@ -2228,15 +2293,20 @@ func TestClaudeCodePermissionTools(t *testing.T) {
 		t.Fatalf("unexpected permissions:\nwant %#v\n got %#v", want, tools)
 	}
 
-	for _, tool := range []string{
+	wantAgentTools := []string{
+		"mcp__engram__mem_checkpoint",
+		"mcp__engram__mem_checkpoint_status",
 		"mcp__engram__mem_current_project",
-		"mcp__engram__mem_judge",
+		"mcp__engram__mem_get_observation",
+		"mcp__engram__mem_search",
+		"mcp__plugin_engram_engram__mem_checkpoint",
+		"mcp__plugin_engram_engram__mem_checkpoint_status",
 		"mcp__plugin_engram_engram__mem_current_project",
-		"mcp__plugin_engram_engram__mem_judge",
-	} {
-		if !slices.Contains(claudeCodeMCPTools, tool) {
-			t.Fatalf("claudeCodeMCPTools missing current agent permission %q", tool)
-		}
+		"mcp__plugin_engram_engram__mem_get_observation",
+		"mcp__plugin_engram_engram__mem_search",
+	}
+	if !reflect.DeepEqual(claudeCodeMCPTools, wantAgentTools) {
+		t.Fatalf("unexpected current agent permissions:\nwant %#v\n got %#v", wantAgentTools, claudeCodeMCPTools)
 	}
 }
 
@@ -2249,8 +2319,10 @@ func TestClaudeCodeMemorySkillDoesNotHardcodePluginScopedToolSearch(t *testing.T
 	if strings.Contains(text, "select:mcp__plugin_engram_engram__") {
 		t.Fatalf("memory skill must not hardcode plugin-scoped ToolSearch names")
 	}
-	if !strings.Contains(text, "engram setup claude-code") {
-		t.Fatalf("memory skill fallback should direct users to repair Claude Code setup")
+	for _, want := range []string{"Terminal Memory commit", "saved", "needs_review", "skipped(no_durable_knowledge)"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("memory skill missing terminal policy fragment %q", want)
+		}
 	}
 }
 
@@ -2264,11 +2336,11 @@ func TestClaudeCodeUserPromptHookUsesCurrentMCPServerID(t *testing.T) {
 		t.Fatalf("user prompt hook must not hardcode plugin-scoped ToolSearch names")
 	}
 	for _, tool := range []string{
-		"mcp__engram__mem_save",
-		"mcp__engram__mem_search",
-		"mcp__engram__mem_context",
 		"mcp__engram__mem_current_project",
-		"mcp__engram__mem_judge",
+		"mcp__engram__mem_search",
+		"mcp__engram__mem_get_observation",
+		"mcp__engram__mem_checkpoint",
+		"mcp__engram__mem_checkpoint_status",
 	} {
 		if !strings.Contains(text, tool) {
 			t.Fatalf("user prompt hook missing current ToolSearch name %q", tool)
@@ -2357,7 +2429,9 @@ func TestClaudeCodeUserPromptHookIncludesPowerShellFallback(t *testing.T) {
 	for _, want := range []string{
 		"[Console]::In.ReadToEnd()",
 		"ConvertFrom-Json",
-		"mcp__engram__mem_context",
+		"mcp__engram__mem_current_project",
+		"mcp__engram__mem_checkpoint",
+		"mcp__engram__mem_checkpoint_status",
 		"Write-EmptyHookResponse",
 	} {
 		if !strings.Contains(text, want) {

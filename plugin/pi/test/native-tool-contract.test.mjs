@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { importPluginFromSandbox, PLUGIN_ROOT, withPluginSandbox } from "./plugin-sandbox.mjs";
 
+// Contract tests below exercise deferred curation/lifecycle tools explicitly.
+process.env.ENGRAM_PI_TOOL_PROFILE = "all";
+
 // The runtime context these fixtures hand the plugin still points at the checkout, because the
 // plugin only ever reads `cwd`. The module it loads comes from the sandbox, so nothing under the
 // checkout is written to or removed.
@@ -122,6 +125,90 @@ test("registered Pi-native mem_save_prompt persists through the Engram /prompts 
   }
 });
 
+test("Pi-native checkpoints use the configured HTTP provider and preserve structured failures", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalUrl = process.env.ENGRAM_URL;
+  const originalBin = process.env.ENGRAM_BIN;
+  process.env.ENGRAM_URL = "http://127.0.0.1:17437";
+  process.env.ENGRAM_BIN = "/does/not/exist/engram";
+  const checkpointCalls = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const path = new URL(url).pathname;
+    if (path === "/health") return new Response(`{"status":"ok"}`);
+    if (path === "/project/current") {
+      return new Response(JSON.stringify({
+        project: "engram", project_source: "git_remote", project_strength: "strong", implicit_write_allowed: true,
+      }));
+    }
+    if (path === "/checkpoints/status") {
+      checkpointCalls.push({ method: init.method ?? "GET", path: new URL(url).pathname + new URL(url).search });
+      return new Response(JSON.stringify({ checkpoint: { disposition: "skipped" } }));
+    }
+    if (path === "/checkpoints") {
+      const body = JSON.parse(init.body);
+      checkpointCalls.push({ method: init.method, path, body });
+      if (body.root_turn_id === "turn-conflict") {
+        return new Response(JSON.stringify({
+          code: "checkpoint_conflict",
+          message: "checkpoint already recorded with a different terminal result",
+          details: { existing_disposition: "saved" },
+        }), { status: 409 });
+      }
+      if (body.root_turn_id === "turn-invalid") {
+        return new Response(JSON.stringify({
+          code: "invalid_checkpoint_identity",
+          message: "checkpoint identity fields must be non-empty",
+          details: { field: "session_id" },
+        }), { status: 400 });
+      }
+      return new Response(JSON.stringify({ idempotency: "created", checkpoint: { disposition: "skipped" } }), { status: 201 });
+    }
+    return new Response(`{}`, { status: 404 });
+  };
+
+  try {
+    await withPluginSandbox("engram-pi-checkpoint-provider-", async ({ sandbox }) => {
+      const { registeredTools } = await loadPluginHarness(sandbox);
+      const checkpoint = registeredTools.get("mem_checkpoint");
+      const status = registeredTools.get("mem_checkpoint_status");
+      const ctx = runtimeContext("runtime-session");
+
+      const success = await checkpoint.execute("checkpoint-success", {
+        host: "pi", session_id: "session-success", root_turn_id: "turn-success",
+        disposition: "skipped", reason: "no_durable_knowledge",
+      }, undefined, undefined, ctx);
+      assert.notEqual(success.isError, true);
+
+      for (const [turn, code, detail] of [
+        ["turn-conflict", "checkpoint_conflict", "saved"],
+        ["turn-invalid", "invalid_checkpoint_identity", "session_id"],
+      ]) {
+        const failed = await checkpoint.execute(`checkpoint-${turn}`, {
+          host: "pi", session_id: "session-error", root_turn_id: turn,
+          disposition: "skipped", reason: "no_durable_knowledge",
+        }, undefined, undefined, ctx);
+        assert.equal(failed.isError, true);
+        assert.equal(failed.details.data.code, code);
+        assert.ok(Object.values(failed.details.data.details).includes(detail));
+        assert.match(failed.content[0].text, /checkpoint|identity/);
+      }
+
+      const inspected = await status.execute("checkpoint-status", {
+        host: "pi", session_id: "session-success", root_turn_id: "turn-success",
+      }, undefined, undefined, ctx);
+      assert.notEqual(inspected.isError, true);
+      assert.deepEqual(checkpointCalls.map((call) => call.method), ["POST", "POST", "POST", "GET"]);
+      assert.ok(checkpointCalls.every((call) => call.path.startsWith("/checkpoints")));
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalUrl === undefined) delete process.env.ENGRAM_URL;
+    else process.env.ENGRAM_URL = originalUrl;
+    if (originalBin === undefined) delete process.env.ENGRAM_BIN;
+    else process.env.ENGRAM_BIN = originalBin;
+  }
+});
+
 test("registered Pi-native mem_search reports native provider transport failure", async () => {
   const originalFetch = globalThis.fetch;
   const originalUrl = process.env.ENGRAM_URL;
@@ -174,6 +261,7 @@ test("weak detected identity remains available to reads but cannot authorize Pi 
   process.env.ENGRAM_URL = "http://127.0.0.1:17437";
   let sessionWrites = 0;
   let observationWrites = 0;
+  let checkpointWrites = 0;
   globalThis.fetch = async (url) => {
     const path = new URL(url).pathname;
     if (path === "/health") return { ok: true, async json() { return { status: "ok" }; } };
@@ -195,6 +283,7 @@ test("weak detected identity remains available to reads but cannot authorize Pi 
     if (path === "/context") return { ok: true, async json() { return { context: "readable weak context" }; } };
     if (path === "/sessions") sessionWrites += 1;
     if (path === "/observations") observationWrites += 1;
+    if (path === "/checkpoints") checkpointWrites += 1;
     return { ok: true, status: 201, async json() { return {}; } };
   };
 
@@ -219,6 +308,20 @@ test("weak detected identity remains available to reads but cannot authorize Pi 
       assert.match(write.content[0].text, /provide an explicit project name and retry the write/);
       assert.equal(sessionWrites, 0);
       assert.equal(observationWrites, 0);
+
+      const checkpoint = await registeredTools.get("mem_checkpoint").execute(
+        "weak-checkpoint",
+        {
+          host: "pi", session_id: "weak-identity-session", root_turn_id: "turn-weak",
+          disposition: "needs_review", proposal: { title: "Review", content: "Must not persist" },
+        },
+        undefined,
+        undefined,
+        ctx,
+      );
+      assert.equal(checkpoint.isError, true);
+      assert.match(checkpoint.content[0].text, /weak_project_identity/);
+      assert.equal(checkpointWrites, 0, "weak automatic identity must not authorize durable checkpoint content");
     });
   } finally {
     globalThis.fetch = originalFetch;

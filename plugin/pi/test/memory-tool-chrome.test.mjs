@@ -24,6 +24,8 @@ const existingTools = [
   "mem_session_start",
   "mem_session_end",
   "mem_current_project",
+  "mem_checkpoint",
+  "mem_checkpoint_status",
   "mem_doctor",
   "mem_capture_passive",
   "mem_judge",

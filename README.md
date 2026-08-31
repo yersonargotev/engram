@@ -112,11 +112,11 @@ Full environment variable reference → [DOCS.md#environment-variables](DOCS.md#
 
 ## How It Works
 
-```
-1. Agent completes significant work (bugfix, architecture decision, etc.)
-2. Agent calls mem_save → title, type, What/Why/Where/Learned
-3. Engram persists to SQLite with FTS5 indexing
-4. Next session: agent searches memory, gets relevant context
+```text
+1. Agent completes one settled root user turn
+2. Agent commits one terminal saved, needs_review, or skipped checkpoint
+3. Engram atomically persists any attached Memory and indexes it with FTS5
+4. A later turn recalls Memory only when it can change the work
 ```
 
 Full details on session lifecycle, topic keys, and memory hygiene → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -134,18 +134,32 @@ Full details on session lifecycle, topic keys, and memory hygiene → [docs/ARCH
 
 With `any`, a memory can match one or more query tokens instead of requiring all of them. This is useful when you remember related keywords but not the exact wording stored in Engram.
 
-## MCP Tools (24)
+## MCP Tool Profiles
+
+`engram mcp --tools=agent` is the default agent-facing surface and exposes
+exactly five tools:
+
+`mem_current_project`, `mem_search`, `mem_get_observation`, `mem_checkpoint`,
+and `mem_checkpoint_status`.
+
+This default surface uses selective Recall and ends each settled root user turn
+with one Terminal Memory commit.
+
+Specialized workflows remain available through named profiles, explicit tool
+selection, or `--tools=all`:
 
 | Category               | Tools                                                                                                            |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| **Save & Update**      | `mem_save`, `mem_update`, `mem_delete`, `mem_suggest_topic_key`                                                  |
-| **Search & Retrieve**  | `mem_search`, `mem_context`, `mem_timeline`, `mem_get_observation`                                               |
-| **Session Lifecycle**  | `mem_session_start`, `mem_session_end`, `mem_session_summary`                                                    |
-| **Conflict Surfacing** | `mem_judge`, `mem_compare`                                                                                       |
-| **Lifecycle Review**   | `mem_review`                                                                                                      |
-| **Context Priority**   | `mem_pin`, `mem_unpin` (local-only; not synced)                                                                  |
-| **Memory Checkpoint**  | `mem_checkpoint`, `mem_checkpoint_status` (local-only root-turn dispositions)                                    |
-| **Utilities**          | `mem_save_prompt`, `mem_stats`, `mem_capture_passive`, `mem_merge_projects`, `mem_current_project`, `mem_doctor` |
+| **agent**              | Five-tool Recall and terminal-checkpoint surface                                                                  |
+| **curation**           | Independent save/update, optional Session summary, context, review, relations, diagnosis, and pins               |
+| **lifecycle**          | Host session start/end, prompt save, and passive Content capture                                                  |
+| **admin**              | Delete, statistics, timeline, and project merge                                                                   |
+| **all**                | All 24 tools for compatibility and deliberate broad integrations                                                  |
+
+A Memory operation reads or changes durable Memory or its checkpoint ledger. An
+agent lifecycle operation reports host activity or captures Content; it does
+not decide the root turn's Memory disposition. Session summaries are optional
+curation, not lifecycle completion.
 
 Full tool reference with parameters → [DOCS.md#mcp-tools-24-tools](DOCS.md#mcp-tools-24-tools)
 

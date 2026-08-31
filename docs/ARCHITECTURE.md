@@ -18,21 +18,18 @@
 <p align="center">
   <img src="../assets/agent-save.png" alt="Agent saving a memory via mem_save" width="800" />
   <br />
-  <em>The agent proactively calls <code>mem_save</code> after significant work — structured, searchable, no noise.</em>
+  <em>The agent commits one terminal Memory disposition after a settled root user turn.</em>
 </p>
 
 Engram trusts the **agent** to decide what's worth remembering — not a firehose of raw tool calls.
 
-### The Agent Saves, Engram Stores
+### The Agent Commits, Engram Stores
 
 ```
-1. Agent completes significant work (bugfix, architecture decision, etc.)
-2. Agent calls mem_save with a structured summary:
-   - title: "Fixed N+1 query in user list"
-   - type: "bugfix"
-   - content: What/Why/Where/Learned format
-3. Engram persists to SQLite with FTS5 indexing
-4. Next session: agent searches memory, gets relevant context
+1. Agent completes one settled root user turn.
+2. Agent chooses `saved`, `needs_review`, or `skipped(no_durable_knowledge)`.
+3. `mem_checkpoint` commits the disposition and any inline Memory atomically.
+4. Later work uses selective Recall when prior Memory can change the task.
 ```
 
 ---
@@ -40,16 +37,28 @@ Engram trusts the **agent** to decide what's worth remembering — not a firehos
 ## Session Lifecycle
 
 ```
-Session starts → Agent works → Agent saves memories proactively
-                                    ↓
-Session ends → Agent writes session summary (Goal/Discoveries/Accomplished/Next Steps/Files)
-                                    ↓
-Next session starts → Previous session context is injected automatically
+Root user turn starts → Agent and tools work → Causal work settles
+                                                ↓
+                     One terminal Memory checkpoint commits
+                                                ↓
+                  Later work recalls Memory selectively
 ```
 
 ---
 
 ## MCP Tools
+
+The `agent` profile contains exactly `mem_current_project`, `mem_search`,
+`mem_get_observation`, `mem_checkpoint`, and `mem_checkpoint_status`.
+`curation` contains explicit authoring, optional Session summary, context,
+review, relation, diagnostic, and pin workflows. `lifecycle` contains host
+session and Content-capture operations. `admin` contains destructive and
+operational maintenance. `all` retains all 24 operations.
+
+A **Memory operation** reads or changes durable Memory or checkpoint state. An
+**agent lifecycle operation** reports host activity or captures Content; it
+does not select a disposition. This is why Session start/end belong to
+`lifecycle`, while optional `mem_session_summary` belongs to `curation`.
 
 | Tool | Purpose |
 |------|---------|

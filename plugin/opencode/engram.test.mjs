@@ -537,15 +537,20 @@ test("compaction resolves an unobserved child and registers only its root", asyn
   assert.equal(new URL(compactionContext?.url).searchParams.get("session_id"), "root")
   assert.equal(runtime.requests.some(({ path }) => path === "/context"), false)
   assert.ok(output.context.includes("root-only context"))
-  assert.match(output.context.at(-1), /FIRST ACTION REQUIRED/)
+  assert.match(output.context.at(-1), /Terminal Memory commit/)
+  assert.match(output.context.at(-1), /saved, needs_review, and skipped\(no_durable_knowledge\)/)
 })
 
-test("post-compaction protocol relies on injected session-only context", () => {
-	const afterCompaction = source.match(/### AFTER COMPACTION[\s\S]*?Do not skip step 1\.[\s\S]*?memory\./)?.[0]
-  assert.ok(afterCompaction, "AFTER COMPACTION protocol must exist")
-  assert.match(afterCompaction, /session-only compaction context has already been injected/)
-  assert.match(afterCompaction, /use it only when explicitly requested/)
-  assert.doesNotMatch(afterCompaction, /\d\.\s+(?:Then )?call `mem_context`/)
+test("model-facing policy uses the five-tool Terminal Memory contract", () => {
+	const start = source.indexOf("const MEMORY_INSTRUCTIONS = `")
+  const end = source.indexOf("\n`\n\n//", start)
+  const instructions = source.slice(start, end)
+  assert.match(instructions, /Terminal Memory commit/)
+  for (const tool of ["mem_current_project", "mem_search", "mem_get_observation", "mem_checkpoint", "mem_checkpoint_status"]) {
+    assert.match(instructions, new RegExp(tool))
+  }
+  assert.match(instructions, /Current user intent, maintained source, and runtime evidence override Memory/)
+  assert.doesNotMatch(instructions, /FIRST ACTION REQUIRED|mem_session_summary|mem_save/)
 })
 
 test("compaction skips invalid or missing sessions and still injects recovery context", async (t) => {
@@ -569,7 +574,7 @@ test("compaction skips invalid or missing sessions and still injects recovery co
 
       assertNoRegistration(runtime)
       assert.equal(runtime.requests.some(({ path }) => path === "/context/compaction" || path === "/context"), false)
-      assert.match(output.context.at(-1), /FIRST ACTION REQUIRED/)
+      assert.match(output.context.at(-1), /Terminal Memory commit/)
     })
   }
 })

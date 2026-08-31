@@ -10,6 +10,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { PLUGIN_ROOT as ROOT, RUNTIME_STUB_MARKER, createPluginSandbox, importPluginFromSandbox } from "./plugin-sandbox.mjs";
 
+// Startup failure coverage exercises a specialized write tool explicitly.
+process.env.ENGRAM_PI_TOOL_PROFILE = "all";
+
 function freePort() {
   return new Promise((resolve, reject) => {
     const probe = createServer();

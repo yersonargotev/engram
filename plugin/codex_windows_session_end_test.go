@@ -125,8 +125,8 @@ func TestCodexSessionEndHook(t *testing.T) {
 		if err := json.Unmarshal(data, &manifest); err != nil {
 			t.Fatalf("parse Codex plugin manifest: %v", err)
 		}
-		if manifest.Version != "0.1.6" {
-			t.Errorf("Codex plugin version = %q, want 0.1.6", manifest.Version)
+		if manifest.Version != "0.1.7" {
+			t.Errorf("Codex plugin version = %q, want 0.1.7", manifest.Version)
 		}
 	})
 }

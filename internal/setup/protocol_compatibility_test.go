@@ -36,7 +36,64 @@ func TestProtocolFixtureMatchesSetupCompatibilityCoordinates(t *testing.T) {
 	assertFileSHA256(t, filepath.Join("..", "..", "pack.json"), currentManagedPackManifestSHA256)
 	assertFileSHA256(t, filepath.Join("..", "..", "skills", "engram-memory-cli", "SKILL.md"), currentManagedPackSkillSHA256)
 	assertFileSHA256(t, filepath.Join("..", "..", "assets", "protocol-contract-v1.json"), currentManagedPackFixtureSHA256)
+	assertFileSHA256(t, filepath.Join("..", "..", "plugin", "codex", ".codex-plugin", "plugin.json"), currentCodexPluginManifestSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "managed-pack-3.2.0.json"), previousManagedPackManifestSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "protocol-contract-v1-pack-3.2.0.json"), previousManagedPackFixtureSHA256)
 	assertFileSHA256(t, filepath.Join("testdata", "managed-pack-3.1.2.json"), legacyManagedPackManifestSHA256)
+}
+
+func TestProtocolCompatibilityAcceptsVerifiedPreviousTupleDuringExpand(t *testing.T) {
+	resetSetupSeams(t)
+	bundleRoot := t.TempDir()
+	manifestPath := filepath.Join(bundleRoot, "packs", "engram", "pack.json")
+	previousManifest, err := os.ReadFile(filepath.Join("testdata", "managed-pack-3.2.0.json"))
+	if err != nil {
+		t.Fatalf("read previous Pack manifest: %v", err)
+	}
+	writeStatusTestFile(t, manifestPath, string(previousManifest))
+	previousFixture, err := os.ReadFile(filepath.Join("testdata", "protocol-contract-v1-pack-3.2.0.json"))
+	if err != nil {
+		t.Fatalf("read previous Protocol fixture: %v", err)
+	}
+	writeStatusTestFile(t, filepath.Join(bundleRoot, "assets", "protocol-contract-v1.json"), string(previousFixture))
+	skillPath := filepath.Join(bundleRoot, "skills", "engram-memory-cli", "SKILL.md")
+	packCheck := codexStatusCheck("skill", CodexCheckReady, "engram_skill_discovered", "ready",
+		codexEvidence("source", "standalone"),
+		codexEvidence("path", skillPath),
+		codexEvidence("sha256", previousManagedPackSkillSHA256),
+		codexEvidence("version", previousManagedPackVersion),
+	)
+	plugin := codexPluginInspection{
+		Check:    codexStatusCheck("plugin", CodexCheckReady, "plugin_ready", "ready"),
+		Revision: testReleaseCommit,
+		Capabilities: installedCodexPlugin{
+			Version:        previousCodexPluginVersion,
+			ManifestSHA256: previousCodexPluginManifestSHA256,
+		},
+	}
+
+	report := inspectCodexProtocolCompatibility("3.0.1", testReleaseCommit, "/opt/engram/bin/engram", []CodexIntegrationCheck{packCheck}, plugin)
+	if report.Status != protocolcontract.CompatibilityReady || report.ReasonCode != protocolcontract.ReasonLegacyCompatible || !report.Legacy {
+		t.Fatalf("previous compatibility = %#v", report)
+	}
+	if report.Intersection == nil || *report.Intersection != (protocolcontract.VersionRange{Minimum: 1, Maximum: 1}) {
+		t.Fatalf("previous intersection = %#v", report.Intersection)
+	}
+}
+
+func TestPreviousCodexPluginCoordinateRequiresExactManifest(t *testing.T) {
+	plugin := codexPluginInspection{
+		Revision: testReleaseCommit,
+		Capabilities: installedCodexPlugin{
+			Version:        previousCodexPluginVersion,
+			ManifestSHA256: strings.Repeat("0", 64),
+		},
+	}
+
+	declaration := inspectCodexPluginProtocolDeclaration(plugin)
+	if declaration.Supported != nil || declaration.Legacy {
+		t.Fatalf("untrusted previous plugin asserted Protocol compatibility: %#v", declaration)
+	}
 }
 
 func TestProtocolCompatibilityAcceptsVerifiedLegacyTupleDuringExpand(t *testing.T) {
@@ -90,13 +147,13 @@ func TestManagedPackProtocolInspectionRejectsMalformedAndAmbiguousMetadata(t *te
 	)
 
 	malformed := inspectManagedPackProtocolDeclaration([]CodexIntegrationCheck{check})
-	report := protocolcontract.Evaluate(malformed, validProtocolDeclaration("3.0.1"), validProtocolDeclaration("0.1.6"))
+	report := protocolcontract.Evaluate(malformed, validProtocolDeclaration("3.0.1"), validProtocolDeclaration(currentCodexPluginVersion))
 	if report.ReasonCode != "managed_pack_protocol_range_malformed" {
 		t.Fatalf("missing fixture report = %#v", report)
 	}
 
 	ambiguous := inspectManagedPackProtocolDeclaration([]CodexIntegrationCheck{check, check})
-	report = protocolcontract.Evaluate(ambiguous, validProtocolDeclaration("3.0.1"), validProtocolDeclaration("0.1.6"))
+	report = protocolcontract.Evaluate(ambiguous, validProtocolDeclaration("3.0.1"), validProtocolDeclaration(currentCodexPluginVersion))
 	if report.ReasonCode != "managed_pack_unprovenanced" {
 		t.Fatalf("ambiguous pack report = %#v", report)
 	}
@@ -113,7 +170,7 @@ func TestManagedPackProtocolInspectionRejectsSelfConsistentCustomizedBundle(t *t
 	writeStatusTestFile(t, manifestPath, string(currentManifest))
 
 	skillPath := filepath.Join(bundleRoot, "skills", "engram-memory-cli", "SKILL.md")
-	customSkill := []byte("---\nname: engram-memory-cli\nversion: 3.2.0\n---\nCustomized but internally consistent.\n")
+	customSkill := []byte("---\nname: engram-memory-cli\nversion: " + currentManagedPackVersion + "\n---\nCustomized but internally consistent.\n")
 	writeStatusTestFile(t, skillPath, string(customSkill))
 	customSkillDigest := sha256.Sum256(customSkill)
 	customSkillSHA256 := hex.EncodeToString(customSkillDigest[:])
@@ -170,7 +227,7 @@ func TestProtocolCompatibilityRejectsPluginRangeWithoutIntersection(t *testing.T
 
 func TestBinaryProtocolDeclarationFailsClosedOnMalformedSuppliedRevision(t *testing.T) {
 	declaration := inspectEngramBinaryProtocolDeclaration("3.0.1", "dev", "/opt/engram/bin/engram")
-	report := protocolcontract.Evaluate(validProtocolDeclaration("3.2.0"), declaration, validProtocolDeclaration("0.1.6"))
+	report := protocolcontract.Evaluate(validProtocolDeclaration(currentManagedPackVersion), declaration, validProtocolDeclaration(currentCodexPluginVersion))
 	if report.Status != protocolcontract.CompatibilityIncompatible || report.ReasonCode != "engram_binary_unprovenanced" {
 		t.Fatalf("malformed binary revision report = %#v", report)
 	}

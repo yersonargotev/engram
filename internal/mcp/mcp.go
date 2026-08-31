@@ -7,9 +7,11 @@
 // Tool profiles allow agents to load only the tools they need:
 //
 //	engram mcp                    → all 24 tools (default)
-//	engram mcp --tools=agent      → 20 agent-facing tools (per skill files)
+//	engram mcp --tools=agent      → 5 default agent-facing Protocol tools
+//	engram mcp --tools=curation   → 11 explicit curation tools
+//	engram mcp --tools=lifecycle  → 4 specialized lifecycle and capture tools
 //	engram mcp --tools=admin      → 4 tools for TUI/CLI (delete, stats, timeline, merge)
-//	engram mcp --tools=agent,admin → combine profiles
+//	engram mcp --tools=agent,curation,lifecycle,admin → combine profiles
 //	engram mcp --tools=mem_save,mem_search → individual tool names
 package mcp
 
@@ -127,47 +129,60 @@ func ensureImplicitSessionWithCWD(s *store.Store, sessionID, project string) err
 
 // ─── Tool Profiles ───────────────────────────────────────────────────────────
 //
-// "agent" — tools AI agents use during coding sessions:
-//   mem_save, mem_search, mem_context, mem_session_summary,
-//   mem_session_start, mem_session_end, mem_get_observation,
-//   mem_suggest_topic_key, mem_capture_passive, mem_save_prompt,
-//   mem_update, mem_current_project, mem_judge, mem_compare, mem_doctor,
-//   mem_checkpoint, mem_checkpoint_status,
-//   mem_review, mem_pin, mem_unpin
+// "agent" — the concise default Memory surface for AI agents:
+//   mem_current_project, mem_search, mem_get_observation,
+//   mem_checkpoint, mem_checkpoint_status
 //
-// "admin" — tools for manual curation, TUI, and dashboards:
-//   mem_update, mem_delete, mem_stats, mem_timeline, mem_merge_projects
+// "curation" — explicit Memory authoring, chronological review, and curation:
+//   mem_save, mem_context, mem_session_summary, mem_suggest_topic_key,
+//   mem_update, mem_judge, mem_compare, mem_doctor, mem_review,
+//   mem_pin, mem_unpin
+//
+// "lifecycle" — host lifecycle and Content capture operations:
+//   mem_session_start, mem_session_end, mem_save_prompt, mem_capture_passive
+//
+// "admin" — tools for destructive administration, TUI, and dashboards:
+//   mem_delete, mem_stats, mem_timeline, mem_merge_projects
 //
 // "all" (default) — every tool registered.
 
-// ProfileAgent contains the tool names that AI agents need.
-// Sourced from actual skill files and memory protocol instructions
-// across all 4 supported agents (Claude Code, OpenCode, Gemini CLI, Codex).
+// ProfileAgent contains the five Protocol tools every AI agent needs by default.
+// Specialized Memory, lifecycle, curation, and administration operations remain
+// available through named profiles, "all", or explicit tool-name selection.
 var ProfileAgent = map[string]bool{
-	"mem_save":              true, // proactive save — referenced 17 times across protocols
-	"mem_search":            true, // search past memories — referenced 6 times
-	"mem_context":           true, // recent context from previous sessions — referenced 10 times
-	"mem_session_summary":   true, // end-of-session summary — referenced 16 times
-	"mem_session_start":     true, // register session start
-	"mem_session_end":       true, // mark session completed
-	"mem_get_observation":   true, // full observation content after search — referenced 4 times
-	"mem_suggest_topic_key": true, // stable topic key for upserts — referenced 3 times
-	"mem_capture_passive":   true, // extract learnings from text — referenced in Gemini/Codex protocol
-	"mem_save_prompt":       true, // save user prompts
-	"mem_update":            true, // update observation by ID — skills say "use mem_update when you have an exact ID to correct"
-	"mem_current_project":   true, // detect current project — recommended first call for agents (REQ-313)
-	"mem_judge":             true, // record verdict on a pending memory conflict (REQ-003, Phase D)
-	"mem_compare":           true, // persist an agent-judged semantic verdict via JudgeBySemantic (REQ-011, Phase G)
-	"mem_doctor":            true, // read-only operational diagnostics for agents
-	"mem_checkpoint":        true, // finalize one root user turn
-	"mem_checkpoint_status": true, // inspect one root-turn checkpoint
-	"mem_review":            true, // list/mark observations whose review_after lifecycle is stale
-	"mem_pin":               true, // local pin for context priority
-	"mem_unpin":             true, // local unpin for context priority
+	"mem_current_project":   true,
+	"mem_search":            true,
+	"mem_get_observation":   true,
+	"mem_checkpoint":        true,
+	"mem_checkpoint_status": true,
 }
 
-// ProfileAdmin contains tools for TUI, dashboards, and manual curation
-// that are NOT referenced in any agent skill or memory protocol.
+// ProfileCuration contains explicit Memory authoring and curation workflows.
+// These operations stay outside the default agent surface.
+var ProfileCuration = map[string]bool{
+	"mem_save":              true,
+	"mem_context":           true,
+	"mem_session_summary":   true,
+	"mem_suggest_topic_key": true,
+	"mem_update":            true,
+	"mem_judge":             true,
+	"mem_compare":           true,
+	"mem_doctor":            true,
+	"mem_review":            true,
+	"mem_pin":               true,
+	"mem_unpin":             true,
+}
+
+// ProfileLifecycle contains host lifecycle and Content capture operations.
+// Hosts opt into this surface independently of the default Memory profile.
+var ProfileLifecycle = map[string]bool{
+	"mem_session_start":   true,
+	"mem_session_end":     true,
+	"mem_save_prompt":     true,
+	"mem_capture_passive": true,
+}
+
+// ProfileAdmin contains tools for TUI, dashboards, and manual administration.
 var ProfileAdmin = map[string]bool{
 	"mem_delete":         true, // only in OpenCode's ENGRAM_TOOLS filter, not in any agent instructions
 	"mem_stats":          true, // only in OpenCode's ENGRAM_TOOLS filter, not in any agent instructions
@@ -177,8 +192,10 @@ var ProfileAdmin = map[string]bool{
 
 // Profiles maps profile names to their tool sets.
 var Profiles = map[string]map[string]bool{
-	"agent": ProfileAgent,
-	"admin": ProfileAdmin,
+	"agent":     ProfileAgent,
+	"curation":  ProfileCuration,
+	"lifecycle": ProfileLifecycle,
+	"admin":     ProfileAdmin,
 }
 
 // ResolveTools takes a comma-separated string of profile names and/or
@@ -220,36 +237,23 @@ func NewServer(s *store.Store) *server.MCPServer {
 	return NewServerWithConfig(s, MCPConfig{}, nil)
 }
 
-// serverInstructions tells MCP clients when to use Engram's tools.
-// 9 core tools are eager (always in context). The rest are deferred
-// and require ToolSearch to load.
+// serverInstructions tells MCP clients how the five-tool default profile fits
+// the canonical Protocol. Specialized operations are discoverable only after a
+// host explicitly selects their profile.
 const serverInstructions = `Engram provides persistent memory that survives across sessions and compactions.
 
-CORE TOOLS (always available — use without ToolSearch):
-  mem_save — save decisions, bugs, discoveries, conventions PROACTIVELY (do not wait to be asked)
-  mem_search — find past work, decisions, or context from previous sessions
-  mem_context — get recent session history (call at session start or after compaction)
-  mem_session_summary — save end-of-session summary (MANDATORY before saying "done")
-  mem_get_observation — get full untruncated content of a search result by ID
-  mem_save_prompt — save user prompt for context
-  mem_current_project — detect current project from cwd (recommended first call)
-  mem_checkpoint — record a terminal Memory checkpoint for one settled root turn
+For every settled root user turn, use the canonical skill to finalize one terminal Memory checkpoint through a Terminal Memory commit. The dispositions are saved, needs_review, and skipped(no_durable_knowledge). Finalize once after all causal work settles; reuse the exact opaque identity across continuations.
+
+DEFAULT AGENT TOOLS:
+  mem_current_project — establish project scope and write authority
+  mem_search — recall prior Memory only when it can change the current work
+  mem_get_observation — retrieve complete content for a selected search result
+  mem_checkpoint — commit the terminal Memory disposition and any durable result
   mem_checkpoint_status — inspect one exact root-turn checkpoint
 
-DEFERRED TOOLS (use ToolSearch when needed):
-  mem_update, mem_review, mem_pin, mem_unpin, mem_suggest_topic_key, mem_session_start, mem_session_end,
-  mem_capture_passive, mem_judge, mem_compare, mem_doctor, mem_stats, mem_delete, mem_timeline,
-  mem_merge_projects
+Current user intent, maintained source, and runtime evidence override Memory. Empty Recall is successful. The canonical skill owns the detailed durability rubric; MCP guidance does not define a second policy.
 
-PROACTIVE SAVE RULE: Call mem_save immediately after ANY decision, bug fix, discovery, or convention — not just when asked.
-
-## CONFLICT SURFACING
-
-After mem_save: if judgment_required, iterate candidates[] and call mem_judge
-once per entry using that entry's judgment_id; never reuse the top-level judgment_id.
-Ask conversationally when confidence < 0.7 OR (relation in
-{supersedes, conflicts_with} AND type in {architecture, policy, decision}); else
-resolve with related | compatible | scoped | not_conflict. Pass evidence from user reply.`
+Optional Session summaries and independent Memory saves are explicit curation workflows. Host activity and Content capture belong to the lifecycle profile. Destructive and operational maintenance belongs to the admin profile. Configure curation, lifecycle, admin, all, or explicit tool names only for those specialized workflows.`
 
 // NewServerWithTools creates an MCP server registering only the tools in
 // the allowlist. If allowlist is nil, all tools are registered.
@@ -428,41 +432,23 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 		)
 	}
 
-	// ─── mem_save (profile: agent, core — always in context) ───────────
+	// ─── mem_save (profile: curation, deferred) ─────────────────────────
 	if shouldRegister("mem_save", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_save",
+				mcp.WithDeferLoading(true),
 				mcp.WithTitleAnnotation("Save Memory"),
 				mcp.WithReadOnlyHintAnnotation(false),
 				mcp.WithDestructiveHintAnnotation(false),
 				mcp.WithIdempotentHintAnnotation(false),
 				mcp.WithOpenWorldHintAnnotation(false),
-				mcp.WithDescription(`Save an important observation to persistent memory. Call this PROACTIVELY after completing significant work — don't wait to be asked.
-
-WHEN to save (call this after each of these):
-- Architectural decisions or tradeoffs
-- Bug fixes (what was wrong, why, how you fixed it)
-- New patterns or conventions established
-- Configuration changes or environment setup
-- Important discoveries or gotchas
-- File structure changes
+				mcp.WithDescription(`Create one Memory outside the Terminal Memory commit only for explicit curation or a material loss-risk handoff during long-running work. Normal settled root user turns create or reference durable Memories atomically through mem_checkpoint.
 
 FORMAT for content — use this structured format:
   **What**: [concise description of what was done]
   **Why**: [the reasoning, user request, or problem that drove it]
   **Where**: [files/paths affected, e.g. src/auth/middleware.ts, internal/store/store.go]
-  **Learned**: [any gotchas, edge cases, or decisions made — omit if none]
-
-TITLE should be short and searchable, like: "JWT auth middleware", "FTS5 query sanitization", "Fixed N+1 in user list"
-
-Examples:
-  title: "Switched from sessions to JWT"
-  type: "decision"
-  content: "**What**: Replaced express-session with jsonwebtoken for auth\n**Why**: Session storage doesn't scale across multiple instances\n**Where**: src/middleware/auth.ts, src/routes/login.ts\n**Learned**: Must set httpOnly and secure flags on the cookie, refresh tokens need separate rotation logic"
-
-  title: "Fixed FTS5 syntax error on special chars"
-  type: "bugfix"
-  content: "**What**: Wrapped each search term in quotes before passing to FTS5 MATCH\n**Why**: Users typing queries like 'fix auth bug' would crash because FTS5 interprets special chars as operators\n**Where**: internal/store/store.go — sanitizeFTS() function\n**Learned**: FTS5 MATCH syntax is NOT the same as LIKE — always sanitize user input"`),
+  **Learned**: [non-obvious implications or gotchas — omit if none]`),
 				mcp.WithString("title",
 					mcp.Required(),
 					mcp.Description("Short, searchable title (e.g. 'JWT auth middleware', 'Fixed N+1 query')"),
@@ -502,7 +488,7 @@ Examples:
 		)
 	}
 
-	// ─── mem_update (profile: agent, deferred) ──────────────────────────
+	// ─── mem_update (profile: curation, deferred) ──────────────────────────
 	if shouldRegister("mem_update", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_update",
@@ -537,7 +523,7 @@ Examples:
 		)
 	}
 
-	// ─── mem_review (profile: agent, deferred) ──────────────────────────
+	// ─── mem_review (profile: curation, deferred) ──────────────────────────
 	if shouldRegister("mem_review", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_review",
@@ -558,7 +544,7 @@ Examples:
 		)
 	}
 
-	// ─── mem_suggest_topic_key (profile: agent, deferred) ───────────────
+	// ─── mem_suggest_topic_key (profile: curation, deferred) ───────────────
 	if shouldRegister("mem_suggest_topic_key", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_suggest_topic_key",
@@ -606,11 +592,12 @@ Examples:
 		)
 	}
 
-	// ─── mem_save_prompt (profile: agent, eager) ────────────────────────
+	// ─── mem_save_prompt (profile: lifecycle, deferred) ─────────────────
 	if shouldRegister("mem_save_prompt", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_save_prompt",
-				mcp.WithDescription("Save a user prompt to persistent memory. Use this to record what the user asked — their intent, questions, and requests — so future sessions have context about the user's goals."),
+				mcp.WithDeferLoading(true),
+				mcp.WithDescription("Persist one raw user prompt as Content capture in an explicitly selected lifecycle workflow. This is an agent lifecycle operation, not a Memory operation or terminal checkpoint."),
 				mcp.WithTitleAnnotation("Save User Prompt"),
 				mcp.WithReadOnlyHintAnnotation(false),
 				mcp.WithDestructiveHintAnnotation(false),
@@ -637,7 +624,7 @@ Examples:
 		)
 	}
 
-	// ─── mem_pin / mem_unpin (profile: agent, deferred) ──────────────────
+	// ─── mem_pin / mem_unpin (profile: curation, deferred) ──────────────────
 	if shouldRegister("mem_pin", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_pin",
@@ -669,10 +656,11 @@ Examples:
 		)
 	}
 
-	// ─── mem_context (profile: agent, core — always in context) ────────
+	// ─── mem_context (profile: curation, deferred) ──────────────────────
 	if shouldRegister("mem_context", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_context",
+				mcp.WithDeferLoading(true),
 				mcp.WithDescription("Get recent memory context from previous sessions. Shows recent sessions and observations to understand what was done before."),
 				mcp.WithTitleAnnotation("Get Memory Context"),
 				mcp.WithReadOnlyHintAnnotation(true),
@@ -758,16 +746,17 @@ Examples:
 		)
 	}
 
-	// ─── mem_session_summary (profile: agent, core — always in context) ─
+	// ─── mem_session_summary (profile: curation, deferred) ──────────────
 	if shouldRegister("mem_session_summary", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_session_summary",
+				mcp.WithDeferLoading(true),
 				mcp.WithTitleAnnotation("Save Session Summary"),
 				mcp.WithReadOnlyHintAnnotation(false),
 				mcp.WithDestructiveHintAnnotation(false),
 				mcp.WithIdempotentHintAnnotation(false),
 				mcp.WithOpenWorldHintAnnotation(false),
-				mcp.WithDescription(`Save a comprehensive end-of-session summary. Call this when a session is ending or when significant work is complete. This creates a structured summary that future sessions will use to understand what happened.
+				mcp.WithDescription(`Create an optional Session summary Memory during explicit curation. A Session summary is not lifecycle completion or a Memory checkpoint, and it is outside the default agent profile.
 
 FORMAT — use this exact structure in the content field:
 
@@ -821,7 +810,7 @@ GUIDELINES:
 		)
 	}
 
-	// ─── mem_session_start (profile: agent, deferred) ───────────────────
+	// ─── mem_session_start (profile: lifecycle, deferred) ───────────────────
 	if shouldRegister("mem_session_start", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_session_start",
@@ -844,7 +833,7 @@ GUIDELINES:
 		)
 	}
 
-	// ─── mem_session_end (profile: agent, deferred) ─────────────────────
+	// ─── mem_session_end (profile: lifecycle, deferred) ─────────────────────
 	if shouldRegister("mem_session_end", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_session_end",
@@ -867,7 +856,7 @@ GUIDELINES:
 		)
 	}
 
-	// ─── mem_capture_passive (profile: agent, deferred) ─────────────────
+	// ─── mem_capture_passive (profile: lifecycle, deferred) ─────────────
 	if shouldRegister("mem_capture_passive", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_capture_passive",
@@ -877,7 +866,7 @@ GUIDELINES:
 				mcp.WithDestructiveHintAnnotation(false),
 				mcp.WithIdempotentHintAnnotation(true),
 				mcp.WithOpenWorldHintAnnotation(false),
-				mcp.WithDescription(`Extract and save structured learnings from text output. Use this at the end of a task to capture knowledge automatically.
+				mcp.WithDescription(`Run specialized lifecycle Content capture over deliberately supplied text. This operation is outside the Terminal Memory commit and the default agent profile.
 
 The tool looks for sections like "## Key Learnings:" or "## Aprendizajes Clave:" and extracts numbered or bulleted items. Each item is saved as a separate observation.
 
@@ -936,7 +925,7 @@ Duplicates are automatically detected and skipped — safe to call multiple time
 		)
 	}
 
-	// ─── mem_doctor (profile: agent, deferred) ──────────────────────────
+	// ─── mem_doctor (profile: curation, deferred) ──────────────────────────
 	if shouldRegister("mem_doctor", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_doctor",
@@ -954,10 +943,11 @@ Duplicates are automatically detected and skipped — safe to call multiple time
 		)
 	}
 
-	// ─── mem_judge (profile: agent, eager) — REQ-003, Design §6 ─────────
+	// ─── mem_judge (profile: curation, deferred) — REQ-003, Design §6 ─────────
 	if shouldRegister("mem_judge", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_judge",
+				mcp.WithDeferLoading(true),
 				mcp.WithDescription(`Record a verdict on a pending memory conflict surfaced by mem_save.
 
 WHEN TO CALL: After mem_save returns judgment_required=true, iterate candidates[] and call mem_judge once per entry using that entry's judgment_id.
@@ -1008,10 +998,11 @@ Re-judging an already-judged ID overwrites the verdict (deliberate revision).`),
 		)
 	}
 
-	// ─── mem_compare (profile: agent, eager) — REQ-011, Design §9 ────────
+	// ─── mem_compare (profile: curation, deferred) — REQ-011, Design §9 ────────
 	if shouldRegister("mem_compare", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_compare",
+				mcp.WithDeferLoading(true),
 				mcp.WithDescription(`Persist a semantic verdict you have already judged externally (with your LLM) into Engram.
 
 WHEN TO CALL: After you have evaluated two memories and reached a verdict, call mem_compare to PERSIST that verdict into the relation store. You do the judgment; mem_compare records it.

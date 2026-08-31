@@ -2,13 +2,13 @@
 
 # Mental Model
 
-**Engram gives coding agents curated, searchable, portable memory after a session ends or a conversation is compacted.** It is local-first: SQLite is authoritative, and cloud exists only when a user opts into replication/shared access.
+**Engram gives coding agents curated, searchable, portable Memory committed at settled root-turn boundaries.** It is local-first: SQLite is authoritative, and cloud exists only when a user opts into replication/shared access.
 
 ## What Engram is
 
 | It is | What that means in the code |
 |---|---|
-| **Persistent memory for agents** | Agents save structured observations with `mem_save`, `mem_session_summary`, `mem_save_prompt`, and related tools in `internal/mcp`. |
+| **Persistent memory for agents** | Agents normally use `mem_checkpoint` for one Terminal Memory commit; specialized curation and lifecycle operations remain separate in `internal/mcp`. |
 | **Local-first** | `internal/store` persists to SQLite; interfaces read/write there first. |
 | **A Go binary** | `cmd/engram` composes store, server, MCP, TUI, setup, sync, and cloud. |
 | **SQLite + FTS5** | `internal/store/store.go` defines sessions, observations, prompts, FTS, dedupe, topic upserts, and soft deletes. |

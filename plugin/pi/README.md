@@ -23,11 +23,11 @@ Engram is persistent memory for AI coding agents. `gentle-engram` connects Pi to
 
 | You want                    | Engram gives Pi                                  |
 | --------------------------- | ------------------------------------------------ |
-| Fewer repeated explanations | Searchable memories from previous sessions       |
-| Lower context waste         | Curated saves instead of raw tool-call dumps     |
-| Continuity after compaction | Required session summaries and recovery protocol |
-| One memory across tools     | Shared MCP-backed memory for Pi and other agents |
-| Team/project memory         | Optional Engram Cloud replication and dashboard  |
+| Fewer repeated explanations | Selective search of Memory from previous sessions       |
+| Lower context waste         | One terminal disposition instead of routine activity logs |
+| Continuity after compaction | The same root-turn checkpoint identity and recovery cue   |
+| One memory across tools     | Shared MCP-backed memory for Pi and other agents           |
+| Team/project memory         | Optional Engram Cloud replication and dashboard            |
 
 ## The promise
 
@@ -37,7 +37,7 @@ Install it once. Keep coding. Pi remembers.
 - **Local-first memory** — a single Go binary writes to SQLite + FTS5 on your machine. No Node service, Python stack, or hosted account required for the core path.
 - **Cloud when the team needs it** — Engram Cloud adds opt-in, project-scoped replication, shared access, and a browser dashboard while keeping local SQLite authoritative.
 - **Token-efficient by design** — Engram stores curated summaries, decisions, prompts, and session handoffs instead of a noisy firehose of raw tool calls. Agents search first, then fetch only the relevant memory.
-- **Compaction survival** — before context resets, the Memory Protocol pushes summaries into Engram so the next session can recover what matters.
+- **Compaction survival** — Pi's host lifecycle capture can retain a recovery summary, while the agent continues the same root turn and commits its terminal disposition only after work settles.
 - **Simple Pi setup** — install the Pi package, install the MCP adapter, run `pi-engram init`, restart Pi.
 - **Built in public** — Engram is developed as an open-source, hands-on agentic-coding tool rather than a toy demo.
 - **Real open-source project** — Engram ships docs, releases, beta programs, contributor guidelines, issue templates, CI, and a growing contributor/community workflow around the main repository.
@@ -64,7 +64,7 @@ Context windows are temporary. Engram is memory.
 | Gets summarized away                | Persists in SQLite + FTS5                                |
 | Usually tied to one agent           | Works through MCP across agent clients                   |
 
-Engram does not try to make the model read everything. It gives the model a disciplined memory protocol: save important knowledge, search before repeating work, and fetch full details only when needed.
+Engram does not try to make the model read everything. Its default protocol selectively searches when prior Memory can change the work, fetches full details only for selected results, and makes one Terminal Memory commit after each settled root user turn.
 
 ## See the memory
 
@@ -83,7 +83,7 @@ pi install npm:pi-mcp-adapter
 pi-engram init
 ```
 
-Restart Pi after installation, then ask Pi what it remembers about the current project or call `mem_context`.
+Restart Pi after installation, then ask Pi what it remembers about the current project. The default profile uses `mem_search` and `mem_get_observation` for selective Recall; `mem_context` is available only in the explicit specialized profile.
 
 ## What gets installed
 
@@ -91,7 +91,7 @@ Restart Pi after installation, then ask Pi what it remembers about the current p
 
 | Path         | Purpose                                                                                                                                |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Pi extension | Captures prompts/session events, injects the Memory Protocol, and exposes compact Pi-native `mem_*` tools over the Engram HTTP server. |
+| Pi extension | Captures prompts/session events, injects the Terminal Memory policy, and exposes the five default Pi-native Memory tools.             |
 | MCP tools    | Keeps Engram's MCP surface available through `pi-mcp-adapter` for clients and flows that use MCP directly.                             |
 
 ```text
@@ -99,11 +99,13 @@ Pi events/tools -> gentle-engram extension -> ENGRAM_URL / engram serve -> SQLit
 Pi MCP tools   -> pi-mcp-adapter -> ENGRAM_BIN / engram mcp -> SQLite
 ```
 
-Pi-native compact tools use the same HTTP server path as event capture, including project detection, diagnostics, passive capture, lifecycle review, and conflict-judgment tools such as `mem_current_project`, `mem_doctor`, `mem_capture_passive`, `mem_review`, `mem_judge`, and `mem_compare`. MCP tools remain a separate stdio path, so direct MCP usage still needs an Engram binary even when `ENGRAM_URL` points at a remote HTTP server. Engram MCP direct tools are not enabled by default in Pi to avoid duplicate raw `engram_mem_*` tool rows.
+The default Pi-native profile exposes exactly `mem_current_project`, `mem_search`, `mem_get_observation`, `mem_checkpoint`, and `mem_checkpoint_status`. It commits one terminal disposition—`saved`, `needs_review`, or `skipped(no_durable_knowledge)`—for each settled root user turn. Current user intent, maintained source, and runtime evidence override Memory.
+
+Independent save, optional Session summary, prompt save, passive capture, review, diagnostics, and administration remain callable through the explicit specialized profile: set `ENGRAM_PI_TOOL_PROFILE=all`. Use that profile only for curation, lifecycle, capture, or operational workflows; those operations are not part of the default agent contract. MCP tools remain a separate stdio path and `engram mcp --tools=agent` uses the same five-tool default.
 
 ## Compact memory tool rendering
 
-`gentle-engram` owns the Pi chrome for Engram memory tools by registering compact Pi-native `mem_*` tools in the companion package. When tools such as `mem_search`, `mem_context`, `mem_save`, `mem_session_summary`, `mem_get_observation`, `mem_review`, `mem_judge`, and `mem_doctor` run in Pi, the default collapsed view stays compact:
+`gentle-engram` owns the Pi chrome for Engram memory tools. Default tools and explicitly selected specialized tools share the same compact rendering:
 
 ```text
 🧠 search “auth model” …
@@ -158,9 +160,9 @@ This is a lightweight convenience convention, not a full secret-scanning system.
 
 ## Compaction recovery
 
-When Pi emits a compaction lifecycle event, `gentle-engram` best-effort extracts a compacted summary from supported event fields and saves it as a `session_summary` observation with topic key `session/compaction-recovery`.
+When Pi emits a compaction lifecycle event, `gentle-engram` best-effort extracts a compacted summary as lifecycle capture and saves it as a `session_summary` observation with topic key `session/compaction-recovery`. This is host lifecycle behavior, not the agent's Terminal Memory operation.
 
-Unsupported event shapes fail gracefully. The extension still injects a manual recovery instruction containing `FIRST ACTION REQUIRED`, so the next agent turn can call `mem_session_summary` if the Engram MCP tools are installed and active. If the tools are unavailable, save the compacted summary manually after Engram is available again.
+Unsupported event shapes fail gracefully. The extension re-injects the Terminal Memory cue so the agent continues the same root user turn and finalizes it only after the remaining work settles; compaction does not mandate a Session summary or create a new checkpoint identity.
 
 ## Local, sync, or cloud
 
@@ -223,8 +225,10 @@ The command respects `PI_CODING_AGENT_DIR`; otherwise it writes to `~/.pi/agent`
 
 ## Project detection
 
-Pi event capture and Pi-native tools consume Engram core's `/project/current`
-classification. `config` and `git_remote` are strong automatic identities;
+Pi event capture and Pi-native tools consume one configured Engram HTTP provider.
+Terminal commits use `POST /checkpoints` and `GET /checkpoints/status`; Recall and
+write authority consume Engram core's `/project/current` classification from that
+same provider. `config` and `git_remote` are strong automatic identities;
 `git_root`, `git_child`, and `dir_basename` remain available for reads but cannot
 create sessions, prompts, or observations implicitly. A weak write reports
 `weak_project_identity` and asks for an explicit project. If the route is missing
@@ -249,13 +253,13 @@ version-mismatch warning. For critical repos or monorepos, prefer an explicit
 | Pi shows `error MCP: 0/N servers` but `mem_*` works          | That status is Pi's global MCP gateway, not proof that Engram's Pi-native HTTP tools failed. Check `~/.pi/agent/mcp.json` for stale/unreachable servers such as remote OAuth services, and keep `npm:pi-mcp-adapter` installed if you use MCP integrations like Notion. |
 | Existing MCP config was not replaced                         | Run `pi-engram init --force`.                                                                                                                                                                                                                                           |
 | `mem_current_project` reports `/project/current` unsupported | Restart or upgrade the running `engram serve`; check `ENGRAM_URL`/`ENGRAM_BIN`. If `.engram/config.json` exists, Pi uses it as a temporary fallback.                                                                                                                    |
-| `mem_session_summary` cannot detect a project                | Ask the user which project should receive the summary, then retry `mem_session_summary` with `project: "name"`.                                                                                                                                                         |
+| Specialized `mem_session_summary` cannot detect a project    | Start Pi with `ENGRAM_PI_TOOL_PROFILE=all`, ask which project should receive this explicit curation summary, then retry with `project: "name"`.                                                                                                                      |
 | Status bar shows `🧠 repos · ambiguous project`             | Pi was started from a parent directory that contains multiple git repos. Run Pi from inside a single repo, or add `.engram/config.json` with `"project_name": "my-project"` to the ambiguous directory.                                                                 |
 
 ## Next steps
 
 - Run `engram tui` to inspect stored memories.
-- Use `mem_current_project` to confirm `project_strength` and write authority before writing memories.
+- Use `mem_current_project` to confirm `project_strength` and write authority, then let the canonical skill select `saved`, `needs_review`, or `skipped(no_durable_knowledge)` for the settled root turn.
 - Read the main Engram setup guide: <https://github.com/yersonargotev/engram/blob/main/docs/AGENT-SETUP.md>
 - Explore Engram Cloud: <https://github.com/yersonargotev/engram/blob/main/docs/engram-cloud/README.md>
 - Join the project through issues, discussions, and beta feedback: <https://github.com/yersonargotev/engram>

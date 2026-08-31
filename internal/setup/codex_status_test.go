@@ -179,7 +179,7 @@ args = ["mcp", "--tools=agent"]
 	marketplaceRoot := t.TempDir()
 	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
 	writeCanonicalCodexActivationFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"))
-	installedPath := filepath.Join(home, ".codex", "plugins", "cache", "engram", "engram", "0.1.6")
+	installedPath := filepath.Join(home, ".codex", "plugins", "cache", "engram", "engram", "0.1.7")
 	writeCanonicalCodexActivationFixture(t, installedPath)
 
 	lookPathFn = func(name string) (string, error) {
@@ -202,7 +202,7 @@ args = ["mcp", "--tools=agent"]
 		case slices.Equal(args, []string{"--version"}):
 			return []byte("codex-cli 0.150.1\n"), nil
 		case slices.Equal(args, []string{"plugin", "list", "--json"}):
-			return []byte(fmt.Sprintf(`{"installed":[{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.6","installed":true,"enabled":true,"source":{"source":"local","path":%q},"marketplaceSource":{"sourceType":"git","source":"https://github.com/yersonargotev/engram.git"}}],"available":[]}`, filepath.Join(marketplaceRoot, "plugin", "codex"))), nil
+			return []byte(fmt.Sprintf(`{"installed":[{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.7","installed":true,"enabled":true,"source":{"source":"local","path":%q},"marketplaceSource":{"sourceType":"git","source":"https://github.com/yersonargotev/engram.git"}}],"available":[]}`, filepath.Join(marketplaceRoot, "plugin", "codex"))), nil
 		default:
 			return nil, fmt.Errorf("unexpected Codex command: %v", args)
 		}
@@ -236,7 +236,7 @@ args = ["mcp", "--tools=agent"]
 		}
 	}
 	plugin := statusChecksByCapability(status.Checks, "plugin")[0]
-	if evidenceValue(plugin, "installed_version") != "0.1.6" || evidenceValue(plugin, "installed_revision") != testReleaseCommit || evidenceValue(plugin, "enabled") != "true" {
+	if evidenceValue(plugin, "installed_version") != "0.1.7" || evidenceValue(plugin, "installed_revision") != testReleaseCommit || evidenceValue(plugin, "enabled") != "true" {
 		t.Fatalf("plugin provenance = %#v", plugin.Evidence)
 	}
 	pluginSkills := statusChecksByCapability(status.Checks, "skill")
@@ -556,7 +556,7 @@ enabled = false
 	marketplaceRoot := t.TempDir()
 	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
 	writeCanonicalCodexActivationFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"))
-	installedPath := filepath.Join(home, ".codex", "plugins", "cache", "engram", "engram", "0.1.6")
+	installedPath := filepath.Join(home, ".codex", "plugins", "cache", "engram", "engram", "0.1.7")
 	writeCanonicalCodexActivationFixture(t, installedPath)
 
 	lookPathFn = func(name string) (string, error) {
@@ -570,7 +570,7 @@ enabled = false
 		case name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"--version"}):
 			return []byte("codex-cli 0.150.1\n"), nil
 		case name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"plugin", "list", "--json"}):
-			return []byte(fmt.Sprintf(`{"installed":[{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.6","installed":true,"enabled":false,"source":{"source":"local","path":%q},"marketplaceSource":{"sourceType":"git","source":"https://github.com/yersonargotev/engram.git"}}]}`, filepath.Join(marketplaceRoot, "plugin", "codex"))), nil
+			return []byte(fmt.Sprintf(`{"installed":[{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.7","installed":true,"enabled":false,"source":{"source":"local","path":%q},"marketplaceSource":{"sourceType":"git","source":"https://github.com/yersonargotev/engram.git"}}]}`, filepath.Join(marketplaceRoot, "plugin", "codex"))), nil
 		default:
 			t.Fatalf("disabled plugin profile executed unexpected command: %s %v", name, args)
 			return nil, nil
@@ -590,7 +590,7 @@ enabled = false
 		t.Fatalf("disabled plugin check = %#v", plugin)
 	}
 	if evidenceValue(plugin, "installed") != "true" || evidenceValue(plugin, "enabled") != "false" ||
-		evidenceValue(plugin, "installed_version") != "0.1.6" || evidenceValue(plugin, "installed_revision") != testReleaseCommit {
+		evidenceValue(plugin, "installed_version") != "0.1.7" || evidenceValue(plugin, "installed_revision") != testReleaseCommit {
 		t.Fatalf("disabled plugin evidence = %#v", plugin.Evidence)
 	}
 	if status.Mode != CodexModePartialPlugin {

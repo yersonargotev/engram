@@ -1,9 +1,13 @@
 package mcp
 
 import (
+	"maps"
+	"regexp"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/yersonargotev/engram/internal/protocolcontract"
 )
 
 // TestServerInstructionsStaysUnderClientTruncationLimit enforces the
@@ -34,13 +38,43 @@ func TestServerInstructionsStaysUnderClientTruncationLimit(t *testing.T) {
 	}
 }
 
-func TestServerInstructionsUsesCandidateJudgmentIDs(t *testing.T) {
+func TestCurationJudgeDescriptionUsesCandidateJudgmentIDs(t *testing.T) {
 	const candidateInstruction = "once per entry using that entry's judgment_id"
-	const topLevelWarning = "never reuse the top-level judgment_id"
+	s := newMCPTestStore(t)
+	tool := NewServerWithTools(s, ResolveTools("mem_judge")).ListTools()["mem_judge"]
+	if tool == nil || !strings.Contains(tool.Tool.Description, candidateInstruction) {
+		t.Errorf("specialized mem_judge description must require each candidate's judgment_id")
+	}
+}
 
-	candidateIndex := strings.Index(serverInstructions, candidateInstruction)
-	warningIndex := strings.Index(serverInstructions, topLevelWarning)
-	if candidateIndex < 0 || warningIndex < candidateIndex {
-		t.Errorf("serverInstructions must require each candidate's judgment_id and prohibit reusing the top-level judgment_id")
+func TestServerInstructionsExposeOnlyProtocolToolsAndTerminalPolicy(t *testing.T) {
+	wantTools := make(map[string]bool)
+	for _, name := range protocolcontract.MinimumTools() {
+		wantTools[name] = true
+	}
+	gotTools := make(map[string]bool)
+	for _, name := range regexp.MustCompile(`\bmem_[a-z_]+\b`).FindAllString(serverInstructions, -1) {
+		gotTools[name] = true
+	}
+	if !maps.Equal(gotTools, wantTools) {
+		t.Fatalf("MCP instructions mention tools %#v, want only Protocol tools %#v", gotTools, wantTools)
+	}
+
+	for _, required := range []string{
+		"Terminal Memory commit",
+		"one terminal Memory checkpoint",
+		"settled root user turn",
+		"saved", "needs_review", "skipped",
+		"Current user intent, maintained source, and runtime evidence override Memory",
+		"curation", "lifecycle", "admin",
+	} {
+		if !strings.Contains(serverInstructions, required) {
+			t.Errorf("MCP instructions missing %q", required)
+		}
+	}
+	for _, legacyMandate := range []string{"MANDATORY", "PROACTIVE SAVE", "immediately after ANY"} {
+		if strings.Contains(serverInstructions, legacyMandate) {
+			t.Errorf("MCP instructions retain legacy mandate %q", legacyMandate)
+		}
 	}
 }

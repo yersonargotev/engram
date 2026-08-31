@@ -16,7 +16,7 @@ func agentAdapters() []agentAdapter {
 	return []agentAdapter{
 		{
 			slug:        "opencode",
-			description: "OpenCode — TypeScript plugin with session tracking, compaction recovery, and Memory Protocol",
+			description: "OpenCode — TypeScript plugin with session tracking, lifecycle recovery, and terminal Memory policy",
 			custom:      func(InstallOptions) (*Result, error) { return installOpenCode() },
 			installDir:  openCodePluginDir,
 		},
@@ -32,19 +32,19 @@ func agentAdapters() []agentAdapter {
 		},
 		{
 			slug:        "claude-code",
-			description: "Claude Code — Native plugin via marketplace (hooks, skills, MCP, compaction recovery)",
+			description: "Claude Code — Native plugin via marketplace (lifecycle hooks, canonical skill, and MCP)",
 			custom:      func(InstallOptions) (*Result, error) { return installClaudeCode() },
 			installDir:  func() string { return "managed by claude plugin system" },
 		},
 		{
 			slug:        "gemini-cli",
-			description: "Gemini CLI — MCP registration plus system prompt compaction recovery",
+			description: "Gemini CLI — MCP registration plus terminal Memory policy",
 			custom:      func(InstallOptions) (*Result, error) { return installGeminiCLI() },
 			installDir:  geminiConfigPath,
 			postInstall: []string{
 				"Restart Gemini CLI so MCP config is reloaded",
 				"Verify ~/.gemini/settings.json includes mcpServers.engram",
-				"Verify ~/.gemini/system.md + ~/.gemini/.env exist for compaction recovery",
+				"Verify ~/.gemini/system.md + ~/.gemini/.env exist for protocol activation",
 			},
 		},
 		{

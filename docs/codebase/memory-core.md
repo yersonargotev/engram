@@ -4,27 +4,28 @@
 
 **The memory core is `internal/store`: local SQLite + FTS5 is Engram's source of truth.** Interfaces should translate user/agent intent into store operations instead of reimplementing persistence rules.
 
-## Save and retrieve flow
+## Commit and retrieve flow
 
 The memory flow does not start in the database. It starts with the agent deciding something is worth remembering.
 
 ```text
-1. The agent finishes significant work
-   bugfix, decision, discovery, config, convention, session summary
+1. The root user turn and all causal work settle
 
-2. The agent calls an MCP tool
-   mem_save / mem_session_summary / mem_save_prompt / mem_capture_passive
+2. The agent chooses one terminal disposition
+   saved / needs_review / skipped(no_durable_knowledge)
 
-3. internal/project classifies identity; internal/mcp validates the contract
+3. mem_checkpoint commits the disposition and any inline Memory atomically
+
+4. internal/project classifies identity; internal/mcp validates the contract
    strong config/remote or explicit/session authority → write
    weak git root/child/basename → read-only discovery or actionable rejection
 
-4. internal/store persists
+5. internal/store persists
    sessions / observations / user_prompts / memory_relations / sync_mutations
    FTS5 indexes for search
 
-5. Next session
-   mem_context → mem_search → mem_get_observation when full detail is needed
+6. Later work
+   mem_search → mem_get_observation when full detail can change the task
 ```
 
 ## Store mental entities
@@ -45,7 +46,8 @@ For schema details, use [DOCS.md — Database Schema](../../DOCS.md#database-sch
 
 ## Memory invariants
 
-- Agent protocol and tool guides expect structured `mem_save` content: **What / Why / Where / Learned**. The persistence layer does not automatically reject poorly formed prose; discipline lives in agent instructions and review.
+- Canonical agent guidance owns the durable-knowledge rubric. Independent
+  `mem_save` remains available for explicit curation or a material loss-risk handoff.
 - `topic_key` is for evolving topics; distinct decisions are not mixed under the same key.
 - `scope=project` is the default; `scope=personal` exists for non-shared memory.
 - Soft delete (`deleted_at`) hides data without physically deleting it unless explicit hard delete is used.

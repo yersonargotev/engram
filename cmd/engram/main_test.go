@@ -239,6 +239,20 @@ func TestPrintUsage(t *testing.T) {
 	if !strings.Contains(stdout, "search <query>") || !strings.Contains(stdout, "setup [agent]") {
 		t.Fatalf("usage missing expected commands: %q", stdout)
 	}
+	for _, profile := range []string{
+		"agent (5 tools)",
+		"curation (11 tools)",
+		"lifecycle (4 tools)",
+		"admin (4 tools)",
+		"all (default, 24)",
+	} {
+		if !strings.Contains(stdout, profile) {
+			t.Fatalf("usage missing MCP profile %q: %q", profile, stdout)
+		}
+	}
+	if !strings.Contains(stdout, "--tools=agent,curation,lifecycle,admin") {
+		t.Fatalf("usage missing combined MCP profile example: %q", stdout)
+	}
 	if !strings.Contains(stdout, "save <title> <content>") || !strings.Contains(stdout, "save --title TITLE --content CONTENT") {
 		t.Fatalf("usage missing save input forms: %q", stdout)
 	}

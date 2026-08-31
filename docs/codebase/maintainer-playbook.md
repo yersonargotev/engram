@@ -8,7 +8,7 @@
 
 | Capability | What it does | Where it lives |
 |---|---|---|
-| Proactive save | Agent-written structured memories. | `internal/mcp`, `internal/store` |
+| Terminal Memory commit | Root-turn disposition plus atomically attached durable Memories. | `internal/memoryops`, `internal/mcp`, `internal/store` |
 | FTS5 search | Retrieves memories by text, type, project, scope. | `internal/store`, `internal/server`, `internal/mcp` |
 | Recent context | Session summary and context for a new session. | `internal/store`, `internal/mcp` |
 | Prompt capture | Saves user prompts as retrievable context. | `internal/store`, `internal/mcp`, plugins |
@@ -94,7 +94,7 @@
 
 - [ ] The tool uses store as the source of truth.
 - [ ] Project resolution respects `.engram/config.json`, cwd, and the `ambiguous_project` flow.
-- [ ] The `agent`/`admin` profile remains intentional.
+- [ ] The `agent`/`curation`/`lifecycle`/`admin` profile remains intentional.
 - [ ] Errors return useful envelopes for agents.
 - [ ] Tests in `internal/mcp/*_test.go` cover the contract.
 - [ ] `docs/AGENT-SETUP.md`, `docs/ARCHITECTURE.md`, or `DOCS.md` are updated if visible behavior changes.

@@ -136,12 +136,12 @@ func TestInstallDeclarativeAgentsRegisterMCPAndInstructions(t *testing.T) {
 				}
 			}
 
-			// Instruction surface contains the FULL protocol text. Declarative
+			// Instruction surface contains the FULL terminal policy. Declarative
 			// adapters (this table) are out of scope for --protocol=slim (see
 			// openspec/changes/setup-protocol-flag/proposal.md, Out of Scope):
 			// their protocol text is baked in at setup time from
 			// memoryProtocolMarkdown, not read at runtime, so it must always be
-			// the complete markdown — never a truncated/slim variant.
+			// the complete policy — never a truncated/slim variant.
 			instrRaw, err := os.ReadFile(agent.instrPath())
 			if err != nil {
 				t.Fatalf("read instruction file %s: %v", agent.instrPath(), err)
@@ -150,11 +150,25 @@ func TestInstallDeclarativeAgentsRegisterMCPAndInstructions(t *testing.T) {
 			if !strings.Contains(instr, "Engram Persistent Memory") {
 				t.Errorf("%s: instruction file missing protocol content", agent.slug)
 			}
-			if !strings.Contains(instr, "SESSION CLOSE PROTOCOL") {
-				t.Errorf("%s: instruction file missing full-protocol SESSION CLOSE section (adapter is full-only, not slim-eligible)", agent.slug)
+			if !strings.Contains(instr, "TERMINAL MEMORY COMMIT") {
+				t.Errorf("%s: instruction file missing Terminal Memory policy (adapter is full-only, not slim-eligible)", agent.slug)
 			}
 			if !strings.Contains(instr, "AFTER COMPACTION") {
-				t.Errorf("%s: instruction file missing full-protocol AFTER COMPACTION section (adapter is full-only, not slim-eligible)", agent.slug)
+				t.Errorf("%s: instruction file missing AFTER COMPACTION policy (adapter is full-only, not slim-eligible)", agent.slug)
+			}
+			for _, required := range []string{
+				"mem_current_project", "mem_search", "mem_get_observation",
+				"mem_checkpoint", "mem_checkpoint_status",
+				"saved", "needs_review", "skipped(no_durable_knowledge)",
+			} {
+				if !strings.Contains(instr, required) {
+					t.Errorf("%s: instruction file missing terminal-policy vocabulary %q", agent.slug, required)
+				}
+			}
+			for _, retired := range []string{"SESSION CLOSE PROTOCOL", "FIRST ACTION REQUIRED", "WHEN TO SAVE (mandatory", "search memory PROACTIVELY"} {
+				if strings.Contains(instr, retired) {
+					t.Errorf("%s: instruction file retains retired policy %q", agent.slug, retired)
+				}
 			}
 			if agent.style == markerBlock {
 				begin := strings.Index(instr, engramMarkerBegin)

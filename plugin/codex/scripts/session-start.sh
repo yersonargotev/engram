@@ -133,6 +133,15 @@ fi
 
 # Return valid model-visible SessionStart.additionalContext. The cue is read
 # from the installed skill so this script owns no independent Memory semantics.
-emit_session_start_context "$CONTEXT"
+SESSION_START_OUTPUT=$(emit_session_start_context "$CONTEXT")
+if [ -n "$SESSION_START_OUTPUT" ]; then
+  DELIVERED_BYTES=$(printf '%s\n' "$SESSION_START_OUTPUT" | LC_ALL=C wc -c | tr -d '[:space:]')
+  BASELINE_ARGS=(
+    --kind operation --surface lifecycle --operation session_start --outcome success
+    --delivered-bytes "$DELIVERED_BYTES"
+  )
+  record_baseline "${BASELINE_ARGS[@]}"
+  printf '%s\n' "$SESSION_START_OUTPUT"
+fi
 
 exit 0

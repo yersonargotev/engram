@@ -23,6 +23,7 @@
 | Change the TUI | `internal/tui/model.go` | `internal/tui/update.go`, `internal/tui/view.go`, `internal/tui/styles.go` |
 | Change Obsidian | `internal/obsidian/` | `plugin/obsidian/`, `docs/beta/obsidian-brain.md` |
 | Change the Codex activation evaluation | `internal/activationstudy/` | `evals/codex-activation/`, `cmd/engram/activation_study.go` |
+| Change the content-free Recall baseline | `internal/recallbaseline/` | `cmd/engram/recall_baseline.go`, `plugin/codex/`, `docs/RECALL-BASELINE.md` |
 | Prepare a large feature | `openspec/changes/*` | `openspec/specs/*`, `CONTRIBUTING.md` |
 
 ## Package ownership
@@ -44,6 +45,7 @@
 | `internal/project` | Project detection and normalization. | Access the store to correct data. |
 | `internal/setup` | Registry-driven agent installation: declarative adapters in `agents.go`, generic registry/injection machinery in `registry.go`, and custom installers in `setup.go`. | Orchestrate automatic cloud enrollment/login if it is not implemented and documented. |
 | `internal/activationstudy` | Frozen Codex activation contracts, disposable treatment fixtures, bounded event classification, deterministic analysis, and study cleanup. | Enable production integrations, retain raw run evidence, or mutate the real user home/store. |
+| `internal/recallbaseline` | Versioned local-only operational events, salted linkage, retention, deterministic aggregation, and prospective power analysis. | Store content or raw identity, enter Memory/FTS/sync/cloud, or decide plugin lifecycle behavior. |
 | `plugin/` | Thin adapters per agent/host. | Contain core behavior that should live in Go. |
 | `skills/` | Guardrails for contributor agents. | Replace specs, tests, or code. |
 | `docs/` | Usage, architecture, cloud, plugin, installation, and doctor guides. | Document unimplemented aspirations. |
@@ -64,6 +66,7 @@ Is it Postgres/cloud read model? → internal/cloud/cloudstore
 Is it a browser screen?          → internal/cloud/dashboard
 Is it auth/session?              → internal/cloud/auth
 Is it agent installation?        → internal/setup
+Is it content-free Recall measurement? → internal/recallbaseline
 ```
 
 If a change needs two areas, separate the contract: for example, a dashboard toggle that pauses sync should have UI in `dashboard`, enforcement in `cloudserver`, state in `cloudstore`, and tests crossing that boundary.

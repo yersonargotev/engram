@@ -25,6 +25,11 @@ SESSION_ID=$(json_string "session_id")
 ROOT_TURN_ID=$(json_string "turn_id")
 PROMPT=$(json_string "prompt")
 
+if [ -n "$PROMPT" ] && [ -n "$SESSION_ID" ]; then
+  record_baseline \
+    --kind capture --surface lifecycle --operation prompt --outcome enabled
+fi
+
 # Prompt capture remains lifecycle telemetry. It never creates a Memory or a
 # checkpoint and cannot block prompt submission. Project policy stays in the
 # server; detached standard streams keep the foreground hook prompt.

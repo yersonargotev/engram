@@ -5,13 +5,19 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yersonargotev/engram/internal/memoryops"
 	"github.com/yersonargotev/engram/internal/project"
+	"github.com/yersonargotev/engram/internal/recallbaseline"
 	"github.com/yersonargotev/engram/internal/store"
 )
 
 func cmdGet(cfg store.Config) {
+	started := time.Now()
+	baselineOutcome := recallbaseline.OutcomeError
+	var baselineBytes *int64
+	defer func() { observeRecallBaselineCLI(cfg, "get", started, baselineOutcome, baselineBytes) }()
 	if len(os.Args) < 3 {
 		failCLI(hasArg("--json"), "invalid_arguments", "usage: engram get <observation_id> [--json]", nil)
 		return
@@ -41,9 +47,13 @@ func cmdGet(cfg store.Config) {
 	}
 	obs := result.Observation
 	if jsonMode {
-		_ = writeCLIJSON(map[string]any{"observation": obs, "state": obs.State(), "pinned": obs.Pinned, "relations": result.Relations})
+		payload := map[string]any{"observation": obs, "state": obs.State(), "pinned": obs.Pinned, "relations": result.Relations}
+		baselineOutcome = recallbaseline.OutcomeSuccess
+		baselineBytes = cliJSONBytes(payload)
+		_ = writeCLIJSON(payload)
 		return
 	}
+	baselineOutcome = recallbaseline.OutcomeSuccess
 	fmt.Printf("#%d [%s] %s\n%s\nSession: %s\n", obs.ID, obs.Type, obs.Title, obs.Content, obs.SessionID)
 	if obs.Project != nil {
 		fmt.Printf("Project: %s\n", *obs.Project)

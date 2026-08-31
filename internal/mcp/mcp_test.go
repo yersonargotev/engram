@@ -26,6 +26,53 @@ func newMCPTestStore(t *testing.T) *store.Store {
 	return s
 }
 
+func TestOperationMiddlewareReportsBoundedMCPResultWithoutRequestContent(t *testing.T) {
+	t.Parallel()
+
+	var observed OperationObservation
+	middleware := operationObservationMiddleware(func(value OperationObservation) {
+		observed = value
+	})
+	result := mcppkg.NewToolResultText("UTF-8 ✓")
+	handler := middleware(func(context.Context, mcppkg.CallToolRequest) (*mcppkg.CallToolResult, error) {
+		return result, nil
+	})
+	request := mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{
+		Name:      "mem_search",
+		Arguments: map[string]any{"query": "must never reach telemetry"},
+	}}
+	got, err := handler(context.Background(), request)
+	if err != nil || got != result {
+		t.Fatalf("handler result=%v error=%v", got, err)
+	}
+
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("json.Marshal(result): %v", err)
+	}
+	if observed.Operation != "mem_search" || observed.Outcome != OperationSuccess || observed.DeliveredUTF8Bytes == nil || *observed.DeliveredUTF8Bytes != int64(len(encoded)) {
+		t.Fatalf("observation = %+v", observed)
+	}
+	if observed.Latency < 0 {
+		t.Fatalf("monotonic latency = %s", observed.Latency)
+	}
+}
+
+func TestOperationMiddlewareReportsUnknownBytesForTransportError(t *testing.T) {
+	t.Parallel()
+
+	var observed OperationObservation
+	handler := operationObservationMiddleware(func(value OperationObservation) {
+		observed = value
+	})(func(context.Context, mcppkg.CallToolRequest) (*mcppkg.CallToolResult, error) {
+		return nil, errors.New("transport failed")
+	})
+	_, _ = handler(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Name: "mem_search"}})
+	if observed.Outcome != OperationError || observed.DeliveredUTF8Bytes != nil {
+		t.Fatalf("transport error observation = %+v", observed)
+	}
+}
+
 func newMCPTestStoreWithMaxContentLength(t *testing.T, maxContentLength int) *store.Store {
 	s, _ := newMCPTestStoreWithOptions(t, maxContentLength)
 	return s

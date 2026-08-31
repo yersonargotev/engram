@@ -14,26 +14,58 @@ import (
 // CheckpointToolHandler exposes the transport-neutral checkpoint write for MCP
 // and for adapter-parity tests.
 func CheckpointToolHandler(s *store.Store) server.ToolHandlerFunc {
+	return CheckpointToolHandlerWithObserver(s, nil)
+}
+
+// CheckpointToolHandlerWithObserver reports only bounded checkpoint coverage
+// metadata. The observer never receives Memory IDs, inline Memories, proposal
+// content, project paths, or any other request argument.
+func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointObservation)) server.ToolHandlerFunc {
 	return func(_ context.Context, req mcppkg.CallToolRequest) (*mcppkg.CallToolResult, error) {
+		observation := CheckpointObservation{
+			Host:       checkpointStringArg(req, "host"),
+			SessionID:  checkpointStringArg(req, "session_id"),
+			RootTurnID: checkpointStringArg(req, "root_turn_id"),
+			Outcome:    CheckpointUnknown,
+		}
+		finish := func(err error) {
+			if observe == nil {
+				return
+			}
+			if err == nil {
+				observation.Outcome = CheckpointCompleted
+			} else if memoryops.CheckpointErrorCode(err) == memoryops.CheckpointErrorCodeConflict {
+				observation.Outcome = CheckpointConflict
+			}
+			func() {
+				defer func() { _ = recover() }()
+				observe(observation)
+			}()
+		}
 		if _, exists := req.GetArguments()["proposal_id"]; exists {
-			return checkpointToolError(fmt.Errorf("%w: proposal_id is not supported", store.ErrCheckpointInvalidReferences)), nil
+			err := fmt.Errorf("%w: proposal_id is not supported", store.ErrCheckpointInvalidReferences)
+			finish(err)
+			return checkpointToolError(err), nil
 		}
 		memoryIDs, err := checkpointMemoryIDsArg(req, "memory_ids")
 		if err != nil {
+			finish(err)
 			return checkpointToolError(err), nil
 		}
 		memories, err := checkpointMemoriesArg(req, "memories")
 		if err != nil {
+			finish(err)
 			return checkpointToolError(err), nil
 		}
 		proposal, err := checkpointProposalArg(req, "proposal")
 		if err != nil {
+			finish(err)
 			return checkpointToolError(err), nil
 		}
 		result, err := memoryops.New(s).RecordCheckpoint(memoryops.CheckpointRecordInput{
-			Host:        checkpointStringArg(req, "host"),
-			SessionID:   checkpointStringArg(req, "session_id"),
-			RootTurnID:  checkpointStringArg(req, "root_turn_id"),
+			Host:        observation.Host,
+			SessionID:   observation.SessionID,
+			RootTurnID:  observation.RootTurnID,
 			Disposition: checkpointStringArg(req, "disposition"),
 			ReasonCode:  checkpointStringArg(req, "reason"),
 			Project:     checkpointStringArg(req, "project"),
@@ -43,8 +75,10 @@ func CheckpointToolHandler(s *store.Store) server.ToolHandlerFunc {
 			CWD:         currentWorkingDirectory(),
 		})
 		if err != nil {
+			finish(err)
 			return checkpointToolError(err), nil
 		}
+		finish(nil)
 		return checkpointToolJSON(result), nil
 	}
 }

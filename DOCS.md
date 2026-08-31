@@ -57,6 +57,13 @@ For other docs:
 - **memory_proposals** — immutable local checkpoint audit evidence for `needs_review`. Stores only an Engram-derived ID, normalized project, redacted `title` and `content`, and creation time. It is separate from `observations`, has no FTS or sync triggers, and never enters Memory search, context, counts, export/import, sync, cloud, or Obsidian. No workflow converts a proposal into a Memory. Project rename, merge, and delete operations update or remove it together with its checkpoint reference.
 - **memory_checkpoint_proposal_references** — one local proposal reference per `needs_review` checkpoint. Stores only checkpoint ID, proposal ID, and normalized project; it is excluded from all Memory and replication surfaces.
 
+The opt-in Recall baseline does not add a table to this Memory database. Its
+versioned, local-only SQLite ledger is
+`$ENGRAM_DATA_DIR/recall-baseline-v1.db`; it is excluded by construction from
+Memory, FTS, Recall, context, ordinary export/import, sync, cloud, Obsidian,
+and evaluation/publishing pipelines. See [Content-free Recall
+baseline](docs/RECALL-BASELINE.md).
+
 ### SQLite Configuration
 
 - WAL mode for concurrent reads
@@ -99,6 +106,7 @@ engram checkpoint record --host HOST --session-id ID --root-turn-id ID
                          --disposition needs_review --project PROJECT
                          --proposal-json '{"title":"...","content":"..."}' [--json]
 engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
+engram recall-baseline record|report|power|purge [options]
 ```
 
 `engram current-project --json` separates discovery from write authority with
@@ -564,6 +572,8 @@ Response:
 | Variable                        | Description                                                                                                                                                                                                                                               | Default              |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
 | `ENGRAM_DATA_DIR`               | Override data directory                                                                                                                                                                                                                                   | `~/.engram`          |
+| `ENGRAM_RECALL_BASELINE`        | Set to `1` to enable content-free local collection for the current Codex Recall baseline. Unset leaves all automatic observers disabled and creates no baseline state.                                                                                     | (unset — disabled)   |
+| `ENGRAM_RECALL_BASELINE_RETENTION_DAYS` | Integer retention window from 1 through 30 days for the separate Recall-baseline ledger.                                                                                                                                                           | `7`                  |
 | `ENGRAM_PORT`                   | Override HTTP server port                                                                                                                                                                                                                                 | `7437`               |
 | `ENGRAM_PROJECT`                | Process-level default project override, applied by every entry point through one precedence rule: **explicit request project** (`engram save --project`, an MCP tool `project` argument) → **process override** (`engram mcp --project`, then `ENGRAM_PROJECT`) → **cwd detection**. For `engram save`: owns the observation and its `manual-save-<project>` session when `--project` is omitted. For `engram serve`: used as the fallback when `GET /sync/status` receives no `project` query param. For `engram mcp`: sets `MCPConfig.DefaultProject`, which takes precedence over cwd detection for all read and write tools (including `mem_update`) for the lifetime of that MCP process. When unset, cwd detection is used as the fallback. | cwd-detected project |
 | `ENGRAM_HTTP_TOKEN`             | Optional Bearer auth for the local HTTP server. When set, `DELETE /sessions/{id}`, `DELETE /observations/{id}`, `DELETE /prompts/{id}`, `GET /export`, `POST /import`, and `POST /projects/migrate` require `Authorization: Bearer <token>`. `POST /projects/rescue-ownership` always requires a configured token and matching Bearer credential. Comparison is constant-time. Token is read at request time (no restart needed). Other routes remain open when unset (zero-config default). Ownership repair never depends on this token: `engram projects rescue-ownership` performs the same repair against the local store. | (unset — HTTP rescue route not served; CLI repair still available) |

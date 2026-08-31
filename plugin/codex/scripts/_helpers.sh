@@ -24,3 +24,12 @@ resolve_project() {
     end
   ' 2>/dev/null
 }
+
+# Emit bounded, content-free operational metadata only during an explicitly
+# enabled baseline window. Core owns validation, salted linkage, and retention.
+record_baseline() {
+  [ "${ENGRAM_RECALL_BASELINE:-0}" = "1" ] || return 0
+  (
+    engram recall-baseline record "$@" >/dev/null 2>&1 || true
+  ) </dev/null >/dev/null 2>&1 &
+}

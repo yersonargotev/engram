@@ -399,6 +399,7 @@ Your production engram is fully untouched throughout.
 | `engram timeline <obs_id>`                 | Chronological context                                           |
 | `engram context [project]`                 | Recent session context                                           |
 | `engram activation-study verify\|run\|analyze` | Verify, execute, or analyze a frozen disposable Codex activation cohort |
+| `engram recall-baseline record\|report\|power\|purge` | Collect and reproduce the opt-in content-free local Recall baseline |
 | `engram checkpoint record [flags]`         | Record an idempotent local `saved`, `needs_review`, or `skipped` root-turn checkpoint |
 | `engram checkpoint status [flags]`         | Inspect one exact local root-turn checkpoint                 |
 | `engram stats`                             | Memory statistics                                               |
@@ -424,11 +425,22 @@ lifecycle hooks, or Stop verification. The frozen v1 contract,
 reproducible commands, privacy boundary, and published results live in
 [`evals/codex-activation/v1/`](evals/codex-activation/v1/README.md).
 
+### Content-free Recall baseline
+
+`engram recall-baseline` owns an opt-in, local-only operational ledger for the
+current Codex Protocol. It aggregates checkpoint/Stop/Capture/SubagentStop and
+Recall-facing CLI/MCP behavior without storing prompts, queries, Memory or
+assistant content, paths, diffs, credentials, or raw lifecycle identifiers.
+See the [collection, privacy, retention, report, and power-analysis
+contract](docs/RECALL-BASELINE.md).
+
 ### Key Environment Variables
 
 | Variable                        | Description                                                                                                            | Default        |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------- |
 | `ENGRAM_DATA_DIR`               | Override data directory                                                                                                | `~/.engram`    |
+| `ENGRAM_RECALL_BASELINE`        | Set to `1` to enable the content-free, local-only Codex Recall baseline                                                | (unset)        |
+| `ENGRAM_RECALL_BASELINE_RETENTION_DAYS` | Recall-baseline retention from 1 through 30 days                                                             | `7`            |
 | `ENGRAM_PORT`                   | Override HTTP server port                                                                                              | `7437`         |
 | `ENGRAM_URL`                    | Point the **Pi plugin** at an existing `engram serve` instance instead of auto-starting one. Not an MCP endpoint — used by the HTTP event-capture path only. (The OpenCode plugin honors `ENGRAM_PORT`/`ENGRAM_BIN`, not `ENGRAM_URL`.) | (unset, defaults to `http://127.0.0.1:<ENGRAM_PORT>`) |
 | `ENGRAM_HTTP_TOKEN`             | Optional Bearer auth for local HTTP server. When set, destructive and export routes require `Authorization: Bearer <token>`. Unset = open (zero-config default). | (unset) |
@@ -447,6 +459,7 @@ Full environment variable reference → [DOCS.md#environment-variables](DOCS.md#
 | [Engram Cloud](docs/engram-cloud/README.md)   | Cloud landing page, quickstart, branding, and deep links               |
 | [Agent Setup](docs/AGENT-SETUP.md)            | Per-agent configuration + Memory Protocol                              |
 | [Codebase Guide](docs/CODEBASE-GUIDE.md)      | Guide to the repository structure, flows, and implementation landmarks |
+| [Recall baseline](docs/RECALL-BASELINE.md)    | Content-free collection, privacy, retention, reporting, and power analysis |
 | [Architecture](docs/ARCHITECTURE.md)          | How it works + MCP tools + project structure                           |
 | [Plugins](docs/PLUGINS.md)                    | OpenCode & Claude Code plugin details                                  |
 | [Doctor](docs/DOCTOR.md)                      | Operational diagnosis and repair workflows                             |

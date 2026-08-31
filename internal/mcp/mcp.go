@@ -42,6 +42,14 @@ type MCPConfig struct {
 	// auto-resolution; per-call project arguments remain separately validated.
 	DefaultProject string
 
+	// ObserveOperation receives bounded post-call metadata. It never receives
+	// request arguments or tool content and cannot alter the handler result.
+	ObserveOperation func(OperationObservation)
+	// ObserveCheckpoint receives only the opaque checkpoint identity and a
+	// bounded terminal attempt outcome. It never receives Memory or proposal
+	// payloads and cannot alter the handler result.
+	ObserveCheckpoint func(CheckpointObservation)
+
 	// BM25Floor overrides the default BM25 score floor used by FindCandidates
 	// during conflict candidate detection (REQ-001). The floor is the minimum
 	// acceptable BM25 rank (negative; closer to 0 = better match). Candidates
@@ -57,6 +65,35 @@ type MCPConfig struct {
 	// mem_save call (REQ-001). nil means "use the store default" (3).
 	// An explicit pointer value (including 0) is forwarded directly.
 	Limit *int
+}
+
+type OperationOutcome string
+
+const (
+	OperationSuccess OperationOutcome = "success"
+	OperationError   OperationOutcome = "error"
+)
+
+type OperationObservation struct {
+	Operation          string
+	Outcome            OperationOutcome
+	Latency            time.Duration
+	DeliveredUTF8Bytes *int64
+}
+
+type CheckpointOutcome string
+
+const (
+	CheckpointCompleted CheckpointOutcome = "completed"
+	CheckpointConflict  CheckpointOutcome = "conflict"
+	CheckpointUnknown   CheckpointOutcome = "unknown"
+)
+
+type CheckpointObservation struct {
+	Host       string
+	SessionID  string
+	RootTurnID string
+	Outcome    CheckpointOutcome
 }
 
 var suggestTopicKey = store.SuggestTopicKey
@@ -227,15 +264,50 @@ func NewServerWithConfig(s *store.Store, cfg MCPConfig, allowlist map[string]boo
 }
 
 func newServerWithActivity(s *store.Store, cfg MCPConfig, allowlist map[string]bool, activity *SessionActivity) *server.MCPServer {
+	options := []server.ServerOption{
+		server.WithToolCapabilities(true),
+		server.WithInstructions(serverInstructions),
+	}
+	if cfg.ObserveOperation != nil {
+		options = append(options, server.WithToolHandlerMiddleware(operationObservationMiddleware(cfg.ObserveOperation)))
+	}
 	srv := server.NewMCPServer(
 		"engram",
 		"0.1.0",
-		server.WithToolCapabilities(true),
-		server.WithInstructions(serverInstructions),
+		options...,
 	)
 
 	registerTools(srv, s, cfg, allowlist, activity)
 	return srv
+}
+
+func operationObservationMiddleware(observe func(OperationObservation)) server.ToolHandlerMiddleware {
+	return func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+		return func(ctx context.Context, request mcp.CallToolRequest) (result *mcp.CallToolResult, err error) {
+			started := time.Now()
+			result, err = next(ctx, request)
+			observation := OperationObservation{
+				Operation: request.Params.Name,
+				Outcome:   OperationSuccess,
+				Latency:   time.Since(started),
+			}
+			if err != nil || (result != nil && result.IsError) {
+				observation.Outcome = OperationError
+			}
+			if result != nil {
+				encoded, marshalErr := json.Marshal(result)
+				if marshalErr == nil {
+					bytes := int64(len(encoded))
+					observation.DeliveredUTF8Bytes = &bytes
+				}
+			}
+			func() {
+				defer func() { _ = recover() }()
+				observe(observation)
+			}()
+			return result, err
+		}
+	}
 }
 
 // shouldRegister returns true if the tool should be registered given the
@@ -299,7 +371,7 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 					mcp.AdditionalProperties(false),
 				),
 			),
-			queuedCheckpointToolHandler(writeQueue, CheckpointToolHandler(s)),
+			queuedCheckpointToolHandler(writeQueue, CheckpointToolHandlerWithObserver(s, cfg.ObserveCheckpoint)),
 		)
 	}
 	if shouldRegister("mem_checkpoint_status", allowlist) {

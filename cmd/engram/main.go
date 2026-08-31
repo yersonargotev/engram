@@ -37,6 +37,7 @@ import (
 	"github.com/yersonargotev/engram/internal/memoryops"
 	"github.com/yersonargotev/engram/internal/obsidian"
 	projectpkg "github.com/yersonargotev/engram/internal/project"
+	"github.com/yersonargotev/engram/internal/recallbaseline"
 	"github.com/yersonargotev/engram/internal/server"
 	"github.com/yersonargotev/engram/internal/setup"
 	"github.com/yersonargotev/engram/internal/store"
@@ -152,7 +153,8 @@ var (
 		return autosync.New(s, transport, cfg)
 	}
 
-	exitFunc = os.Exit
+	processExit = os.Exit
+	exitFunc    = exitWithRecallBaseline
 
 	stdinScanner = func() *bufio.Scanner { return bufio.NewScanner(os.Stdin) }
 	userHomeDir  = os.UserHomeDir
@@ -646,61 +648,71 @@ func main() {
 
 	switch os.Args[1] {
 	case "serve":
-		cmdServe(cfg)
+		runRecallBaselineCLI(cfg, "serve", func() { cmdServe(cfg) })
 	case "mcp":
-		cmdMCP(cfg)
+		runRecallBaselineCLI(cfg, "mcp", func() { cmdMCP(cfg) })
 	case "tui":
-		cmdTUI(cfg)
+		runRecallBaselineCLI(cfg, "tui", func() { cmdTUI(cfg) })
 	case "search":
 		cmdSearch(cfg)
 	case "save":
-		cmdSave(cfg)
+		runRecallBaselineCLI(cfg, "save", func() { cmdSave(cfg) })
 	case "get":
 		cmdGet(cfg)
 	case "update":
-		cmdUpdate(cfg)
+		runRecallBaselineCLI(cfg, "update", func() { cmdUpdate(cfg) })
 	case "review":
-		cmdReview(cfg)
+		runRecallBaselineCLI(cfg, "review", func() { cmdReview(cfg) })
 	case "pin":
-		cmdPin(cfg, true)
+		runRecallBaselineCLI(cfg, "pin", func() { cmdPin(cfg, true) })
 	case "unpin":
-		cmdPin(cfg, false)
+		runRecallBaselineCLI(cfg, "unpin", func() { cmdPin(cfg, false) })
 	case "current-project":
-		cmdCurrentProject()
+		runRecallBaselineCLI(cfg, "current_project", cmdCurrentProject)
 	case "suggest-topic-key":
-		cmdSuggestTopicKey()
+		runRecallBaselineCLI(cfg, "suggest_topic_key", cmdSuggestTopicKey)
 	case "delete":
-		cmdDelete(cfg)
+		runRecallBaselineCLI(cfg, "delete", func() { cmdDelete(cfg) })
 	case "timeline":
-		cmdTimeline(cfg)
+		runRecallBaselineCLI(cfg, "timeline", func() { cmdTimeline(cfg) })
 	case "conflicts":
-		cmdConflicts(cfg)
+		runRecallBaselineCLI(cfg, "conflicts", func() { cmdConflicts(cfg) })
 	case "doctor":
-		cmdDoctor(cfg)
+		runRecallBaselineCLI(cfg, "doctor", func() { cmdDoctor(cfg) })
 	case "context":
 		cmdContext(cfg)
 	case "checkpoint":
-		cmdCheckpoint(cfg)
+		if len(os.Args) >= 3 && strings.EqualFold(strings.TrimSpace(os.Args[2]), "verify-stop") {
+			cmdCheckpoint(cfg)
+			break
+		}
+		operation := "checkpoint_status"
+		if len(os.Args) >= 3 && strings.EqualFold(strings.TrimSpace(os.Args[2]), "record") {
+			operation = "checkpoint_record"
+		}
+		runRecallBaselineCLI(cfg, operation, func() { cmdCheckpoint(cfg) })
 	case "stats":
-		cmdStats(cfg)
+		runRecallBaselineCLI(cfg, "stats", func() { cmdStats(cfg) })
 	case "export":
-		cmdExport(cfg)
+		runRecallBaselineCLI(cfg, "export", func() { cmdExport(cfg) })
 	case "import":
-		cmdImport(cfg)
+		runRecallBaselineCLI(cfg, "import", func() { cmdImport(cfg) })
 	case "sync":
-		cmdSync(cfg)
+		runRecallBaselineCLI(cfg, "sync", func() { cmdSync(cfg) })
 	case "cloud":
-		cmdCloud(cfg)
+		runRecallBaselineCLI(cfg, "cloud", func() { cmdCloud(cfg) })
 	case "obsidian-export":
-		cmdObsidianExport(cfg)
+		runRecallBaselineCLI(cfg, "obsidian_export", func() { cmdObsidianExport(cfg) })
 	case "projects":
-		cmdProjects(cfg)
+		runRecallBaselineCLI(cfg, "projects", func() { cmdProjects(cfg) })
 	case "setup":
-		cmdSetup(cfg)
+		runRecallBaselineCLI(cfg, "setup", func() { cmdSetup(cfg) })
 	case "protocol-mode":
-		cmdProtocolMode(cfg)
+		runRecallBaselineCLI(cfg, "protocol_mode", func() { cmdProtocolMode(cfg) })
 	case "activation-study":
 		cmdActivationStudy()
+	case "recall-baseline":
+		cmdRecallBaseline(cfg)
 	case "version", "--version", "-v":
 		fmt.Printf("engram %s\n", version)
 	case "help", "--help", "-h":
@@ -726,7 +738,7 @@ func shouldCheckForUpdates(args []string) bool {
 	}
 	command := strings.ToLower(strings.TrimSpace(args[0]))
 	switch command {
-	case "mcp", "serve", "protocol-mode", "activation-study":
+	case "mcp", "serve", "protocol-mode", "activation-study", "recall-baseline":
 		return false
 	case "checkpoint":
 		return len(args) >= 2 && strings.ToLower(strings.TrimSpace(args[1])) != "verify-stop"
@@ -748,6 +760,14 @@ func handleConfigFreeCommand(args []string) bool {
 	case "activation-study":
 		cmdActivationStudy()
 		return true
+	case "recall-baseline":
+		if len(args) >= 2 {
+			subcommand := strings.ToLower(strings.TrimSpace(args[1]))
+			if subcommand == "power" || subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
+				cmdRecallBaseline(store.Config{})
+				return true
+			}
+		}
 	case "version", "--version", "-v":
 		fmt.Printf("engram %s\n", version)
 		return true
@@ -970,7 +990,12 @@ func cmdMCP(cfg store.Config) {
 	}
 	defer stopAutosync()
 
-	mcpCfg := mcp.MCPConfig{DefaultProject: projectOverride}
+	observeOperation, observeCheckpoint, closeObservers := newRecallBaselineMCPObservers(cfg)
+	defer closeObservers()
+	mcpCfg := mcp.MCPConfig{
+		DefaultProject: projectOverride, ObserveOperation: observeOperation,
+		ObserveCheckpoint: observeCheckpoint,
+	}
 	allowlist := resolveMCPTools(toolsFilter)
 	mcpSrv := newMCPServerWithConfig(s, mcpCfg, allowlist)
 
@@ -995,6 +1020,10 @@ func cmdTUI(cfg store.Config) {
 }
 
 func cmdSearch(cfg store.Config) {
+	started := time.Now()
+	baselineOutcome := recallbaseline.OutcomeError
+	var baselineBytes *int64
+	defer func() { observeRecallBaselineCLI(cfg, "search", started, baselineOutcome, baselineBytes) }()
 	jsonMode := hasArg("--json")
 	if len(os.Args) < 3 {
 		failCLI(jsonMode, "invalid_arguments", "usage: engram search <query> [--type TYPE] [--project PROJECT] [--all-projects] [--match-mode all|any] [--scope SCOPE] [--limit N] [--json]", nil)
@@ -1113,15 +1142,21 @@ func cmdSearch(cfg store.Config) {
 		if identity.Strength == projectpkg.IdentityStrengthWeak {
 			payload["safe_next_action"] = projectpkg.ExplicitProjectSafeNextAction
 		}
+		baselineOutcome = recallbaseline.OutcomeSuccess
+		baselineBytes = cliJSONBytes(payload)
 		_ = writeCLIJSON(payload)
 		return
 	}
 
 	if len(results) == 0 {
-		fmt.Printf("No memories found for: %q\n", query)
+		output := fmt.Sprintf("No memories found for: %q\n", query)
+		baselineOutcome = recallbaseline.OutcomeSuccess
+		baselineBytes = recallbaseline.KnownBytes(int64(len([]byte(output))))
+		fmt.Print(output)
 		return
 	}
 
+	baselineOutcome = recallbaseline.OutcomeSuccess
 	fmt.Printf("Found %d memories:\n\n", len(results))
 	for i, r := range results {
 		project := ""
@@ -1578,6 +1613,10 @@ func cmdTimeline(cfg store.Config) {
 }
 
 func cmdContext(cfg store.Config) {
+	started := time.Now()
+	baselineOutcome := recallbaseline.OutcomeError
+	var baselineBytes *int64
+	defer func() { observeRecallBaselineCLI(cfg, "context", started, baselineOutcome, baselineBytes) }()
 	project := ""
 	scope := ""
 	jsonMode := hasArg("--json")
@@ -1619,15 +1658,23 @@ func cmdContext(cfg store.Config) {
 		return
 	}
 	if jsonMode {
-		_ = writeCLIJSON(map[string]any{"project": project, "scope": scope, "context": ctx})
+		payload := map[string]any{"project": project, "scope": scope, "context": ctx}
+		baselineOutcome = recallbaseline.OutcomeSuccess
+		baselineBytes = cliJSONBytes(payload)
+		_ = writeCLIJSON(payload)
 		return
 	}
 
 	if ctx == "" {
-		fmt.Println("No previous session memories found.")
+		output := "No previous session memories found.\n"
+		baselineOutcome = recallbaseline.OutcomeSuccess
+		baselineBytes = recallbaseline.KnownBytes(int64(len(output)))
+		fmt.Print(output)
 		return
 	}
 
+	baselineOutcome = recallbaseline.OutcomeSuccess
+	baselineBytes = recallbaseline.KnownBytes(int64(len([]byte(ctx))))
 	fmt.Print(ctx)
 }
 
@@ -3399,6 +3446,8 @@ Commands:
   doctor             Run read-only operational diagnostics [--json] [--project P] [--check CODE]
   context [project]  Show recent context from previous sessions [--scope SCOPE] [--json]
   activation-study   Verify, run, or analyze the frozen Codex activation cohort
+  recall-baseline    Record and report content-free local operational evidence
+                       record|report|power|purge (see recall-baseline --help)
   checkpoint record  Record a root-turn Memory checkpoint
                        --host HOST --session-id ID --root-turn-id ID
                        --disposition saved|needs_review|skipped [reference flags] [--json]

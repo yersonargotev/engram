@@ -7,8 +7,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/yersonargotev/engram/internal/memoryops"
+	"github.com/yersonargotev/engram/internal/recallbaseline"
 	"github.com/yersonargotev/engram/internal/store"
 )
 
@@ -76,9 +78,15 @@ func cmdCheckpoint(cfg store.Config) {
 			CWD:         currentCWD(),
 		})
 		if recordErr != nil {
+			outcome := recallbaseline.OutcomeUnknown
+			if memoryops.CheckpointErrorCode(recordErr) == memoryops.CheckpointErrorCodeConflict {
+				outcome = recallbaseline.OutcomeConflict
+			}
+			recordRecallBaselineCheckpoint(cfg, opts.Host, opts.SessionID, opts.RootTurnID, outcome)
 			failCLI(opts.JSONMode, memoryops.CheckpointErrorCode(recordErr), recordErr.Error(), nil)
 			return
 		}
+		defer recordRecallBaselineCheckpoint(cfg, opts.Host, opts.SessionID, opts.RootTurnID, recallbaseline.OutcomeCompleted)
 		if opts.JSONMode {
 			_ = writeCLIJSON(result)
 			return
@@ -120,6 +128,14 @@ func cmdCheckpoint(cfg store.Config) {
 	}
 }
 
+func recordRecallBaselineCheckpoint(cfg store.Config, host, sessionID, rootTurnID string, outcome recallbaseline.Outcome) {
+	recordRecallBaselineEvents(cfg, recallbaseline.Event{
+		Kind: recallbaseline.EventCheckpoint, Surface: recallbaseline.SurfaceLifecycle,
+		Operation: "terminal_checkpoint", Outcome: outcome,
+		Link: recallbaseline.Linkage{Host: host, SessionID: sessionID, RootTurnID: rootTurnID},
+	})
+}
+
 type checkpointStopEvent struct {
 	SessionID      *string `json:"session_id"`
 	TurnID         *string `json:"turn_id"`
@@ -133,15 +149,21 @@ type checkpointStopResponse struct {
 }
 
 func cmdCheckpointVerifyStop(cfg store.Config, host string, input io.Reader) {
+	started := time.Now()
+	finish := func(event *checkpointStopEvent, stopOutcome, checkpointOutcome recallbaseline.Outcome, response checkpointStopResponse) {
+		finishCheckpointStopWithBaseline(cfg, host, event, stopOutcome, checkpointOutcome, response, started)
+	}
 	event, err := decodeCheckpointStopEvent(input)
 	if err != nil {
-		_ = writeCLIJSON(checkpointStopIntegrationFailure("Stop input is missing a string session_id, string turn_id, or boolean stop_hook_active."))
+		finish(nil, recallbaseline.OutcomeIntegrationFailure, recallbaseline.OutcomeUnknown,
+			checkpointStopIntegrationFailure("Stop input is missing a string session_id, string turn_id, or boolean stop_hook_active."))
 		return
 	}
 
 	s, err := storeNew(cfg)
 	if err != nil {
-		_ = writeCLIJSON(checkpointStopIntegrationFailure("the verifier could not inspect checkpoint status."))
+		finish(&event, recallbaseline.OutcomeIntegrationFailure, recallbaseline.OutcomeUnknown,
+			checkpointStopIntegrationFailure("the verifier could not inspect checkpoint status."))
 		return
 	}
 	defer s.Close()
@@ -153,28 +175,75 @@ func cmdCheckpointVerifyStop(cfg store.Config, host string, input io.Reader) {
 		RecoveryActive: *event.StopHookActive,
 	})
 	if err != nil {
-		_ = writeCLIJSON(checkpointStopIntegrationFailure("the verifier could not inspect checkpoint status."))
+		finish(&event, recallbaseline.OutcomeIntegrationFailure, recallbaseline.OutcomeUnknown,
+			checkpointStopIntegrationFailure("the verifier could not inspect checkpoint status."))
 		return
 	}
 
 	switch outcome {
 	case memoryops.CheckpointVerificationComplete:
-		_ = writeCLIJSON(checkpointStopResponse{})
+		finish(&event, recallbaseline.OutcomeCompleted, recallbaseline.OutcomeCompleted, checkpointStopResponse{})
 	case memoryops.CheckpointVerificationContinuationRequired:
 		identity, marshalErr := json.Marshal(store.CheckpointIdentity{
 			Host: host, SessionID: *event.SessionID, RootTurnID: *event.TurnID,
 		})
 		if marshalErr != nil {
-			_ = writeCLIJSON(checkpointStopIntegrationFailure("the verifier could not encode the original checkpoint identity."))
+			finish(&event, recallbaseline.OutcomeIntegrationFailure, recallbaseline.OutcomeUnknown,
+				checkpointStopIntegrationFailure("the verifier could not encode the original checkpoint identity."))
 			return
 		}
 		reason := "Finalize the missing Engram checkpoint for the original root user turn " + string(identity) + " using the Engram memory skill. Preserve this identity unchanged; do not checkpoint this continuation."
-		_ = writeCLIJSON(checkpointStopResponse{Decision: "block", Reason: reason})
+		finish(&event, recallbaseline.OutcomeContinuationRequired, recallbaseline.OutcomeMissing,
+			checkpointStopResponse{Decision: "block", Reason: reason})
 	case memoryops.CheckpointVerificationRecoveryExhausted:
-		_ = writeCLIJSON(checkpointStopIntegrationFailure("checkpoint is still missing after the single recovery continuation."))
+		finish(&event, recallbaseline.OutcomeRecoveryExhausted, recallbaseline.OutcomeMissing,
+			checkpointStopIntegrationFailure("checkpoint is still missing after the single recovery continuation."))
 	default:
-		_ = writeCLIJSON(checkpointStopIntegrationFailure("checkpoint verification returned an unexpected outcome."))
+		finish(&event, recallbaseline.OutcomeIntegrationFailure, recallbaseline.OutcomeUnknown,
+			checkpointStopIntegrationFailure("checkpoint verification returned an unexpected outcome."))
 	}
+}
+
+func finishCheckpointStopWithBaseline(
+	cfg store.Config,
+	host string,
+	event *checkpointStopEvent,
+	stopOutcome, checkpointOutcome recallbaseline.Outcome,
+	response checkpointStopResponse,
+	started time.Time,
+) {
+	link := recallbaseline.Linkage{}
+	if event != nil {
+		link.Host = host
+		if event.SessionID != nil {
+			link.SessionID = *event.SessionID
+		}
+		if event.TurnID != nil {
+			link.RootTurnID = *event.TurnID
+		}
+	}
+	operationOutcome := recallbaseline.OutcomeSuccess
+	if stopOutcome == recallbaseline.OutcomeIntegrationFailure || stopOutcome == recallbaseline.OutcomeRecoveryExhausted {
+		operationOutcome = recallbaseline.OutcomeError
+	}
+	var deliveredBytes *int64
+	if encoded, err := json.MarshalIndent(response, "", "  "); err == nil {
+		bytes := int64(len(encoded) + 1)
+		deliveredBytes = &bytes
+	}
+	events := []recallbaseline.Event{
+		{Kind: recallbaseline.EventStop, Surface: recallbaseline.SurfaceLifecycle, Operation: "stop", Outcome: stopOutcome},
+		{Kind: recallbaseline.EventOperation, Surface: recallbaseline.SurfaceCLI, Operation: "checkpoint_verify_stop", Outcome: operationOutcome,
+			Latency: recallbaseline.KnownLatency(time.Since(started)), DeliveredUTF8Bytes: deliveredBytes},
+	}
+	if link.Host != "" && link.SessionID != "" && link.RootTurnID != "" {
+		events = append(events, recallbaseline.Event{
+			Kind: recallbaseline.EventCheckpoint, Surface: recallbaseline.SurfaceLifecycle,
+			Operation: "terminal_checkpoint", Outcome: checkpointOutcome, Link: link,
+		})
+	}
+	_ = writeCLIJSON(response)
+	recordRecallBaselineEvents(cfg, events...)
 }
 
 func decodeCheckpointStopEvent(input io.Reader) (checkpointStopEvent, error) {

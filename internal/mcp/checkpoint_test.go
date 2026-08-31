@@ -85,6 +85,47 @@ func TestCheckpointToolsRecordReplayStatusAndRejectFailureReasons(t *testing.T) 
 	}
 }
 
+func TestCheckpointObserverReportsConflictWithoutMemoryOrProposalPayload(t *testing.T) {
+	s := newMCPTestStore(t)
+	identity := map[string]any{
+		"host": "codex", "session_id": "session-observed", "root_turn_id": "turn-observed",
+	}
+	initial := map[string]any{
+		"host": identity["host"], "session_id": identity["session_id"], "root_turn_id": identity["root_turn_id"],
+		"disposition": store.CheckpointDispositionSkipped, "reason": store.CheckpointSkipReasonNoDurableKnowledge,
+	}
+	created, err := CheckpointToolHandler(s)(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: initial}})
+	if err != nil || created.IsError {
+		t.Fatalf("initial checkpoint response = %#v, err = %v", created, err)
+	}
+
+	var observed []CheckpointObservation
+	conflicting := map[string]any{
+		"host": identity["host"], "session_id": identity["session_id"], "root_turn_id": identity["root_turn_id"],
+		"disposition": store.CheckpointDispositionNeedsReview,
+		"project":     "engram",
+		"proposal": map[string]any{
+			"title": "PROPOSAL-TITLE-MUST-NOT-REACH-OBSERVER", "content": "PROPOSAL-CONTENT-MUST-NOT-REACH-OBSERVER",
+		},
+	}
+	response, err := CheckpointToolHandlerWithObserver(s, func(value CheckpointObservation) {
+		observed = append(observed, value)
+	})(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: conflicting}})
+	if err != nil || !response.IsError {
+		t.Fatalf("conflict response = %#v, err = %v", response, err)
+	}
+	if len(observed) != 1 || observed[0].Host != "codex" || observed[0].SessionID != "session-observed" || observed[0].RootTurnID != "turn-observed" || observed[0].Outcome != CheckpointConflict {
+		t.Fatalf("checkpoint observations = %+v", observed)
+	}
+	encoded, err := json.Marshal(observed)
+	if err != nil {
+		t.Fatalf("json.Marshal(observed): %v", err)
+	}
+	if strings.Contains(string(encoded), "PROPOSAL-") {
+		t.Fatalf("checkpoint observer leaked proposal payload: %s", encoded)
+	}
+}
+
 func TestRegisteredCheckpointWriteReturnsJSONForQueueCancellation(t *testing.T) {
 	s := newMCPTestStore(t)
 	srv := NewServerWithTools(s, map[string]bool{"mem_checkpoint": true})

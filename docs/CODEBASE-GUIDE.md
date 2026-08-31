@@ -21,6 +21,7 @@ cmd/engram
         ├── internal/server     local JSON API: engram serve
         ├── internal/tui        Bubbletea terminal UI
         ├── internal/setup      automated integration installation
+        ├── internal/recallbaseline  local content-free Protocol measurement
         │
         ▼
 internal/store
@@ -69,6 +70,7 @@ The sentence that organizes the whole repo:
 | Change cloud autosync | `internal/cloud/autosync/manager.go` | [Sync and Cloud](codebase/sync-and-cloud.md), `internal/cloud/remote/transport.go`, `DOCS.md#cloud-autosync` |
 | Change the dashboard | `internal/cloud/dashboard/dashboard.go` | [Dashboard](codebase/dashboard.md), `internal/cloud/dashboard/*_templ.go`, `internal/cloud/dashboard/static/styles.css` |
 | Change agent setup | `internal/setup/registry.go`, `internal/setup/agents.go`, `internal/setup/setup.go` | [Integrations](codebase/integrations.md), `plugin/`, `docs/AGENT-SETUP.md`, `docs/PLUGINS.md` |
+| Change the content-free Recall baseline | `internal/recallbaseline/` | `cmd/engram/recall_baseline.go`, `plugin/codex/`, `docs/RECALL-BASELINE.md` |
 | Prepare or review a large feature | `openspec/changes/*` | [Maintainer Playbook](codebase/maintainer-playbook.md), `openspec/specs/*`, `CONTRIBUTING.md` |
 
 ## Full technical reference stays in DOCS.md

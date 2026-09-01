@@ -79,6 +79,8 @@ func TestServerInstructionsExposeOnlyProtocolToolsAndTerminalPolicy(t *testing.T
 		"settled root user turn",
 		"saved", "needs_review", "skipped",
 		"Current user intent, maintained source, and runtime evidence override Memory",
+		"Recall feedback is explicit", "missing stays unknown",
+		"cannot change completion on failure",
 		"curation", "lifecycle", "admin",
 	} {
 		if !strings.Contains(serverInstructions, required) {

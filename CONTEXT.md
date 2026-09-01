@@ -52,14 +52,20 @@ An explicit assessment of whether an exposed Memory was decisive, orienting,
 duplicate, or unused in a root user turn. An unassessed Memory remains unknown.
 _Avoid_: Retrieval count, inferred use
 
+**Recall quality**:
+An explicit assessment of whether an exposed Memory is current, stale,
+contradictory, or of unknown currency. An unassessed Memory remains unknown.
+_Avoid_: Factuality score, inferred freshness
+
 **Recall authority**:
 The ordering that treats current user intent and maintained or runtime evidence as
 authoritative while Memories remain advisory and contradictions stay explicit.
 _Avoid_: Memory source of truth, silent override
 
 **Recall feedback**:
-A content-free local assessment that attributes Recall utility to an exposed
-Memory. Missing feedback preserves an unknown assessment.
+A content-free local assessment that attributes Recall utility or quality to an
+exposed Memory, or explicitly reviews an empty Recall. Missing feedback remains
+unknown.
 _Avoid_: Usage inference, retrieval telemetry
 
 **Protocol contract**:

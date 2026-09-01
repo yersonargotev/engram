@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,6 +71,169 @@ func TestCmdCheckpointRecordReplayAndStatusJSON(t *testing.T) {
 	}
 	if !reflect.DeepEqual(status.Checkpoint, created.Checkpoint) {
 		t.Fatalf("status checkpoint = %#v, want %#v", status.Checkpoint, created.Checkpoint)
+	}
+}
+
+func TestCmdCheckpointRecordsOptionalRecallFeedbackJSON(t *testing.T) {
+	cfg := testConfig(t)
+	identity := store.CheckpointIdentity{
+		Host: "codex", SessionID: "session-cli-feedback", RootTurnID: "turn-cli-feedback",
+	}
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if err := s.RecordRecallRunContext(context.Background(), store.RecallRunRecord{
+		RecallID: "recall-cli-feedback", Project: "engram", Scope: "project",
+		DeliveredUTF8Bytes: 2, ElapsedMonotonicMS: 9, ProtocolVersion: 1, BinaryVersion: "test",
+		TurnIdentity: &identity,
+	}); err != nil {
+		_ = s.Close()
+		t.Fatalf("seed empty Recall run: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
+	feedback, err := json.Marshal(memoryops.RecallFeedbackInput{
+		RecallID:   "recall-cli-feedback",
+		FalseEmpty: &memoryops.RecallFalseEmptyInput{Value: true, Source: memoryops.RecallFeedbackSourceEvaluator},
+	})
+	if err != nil {
+		t.Fatalf("encode Recall feedback: %v", err)
+	}
+	withArgs(t,
+		"engram", "checkpoint", "record",
+		"--host", identity.Host, "--session-id", identity.SessionID, "--root-turn-id", identity.RootTurnID,
+		"--disposition", store.CheckpointDispositionSkipped,
+		"--reason", store.CheckpointSkipReasonNoDurableKnowledge,
+		"--recall-feedback-json", string(feedback), "--json",
+	)
+	stdout, stderr := captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("checkpoint feedback stderr = %q", stderr)
+	}
+	var result memoryops.CheckpointRecordResult
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("decode checkpoint feedback result: %v\n%s", err, stdout)
+	}
+	if result.Idempotency != memoryops.CheckpointIdempotencyCreated || result.RecallFeedback == nil ||
+		result.RecallFeedback.Status != memoryops.RecallFeedbackStatusRecorded ||
+		result.RecallFeedback.EmptyReviewsRecorded != 1 {
+		t.Fatalf("checkpoint feedback result = %#v", result)
+	}
+}
+
+func TestCmdSearchBindsRecallFeedbackToExactCheckpointTurn(t *testing.T) {
+	cfg := testConfig(t)
+	identity := store.CheckpointIdentity{
+		Host: "--codex", SessionID: "--session-cli-search-feedback", RootTurnID: "--turn-cli-search-feedback",
+	}
+	withArgs(t,
+		"engram", "search", "no matching feedback memory", "--project", "engram",
+		"--host="+identity.Host, "--session-id="+identity.SessionID, "--root-turn-id="+identity.RootTurnID,
+		"--json",
+	)
+	stdout, stderr := captureOutput(t, func() { cmdSearch(cfg) })
+	if stderr != "" {
+		t.Fatalf("bound search stderr = %q", stderr)
+	}
+	var search struct {
+		RecallID    string `json:"recall_id"`
+		ResultCount int    `json:"result_count"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &search); err != nil {
+		t.Fatalf("decode bound search: %v\n%s", err, stdout)
+	}
+	if search.RecallID == "" || search.ResultCount != 0 {
+		t.Fatalf("bound search = %#v", search)
+	}
+	feedback, err := json.Marshal(memoryops.RecallFeedbackInput{
+		RecallID: search.RecallID,
+		FalseEmpty: &memoryops.RecallFalseEmptyInput{
+			Value: true, Source: memoryops.RecallFeedbackSourceAgentExplicit,
+		},
+	})
+	if err != nil {
+		t.Fatalf("encode bound Recall feedback: %v", err)
+	}
+	withArgs(t,
+		"engram", "checkpoint", "record",
+		"--host="+identity.Host, "--session-id="+identity.SessionID, "--root-turn-id="+identity.RootTurnID,
+		"--disposition", store.CheckpointDispositionSkipped,
+		"--reason", store.CheckpointSkipReasonNoDurableKnowledge,
+		"--recall-feedback-json", string(feedback), "--json",
+	)
+	stdout, stderr = captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("bound checkpoint stderr = %q", stderr)
+	}
+	var checkpoint memoryops.CheckpointRecordResult
+	if err := json.Unmarshal([]byte(stdout), &checkpoint); err != nil {
+		t.Fatalf("decode bound checkpoint: %v\n%s", err, stdout)
+	}
+	if checkpoint.RecallFeedback == nil || checkpoint.RecallFeedback.Status != memoryops.RecallFeedbackStatusRecorded {
+		t.Fatalf("bound checkpoint = %#v", checkpoint)
+	}
+
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("open bound Recall store: %v", err)
+	}
+	defer s.Close()
+	var turnKey string
+	if err := s.DB().QueryRow(`SELECT turn_key FROM recall_runs WHERE recall_id = ?`, search.RecallID).Scan(&turnKey); err != nil {
+		t.Fatalf("load bound Recall turn key: %v", err)
+	}
+	if len(turnKey) != 64 || strings.Contains(turnKey, identity.Host) ||
+		strings.Contains(turnKey, identity.SessionID) || strings.Contains(turnKey, identity.RootTurnID) {
+		t.Fatalf("bound Recall turn key leaked raw identity: %q", turnKey)
+	}
+}
+
+func TestCmdSearchRequiresCompleteCheckpointIdentity(t *testing.T) {
+	stubExitWithPanic(t)
+	withArgs(t,
+		"engram", "search", "partial identity", "--project", "engram",
+		"--host", "codex", "--json",
+	)
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdSearch(testConfig(t)) })
+	if stdout != "" {
+		t.Fatalf("partial identity stdout = %q", stdout)
+	}
+	if _, ok := recovered.(exitCode); !ok || !strings.Contains(stderr, "invalid_checkpoint_identity") ||
+		!strings.Contains(stderr, "must be provided together") {
+		t.Fatalf("partial identity panic=%v stderr=%q", recovered, stderr)
+	}
+}
+
+func TestCmdCheckpointKeepsHumanFeedbackFailureVisibleAfterCompletion(t *testing.T) {
+	cfg := testConfig(t)
+	withArgs(t,
+		"engram", "checkpoint", "record",
+		"--host", "codex", "--session-id", "session-human-feedback", "--root-turn-id", "turn-human-feedback",
+		"--disposition", store.CheckpointDispositionSkipped,
+		"--reason", store.CheckpointSkipReasonNoDurableKnowledge,
+		"--recall-feedback-json", `{"recall_id":"missing", "unexpected":true}`,
+	)
+	stdout, stderr := captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("checkpoint feedback stderr = %q", stderr)
+	}
+	for _, want := range []string{"Memory checkpoint created: skipped", "Recall feedback failed", "invalid_recall_feedback"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("checkpoint feedback output %q does not contain %q", stdout, want)
+		}
+	}
+
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("open completed checkpoint store: %v", err)
+	}
+	defer s.Close()
+	if _, err := s.GetMemoryCheckpoint(store.CheckpointIdentity{
+		Host: "codex", SessionID: "session-human-feedback", RootTurnID: "turn-human-feedback",
+	}); err != nil {
+		t.Fatalf("checkpoint did not remain complete after feedback failure: %v", err)
 	}
 }
 

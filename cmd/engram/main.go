@@ -724,6 +724,8 @@ func main() {
 		cmdActivationStudy()
 	case "recall-baseline":
 		cmdRecallBaseline(cfg)
+	case "recall-feedback":
+		runRecallBaselineCLI(cfg, "recall_feedback_report", func() { cmdRecallFeedback(cfg) })
 	case "version", "--version", "-v":
 		fmt.Printf("engram %s\n", version)
 	case "help", "--help", "-h":
@@ -780,6 +782,11 @@ func handleConfigFreeCommand(args []string) bool {
 				cmdRecallBaseline(store.Config{})
 				return true
 			}
+		}
+	case "recall-feedback":
+		if len(args) >= 2 && (args[1] == "help" || args[1] == "--help" || args[1] == "-h") {
+			printRecallFeedbackUsage()
+			return true
 		}
 	case "version", "--version", "-v":
 		fmt.Printf("engram %s\n", version)
@@ -1056,21 +1063,40 @@ func cmdSearch(cfg store.Config) {
 	defer func() { observeRecallBaselineCLI(cfg, "search", started, baselineOutcome, baselineBytes) }()
 	jsonMode := hasArg("--json")
 	if len(os.Args) < 3 {
-		failCLI(jsonMode, "invalid_arguments", "usage: engram search <query> [--type TYPE] [--project PROJECT] [--all-projects] [--match-mode all|any] [--scope SCOPE] [--limit N] [--json]", nil)
+		failCLI(jsonMode, "invalid_arguments", "usage: engram search <query> [--type TYPE] [--project PROJECT] [--all-projects] [--match-mode all|any] [--scope SCOPE] [--limit N] [--host HOST --session-id ID --root-turn-id ID] [--json]", nil)
 		return
 	}
 
 	var queryParts []string
 	opts := store.SearchOptions{}
 	allProjects := false
+	turnIdentity := store.CheckpointIdentity{}
 
 	for i := 2; i < len(os.Args); i++ {
 		arg := os.Args[i]
+		if name, value, inline := strings.Cut(arg, "="); inline {
+			switch name {
+			case "--host", "--session-id", "--root-turn-id":
+				if value == "" {
+					failCLI(jsonMode, "missing_flag_value", fmt.Sprintf("%s requires a value", name), nil)
+					return
+				}
+				switch name {
+				case "--host":
+					turnIdentity.Host = value
+				case "--session-id":
+					turnIdentity.SessionID = value
+				case "--root-turn-id":
+					turnIdentity.RootTurnID = value
+				}
+				continue
+			}
+		}
 		switch arg {
 		case "--json":
 		case "--all-projects":
 			allProjects = true
-		case "--type", "--project", "--limit", "--scope", "--match-mode":
+		case "--type", "--project", "--limit", "--scope", "--match-mode", "--host", "--session-id", "--root-turn-id":
 			if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
 				failCLI(jsonMode, "missing_flag_value", fmt.Sprintf("%s requires a value", arg), nil)
 				return
@@ -1086,6 +1112,12 @@ func cmdSearch(cfg store.Config) {
 				opts.Scope = value
 			case "--match-mode":
 				opts.MatchMode = value
+			case "--host":
+				turnIdentity.Host = value
+			case "--session-id":
+				turnIdentity.SessionID = value
+			case "--root-turn-id":
+				turnIdentity.RootTurnID = value
 			case "--limit":
 				n, err := strconv.Atoi(value)
 				if err != nil || n < 1 || n > memoryops.MaximumRecallCandidateLimit {
@@ -1122,6 +1154,24 @@ func cmdSearch(cfg store.Config) {
 	if allProjects && opts.Project != "" {
 		failCLI(jsonMode, "incompatible_flags", "--all-projects cannot be combined with --project", nil)
 		return
+	}
+	identityParts := 0
+	for _, value := range []string{turnIdentity.Host, turnIdentity.SessionID, turnIdentity.RootTurnID} {
+		if strings.TrimSpace(value) != "" {
+			identityParts++
+		}
+	}
+	var recallTurnIdentity *store.CheckpointIdentity
+	if identityParts != 0 {
+		if identityParts != 3 {
+			failCLI(jsonMode, "invalid_checkpoint_identity", "--host, --session-id, and --root-turn-id must be provided together", nil)
+			return
+		}
+		if err := store.ValidateCheckpointIdentity(turnIdentity); err != nil {
+			failCLI(jsonMode, "invalid_checkpoint_identity", err.Error(), nil)
+			return
+		}
+		recallTurnIdentity = &turnIdentity
 	}
 	projectSource := projectpkg.SourceCLIExplicit
 	projectPath := ""
@@ -1167,6 +1217,7 @@ func cmdSearch(cfg store.Config) {
 		DeliberateScope: allProjects || opts.Scope != "project",
 		BinaryVersion:   version,
 		BinaryRevision:  commit,
+		TurnIdentity:    recallTurnIdentity,
 	})
 	if err != nil {
 		failCLI(jsonMode, "search_failed", err.Error(), nil)
@@ -3434,7 +3485,8 @@ Commands:
                      Run isolated local reliability and performance self-tests
                        suites: reliability, performance (default: both)
   search <query>     Search memories [--type TYPE] [--project PROJECT] [--scope SCOPE] [--limit N]
-                       [--all-projects] [--match-mode all|any] [--json]
+                       [--all-projects] [--match-mode all|any]
+                       [--host HOST --session-id ID --root-turn-id ID] [--json]
   save <title> <content>
                      Save a memory [--type TYPE] [--project PROJECT] [--scope SCOPE]
                        [--topic-key KEY] [--json]
@@ -3473,6 +3525,8 @@ Commands:
   activation-study   Verify, run, or analyze the frozen Codex activation cohort
   recall-baseline    Record and report content-free local operational evidence
                        record|report|power|purge (see recall-baseline --help)
+  recall-feedback    Report aggregate-only local Recall utility and quality metrics
+                       report [--json]
   checkpoint record  Record a root-turn Memory checkpoint
                        --host HOST --session-id ID --root-turn-id ID
                        --disposition saved|needs_review|skipped [reference flags] [--json]

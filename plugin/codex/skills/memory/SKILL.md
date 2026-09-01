@@ -68,6 +68,9 @@ search. Automatic Recall requires strong or explicit project identity from
 warning.
 
 Start with one project-scoped `mem_search` using one to three narrow anchors.
+For a checkpoint-capable root turn, pass its exact `host`, `session_id`, and
+`root_turn_id` together on every search so later explicit Recall feedback can
+prove same-turn exposure. Omit all three if exact root identity is unavailable.
 The initial request returns at most five candidate summaries and 4 KiB. If
 relevant Memory is reasonably expected, reformulate that same lookup intent at
 most once. A deliberate follow-up may set `limit` from 6 through 10, but the
@@ -86,6 +89,24 @@ recency, and returns unresolved conflicts explicitly. If Recall is unavailable,
 continue the task after its single warning and structured diagnostics.
 `mem_context` remains optional curation for explicit chronological review and is
 not part of the default five-tool path.
+
+## Record only explicit Recall feedback
+
+At the terminal checkpoint, attach optional `recall_feedback` only when an
+assessment is actually known for one exact Recall run and only the opaque
+results that run exposed after being bound to this exact root turn at search
+time. A different or unbound turn is ineligible. Utility is `decisive`,
+`orienting`, `duplicate`, or
+`unused`; quality is `current`, `stale`, `contradictory`, or `unknown`. Use
+`agent_explicit` for your stated assessment, `user_explicit` for a direct user
+assessment, and `evaluator` only for a separately invoked evaluator. Explicitly
+reviewed zero-result runs may carry `false_empty`.
+
+Omit unknown assessments. Absence means unknown, never unused, current,
+false-empty, or failure; retrieval, citation, ordering, and checkpoint outcome
+do not imply a label. Feedback is a content-free local sidecar. Its failure
+must remain visible but never changes or rolls back the terminal checkpoint;
+retry it through the exact checkpoint identity.
 
 ## Preflight prospective Memories
 
@@ -170,7 +191,15 @@ user turn:
   "session_id": "<opaque session id>",
   "root_turn_id": "<opaque original turn id>",
   "disposition": "skipped",
-  "reason": "no_durable_knowledge"
+  "reason": "no_durable_knowledge",
+  "recall_feedback": {
+    "recall_id": "<exact Recall run>",
+    "results": [{
+      "result_id": "<opaque exposed result>",
+      "utility": "orienting",
+      "source": "agent_explicit"
+    }]
+  }
 }
 ```
 
@@ -189,6 +218,7 @@ engram checkpoint record \
   --root-turn-id '<opaque original turn id>' \
   --disposition skipped \
   --reason no_durable_knowledge \
+  --recall-feedback-json '{"recall_id":"<exact Recall run>","results":[{"result_id":"<opaque exposed result>","utility":"orienting","source":"agent_explicit"}]}' \
   --json
 ```
 

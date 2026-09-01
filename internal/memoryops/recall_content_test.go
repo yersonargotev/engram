@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/yersonargotev/engram/internal/project"
@@ -351,6 +352,99 @@ func TestRecallContentExactSegmentReplayIsIdempotent(t *testing.T) {
 	}
 	if segmentCount != 1 {
 		t.Fatalf("persisted segment count = %d, want 1", segmentCount)
+	}
+}
+
+func TestRecallContentPersistsLatencyOnlyAfterPrimarySegmentPersistence(t *testing.T) {
+	service := newTestService(t)
+	service.newRecallID = func() (string, error) { return "recall-content-persisted-latency", nil }
+	saveObservation(t, service, "engram", "Persisted segment latency", "primary segment persistence precedes completion measurement")
+	recall, err := service.Recall(RecallInput{
+		Query: "primary segment persistence precedes completion measurement", Project: "engram",
+		ProjectStrength: project.IdentityStrengthExplicit,
+	})
+	if err != nil || recall.ResultCount != 1 {
+		t.Fatalf("Recall result = %#v, err=%v", recall, err)
+	}
+	service.recallElapsed = func(time.Time) time.Duration {
+		var persisted int
+		if err := service.store.DB().QueryRow(`
+			SELECT COUNT(*) FROM recall_segments
+			WHERE recall_id = ? AND result_id = ? AND position = 0`,
+			recall.RecallID, recall.Candidates[0].ResultID).Scan(&persisted); err != nil {
+			t.Fatalf("inspect persisted Recall segment: %v", err)
+		}
+		if persisted == 0 {
+			return 7 * time.Millisecond
+		}
+		return 43 * time.Millisecond
+	}
+	result, err := service.RecallContent(RecallContentInput{
+		RecallID: recall.RecallID, ResultID: recall.Candidates[0].ResultID,
+		Project: "engram", ProjectStrength: project.IdentityStrengthExplicit,
+	})
+	if err != nil || result.Warning != nil || result.ElapsedMonotonicMS != 43 {
+		t.Fatalf("Recall content result = %#v, err=%v", result, err)
+	}
+	var persistedElapsed int64
+	if err := service.store.DB().QueryRow(`
+		SELECT elapsed_monotonic_ms FROM recall_segments
+		WHERE recall_id = ? AND result_id = ? AND position = 0`,
+		result.RecallID, result.ResultID).Scan(&persistedElapsed); err != nil {
+		t.Fatalf("load completed Recall segment latency: %v", err)
+	}
+	if persistedElapsed != result.ElapsedMonotonicMS {
+		t.Fatalf("persisted segment latency = %d, result=%d", persistedElapsed, result.ElapsedMonotonicMS)
+	}
+}
+
+func TestRecallContentPreservesDeliveredSegmentWhenMetricCompletionFails(t *testing.T) {
+	service := newTestService(t)
+	service.newRecallID = func() (string, error) { return "recall-content-metric-completion-failure", nil }
+	content := "a committed complete Memory segment remains delivered"
+	saveObservation(t, service, "engram", "Delivered content despite metric failure", content)
+	recall, err := service.Recall(RecallInput{
+		Query: content, Project: "engram", ProjectStrength: project.IdentityStrengthExplicit,
+	})
+	if err != nil || recall.ResultCount != 1 {
+		t.Fatalf("Recall result = %#v, err=%v", recall, err)
+	}
+	if _, err := service.store.DB().Exec(`
+		CREATE TRIGGER fail_recall_content_metric_completion
+		BEFORE UPDATE OF elapsed_monotonic_ms ON recall_segments
+		BEGIN
+			SELECT RAISE(ABORT, 'forced Recall content metric completion failure');
+		END`); err != nil {
+		t.Fatalf("create Recall content metric failure trigger: %v", err)
+	}
+	result, err := service.RecallContent(RecallContentInput{
+		RecallID: recall.RecallID, ResultID: recall.Candidates[0].ResultID,
+		Project: "engram", ProjectStrength: project.IdentityStrengthExplicit,
+	})
+	if err != nil || result.Warning != nil || result.Memory.Content != content || result.DeliveredUTF8Bytes != len(content) {
+		t.Fatalf("Recall content delivery = %#v, err=%v", result, err)
+	}
+	if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != "recall_metrics_unavailable" ||
+		result.Diagnostics[0].Operation != "recall_content_metrics" {
+		t.Fatalf("Recall content metric diagnostic = %#v", result.Diagnostics)
+	}
+	var elapsed any
+	if err := service.store.DB().QueryRow(`
+		SELECT elapsed_monotonic_ms FROM recall_segments
+		WHERE recall_id = ? AND result_id = ? AND position = 0`, result.RecallID, result.ResultID).Scan(&elapsed); err != nil {
+		t.Fatalf("load pending Recall content latency: %v", err)
+	}
+	if elapsed != nil {
+		t.Fatalf("failed Recall content completion persisted latency: %v", elapsed)
+	}
+	report, err := service.RecallFeedbackReport()
+	if err != nil {
+		t.Fatalf("report pending Recall content metrics: %v", err)
+	}
+	get := findRecallOperationReport(t, report.Operations, RecallFeedbackOperationGet)
+	if get.Events != 1 || get.TotalExposedResults != 1 || get.TotalUTF8Bytes != int64(len(content)) ||
+		get.LatencySamples != 0 || get.UnknownLatency != 1 {
+		t.Fatalf("pending Recall content metric report = %#v", get)
 	}
 }
 

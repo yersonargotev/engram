@@ -245,7 +245,7 @@ func NewServer(s *store.Store) *server.MCPServer {
 // host explicitly selects their profile.
 const serverInstructions = `Engram provides persistent memory that survives across sessions and compactions.
 
-For each settled root user turn, make one terminal Memory checkpoint: one Terminal Memory commit. Before saving Memories, call mem_checkpoint with operation=preflight; it returns exact duplicates and at most three same-project candidates without writes. Reuse duplicates and account for each candidate. Dispositions: saved, needs_review, skipped(no_durable_knowledge). needs_review may preserve Memories plus one proposal (Mixed Memory). Finalize after causal work; reuse the opaque identity across continuations.
+For each settled root user turn, make one terminal Memory checkpoint: one Terminal Memory commit. Before saves, call mem_checkpoint with operation=preflight; it returns exact duplicates and at most three same-project candidates without writes. Reuse duplicates and account for each candidate. Dispositions: saved, needs_review, skipped(no_durable_knowledge). needs_review may preserve Memories plus one proposal (Mixed Memory). Finalize after causal work; reuse the opaque identity across continuations.
 
 DEFAULT AGENT TOOLS:
   mem_current_project — establish project scope and write authority
@@ -258,7 +258,9 @@ Current user intent, maintained source, and runtime evidence override Memory. Em
 
 Recall only when prior decisions, tracked work, release/configuration, preferences, or failures can change the task; self-contained work needs none. Automatic Recall requires strong or explicit project identity. Initial Recall: five candidates, 4 KiB, at most one reformulation. Deliberate follow-up: at most ten candidates; broad scope requires explicit relevance. Complete Recall: one selected result, at most 16 KiB, with explicit positioned continuation. Unavailable Recall fails open without blocking the task.
 
-Optional Session summaries and independent saves require curation; host activity and Content capture require lifecycle; destructive maintenance requires admin.`
+Recall feedback is explicit; missing stays unknown. Bind mem_search to the exact root identity. Its content-free checkpoint sidecar cannot change completion on failure.
+
+curation owns optional summaries/saves; lifecycle owns activity/capture; admin owns destructive maintenance.`
 
 // NewServerWithTools creates an MCP server registering only the tools in
 // the allowlist. If allowlist is nil, all tools are registered.
@@ -380,6 +382,50 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 					mcp.MaxProperties(2),
 					mcp.AdditionalProperties(false),
 				),
+				mcp.WithObject("recall_feedback",
+					mcp.Description("Optional content-free attribution for one exact Recall run; absence remains unknown and feedback failure never changes checkpoint completion"),
+					mcp.Properties(map[string]any{
+						"recall_id": map[string]any{"type": "string"},
+						"results": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"result_id": map[string]any{"type": "string"},
+									"utility": map[string]any{"type": "string", "enum": []string{
+										memoryops.RecallUtilityDecisive, memoryops.RecallUtilityOrienting,
+										memoryops.RecallUtilityDuplicate, memoryops.RecallUtilityUnused,
+									}},
+									"quality": map[string]any{"type": "string", "enum": []string{
+										memoryops.RecallQualityCurrent, memoryops.RecallQualityStale,
+										memoryops.RecallQualityContradictory, memoryops.RecallQualityUnknown,
+									}},
+									"source": map[string]any{"type": "string", "enum": []string{
+										memoryops.RecallFeedbackSourceAgentExplicit,
+										memoryops.RecallFeedbackSourceUserExplicit,
+										memoryops.RecallFeedbackSourceEvaluator,
+									}},
+								},
+								"required":             []string{"result_id", "source"},
+								"additionalProperties": false,
+							},
+						},
+						"false_empty": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"value": map[string]any{"type": "boolean"},
+								"source": map[string]any{"type": "string", "enum": []string{
+									memoryops.RecallFeedbackSourceAgentExplicit,
+									memoryops.RecallFeedbackSourceUserExplicit,
+									memoryops.RecallFeedbackSourceEvaluator,
+								}},
+							},
+							"required":             []string{"value", "source"},
+							"additionalProperties": false,
+						},
+					}),
+					mcp.AdditionalProperties(false),
+				),
 			),
 			queuedCheckpointToolHandler(writeQueue, CheckpointToolHandlerWithObserver(s, cfg.ObserveCheckpoint)),
 		)
@@ -436,6 +482,15 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 					mcp.Min(1),
 					mcp.Max(memoryops.MaximumRecallCandidateLimit),
 					mcp.MultipleOf(1),
+				),
+				mcp.WithString("host",
+					mcp.Description("Exact host adapter identity for Recall feedback eligibility; provide with session_id and root_turn_id."),
+				),
+				mcp.WithString("session_id",
+					mcp.Description("Exact host session identity for Recall feedback eligibility; provide with host and root_turn_id."),
+				),
+				mcp.WithString("root_turn_id",
+					mcp.Description("Exact root user turn identity for Recall feedback eligibility; provide with host and session_id."),
 				),
 			),
 			handleSearch(s, cfg, activity),
@@ -1150,6 +1205,26 @@ func handleSearch(s *store.Store, cfg MCPConfig, activity *SessionActivity) serv
 		if allProjects && strings.TrimSpace(projectOverride) != "" {
 			return mcp.NewToolResultError("all_projects cannot be combined with project"), nil
 		}
+		turnIdentity := store.CheckpointIdentity{
+			Host: stringArg(req, "host", ""), SessionID: stringArg(req, "session_id", ""),
+			RootTurnID: stringArg(req, "root_turn_id", ""),
+		}
+		identityParts := 0
+		for _, value := range []string{turnIdentity.Host, turnIdentity.SessionID, turnIdentity.RootTurnID} {
+			if strings.TrimSpace(value) != "" {
+				identityParts++
+			}
+		}
+		var recallTurnIdentity *store.CheckpointIdentity
+		if identityParts != 0 {
+			if identityParts != 3 {
+				return mcp.NewToolResultError("host, session_id, and root_turn_id must be provided together"), nil
+			}
+			if err := store.ValidateCheckpointIdentity(turnIdentity); err != nil {
+				return mcp.NewToolResultError("invalid checkpoint identity: " + err.Error()), nil
+			}
+			recallTurnIdentity = &turnIdentity
+		}
 
 		var detRes projectpkg.DetectionResult
 		switch {
@@ -1192,6 +1267,7 @@ func handleSearch(s *store.Store, cfg MCPConfig, activity *SessionActivity) serv
 			DeliberateScope: allProjects || scope != "project",
 			BinaryVersion:   cfg.BinaryVersion,
 			BinaryRevision:  cfg.BinaryRevision,
+			TurnIdentity:    recallTurnIdentity,
 		})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Search error: %s. Try simpler keywords.", err)), nil

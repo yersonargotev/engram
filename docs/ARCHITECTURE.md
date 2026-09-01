@@ -32,7 +32,10 @@ Engram trusts the **agent** to decide what's worth remembering — not a firehos
 3. Agent chooses `saved`, `needs_review`, or `skipped(no_durable_knowledge)`.
 4. `mem_checkpoint` commits the disposition, settled Memories, and any proposal
    atomically. A `needs_review` result with at least one Memory is Mixed.
-5. Later work uses selective Recall only when prior Memory can change the task:
+5. The checkpoint may attach explicit, content-free Recall feedback as a local
+   sidecar only for a Recall bound at search time to the same exact root turn;
+   feedback failure never changes terminal completion.
+6. Later work uses selective Recall only when prior Memory can change the task:
    one strong/explicit project request, at most five candidates/4 KiB, and at
    most one reformulation. Deliberate follow-up can request up to ten; broad
    scope requires explicit relevance. Empty or unavailable Recall does not
@@ -47,6 +50,8 @@ Engram trusts the **agent** to decide what's worth remembering — not a firehos
 Root user turn starts → Agent and tools work → Causal work settles
                                                 ↓
                      One terminal Memory checkpoint commits
+                                                ↓
+                  Optional Recall feedback sidecar records
                                                 ↓
                   Later work recalls Memory selectively
 ```
@@ -312,6 +317,8 @@ engram checkpoint preflight
                           Inspect prospective Memories without writes [--json]
 engram checkpoint record Record a saved, needs_review, or skipped root-turn checkpoint [--json]
 engram checkpoint status Inspect one exact root-turn checkpoint [--json]
+engram recall-feedback report
+                          Report aggregate-only Recall utility and quality [--json]
 engram delete <obs_id>    Delete an observation [--hard] (soft-delete by default; --hard removes permanently)
 engram delete session <id>
                           Delete a session by ID (session must have no observations)

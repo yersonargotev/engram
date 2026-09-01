@@ -41,6 +41,7 @@ type RecallInput struct {
 	DeliberateScope bool
 	BinaryVersion   string
 	BinaryRevision  string
+	TurnIdentity    *store.CheckpointIdentity
 }
 
 // RecallProvenance identifies the machine semantics and executable that
@@ -143,6 +144,11 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 	}
 
 	started := s.recallStartedAt()
+	if input.TurnIdentity != nil {
+		if err := store.ValidateCheckpointIdentity(*input.TurnIdentity); err != nil {
+			return nil, err
+		}
+	}
 	recallID, identifierErr := s.newRecallID()
 	if identifierErr != nil {
 		recallID = s.newRecallFallbackID()
@@ -159,7 +165,12 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 			BinaryRevision:  strings.TrimSpace(input.BinaryRevision),
 		},
 	}
-	defer func() { result.ElapsedMonotonicMS = s.recallElapsed(started).Milliseconds() }()
+	elapsedFinalized := false
+	defer func() {
+		if !elapsedFinalized {
+			result.ElapsedMonotonicMS = s.recallElapsed(started).Milliseconds()
+		}
+	}()
 	if identifierErr != nil {
 		setRecallUnavailable(result, "recall_identifier_failure", "recall_identifier", identifierErr)
 		return result, nil
@@ -219,6 +230,7 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 	result.Candidates = fitRecallCandidates(result.Candidates, RecallCandidateBudgetBytes)
 	record := store.RecallRunRecord{
 		RecallID: recallID, Project: input.Project, Scope: input.Scope, AllProjects: input.AllProjects,
+		TurnIdentity: input.TurnIdentity, StartedAtUnixNano: started.UnixNano(), MetricsPending: true,
 		Results: make([]store.RecallResultRecord, 0, len(result.Candidates)),
 	}
 	for index, candidate := range result.Candidates {
@@ -238,6 +250,10 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 	result.ResultCount = len(result.Candidates)
 	encoded, _ := json.Marshal(result.Candidates)
 	result.DeliveredUTF8Bytes = len(encoded)
+	record.DeliveredUTF8Bytes = result.DeliveredUTF8Bytes
+	record.ProtocolVersion = result.Provenance.ProtocolVersion
+	record.BinaryVersion = result.Provenance.BinaryVersion
+	record.BinaryRevision = result.Provenance.BinaryRevision
 	if err := s.store.RecordRecallRunContext(ctx, record); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
@@ -248,7 +264,16 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 		result.ResultCount = 0
 		result.DeliveredUTF8Bytes = len("[]")
 		setRecallUnavailable(result, "recall_store_failure", "recall_run", err)
+		return result, nil
 	}
+	elapsed := s.recallElapsed(started)
+	result.ElapsedMonotonicMS = elapsed.Milliseconds()
+	if err := s.store.CompleteRecallRunContext(ctx, recallID, result.ElapsedMonotonicMS, started.Add(elapsed).UnixNano()); err != nil {
+		result.Diagnostics = append(result.Diagnostics, RecallDiagnostic{
+			Code: "recall_metrics_unavailable", Operation: "recall_metrics", Detail: err.Error(),
+		})
+	}
+	elapsedFinalized = true
 	return result, nil
 }
 

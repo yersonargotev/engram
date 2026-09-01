@@ -66,7 +66,12 @@ func (s *Service) RecallContentContext(ctx context.Context, input RecallContentI
 			BinaryRevision:  strings.TrimSpace(input.BinaryRevision),
 		},
 	}
-	defer func() { result.ElapsedMonotonicMS = s.recallElapsed(started).Milliseconds() }()
+	elapsedFinalized := false
+	defer func() {
+		if !elapsedFinalized {
+			result.ElapsedMonotonicMS = s.recallElapsed(started).Milliseconds()
+		}
+	}()
 
 	var err error
 	input.Scope, err = NormalizeRecallScope(input.Scope)
@@ -176,13 +181,14 @@ func (s *Service) RecallContentContext(ctx context.Context, input RecallContentI
 	if observation.Project != nil {
 		result.Memory.Project = *observation.Project
 	}
-
 	replayed, err := s.store.RecordRecallSegmentContext(ctx, store.RecallSegmentRecord{
 		RecallID: result.RecallID, ResultID: result.ResultID, ObservationID: observation.ID,
 		RevisionCount: selection.RevisionCount, LocalRevisionCount: selection.LocalRevisionCount,
 		Position: input.Position, OriginalBytes: result.OriginalBytes,
 		DeliveredBytes: result.DeliveredUTF8Bytes, LimitBytes: result.LimitBytes,
 		Truncated: result.Truncated, ContinuationPosition: result.ContinuationPosition,
+		MetricsPending: true, ProtocolVersion: result.Provenance.ProtocolVersion,
+		BinaryVersion: result.Provenance.BinaryVersion, BinaryRevision: result.Provenance.BinaryRevision,
 	})
 	if err != nil {
 		result.Memory = RecallMemoryContent{}
@@ -199,7 +205,17 @@ func (s *Service) RecallContentContext(ctx context.Context, input RecallContentI
 		}
 		return result, nil
 	}
+	elapsed := s.recallElapsed(started)
+	result.ElapsedMonotonicMS = elapsed.Milliseconds()
+	if !replayed {
+		if err := s.store.CompleteRecallSegmentContext(ctx, result.RecallID, result.ResultID, result.Position, result.ElapsedMonotonicMS); err != nil {
+			result.Diagnostics = append(result.Diagnostics, RecallDiagnostic{
+				Code: "recall_metrics_unavailable", Operation: "recall_content_metrics", Detail: err.Error(),
+			})
+		}
+	}
 	result.Replayed = replayed
+	elapsedFinalized = true
 	return result, nil
 }
 

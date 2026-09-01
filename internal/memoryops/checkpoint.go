@@ -32,16 +32,17 @@ var ErrCheckpointInvalidDisposition = errors.New("invalid checkpoint disposition
 // CheckpointRecordInput is transport-neutral input for finalizing one root
 // user turn as saved, skipped, or needs_review.
 type CheckpointRecordInput struct {
-	Host        string                   `json:"host"`
-	SessionID   string                   `json:"session_id"`
-	RootTurnID  string                   `json:"root_turn_id"`
-	Disposition string                   `json:"disposition"`
-	ReasonCode  string                   `json:"reason_code"`
-	Project     string                   `json:"project,omitempty"`
-	MemoryIDs   []int64                  `json:"memory_ids,omitempty"`
-	Memories    []CheckpointMemoryInput  `json:"memories,omitempty"`
-	Proposal    *CheckpointProposalInput `json:"proposal,omitempty"`
-	CWD         string                   `json:"-"`
+	Host           string                   `json:"host"`
+	SessionID      string                   `json:"session_id"`
+	RootTurnID     string                   `json:"root_turn_id"`
+	Disposition    string                   `json:"disposition"`
+	ReasonCode     string                   `json:"reason_code"`
+	Project        string                   `json:"project,omitempty"`
+	MemoryIDs      []int64                  `json:"memory_ids,omitempty"`
+	Memories       []CheckpointMemoryInput  `json:"memories,omitempty"`
+	Proposal       *CheckpointProposalInput `json:"proposal,omitempty"`
+	RecallFeedback *RecallFeedbackInput     `json:"recall_feedback,omitempty"`
+	CWD            string                   `json:"-"`
 }
 
 // CheckpointProposalInput is one local Memory proposal to retain atomically
@@ -84,8 +85,9 @@ type CheckpointMemoryInput struct {
 }
 
 type CheckpointRecordResult struct {
-	Checkpoint  *store.MemoryCheckpoint `json:"checkpoint"`
-	Idempotency string                  `json:"idempotency"`
+	Checkpoint     *store.MemoryCheckpoint `json:"checkpoint"`
+	Idempotency    string                  `json:"idempotency"`
+	RecallFeedback *RecallFeedbackResult   `json:"recall_feedback,omitempty"`
 }
 
 // CheckpointReplayInput is the minimum payload needed to resolve an immutable
@@ -186,6 +188,9 @@ func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointReco
 		Host: input.Host, SessionID: input.SessionID, RootTurnID: input.RootTurnID, Disposition: input.Disposition,
 	})
 	if replayErr == nil {
+		replayed.RecallFeedback = s.recordOptionalRecallFeedback(store.CheckpointIdentity{
+			Host: input.Host, SessionID: input.SessionID, RootTurnID: input.RootTurnID,
+		}, input.RecallFeedback)
 		return replayed, nil
 	}
 	if !errors.Is(replayErr, store.ErrCheckpointNotFound) {
@@ -239,7 +244,9 @@ func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointReco
 	if alreadyRecorded {
 		idempotency = CheckpointIdempotencyAlreadyRecorded
 	}
-	return &CheckpointRecordResult{Checkpoint: checkpoint, Idempotency: idempotency}, nil
+	result := &CheckpointRecordResult{Checkpoint: checkpoint, Idempotency: idempotency}
+	result.RecallFeedback = s.recordOptionalRecallFeedback(identity, input.RecallFeedback)
+	return result, nil
 }
 
 // PreflightCheckpoint assesses proposed settled Memories without persisting

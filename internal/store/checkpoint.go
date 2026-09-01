@@ -702,6 +702,12 @@ func validateCheckpointIdentity(identity CheckpointIdentity) error {
 	return validateCheckpointIdentityPart("root_turn_id", identity.RootTurnID, maxCheckpointOpaqueIDBytes)
 }
 
+// ValidateCheckpointIdentity validates one opaque host root-turn identity for
+// adapters and adjacent Core operations that must bind to the checkpoint seam.
+func ValidateCheckpointIdentity(identity CheckpointIdentity) error {
+	return validateCheckpointIdentity(identity)
+}
+
 func validateCheckpointIdentityPart(field, value string, maxBytes int) error {
 	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("%w: %s is required", ErrCheckpointInvalidIdentity, field)

@@ -352,3 +352,113 @@ func TestCheckpointToolSchemaExposesOnlyMinimalInlineNeedsReviewProposal(t *test
 		t.Fatalf("mem_checkpoint schema does not expose read-only preflight operation")
 	}
 }
+
+func TestCheckpointToolRecordsOptionalRecallFeedbackWithoutChangingCheckpointSuccess(t *testing.T) {
+	s := newMCPTestStore(t)
+	identity := store.CheckpointIdentity{
+		Host: "codex", SessionID: "session-mcp-feedback", RootTurnID: "turn-mcp-feedback",
+	}
+	if err := s.RecordRecallRunContext(context.Background(), store.RecallRunRecord{
+		RecallID: "recall-mcp-feedback", Project: "engram", Scope: "project",
+		DeliveredUTF8Bytes: 2, ElapsedMonotonicMS: 7, ProtocolVersion: 1, BinaryVersion: "test",
+		TurnIdentity: &identity,
+	}); err != nil {
+		t.Fatalf("seed empty Recall run: %v", err)
+	}
+	arguments := map[string]any{
+		"host": identity.Host, "session_id": identity.SessionID, "root_turn_id": identity.RootTurnID,
+		"disposition": store.CheckpointDispositionSkipped, "reason": store.CheckpointSkipReasonNoDurableKnowledge,
+		"recall_feedback": map[string]any{
+			"recall_id":   "recall-mcp-feedback",
+			"false_empty": map[string]any{"value": true, "source": memoryops.RecallFeedbackSourceEvaluator},
+		},
+	}
+	response, err := CheckpointToolHandler(s)(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: arguments}})
+	if err != nil || response.IsError {
+		t.Fatalf("checkpoint feedback response = %#v, err=%v", response, err)
+	}
+	var result memoryops.CheckpointRecordResult
+	if err := json.Unmarshal([]byte(callResultText(t, response)), &result); err != nil {
+		t.Fatalf("decode checkpoint feedback response: %v", err)
+	}
+	if result.Idempotency != memoryops.CheckpointIdempotencyCreated || result.RecallFeedback == nil ||
+		result.RecallFeedback.Status != memoryops.RecallFeedbackStatusRecorded ||
+		result.RecallFeedback.EmptyReviewsRecorded != 1 {
+		t.Fatalf("checkpoint feedback result = %#v", result)
+	}
+
+	tool := NewServerWithTools(s, map[string]bool{"mem_checkpoint": true}).GetTool("mem_checkpoint")
+	feedback, ok := tool.Tool.InputSchema.Properties["recall_feedback"].(map[string]any)
+	if !ok || feedback["additionalProperties"] != false {
+		t.Fatalf("recall_feedback schema = %#v", feedback)
+	}
+	properties, _ := feedback["properties"].(map[string]any)
+	items, _ := properties["results"].(map[string]any)
+	itemSchema, _ := items["items"].(map[string]any)
+	itemProperties, _ := itemSchema["properties"].(map[string]any)
+	for name, expected := range map[string][]string{
+		"utility": {memoryops.RecallUtilityDecisive, memoryops.RecallUtilityOrienting, memoryops.RecallUtilityDuplicate, memoryops.RecallUtilityUnused},
+		"quality": {memoryops.RecallQualityCurrent, memoryops.RecallQualityStale, memoryops.RecallQualityContradictory, memoryops.RecallQualityUnknown},
+		"source":  {memoryops.RecallFeedbackSourceAgentExplicit, memoryops.RecallFeedbackSourceUserExplicit, memoryops.RecallFeedbackSourceEvaluator},
+	} {
+		property, _ := itemProperties[name].(map[string]any)
+		if !reflect.DeepEqual(property["enum"], expected) {
+			t.Fatalf("recall_feedback %s enum = %#v, want %#v", name, property["enum"], expected)
+		}
+	}
+}
+
+func TestSearchToolBindsRecallFeedbackToExactCheckpointTurn(t *testing.T) {
+	s := newMCPTestStore(t)
+	identity := store.CheckpointIdentity{
+		Host: "codex", SessionID: "session-mcp-search-feedback", RootTurnID: "turn-mcp-search-feedback",
+	}
+	searchResponse, err := SearchToolHandler(s, MCPConfig{})(t.Context(), mcppkg.CallToolRequest{
+		Params: mcppkg.CallToolParams{Arguments: map[string]any{
+			"query": "no matching feedback memory", "project": "engram",
+			"host": identity.Host, "session_id": identity.SessionID, "root_turn_id": identity.RootTurnID,
+		}},
+	})
+	if err != nil || searchResponse.IsError {
+		t.Fatalf("bound search response = %#v, err=%v", searchResponse, err)
+	}
+	var search map[string]any
+	if err := json.Unmarshal([]byte(callResultText(t, searchResponse)), &search); err != nil {
+		t.Fatalf("decode bound search response: %v", err)
+	}
+	recallID, _ := search["recall_id"].(string)
+	if recallID == "" || search["result_count"] != float64(0) {
+		t.Fatalf("bound search body = %#v", search)
+	}
+	checkpointResponse, err := CheckpointToolHandler(s)(t.Context(), mcppkg.CallToolRequest{
+		Params: mcppkg.CallToolParams{Arguments: map[string]any{
+			"host": identity.Host, "session_id": identity.SessionID, "root_turn_id": identity.RootTurnID,
+			"disposition": store.CheckpointDispositionSkipped, "reason": store.CheckpointSkipReasonNoDurableKnowledge,
+			"recall_feedback": map[string]any{
+				"recall_id": recallID,
+				"false_empty": map[string]any{
+					"value": true, "source": memoryops.RecallFeedbackSourceAgentExplicit,
+				},
+			},
+		}},
+	})
+	if err != nil || checkpointResponse.IsError {
+		t.Fatalf("bound checkpoint response = %#v, err=%v", checkpointResponse, err)
+	}
+	var checkpoint memoryops.CheckpointRecordResult
+	if err := json.Unmarshal([]byte(callResultText(t, checkpointResponse)), &checkpoint); err != nil {
+		t.Fatalf("decode bound checkpoint response: %v", err)
+	}
+	if checkpoint.RecallFeedback == nil || checkpoint.RecallFeedback.Status != memoryops.RecallFeedbackStatusRecorded {
+		t.Fatalf("bound checkpoint = %#v", checkpoint)
+	}
+	partialResponse, err := SearchToolHandler(s, MCPConfig{})(t.Context(), mcppkg.CallToolRequest{
+		Params: mcppkg.CallToolParams{Arguments: map[string]any{
+			"query": "partial identity", "project": "engram", "host": identity.Host,
+		}},
+	})
+	if err != nil || !partialResponse.IsError ||
+		!strings.Contains(callResultText(t, partialResponse), "must be provided together") {
+		t.Fatalf("partial identity response = %#v, err=%v", partialResponse, err)
+	}
+}

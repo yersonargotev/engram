@@ -134,7 +134,7 @@ Token-efficient memory retrieval — don't dump everything, drill in:
 - `mem_save` and `mem_search` expose lifecycle metadata: computed `state` (`active` or `needs_review`) and `review_after` when a review cycle applies.
 - `mem_review` supports `action="list"` (`project`, `limit`) and `action="mark_reviewed"` (`observation_id`). Marking reviewed is local-only for now because `review_after` is intentionally not part of sync payloads in this phase.
 - `mem_pin` and `mem_unpin` change only local context priority. Pins are intentionally excluded from sync payloads.
-- Exact dedupe prevents repeated inserts in a rolling window (hash + project + scope + type + title)
+- Exact dedupe prevents repeated inserts in a rolling window using a normalized content hash + project + scope + type + title + tool_name + normalized topic_key; empty optional identity fields compare as empty values
 - Duplicates update metadata (`duplicate_count`, `last_seen_at`, `updated_at`) instead of creating new rows
 - Topic upserts increment `revision_count` so evolving decisions stay in one memory
 - `mem_delete` uses soft-delete by default (`deleted_at`), with optional hard delete

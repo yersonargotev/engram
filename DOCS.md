@@ -1055,7 +1055,7 @@ Save structured observations. The tool description teaches agents the format:
 - **content**: Structured with `**What**`, `**Why**`, `**Where**`, `**Learned**`; required unless the legacy `observation` alias is provided
 - **observation**: backward-compatible alias for `content` for older/raw MCP clients; prefer `content` for new integrations
 
-Exact duplicate saves are deduplicated in a rolling time window using a normalized content hash + project + scope + type + title.
+Exact duplicate saves are deduplicated in a rolling time window using a normalized content hash + project + scope + type + title + tool_name + normalized topic_key. Empty optional identity fields compare as empty values.
 When `topic_key` is provided, `mem_save` upserts the latest observation in the same `project + scope + topic_key`, incrementing `revision_count` and attributing it to the latest writer session.
 Save responses include lifecycle metadata for the saved observation: computed `state` (`active` or `needs_review`) and `review_after` when the observation type has a review cycle. Content is redacted before the configured storage limit is applied; that limit and truncation metadata (`original_bytes`, `limit_bytes`) are UTF-8 bytes. MCP save/update responses include `truncated`, and warn when truncation occurs.
 

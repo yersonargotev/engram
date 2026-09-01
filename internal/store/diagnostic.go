@@ -466,7 +466,7 @@ func (s *Store) ApplySessionProjectReclassification(actions []SessionProjectRecl
 			n, _ := res.RowsAffected()
 			result.Counts.Sessions += n
 
-			res, err = s.execHook(tx, `UPDATE observations SET project = ? WHERE session_id = ? AND project = ?`, action.ToProject, action.SessionID, action.FromProject)
+			res, err = s.execHook(tx, `UPDATE observations SET project = ?, local_revision_count = local_revision_count + 1 WHERE session_id = ? AND project = ?`, action.ToProject, action.SessionID, action.FromProject)
 			if err != nil {
 				return fmt.Errorf("reclassify observations for session %q: %w", action.SessionID, err)
 			}

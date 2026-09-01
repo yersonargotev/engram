@@ -14,8 +14,8 @@ import (
 const (
 	currentManagedPackVersion         = "3.3.0"
 	currentManagedPackManifestSHA256  = "9bed746986c705191d806c4a298e480becf251bd12189a5b191a8c9862169a74"
-	currentManagedPackSkillSHA256     = "8ec3ac2d0bf00d80c6c137393dbafa2ab62b56fc43081c8d220a898f38b1ce33"
-	currentManagedPackFixtureSHA256   = "cac1d3afb2158ea3299f7b0c1404b2e7b71e225429b3a362fef1ff4bb9a1b9a9"
+	currentManagedPackSkillSHA256     = "5e8e94eeea4dc6fb2d389999f0de92b1182784f6700bb89332f1040295c0b3a9"
+	currentManagedPackFixtureSHA256   = "d6998bc1e053878410487dddae05de39839590f0bd9335c73fcbdd7f5aff2c54"
 	currentCodexPluginVersion         = "0.1.7"
 	currentCodexPluginManifestSHA256  = "8fd6699d834beab9a8188ee51e273156f5db02aec4694bc3458db382a17a23b1"
 	previousManagedPackVersion        = "3.2.0"

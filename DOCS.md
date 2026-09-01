@@ -57,6 +57,7 @@ For other docs:
 - **memory_checkpoint_references** — ordered, typed local-only references from a checkpoint to the immutable ID, sync ID, and project identity of every attached Memory. The table has no sync triggers and is excluded from normal Memory and replication surfaces.
 - **memory_proposals** — immutable local checkpoint audit evidence for `needs_review`. Stores only an Engram-derived ID, normalized project, redacted `title` and `content`, and creation time. It is separate from `observations`, has no FTS or sync triggers, and never enters Memory search, context, counts, export/import, sync, cloud, or Obsidian. No workflow converts a proposal into a Memory. Project rename, merge, and delete operations update or remove it together with its checkpoint reference.
 - **memory_checkpoint_proposal_references** — one local proposal reference per `needs_review` checkpoint. Stores only checkpoint ID, proposal ID, and normalized project; it is excluded from all Memory and replication surfaces.
+- **recall_runs / recall_results / recall_segments** — local-only, content-free operational identity for bounded Recall. Runs retain normalized project/scope authority; results bind opaque result IDs to a selected Memory revision through its semantic revision counter and local apply generation; segments retain only byte positions/limits/truncation. They store neither the query nor Memory content or content-derived hashes and have no FTS, export, sync, cloud, Obsidian, or Content-capture path.
 
 The opt-in Recall baseline does not add a table to this Memory database. Its
 versioned, local-only SQLite ledger is
@@ -87,7 +88,9 @@ Core curated-memory operations:
 engram search <query> [--project P|--all-projects] [--match-mode all|any] [--json]
 engram save <title> <content> [--project P] [--topic-key K] [--json]
 engram save --title TITLE --content CONTENT [--project P] [--topic-key K] [--json]
-engram get <id> [--json]
+engram get <id> [--json]  # explicit curation; complete Memory and relations
+engram get --recall-id ID --result-id ID [--position BYTES]
+           [--project P|--all-projects] [--scope project|personal|global] [--json]
 engram update <id> [--title V] [--content V] [--type V] [--scope V]
                    [--topic-key V|--clear-topic-key] [--json]
 engram review list [--project P|--all-projects] [--limit N] [--json]
@@ -278,6 +281,7 @@ Engram is local-first: local SQLite is authoritative; cloud features are optiona
   - defaults to five candidates, always enforces a 4 KiB candidate budget, and allows at most ten candidates for deliberate follow-up
   - returns `200` for candidates, an empty result, weak authority, or operational fail-open; warnings and diagnostics remain structured
   - returns `400` for malformed query, match mode, limit, authority strength, or conflicting `project`/`all_projects`
+- `GET /recall/content` — Deliberately retrieve one selected Recall result. Required query: `recall_id`, `result_id`. Optional query: `position` (UTF-8 byte position, default `0`), `project`, `scope`, `all_projects`, `project_strength`. A success or fail-open response is `200`; syntactically invalid requests are `400`. Content is capped at 16 KiB and a truncated response exposes `continuation_position` for a new explicit request.
 
 ### Timeline
 
@@ -958,8 +962,11 @@ retry with `project=<one of available_projects>` and
 `project` against the store and return a structured unknown-project error.
 `mem_search` instead treats an explicit project as Recall authority and returns
 a successful empty candidate set when that project has no Memory.
-`mem_get_observation` resolves project from cwd for envelope metadata and does
-not accept a project override.
+`mem_get_observation` defaults to an opaque `recall_id`/`result_id` selection,
+plus optional `position`, `project`, `scope`, and `all_projects` values that must
+preserve the original Recall boundary. Core revalidates the current Memory
+revision and authority before returning content. Explicit curation may instead
+pass the legacy numeric `id`; it cannot be mixed with an opaque selection.
 
 ### Admin tools
 
@@ -1056,10 +1063,12 @@ and recency breaks remaining ties. Pending relations and judged
 `conflicts_with` relations appear symmetrically in each candidate's structured
 `conflicts`; use `mem_get_observation` only for a selected candidate.
 
-Every success envelope exposes `recall_id`, `result_ids`, `result_count`,
-`delivered_utf8_bytes`, `elapsed_monotonic_ms`, and Protocol/binary
-`provenance` outside prose. Empty Recall is successful. Store or transport
-failure returns no candidates, one `recall_unavailable` warning, and structured
+Every success envelope exposes `recall_id`, legacy numeric `result_ids`, opaque
+`opaque_result_ids`, `result_count`, `delivered_utf8_bytes`,
+`elapsed_monotonic_ms`, and Protocol/binary `provenance` outside prose. Select
+bounded content with the candidate's `result_id` or the corresponding
+`opaque_result_ids` entry. Empty Recall is successful. Store or transport failure
+returns no candidates, one `recall_unavailable` warning, and structured
 diagnostics without blocking the caller's task.
 
 ### mem_save
@@ -1150,7 +1159,16 @@ Progressive disclosure: after searching, drill into chronological context around
 
 ### mem_get_observation
 
-Get full untruncated content of a specific observation by ID.
+Deliberately retrieve one selected `mem_search` result by its `recall_id` and
+opaque `result_id`. Each response contains at most 16 KiB of valid UTF-8 Memory
+content and reports `original_bytes`, `delivered_utf8_bytes`, `limit_bytes`, and
+`truncated`. If truncated, call again with exactly `continuation_position`; no
+content is paged automatically, and project/scope authority cannot widen.
+
+Explicit curation workflows may instead pass a numeric observation `id` to
+retrieve the legacy complete Memory view and metadata. `id` cannot be combined
+with `recall_id` or `result_id`; default agent Recall should use the bounded
+opaque-selection path.
 
 ### mem_session_summary
 
@@ -1347,7 +1365,7 @@ Three-layer pattern for token-efficient memory retrieval:
 
 1. `mem_search` — Find relevant observations
 2. `mem_timeline` — Drill into chronological neighborhood of a result
-3. `mem_get_observation` — Get full untruncated content
+3. `mem_get_observation` — Get at most 16 KiB for one selected result; continue explicitly by byte position
 
 ### Privacy Tags
 

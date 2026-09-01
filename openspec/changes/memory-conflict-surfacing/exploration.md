@@ -12,7 +12,7 @@ Use the Engram MCP tools:
 
 ```
 mem_search(query: "sdd/memory-conflict-surfacing/explore", project: "engram")
-mem_get_observation(id: 2623)
+mem_get_observation(recall_id: "<returned recall_id>", result_id: "<result for observation 2623>", project: "engram")
 ```
 
 ## Summary

@@ -27,6 +27,13 @@ func TestVersionedFixtureMatchesCoreAndDistributionMetadata(t *testing.T) {
 		!reflect.DeepEqual(fixture.Protocol.MinimumTools, MinimumTools()) {
 		t.Fatalf("fixture Protocol semantics drifted from Core: %#v", fixture.Protocol)
 	}
+	if fixture.Protocol.RecallLimits == nil || *fixture.Protocol.RecallLimits != (FixtureRecallLimits{
+		InitialCandidates: RecallInitialCandidateLimit, FollowupCandidates: RecallFollowupCandidateLimit,
+		CandidateUTF8Bytes: RecallCandidateUTF8Budget, ContentUTF8Bytes: RecallContentUTF8Limit,
+		Continuation: RecallContinuationMode,
+	}) {
+		t.Fatalf("fixture Recall limits drifted from Core: %#v", fixture.Protocol.RecallLimits)
+	}
 	if fixture.Distributions.EngramBinary.Supported != BinarySupportedRange() {
 		t.Fatalf("fixture binary range = %#v, Core = %#v", fixture.Distributions.EngramBinary.Supported, BinarySupportedRange())
 	}

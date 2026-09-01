@@ -46,6 +46,7 @@ The memory flow does not start in the database. It starts with the agent decidin
 | `sync_apply_deferred` | Pull mutations deferred because dependencies are missing. | `internal/store/sync_apply_test.go`, `internal/server/server.go` |
 | `memory_checkpoints` / checkpoint reference tables | Local-only root-turn dispositions and typed Memory or Memory-proposal references, excluded from every durable-Memory and replication surface. | `internal/store/checkpoint.go`, `internal/memoryops/checkpoint.go` |
 | `memory_proposals` | Immutable local `needs_review` checkpoint audit snapshots that remain outside Memory retrieval and every replication surface; no workflow converts them into Memories. | `internal/store/memory_proposal.go` |
+| `recall_runs` / `recall_results` / `recall_segments` | Content-free local Recall identity, selected semantic revision/local apply generation, and explicit segment positions. These tables retain no query or Memory content and never replicate. | `internal/store/recall.go`, `internal/memoryops/recall_content.go` |
 
 For schema details, use [DOCS.md — Database Schema](../../DOCS.md#database-schema).
 
@@ -64,8 +65,9 @@ For schema details, use [DOCS.md — Database Schema](../../DOCS.md#database-sch
   active/non-superseded candidates before `LIMIT`, while CLI, MCP, and HTTP only
   resolve authority and render the envelope. The default is five candidates and
   4 KiB, with up to ten only for deliberate follow-up.
-- Search is progressive: compact candidate summaries first,
-  `mem_get_observation` only when selected full content is needed.
+- Search is progressive: compact candidate summaries first, then at most 16 KiB
+  for one opaque selected result. `mem_get_observation` continues only through a
+  new request at the returned UTF-8 byte position with unchanged authority.
 - Diagnostic Content is not Memory. It is excluded from Memory/FTS/Recall/context, ordinary export/import, sync/cloud, Obsidian, and retired candidate/promotion flows.
 - Legacy prompts are preserved byte-for-byte during migration and remain outside those same ordinary surfaces. Migration neither reclassifies nor uploads them and creates no deletion tombstone.
 

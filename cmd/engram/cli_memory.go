@@ -14,15 +14,133 @@ import (
 )
 
 func cmdGet(cfg store.Config) {
+	if len(os.Args) >= 3 && !strings.HasPrefix(os.Args[2], "--") {
+		cmdGetLegacy(cfg)
+		return
+	}
 	started := time.Now()
 	baselineOutcome := recallbaseline.OutcomeError
 	var baselineBytes *int64
 	defer func() { observeRecallBaselineCLI(cfg, "get", started, baselineOutcome, baselineBytes) }()
-	if len(os.Args) < 3 {
-		failCLI(hasArg("--json"), "invalid_arguments", "usage: engram get <observation_id> [--json]", nil)
+	jsonMode := hasArg("--json")
+	usage := "usage: engram get --recall-id ID --result-id ID [--position BYTES] [--project PROJECT|--all-projects] [--scope project|personal|global] [--json]"
+	var recallID, resultID, projectName, scope string
+	var position int
+	allProjects := false
+	for i := 2; i < len(os.Args); i++ {
+		arg := os.Args[i]
+		switch arg {
+		case "--json":
+		case "--all-projects":
+			allProjects = true
+		case "--recall-id", "--result-id", "--position", "--project", "--scope":
+			if i+1 >= len(os.Args) || strings.HasPrefix(os.Args[i+1], "--") {
+				failCLI(jsonMode, "missing_flag_value", fmt.Sprintf("%s requires a value", arg), nil)
+				return
+			}
+			value := os.Args[i+1]
+			i++
+			switch arg {
+			case "--recall-id":
+				recallID = value
+			case "--result-id":
+				resultID = value
+			case "--project":
+				projectName = value
+			case "--scope":
+				scope = value
+			case "--position":
+				parsed, err := strconv.Atoi(value)
+				if err != nil || parsed < 0 {
+					failCLI(jsonMode, "invalid_position", "position must be a non-negative UTF-8 byte position", nil)
+					return
+				}
+				position = parsed
+			}
+		default:
+			failCLI(jsonMode, "unknown_flag", fmt.Sprintf("unknown flag %s", arg), nil)
+			return
+		}
+	}
+	if strings.TrimSpace(recallID) == "" || strings.TrimSpace(resultID) == "" {
+		failCLI(jsonMode, "invalid_arguments", usage, nil)
 		return
 	}
+	var err error
+	scope, err = memoryops.NormalizeRecallScope(scope)
+	if err != nil {
+		failCLI(jsonMode, "invalid_recall_scope", err.Error(), nil)
+		return
+	}
+	if allProjects && strings.TrimSpace(projectName) != "" {
+		failCLI(jsonMode, "incompatible_flags", "--all-projects cannot be combined with --project", nil)
+		return
+	}
+
+	projectSource := project.SourceCLIExplicit
+	if allProjects {
+		projectName = ""
+		projectSource = project.SourceAllProjects
+	} else if strings.TrimSpace(projectName) != "" {
+		projectName, _ = store.NormalizeProject(projectName)
+	} else if scope != "project" {
+		projectSource = project.SourcePersonalScope
+	} else {
+		detected := project.DetectProjectFull(currentCWD())
+		projectName, _ = store.NormalizeProject(detected.Project)
+		projectSource = detected.Source
+	}
+	authority := project.ClassifyIdentitySource(projectSource)
+	s, storeErr := storeNew(cfg)
+	service := memoryops.New(s)
+	if storeErr == nil {
+		defer s.Close()
+	} else {
+		service = memoryops.New(nil)
+	}
+	result, err := service.RecallContent(memoryops.RecallContentInput{
+		RecallID: recallID, ResultID: resultID, Position: position,
+		Project: projectName, Scope: scope,
+		AllProjects:     allProjects || (scope != "project" && projectName == ""),
+		ProjectStrength: authority.Strength, DeliberateScope: allProjects || scope != "project",
+		BinaryVersion: version, BinaryRevision: commit,
+	})
+	if err != nil {
+		failCLI(jsonMode, "recall_content_failed", err.Error(), nil)
+		return
+	}
+	if jsonMode {
+		if result.Warning == nil {
+			baselineOutcome = recallbaseline.OutcomeSuccess
+		}
+		baselineBytes = cliJSONBytes(result)
+		_ = writeCLIJSON(result)
+		return
+	}
+	if result.Warning != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %s %s\n", result.Warning.Message, result.Warning.NextAction)
+		return
+	}
+	baselineOutcome = recallbaseline.OutcomeSuccess
+	fmt.Printf("Memory #%d [%s] %s\n%s\n", result.Memory.ID, result.Memory.Type, result.Memory.Title, result.Memory.Content)
+	fmt.Printf("Bytes: %d/%d (limit %d) | position: %d | truncated: %t\n", result.DeliveredUTF8Bytes, result.OriginalBytes, result.LimitBytes, result.Position, result.Truncated)
+	if result.ContinuationPosition != nil {
+		fmt.Printf("Continuation position: %d\n", *result.ContinuationPosition)
+	}
+}
+
+// cmdGetLegacy preserves the explicit observation-ID curation contract. The
+// default Recall path uses an opaque run/result selection and bounded segments.
+func cmdGetLegacy(cfg store.Config) {
+	started := time.Now()
+	baselineOutcome := recallbaseline.OutcomeError
+	var baselineBytes *int64
+	defer func() { observeRecallBaselineCLI(cfg, "get", started, baselineOutcome, baselineBytes) }()
 	jsonMode := hasArg("--json")
+	if len(os.Args) < 3 {
+		failCLI(jsonMode, "invalid_arguments", "usage: engram get <observation_id> [--json]", nil)
+		return
+	}
 	for _, arg := range os.Args[3:] {
 		if arg != "--json" {
 			failCLI(jsonMode, "unknown_flag", fmt.Sprintf("unknown flag %s", arg), nil)
@@ -40,14 +158,14 @@ func cmdGet(cfg store.Config) {
 		return
 	}
 	defer s.Close()
-	result, err := memoryops.New(s).Get(id)
+	getResult, err := memoryops.New(s).Get(id)
 	if err != nil {
 		failCLI(jsonMode, "observation_not_found", fmt.Sprintf("observation #%d not found", id), nil)
 		return
 	}
-	obs := result.Observation
+	obs := getResult.Observation
 	if jsonMode {
-		payload := map[string]any{"observation": obs, "state": obs.State(), "pinned": obs.Pinned, "relations": result.Relations}
+		payload := map[string]any{"observation": obs, "state": obs.State(), "pinned": obs.Pinned, "relations": getResult.Relations}
 		baselineOutcome = recallbaseline.OutcomeSuccess
 		baselineBytes = cliJSONBytes(payload)
 		_ = writeCLIJSON(payload)

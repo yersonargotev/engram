@@ -95,11 +95,11 @@ inventory, access, export, and separately confirmed purge may touch it.
 | `mem_update` | Update an existing observation by ID |
 | `mem_delete` | Delete an observation (soft-delete by default, hard-delete optional) |
 | `mem_suggest_topic_key` | Suggest a stable `topic_key` for evolving topics before saving |
-| `mem_search` | Full-text search across all memories |
+| `mem_search` | Bounded candidate Recall within explicit project/scope authority |
 | `mem_session_summary` | Save end-of-session summary |
 | `mem_context` | Get recent context from previous sessions |
 | `mem_timeline` | Chronological context around a specific observation |
-| `mem_get_observation` | Get full content of a specific memory |
+| `mem_get_observation` | Get a bounded selected Recall segment; numeric ID remains available for explicit legacy curation |
 | `mem_save_prompt` | Offer a user prompt to the local Diagnostic capture gate; never required for checkpoint identity or Memory saving |
 | `mem_stats` | Memory system statistics |
 | `mem_session_start` | Register a session start |
@@ -125,7 +125,8 @@ Token-efficient memory retrieval — don't dump everything, drill in:
 ```
 1. mem_search "auth middleware"     → compact results with IDs (~100 tokens each)
 2. mem_timeline observation_id=42  → what happened before/after in that session
-3. mem_get_observation id=42       → full untruncated content
+3. mem_get_observation recall_id=… result_id=… → at most 16 KiB; explicit byte continuation
+   (explicit curation only: mem_get_observation id=42 → legacy complete view)
 ```
 
 ---
@@ -299,7 +300,9 @@ engram search <query>     Search memories
 engram save <title> <content>
 engram save --title TITLE --content CONTENT
                           Save a memory using positional or named input
-engram get <obs_id>       Retrieve complete memory content, metadata, and relations [--json]
+engram get <obs_id>       Explicit curation: complete Memory, metadata, and relations [--json]
+engram get --recall-id ID --result-id ID [--position BYTES] [--json]
+                           Retrieve one selected bounded content segment
 engram update <obs_id>    Partially update title/content/type/scope/topic key [--json]
 engram review list|mark   List due memories or mark one reviewed (local-only) [--json]
 engram pin|unpin <obs_id> Change local-only context priority [--json]

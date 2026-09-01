@@ -262,7 +262,7 @@ If validation returns `project_name_collision`, do not guess. Ask the user to di
 
 Alternatives: `cd` into the target repo before starting the MCP server, or add repo `.engram/config.json`.
 
-**Read tools** (`mem_search`, `mem_context`, `mem_stats`, `mem_timeline`, `mem_doctor`) accept an optional `project` override validated against the store. Omit it to auto-detect. `mem_get_observation` is ID-based and does not accept a `project` override.
+**Read tools** (`mem_search`, `mem_context`, `mem_stats`, `mem_timeline`, `mem_doctor`) accept an optional `project` override validated against the store. Omit it to auto-detect. Default `mem_get_observation` uses the selected candidate's opaque `recall_id` and `result_id`; optional project/scope inputs must match that Recall run, and explicit continuation uses only the returned UTF-8 byte position. Explicit curation may still pass a numeric `id` for the legacy complete view, but cannot mix it with an opaque selection.
 
 ---
 

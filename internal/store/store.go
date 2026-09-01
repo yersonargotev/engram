@@ -843,6 +843,7 @@ func (s *Store) migrate() error {
 			topic_key  TEXT,
 			normalized_hash TEXT,
 			revision_count INTEGER NOT NULL DEFAULT 1,
+			local_revision_count INTEGER NOT NULL DEFAULT 1,
 			duplicate_count INTEGER NOT NULL DEFAULT 1,
 			last_seen_at TEXT,
 			pinned     BOOLEAN NOT NULL DEFAULT 0,
@@ -955,6 +956,7 @@ func (s *Store) migrate() error {
 		{name: "topic_key", definition: "TEXT"},
 		{name: "normalized_hash", definition: "TEXT"},
 		{name: "revision_count", definition: "INTEGER NOT NULL DEFAULT 1"},
+		{name: "local_revision_count", definition: "INTEGER NOT NULL DEFAULT 1"},
 		{name: "duplicate_count", definition: "INTEGER NOT NULL DEFAULT 1"},
 		{name: "last_seen_at", definition: "TEXT"},
 		{name: "pinned", definition: "BOOLEAN NOT NULL DEFAULT 0"},
@@ -1113,6 +1115,9 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if _, err := s.execHook(s.db, `UPDATE observations SET revision_count = 1 WHERE revision_count IS NULL OR revision_count < 1`); err != nil {
+		return err
+	}
+	if _, err := s.execHook(s.db, `UPDATE observations SET local_revision_count = 1 WHERE local_revision_count IS NULL OR local_revision_count < 1`); err != nil {
 		return err
 	}
 	if _, err := s.execHook(s.db, `UPDATE observations SET duplicate_count = 1 WHERE duplicate_count IS NULL OR duplicate_count < 1`); err != nil {
@@ -1284,6 +1289,9 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if err := s.migrateContentCapture(); err != nil {
+		return err
+	}
+	if err := s.migrateRecallOperations(); err != nil {
 		return err
 	}
 
@@ -2584,6 +2592,7 @@ func (s *Store) addObservationTx(tx *sql.Tx, p AddObservationParams) (*Observati
 				`UPDATE observations
 				 SET session_id = ?, type = ?, title = ?, content = ?, tool_name = ?, topic_key = ?,
 				     normalized_hash = ?, revision_count = revision_count + 1,
+				     local_revision_count = local_revision_count + 1,
 				     last_seen_at = datetime('now'), updated_at = datetime('now')
 				 WHERE id = ?`,
 				p.SessionID, p.Type, title, content, nullableString(p.ToolName), nullableString(topicKey), normHash, existingID,
@@ -2625,6 +2634,7 @@ func (s *Store) addObservationTx(tx *sql.Tx, p AddObservationParams) (*Observati
 		if _, err := s.execHook(tx,
 			`UPDATE observations
 			 SET duplicate_count = duplicate_count + 1,
+			     local_revision_count = local_revision_count + 1,
 			     last_seen_at = datetime('now'), updated_at = datetime('now')
 			 WHERE id = ?`, existingID,
 		); err != nil {
@@ -2659,7 +2669,7 @@ func (s *Store) addObservationTx(tx *sql.Tx, p AddObservationParams) (*Observati
 	}
 	if months, ok := decayReviewAfterMonths[p.Type]; ok {
 		reviewAfter := time.Now().UTC().AddDate(0, months, 0).Format("2006-01-02 15:04:05")
-		if _, err := s.execHook(tx, `UPDATE observations SET review_after = ? WHERE id = ?`, reviewAfter, observationID); err != nil {
+		if _, err := s.execHook(tx, `UPDATE observations SET review_after = ?, local_revision_count = local_revision_count + 1 WHERE id = ?`, reviewAfter, observationID); err != nil {
 			return nil, fmt.Errorf("set review_after: %w", err)
 		}
 	}
@@ -2776,7 +2786,7 @@ func (s *Store) setObservationPinned(id int64, pinned bool) error {
 	if pinned {
 		value = 1
 	}
-	res, err := s.execHook(s.db, `UPDATE observations SET pinned = ? WHERE id = ? AND deleted_at IS NULL`, value, id)
+	res, err := s.execHook(s.db, `UPDATE observations SET pinned = ?, local_revision_count = local_revision_count + 1 WHERE id = ? AND deleted_at IS NULL`, value, id)
 	if err != nil {
 		return err
 	}
@@ -2875,7 +2885,7 @@ func (s *Store) MarkReviewed(id int64) error {
 		if months, ok := decayReviewAfterMonths[obs.Type]; ok {
 			reviewAfter = time.Now().UTC().AddDate(0, months, 0).Format("2006-01-02 15:04:05")
 		}
-		if _, err := s.execHook(tx, `UPDATE observations SET review_after = ?, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL`, reviewAfter, id); err != nil {
+		if _, err := s.execHook(tx, `UPDATE observations SET review_after = ?, local_revision_count = local_revision_count + 1, updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL`, reviewAfter, id); err != nil {
 			return err
 		}
 		return nil
@@ -3208,6 +3218,7 @@ func (s *Store) UpdateObservation(id int64, p UpdateObservationParams) (*Observa
 			     topic_key = ?,
 			     normalized_hash = ?,
 			     revision_count = revision_count + 1,
+			     local_revision_count = local_revision_count + 1,
 			     updated_at = datetime('now')
 			 WHERE id = ? AND deleted_at IS NULL`,
 			typ,
@@ -3267,6 +3278,7 @@ func (s *Store) DeleteObservation(id int64, hardDelete bool) error {
 			if _, err := s.execHook(tx,
 				`UPDATE observations
 				 SET deleted_at = datetime('now'),
+				     local_revision_count = local_revision_count + 1,
 				     updated_at = datetime('now')
 				 WHERE id = ? AND deleted_at IS NULL`,
 				id,
@@ -5483,7 +5495,7 @@ var (
 	rescueObservationQuery = rescueRecordQuery{
 		selectSessionID: `SELECT session_id FROM observations WHERE id = ?`,
 		selectProject:   `SELECT project FROM observations WHERE id = ?`,
-		updateProject:   `UPDATE observations SET project = ? WHERE id = ? AND ifnull(trim(project), '') = ''`,
+		updateProject:   `UPDATE observations SET project = ?, local_revision_count = local_revision_count + 1 WHERE id = ? AND ifnull(trim(project), '') = ''`,
 	}
 	rescuePromptQuery = rescueRecordQuery{
 		selectSessionID: `SELECT session_id FROM user_prompts WHERE id = ?`,
@@ -5579,7 +5591,7 @@ func (s *Store) MigrateProject(oldName, newName string) (*MigrateResult, error) 
 
 	err = s.withTx(func(tx *sql.Tx) error {
 		// FTS triggers handle index updates automatically on UPDATE
-		res, err := s.execHook(tx, `UPDATE observations SET project = ? WHERE project = ?`, newName, oldName)
+		res, err := s.execHook(tx, `UPDATE observations SET project = ?, local_revision_count = local_revision_count + 1 WHERE project = ?`, newName, oldName)
 		if err != nil {
 			return fmt.Errorf("migrate observations: %w", err)
 		}
@@ -5931,7 +5943,7 @@ func (s *Store) mergeProjects(sources []string, canonical string, allowNonEquiva
 			}
 			sourceRowsUpdated := int64(0)
 
-			res, err := s.execHook(tx, `UPDATE observations SET project = ? WHERE project IN (`+placeholders+`)`, args...)
+			res, err := s.execHook(tx, `UPDATE observations SET project = ?, local_revision_count = local_revision_count + 1 WHERE project IN (`+placeholders+`)`, args...)
 			if err != nil {
 				return fmt.Errorf("merge observations %q → %q: %w", srcNormalized, canonical, err)
 			}
@@ -6259,6 +6271,7 @@ func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectRe
 			res, err := s.execHook(tx, `
 				UPDATE observations
 				SET deleted_at = datetime('now'),
+				    local_revision_count = local_revision_count + 1,
 				    updated_at = datetime('now')
 				WHERE project = ? AND deleted_at IS NULL
 			`, project)
@@ -7702,7 +7715,7 @@ func (s *Store) applyObservationUpsertTx(tx *sql.Tx, payload syncObservationPayl
 
 	_, err = s.execHook(tx,
 		`UPDATE observations
-		 SET session_id = ?, type = ?, title = ?, content = ?, tool_name = ?, project = ?, scope = ?, topic_key = ?, normalized_hash = ?, revision_count = ?, duplicate_count = ?, last_seen_at = ?, created_at = ?, updated_at = ?, deleted_at = NULL
+		 SET session_id = ?, type = ?, title = ?, content = ?, tool_name = ?, project = ?, scope = ?, topic_key = ?, normalized_hash = ?, revision_count = ?, local_revision_count = local_revision_count + 1, duplicate_count = ?, last_seen_at = ?, created_at = ?, updated_at = ?, deleted_at = NULL
 		 WHERE id = ?`,
 		payload.SessionID,
 		payload.Type,
@@ -7741,7 +7754,7 @@ func (s *Store) applyObservationDeleteTx(tx *sql.Tx, payload syncObservationPayl
 		deletedAt = &now
 	}
 	_, err = s.execHook(tx,
-		`UPDATE observations SET deleted_at = ?, updated_at = datetime('now') WHERE id = ?`,
+		`UPDATE observations SET deleted_at = ?, local_revision_count = local_revision_count + 1, updated_at = datetime('now') WHERE id = ?`,
 		deletedAt, existing.ID,
 	)
 	return err
@@ -7978,6 +7991,7 @@ func (s *Store) migrateLegacyObservationsTable() error {
 			topic_key  TEXT,
 			normalized_hash TEXT,
 			revision_count INTEGER NOT NULL DEFAULT 1,
+			local_revision_count INTEGER NOT NULL DEFAULT 1,
 			duplicate_count INTEGER NOT NULL DEFAULT 1,
 			last_seen_at TEXT,
 			pinned     BOOLEAN NOT NULL DEFAULT 0,
@@ -7993,7 +8007,7 @@ func (s *Store) migrateLegacyObservationsTable() error {
 	if _, err := s.execHook(tx, `
 		INSERT INTO observations_migrated (
 			id, sync_id, session_id, type, title, content, tool_name, project,
-			scope, topic_key, normalized_hash, revision_count, duplicate_count,
+			scope, topic_key, normalized_hash, revision_count, local_revision_count, duplicate_count,
 			last_seen_at, pinned, created_at, updated_at, deleted_at
 		)
 		SELECT
@@ -8013,6 +8027,7 @@ func (s *Store) migrateLegacyObservationsTable() error {
 			NULLIF(topic_key, ''),
 			normalized_hash,
 			CASE WHEN revision_count IS NULL OR revision_count < 1 THEN 1 ELSE revision_count END,
+			1,
 			CASE WHEN duplicate_count IS NULL OR duplicate_count < 1 THEN 1 ELSE duplicate_count END,
 			last_seen_at,
 			0,

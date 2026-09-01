@@ -1257,7 +1257,9 @@ func TestHandleSearchAndCRUDHandlers(t *testing.T) {
 
 	getObs := handleGetObservation(s, MCPConfig{})
 	getReq := mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
-		"id": float64(obsID),
+		"recall_id": searchBody["recall_id"],
+		"result_id": firstResult["result_id"],
+		"project":   "engram",
 	}}}
 	getRes, err := getObs(context.Background(), getReq)
 	if err != nil {
@@ -1309,7 +1311,7 @@ func TestHandleSearchReturnsBoundedRecallEnvelope(t *testing.T) {
 	if recallID, _ := payload["recall_id"].(string); !strings.HasPrefix(recallID, "recall-") {
 		t.Fatalf("recall_id=%v", payload["recall_id"])
 	}
-	if payload["result_count"] != float64(1) || len(payload["result_ids"].([]any)) != 1 || len(payload["results"].([]any)) != 1 {
+	if payload["result_count"] != float64(1) || len(payload["result_ids"].([]any)) != 1 || len(payload["opaque_result_ids"].([]any)) != 1 || len(payload["results"].([]any)) != 1 {
 		t.Fatalf("result metadata=%v", payload)
 	}
 	if delivered, _ := payload["delivered_utf8_bytes"].(float64); delivered <= 0 || delivered > memoryops.RecallCandidateBudgetBytes {
@@ -2262,12 +2264,12 @@ func TestHandleTimelineBeforeSectionAndSummaryBranches(t *testing.T) {
 	}
 }
 
-func TestHandleGetObservationIncludesTopicAndToolMetadata(t *testing.T) {
+func TestHandleGetObservationIncludesSelectedMemoryMetadata(t *testing.T) {
 	s := newMCPTestStore(t)
 	if err := s.CreateSession("s-get-meta", "engram", "/tmp/engram"); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	id, err := s.AddObservation(store.AddObservationParams{
+	_, err := s.AddObservation(store.AddObservationParams{
 		SessionID: "s-get-meta",
 		Type:      "architecture",
 		Title:     "Auth model",
@@ -2280,18 +2282,75 @@ func TestHandleGetObservationIncludesTopicAndToolMetadata(t *testing.T) {
 		t.Fatalf("add observation: %v", err)
 	}
 
-	res, err := handleGetObservation(s, MCPConfig{})(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
-		"id": float64(id),
-	}}})
+	selection := recallSelectionArgs(t, s, "Auth model", "engram")
+	res, err := handleGetObservation(s, MCPConfig{})(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: selection}})
 	if err != nil {
 		t.Fatalf("get observation handler error: %v", err)
 	}
 	if res.IsError {
 		t.Fatalf("unexpected get observation error: %s", callResultText(t, res))
 	}
+	body := callResultJSON(t, res)
+	memory, ok := body["memory"].(map[string]any)
+	if !ok || memory["title"] != "Auth model" || memory["type"] != "architecture" || memory["project"] != "engram" || memory["content"] != "Details" {
+		t.Fatalf("selected Memory metadata = %v", body["memory"])
+	}
+}
+
+func TestHandleGetObservationPreservesLegacyIDCuration(t *testing.T) {
+	s := newMCPTestStore(t)
+	if err := s.CreateSession("s-get-legacy", "engram", "/tmp/engram"); err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.AddObservation(store.AddObservationParams{
+		SessionID: "s-get-legacy", Type: "architecture", Title: "Legacy curation",
+		Content: "complete legacy content", Project: "engram", ToolName: "mcp-passive", TopicKey: "architecture/legacy",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := handleGetObservation(s, MCPConfig{DefaultProject: "engram"})(context.Background(), mcppkg.CallToolRequest{
+		Params: mcppkg.CallToolParams{Arguments: map[string]any{"id": float64(id)}},
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("legacy get result=%q error=%v", callResultText(t, res), err)
+	}
 	text := callResultText(t, res)
-	if !strings.Contains(text, "Topic: architecture/auth-model") || !strings.Contains(text, "Tool: mcp-passive") {
-		t.Fatalf("expected topic and tool metadata in output, got %q", text)
+	for _, want := range []string{"Legacy curation", "complete legacy content", "Scope: project", "Topic: architecture/legacy", "Tool: mcp-passive", "Revisions:"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("legacy get lost %q metadata: %q", want, text)
+		}
+	}
+}
+
+func TestGetObservationSchemaKeepsLegacyIDAndAddsOpaqueSelection(t *testing.T) {
+	s := newMCPTestStore(t)
+	tool := NewServer(s).GetTool("mem_get_observation")
+	for _, name := range []string{"id", "recall_id", "result_id", "position"} {
+		if _, ok := tool.Tool.InputSchema.Properties[name]; !ok {
+			t.Fatalf("mem_get_observation schema lost %q", name)
+		}
+	}
+	for _, required := range tool.Tool.InputSchema.Required {
+		if required == "id" || required == "recall_id" || required == "result_id" {
+			t.Fatalf("alternative selection field %q must not be schema-required", required)
+		}
+	}
+	for _, test := range []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{name: "missing result", args: map[string]any{"recall_id": "recall-a"}, want: "either id or both"},
+		{name: "mixed", args: map[string]any{"id": float64(1), "recall_id": "recall-a", "result_id": "result-a"}, want: "cannot be combined"},
+		{name: "invalid legacy id", args: map[string]any{"id": float64(0)}, want: "positive observation ID"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := handleGetObservation(s, MCPConfig{})(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: test.args}})
+			if err != nil || !result.IsError || !strings.Contains(callResultText(t, result), test.want) {
+				t.Fatalf("selection validation result=%q error=%v", callResultText(t, result), err)
+			}
+		})
 	}
 }
 
@@ -5897,7 +5956,7 @@ func TestAllTools_ReadResponseEnvelope(t *testing.T) {
 	if err := s.CreateSession("sess-env", "envelope-test-project", "/tmp"); err != nil {
 		t.Fatal(err)
 	}
-	obsID, err := s.AddObservation(store.AddObservationParams{
+	_, err := s.AddObservation(store.AddObservationParams{
 		SessionID: "sess-env",
 		Type:      "manual",
 		Title:     "envelope test observation",
@@ -5912,7 +5971,8 @@ func TestAllTools_ReadResponseEnvelope(t *testing.T) {
 	hSearch := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
 	resSearch, err := hSearch(context.Background(), mcppkg.CallToolRequest{
 		Params: mcppkg.CallToolParams{Arguments: map[string]any{
-			"query": "envelope test",
+			"query":   "envelope test",
+			"project": "envelope-test-project",
 		}},
 	})
 	if err != nil || resSearch.IsError {
@@ -5921,9 +5981,13 @@ func TestAllTools_ReadResponseEnvelope(t *testing.T) {
 
 	// mem_get_observation envelope
 	hGet := handleGetObservation(s, MCPConfig{})
+	searchEnvelope := callResultJSON(t, resSearch)
+	searchResultIDs := searchEnvelope["opaque_result_ids"].([]any)
 	resGet, err := hGet(context.Background(), mcppkg.CallToolRequest{
 		Params: mcppkg.CallToolParams{Arguments: map[string]any{
-			"id": float64(obsID),
+			"recall_id": searchEnvelope["recall_id"],
+			"result_id": searchResultIDs[0],
+			"project":   searchEnvelope["project"],
 		}},
 	})
 	if err != nil || resGet.IsError {
@@ -6083,6 +6147,33 @@ func callResultJSON(t *testing.T, res *mcppkg.CallToolResult) map[string]any {
 		t.Fatalf("response is not JSON: %v\ntext: %s", err, text)
 	}
 	return m
+}
+
+func recallSelectionArgs(t *testing.T, s *store.Store, query, projectName string) map[string]any {
+	t.Helper()
+	args := map[string]any{"query": query}
+	if projectName != "" {
+		args["project"] = projectName
+	}
+	res, err := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))(context.Background(), mcppkg.CallToolRequest{
+		Params: mcppkg.CallToolParams{Arguments: args},
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("prepare Recall selection: err=%v result=%q", err, callResultText(t, res))
+	}
+	body := callResultJSON(t, res)
+	resultIDs, ok := body["opaque_result_ids"].([]any)
+	if !ok || len(resultIDs) == 0 {
+		t.Fatalf("prepare Recall selection returned no result: %v", body)
+	}
+	selection := map[string]any{
+		"recall_id": body["recall_id"],
+		"result_id": resultIDs[0],
+	}
+	if projectName != "" {
+		selection["project"] = projectName
+	}
+	return selection
 }
 
 // ─── Batch 3: resolver helpers + envelope + error helper ─────────────────────
@@ -6348,7 +6439,7 @@ func TestHandleGetObservation_ResponseEnvelopeIncludesProject(t *testing.T) {
 	if err := s.CreateSession("sess-get-env", "env-test-project", "/tmp"); err != nil {
 		t.Fatal(err)
 	}
-	id, err := s.AddObservation(store.AddObservationParams{
+	_, err := s.AddObservation(store.AddObservationParams{
 		SessionID: "sess-get-env",
 		Type:      "manual",
 		Title:     "envelope observation",
@@ -6359,11 +6450,10 @@ func TestHandleGetObservation_ResponseEnvelopeIncludesProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	selection := recallSelectionArgs(t, s, "envelope observation", "env-test-project")
 	h := handleGetObservation(s, MCPConfig{})
 	res, err := h(context.Background(), mcppkg.CallToolRequest{
-		Params: mcppkg.CallToolParams{Arguments: map[string]any{
-			"id": float64(id),
-		}},
+		Params: mcppkg.CallToolParams{Arguments: selection},
 	})
 	if err != nil || res.IsError {
 		t.Fatalf("get obs: err=%v isError=%v text=%q", err, res.IsError, callResultText(t, res))
@@ -6915,11 +7005,9 @@ func TestHandleContext_EnvelopeProjectMatchesQueryProject(t *testing.T) {
 	}
 }
 
-// JR2-3 RED: TestHandleGetObservation_DegradedPathNoEnvelope
-// When the cwd is ambiguous (multiple git repos), resolveReadProject returns an error.
-// The handler must degrade gracefully: IsError=false, result contains observation content,
-// and the response is NOT JSON (no project_source envelope field).
-func TestHandleGetObservation_DegradedPathNoEnvelope(t *testing.T) {
+// An ambiguous cwd cannot authorize complete Memory retrieval. The adapter
+// fails open with a structured warning and no selected content.
+func TestHandleGetObservationAmbiguousProjectReturnsAuthorityWarning(t *testing.T) {
 	// Create a parent dir with two child git repos → ambiguous cwd.
 	parent := t.TempDir()
 	for _, name := range []string{"repo-a", "repo-b"} {
@@ -6935,7 +7023,7 @@ func TestHandleGetObservation_DegradedPathNoEnvelope(t *testing.T) {
 	if err := s.CreateSession("sess-degraded", "degraded-project", "/tmp"); err != nil {
 		t.Fatal(err)
 	}
-	obsID, err := s.AddObservation(store.AddObservationParams{
+	_, err := s.AddObservation(store.AddObservationParams{
 		SessionID: "sess-degraded",
 		Type:      "manual",
 		Title:     "degraded obs title",
@@ -6946,11 +7034,11 @@ func TestHandleGetObservation_DegradedPathNoEnvelope(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	selection := recallSelectionArgs(t, s, "degraded obs title", "degraded-project")
+	delete(selection, "project")
 	h := handleGetObservation(s, MCPConfig{})
 	res, err := h(context.Background(), mcppkg.CallToolRequest{
-		Params: mcppkg.CallToolParams{Arguments: map[string]any{
-			"id": float64(obsID),
-		}},
+		Params: mcppkg.CallToolParams{Arguments: selection},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -6958,16 +7046,14 @@ func TestHandleGetObservation_DegradedPathNoEnvelope(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("degraded path must not return IsError=true; text=%q", callResultText(t, res))
 	}
-	text := callResultText(t, res)
-	if !strings.Contains(text, "degraded obs content") {
-		t.Errorf("degraded path must contain observation content; got: %q", text)
+	body := callResultJSON(t, res)
+	warning, _ := body["warning"].(map[string]any)
+	memory, _ := body["memory"].(map[string]any)
+	if warning["code"] != "recall_project_authority_required" || memory["content"] != "" {
+		t.Fatalf("ambiguous authority result = %v", body)
 	}
-	// The degraded path returns plain text (no JSON envelope), so project_source must be absent.
-	var m map[string]any
-	if json.Unmarshal([]byte(text), &m) == nil {
-		if _, hasSource := m["project_source"]; hasSource {
-			t.Error("degraded path must NOT include 'project_source' envelope field")
-		}
+	if _, hasSource := body["project_source"]; !hasSource {
+		t.Error("authority warning must retain the project envelope")
 	}
 }
 
@@ -6983,7 +7069,7 @@ func TestHandleGetObservation_EnvelopePresent(t *testing.T) {
 	if err := s.CreateSession("sess-getobs", "obs-project", "/tmp"); err != nil {
 		t.Fatal(err)
 	}
-	obsID, err := s.AddObservation(store.AddObservationParams{
+	_, err := s.AddObservation(store.AddObservationParams{
 		SessionID: "sess-getobs",
 		Type:      "manual",
 		Title:     "getobs test",
@@ -6994,11 +7080,10 @@ func TestHandleGetObservation_EnvelopePresent(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	selection := recallSelectionArgs(t, s, "getobs test", "obs-project")
 	h := handleGetObservation(s, MCPConfig{})
 	res, err := h(context.Background(), mcppkg.CallToolRequest{
-		Params: mcppkg.CallToolParams{Arguments: map[string]any{
-			"id": float64(obsID),
-		}},
+		Params: mcppkg.CallToolParams{Arguments: selection},
 	})
 	if err != nil || res.IsError {
 		t.Fatalf("get obs: err=%v isError=%v text=%q", err, res.IsError, callResultText(t, res))
@@ -7050,7 +7135,7 @@ func TestAllTools_ReadResponseEnvelope_WithAssertions(t *testing.T) {
 	if err := s.CreateSession("sess-js1", "js1-project", "/tmp"); err != nil {
 		t.Fatal(err)
 	}
-	obsID, err := s.AddObservation(store.AddObservationParams{
+	_, err := s.AddObservation(store.AddObservationParams{
 		SessionID: "sess-js1",
 		Type:      "manual",
 		Title:     "js1 envelope test",
@@ -7079,7 +7164,8 @@ func TestAllTools_ReadResponseEnvelope_WithAssertions(t *testing.T) {
 	hSearch := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
 	resSearch, err := hSearch(context.Background(), mcppkg.CallToolRequest{
 		Params: mcppkg.CallToolParams{Arguments: map[string]any{
-			"query": "js1 envelope test",
+			"query":   "js1 envelope test",
+			"project": "js1-project",
 		}},
 	})
 	if err != nil || resSearch.IsError {
@@ -7089,9 +7175,13 @@ func TestAllTools_ReadResponseEnvelope_WithAssertions(t *testing.T) {
 
 	// mem_get_observation envelope
 	hGet := handleGetObservation(s, MCPConfig{})
+	searchEnvelope := callResultJSON(t, resSearch)
+	resultIDs := searchEnvelope["opaque_result_ids"].([]any)
 	resGet, err := hGet(context.Background(), mcppkg.CallToolRequest{
 		Params: mcppkg.CallToolParams{Arguments: map[string]any{
-			"id": float64(obsID),
+			"recall_id": searchEnvelope["recall_id"],
+			"result_id": resultIDs[0],
+			"project":   "js1-project",
 		}},
 	})
 	if err != nil || resGet.IsError {

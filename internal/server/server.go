@@ -255,6 +255,7 @@ func (s *Server) routes() {
 	// Search
 	s.mux.HandleFunc("GET /search", s.handleSearch)
 	s.mux.HandleFunc("GET /recall", s.handleRecall)
+	s.mux.HandleFunc("GET /recall/content", s.handleRecallContent)
 
 	// Timeline
 	s.mux.HandleFunc("GET /timeline", s.handleTimeline)
@@ -569,6 +570,62 @@ func (s *Server) handleRecall(w http.ResponseWriter, r *http.Request) {
 		DeliberateScope: allProjects || scope != "project",
 		BinaryVersion:   s.binaryVersion,
 		BinaryRevision:  s.binaryRevision,
+	})
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, result)
+}
+
+func (s *Server) handleRecallContent(w http.ResponseWriter, r *http.Request) {
+	params := r.URL.Query()
+	recallID := strings.TrimSpace(params.Get("recall_id"))
+	resultID := strings.TrimSpace(params.Get("result_id"))
+	if recallID == "" || resultID == "" {
+		jsonError(w, http.StatusBadRequest, "recall_id and result_id are required")
+		return
+	}
+	position := 0
+	if rawPosition := strings.TrimSpace(params.Get("position")); rawPosition != "" {
+		parsed, err := strconv.Atoi(rawPosition)
+		if err != nil || parsed < 0 {
+			jsonError(w, http.StatusBadRequest, "position must be a non-negative UTF-8 byte position")
+			return
+		}
+		position = parsed
+	}
+	projectName, _ := store.NormalizeProject(params.Get("project"))
+	allProjects := queryBool(r, "all_projects", false)
+	if allProjects && projectName != "" {
+		jsonError(w, http.StatusBadRequest, "all_projects cannot be combined with project")
+		return
+	}
+	scope, err := memoryops.NormalizeRecallScope(params.Get("scope"))
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	strength := projectpkg.IdentityStrengthWeak
+	if projectName != "" {
+		strength = projectpkg.IdentityStrengthExplicit
+	}
+	if rawStrength := strings.TrimSpace(params.Get("project_strength")); rawStrength != "" {
+		strength = projectpkg.IdentityStrength(rawStrength)
+		switch strength {
+		case projectpkg.IdentityStrengthStrong, projectpkg.IdentityStrengthExplicit, projectpkg.IdentityStrengthWeak, projectpkg.IdentityStrengthAggregate:
+		default:
+			jsonError(w, http.StatusBadRequest, "invalid project_strength")
+			return
+		}
+	}
+
+	result, err := memoryops.New(s.store).RecallContentContext(r.Context(), memoryops.RecallContentInput{
+		RecallID: recallID, ResultID: resultID, Position: position,
+		Project: projectName, Scope: scope,
+		AllProjects:     allProjects || (scope != "project" && projectName == ""),
+		ProjectStrength: strength, DeliberateScope: allProjects || scope != "project",
+		BinaryVersion: s.binaryVersion, BinaryRevision: s.binaryRevision,
 	})
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())

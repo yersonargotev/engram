@@ -64,7 +64,7 @@ Context windows are temporary. Engram is memory.
 | Gets summarized away                | Persists in SQLite + FTS5                                |
 | Usually tied to one agent           | Works through MCP across agent clients                   |
 
-Engram does not try to make the model read everything. Its default protocol selectively searches when prior Memory can change the work, fetches full details only for selected results, and makes one Terminal Memory commit after each settled root user turn.
+Engram does not try to make the model read everything. Its default protocol selectively searches when prior Memory can change the work, fetches at most 16 KiB only for one selected result, continues only from an explicit byte position, and makes one Terminal Memory commit after each settled root user turn.
 
 ## See the memory
 

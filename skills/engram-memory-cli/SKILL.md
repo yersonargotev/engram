@@ -50,8 +50,24 @@ requires explicit task relevance or user direction.
 2. The initial response is limited to five candidate summaries and 4 KiB. Core
    excludes inactive, deleted, and superseded Memories; relevance/currentness
    rank before pins and recency. Account for every result and explicit conflict.
-   Use `engram get <id> --json` only for a selected candidate whose complete
-   content can change the task.
+   Use the response's `recall_id` and one selected candidate's opaque
+   `result_id` only when complete content can change the task:
+
+   ```bash
+   engram get --recall-id '<recall-id>' --result-id '<result-id>' \
+     --project '<project>' --scope project --json
+   ```
+
+   One response returns at most 16 KiB of valid UTF-8 content and reports
+   `original_bytes`, `delivered_utf8_bytes`, `limit_bytes`, and `truncated`.
+   When `truncated` is true, request more only with the exact returned byte
+   position; do not infer a position or widen the original scope:
+
+   ```bash
+   engram get --recall-id '<recall-id>' --result-id '<result-id>' \
+     --position '<continuation_position>' --project '<project>' \
+     --scope project --json
+   ```
 3. If a material memory is expected and the first search is empty or too broad,
    reformulate at most once. Remove generic terms, choose a more distinctive anchor, or
    switch to `--match-mode any`; keep the same lookup intent.

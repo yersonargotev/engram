@@ -244,6 +244,28 @@ test("registered Pi-native mem_search fails open on native provider transport fa
       assert.ok(result.details.data.elapsed_monotonic_ms >= 1);
       assert.equal(result.details.data.warning.code, "recall_unavailable");
       assert.equal(result.details.data.diagnostics[0].code, "recall_transport_failure");
+
+      const contentResult = await registeredTools.get("mem_get_observation").execute(
+        "tool-call-content-failure",
+        { recall_id: "recall-selected", result_id: "result-selected" },
+        undefined,
+        undefined,
+        runtimeContext("test-session"),
+      );
+      assert.notEqual(contentResult.isError, true);
+      assert.equal(contentResult.details.data.warning.code, "recall_unavailable");
+      assert.equal(contentResult.details.data.diagnostics[0].operation, "recall_content");
+      assert.equal(contentResult.details.data.memory.content, "");
+
+      const legacyResult = await registeredTools.get("mem_get_observation").execute(
+        "tool-call-legacy-content-failure",
+        { id: 42 },
+        undefined,
+        undefined,
+        runtimeContext("test-session"),
+      );
+      assert.equal(legacyResult.isError, true);
+      assert.equal(legacyResult.details.data, undefined);
     });
   } finally {
     globalThis.fetch = originalFetch;
@@ -283,6 +305,76 @@ test("Pi personal Recall without an explicit project omits detected project auth
 		if (originalUrl === undefined) delete process.env.ENGRAM_URL;
 		else process.env.ENGRAM_URL = originalUrl;
 	}
+});
+
+test("Pi complete Recall forwards the opaque selection and explicit continuation", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalUrl = process.env.ENGRAM_URL;
+  process.env.ENGRAM_URL = "http://127.0.0.1:17437";
+  const { calls, fetchStub } = recordingFetch([
+    { method: "GET", path: "/health", body: { status: "ok" } },
+    { method: "GET", path: "/project/current", body: { project: "engram", project_source: "git_remote", project_strength: "strong" } },
+    { method: "GET", path: "/recall/content", body: { memory: { content: "continued" }, position: 16384, original_bytes: 16400, delivered_utf8_bytes: 16, limit_bytes: 16384, truncated: false } },
+  ]);
+  globalThis.fetch = fetchStub;
+
+  try {
+    await withPluginSandbox("engram-pi-contract-", async ({ sandbox }) => {
+      const { registeredTools } = await loadPluginHarness(sandbox);
+      const getObservation = registeredTools.get("mem_get_observation");
+      assert.ok(getObservation, "mem_get_observation tool should be registered");
+
+      const result = await getObservation.execute(
+        "tool-call-content",
+        { recall_id: "recall-opaque", result_id: "result-opaque", position: 16384, project: "engram" },
+        undefined,
+        undefined,
+        runtimeContext("recall-content-session"),
+      );
+      assert.notEqual(result.isError, true);
+
+      const contentCall = calls.find((call) => call.path.startsWith("/recall/content?"));
+      assert.ok(contentCall, "mem_get_observation must call the bounded content endpoint");
+      const query = new URL(`http://localhost${contentCall.path}`).searchParams;
+      assert.equal(query.get("recall_id"), "recall-opaque");
+      assert.equal(query.get("result_id"), "result-opaque");
+      assert.equal(query.get("position"), "16384");
+      assert.equal(query.get("project"), "engram");
+      assert.equal(query.get("project_strength"), "explicit");
+      assert.equal(query.get("scope"), "project");
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalUrl === undefined) delete process.env.ENGRAM_URL;
+    else process.env.ENGRAM_URL = originalUrl;
+  }
+});
+
+test("Pi explicit curation preserves legacy observation ID retrieval", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalUrl = process.env.ENGRAM_URL;
+  process.env.ENGRAM_URL = "http://127.0.0.1:17437";
+  const { calls, fetchStub } = recordingFetch([
+    { method: "GET", path: "/health", body: { status: "ok" } },
+    { method: "GET", path: "/project/current", body: { project: "engram", project_source: "git_remote", project_strength: "strong" } },
+    { method: "GET", path: "/observations/42", body: { id: 42, title: "Legacy curation", content: "complete" } },
+  ]);
+  globalThis.fetch = fetchStub;
+  try {
+    await withPluginSandbox("engram-pi-legacy-get-", async ({ sandbox }) => {
+      const { registeredTools } = await loadPluginHarness(sandbox);
+      const result = await registeredTools.get("mem_get_observation").execute(
+        "tool-call-legacy-content", { id: 42 }, undefined, undefined, runtimeContext("legacy-content-session"),
+      );
+      assert.notEqual(result.isError, true);
+      assert.ok(calls.some((call) => call.path === "/observations/42"));
+      assert.equal(result.details.data.id, 42);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalUrl === undefined) delete process.env.ENGRAM_URL;
+    else process.env.ENGRAM_URL = originalUrl;
+  }
 });
 
 test("weak detected identity remains available to reads but cannot authorize Pi writes", async () => {

@@ -47,8 +47,9 @@ For other docs:
 - **sessions** — `id` (TEXT PK), `project`, `directory`, `started_at`, `ended_at`, `summary`, `status`
 - **observations** — `id` (INTEGER PK AUTOINCREMENT), `session_id` (FK), `type`, `title`, `content`, `tool_name`, `project`, `scope`, `topic_key`, `normalized_hash`, `revision_count`, `duplicate_count`, `last_seen_at`, `created_at`, `updated_at`, `deleted_at`
 - **observations_fts** — FTS5 virtual table synced via triggers (`title`, `content`, `tool_name`, `type`, `project`)
-- **user_prompts** — `id` (INTEGER PK AUTOINCREMENT), `session_id` (FK), `content`, `project`, `created_at`
-- **prompts_fts** — FTS5 virtual table synced via triggers (`content`, `project`)
+- **user_prompts** — frozen local Legacy prompt archive. Existing rows remain byte-stable and are available only through explicit `engram legacy-prompts` inventory/access/export/purge commands; they do not enter FTS, Recall, context, ordinary export/import, sync/cloud, or Obsidian. Purge removes canonical Engram-owned journal/FTS copies transactionally and fails closed if customized FTS ownership prevents complete removal.
+- **capture_consents** — local project/content-type consent, optionally scoped to an expiring session, with retention between 1 and 30 days (7 by default)
+- **diagnostic_captures** — short-lived, consented local Diagnostic Content. It has no FTS or sync triggers and is excluded from every ordinary Memory and replication surface.
 - **sync_chunks** — `target_key` (TEXT), `chunk_id` (TEXT), `imported_at`; composite PK (`target_key`, `chunk_id`) for target-scoped chunk tracking
 - **memory_relations** — stores conflict-surfacing verdicts from `mem_judge`; columns include `id` (INTEGER PK AUTOINCREMENT), `sync_id` (TEXT UNIQUE), `source_id`, `target_id`, `relation`, `judgment_status` (`pending` | `judged` | `orphaned` | `ignored`), `reason`, `evidence`, `confidence`, `marked_by_actor`, `marked_by_kind`, `marked_by_model`, `session_id`. The SQLite table does not store a `project` column; project is carried in relation sync payloads and derived from joined observations for project-scoped listing. Syncs across machines via local chunks and via cloud autosync when the project is enrolled.
 - **sync_apply_deferred** — holds pulled mutations that could not be applied locally due to a missing FK dependency (e.g. relation references an observation not yet present); columns: `sync_id` (TEXT PK), `entity`, `payload`, `apply_status` (`deferred` | `applied` | `dead`), `retry_count`, `last_error`, `last_attempted_at`, `first_seen_at`. Rows with `apply_status='dead'` have exceeded the retry cap (5 attempts) and will not be retried automatically.
@@ -178,13 +179,11 @@ Dashboard route tree (`engram cloud serve`):
   - `GET /dashboard/browser/observations` (`HX-Request: true` returns fragment; plain GET returns full page)
   - `GET /dashboard/browser/sessions` (`HX-Request: true` returns fragment; plain GET returns full page)
   - `GET /dashboard/browser/sessions/{sessionID}`
-  - `GET /dashboard/browser/prompts` (`HX-Request: true` returns fragment; plain GET returns full page)
   - `GET /dashboard/projects`
   - `GET /dashboard/projects/list` — HTMX partial; paginated project list with "Paused" badges
   - `GET /dashboard/projects/{project}`
   - `GET /dashboard/projects/{name}/observations` — HTMX partial for project detail
   - `GET /dashboard/projects/{name}/sessions` — HTMX partial for project detail
-  - `GET /dashboard/projects/{name}/prompts` — HTMX partial for project detail
   - `GET /dashboard/contributors`
   - `GET /dashboard/contributors/list` — HTMX partial; paginated contributor list
   - `GET /dashboard/contributors/{contributor}`
@@ -197,9 +196,9 @@ Dashboard route tree (`engram cloud serve`):
   - `GET /dashboard/admin/projects/{name}/sync/form` (admin-gated; HTMX partial)
   - `GET /dashboard/admin/audit-log` (admin-gated)
   - `GET /dashboard/admin/audit-log/list` (admin-gated; HTMX partial)
-  - `GET /dashboard/sessions/{project}/{sessionID}` — session detail with observations + prompts sub-lists
+  - `GET /dashboard/sessions/{project}/{sessionID}` — session detail with observations only
   - `GET /dashboard/observations/{project}/{sessionID}/{syncID}` — observation detail
-  - `GET /dashboard/prompts/{project}/{sessionID}/{syncID}` — prompt detail
+- Retired Legacy prompt routes (`/dashboard/browser/prompts`, project prompt lists, and prompt detail) return `410 Gone` without querying historical prompt content.
 
 Engram is local-first: local SQLite is authoritative; cloud features are optional replication/shared access and enrollment controls.
 
@@ -265,18 +264,13 @@ Engram is local-first: local SQLite is authoritative; cloud features are optiona
 
 ### Prompts
 
-- `POST /prompts` — Save user prompt. Body: `{session_id, content, project?}`
-- `GET /prompts/recent` — Recent prompts. Query: `?project=X&limit=N`
-- `GET /prompts/search` — Search prompts. Query: `?q=QUERY&project=X&limit=N`
-- `DELETE /prompts/{id}` — Delete prompt
-  - `200` when deleted
-  - `400` for invalid prompt id
-  - `404` when prompt does not exist
+- `POST /prompts` — Offer prompt content to the Core-owned local Diagnostic capture gate. Body: `{session_id, content, project?}`. Capture is disabled by default and a successful request does not make prompts part of Memory.
+- `GET /prompts/recent`, `GET /prompts/search`, and `DELETE /prompts/{id}` are retired Legacy routes and return `410 Gone`. Use the explicit `engram legacy-prompts` CLI for inventory, access, export, or separately confirmed purge.
 
 ### Context
 
-- `GET /context` — Manual formatted context scoped by project and optional scope. Query: `?project=X&scope=project|personal|global`
-- `GET /context/compaction` — Runtime compaction context scoped strictly to one persisted session. Query: `?session_id=X`. The server derives the session project; this endpoint does not accept project or scope selection.
+- `GET /context` — Manual formatted Memory context scoped by project and optional scope. Query: `?project=X&scope=project|personal|global`. Diagnostic and Legacy prompts are excluded.
+- `GET /context/compaction` — Runtime compaction Memory context scoped strictly to one persisted session. Query: `?session_id=X`. The server derives the session project; this endpoint does not accept project or scope selection. Diagnostic and Legacy prompts are excluded.
 
 ### Passive Capture
 
@@ -291,7 +285,7 @@ Engram is local-first: local SQLite is authoritative; cloud features are optiona
 
 ### Stats / Diagnostics
 
-- `GET /stats` — Memory statistics
+- `GET /stats` — Memory statistics. Diagnostic and Legacy prompt rows are excluded from counts.
 - `GET /doctor` — Read-only operational diagnostics. Query: `?project=X&check=CHECK_CODE`
   - Returns the same diagnostic report envelope as `engram doctor --json` and MCP `mem_doctor`
   - `project` and `check` are optional; omitted `project` uses current project detection
@@ -302,11 +296,11 @@ Engram is local-first: local SQLite is authoritative; cloud features are optiona
 - `GET /project/current` — Detect the current project. Query: `?cwd=/path/to/repo`
   - Always returns a success envelope with `{project, project_source, project_path, project_strength, implicit_write_allowed, cwd, available_projects}` plus optional `warning`, `error_hint`, or `safe_next_action`
 - `POST /projects/migrate` — Rename a project across local records with `{old_project, new_project}`. It follows the server's optional Bearer authentication policy.
-- `POST /projects/rescue-ownership` — Bulk-assign ownership to explicitly selected historical records that carry none. The JSON body is limited to 8 KiB: `{target_project, confirmed:true, observation_ids?:[], session_ids?:[], prompt_ids?:[]}`.
+- `POST /projects/rescue-ownership` — Bulk-assign ownership to explicitly selected historical sessions or observations that carry none. The JSON body is limited to 8 KiB: `{target_project, confirmed:true, observation_ids?:[], session_ids?:[], prompt_ids?:[]}`.
   - A configured `ENGRAM_HTTP_TOKEN`, matching `Authorization: Bearer <token>`, `target_project`, `confirmed:true`, and at least one positive observation/prompt ID or non-blank session ID are required. Missing server token returns `503`; missing or wrong credentials return `401`; malformed or invalid requests return `400`.
-  - This route is a convenience, not the only repair. `engram projects rescue-ownership --project <name> [--session <id>] [--observation <id>] [--prompt <id>]` performs the same operation against the local store and needs no server token, so ownership stays repairable in a zero-config install.
-  - `200` returns `{status, complete, blocked, target_project, rescued_observations, rescued_sessions, rescued_prompts, conflicting_records, skipped_records, journaled_local, reconciliation_status}`. Owned records are never reassigned.
-  - `status` is `rescued` when `complete` is `true` and everything selected now belongs to `target_project`, or `partially_rescued` when something was left behind. `blocked` then names each item exactly — `{kind, id, reason, owned_by}` with `kind` one of `session`/`observation`/`prompt` and `reason` one of `owned_by_other_project`, `session_owned_by_other_project`, `dependent_record_owned_by_other_project`, `missing` — so a partial outcome is never inferred from counters.
+  - This route is a convenience, not the only repair. `engram projects rescue-ownership --project <name> [--session <id>] [--observation <id>]` performs the same operation against the local store and needs no server token, so ownership stays repairable in a zero-config install. Historical `prompt_ids` remain accepted only to return `legacy_prompt_frozen`; ordinary ownership repair never reclassifies Legacy prompt rows.
+  - `200` returns `{status, complete, blocked, target_project, rescued_observations, rescued_sessions, rescued_prompts, conflicting_records, skipped_records, journaled_local, reconciliation_status}`. `rescued_prompts` remains zero for compatibility. Owned records are never reassigned.
+  - `status` is `rescued` when `complete` is `true` and everything selected now belongs to `target_project`, or `partially_rescued` when something was left behind. `blocked` then names each item exactly — `{kind, id, reason, owned_by}` with `reason` including `legacy_prompt_frozen` for prompt selections — so a partial outcome is never inferred from counters.
 - The whole plan is resolved before anything is written: which sessions and which records will move is decided first, then applied. An unowned session that already parents a record owned by a different project is therefore left in place rather than moved out from under it, in either direction. A blank project is treated exactly like `NULL` — neither identifies an owner — and no sync mutation is ever journaled for a blank-owned record.
 - `journaled_local` means a canonical pending local mutation exists after the call, whether inserted by the call or already pending. A local journal is not a cloud acknowledgement; autosync reports subsequent reconciliation state.
 
@@ -587,7 +581,7 @@ Response:
 | `ENGRAM_RECALL_BASELINE_RETENTION_DAYS` | Integer retention window from 1 through 30 days for the separate Recall-baseline ledger.                                                                                                                                                           | `7`                  |
 | `ENGRAM_PORT`                   | Override HTTP server port                                                                                                                                                                                                                                 | `7437`               |
 | `ENGRAM_PROJECT`                | Process-level default project override, applied by every entry point through one precedence rule: **explicit request project** (`engram save --project`, an MCP tool `project` argument) → **process override** (`engram mcp --project`, then `ENGRAM_PROJECT`) → **cwd detection**. For `engram save`: owns the observation and its `manual-save-<project>` session when `--project` is omitted. For `engram serve`: used as the fallback when `GET /sync/status` receives no `project` query param. For `engram mcp`: sets `MCPConfig.DefaultProject`, which takes precedence over cwd detection for all read and write tools (including `mem_update`) for the lifetime of that MCP process. When unset, cwd detection is used as the fallback. | cwd-detected project |
-| `ENGRAM_HTTP_TOKEN`             | Optional Bearer auth for the local HTTP server. When set, `DELETE /sessions/{id}`, `DELETE /observations/{id}`, `DELETE /prompts/{id}`, `GET /export`, `POST /import`, and `POST /projects/migrate` require `Authorization: Bearer <token>`. `POST /projects/rescue-ownership` always requires a configured token and matching Bearer credential. Comparison is constant-time. Token is read at request time (no restart needed). Other routes remain open when unset (zero-config default). Ownership repair never depends on this token: `engram projects rescue-ownership` performs the same repair against the local store. | (unset — HTTP rescue route not served; CLI repair still available) |
+| `ENGRAM_HTTP_TOKEN`             | Optional Bearer auth for the local HTTP server. When set, destructive session/observation routes, `GET /export`, `POST /import`, and `POST /projects/migrate` require `Authorization: Bearer <token>`; retired Legacy prompt routes remain auth-gated before returning `410 Gone`. `POST /projects/rescue-ownership` always requires a configured token and matching Bearer credential. Comparison is constant-time. Token is read at request time (no restart needed). Other routes remain open when unset (zero-config default). Ownership repair never depends on this token: `engram projects rescue-ownership` performs the same repair against the local store. | (unset — HTTP rescue route not served; CLI repair still available) |
 | `ENGRAM_TIMEZONE`               | Timezone for timestamp display in the TUI and cloud dashboard. Accepts any IANA zone name (e.g. `America/New_York`, `Europe/Berlin`). Falls back to system local time when unset or invalid.                                                               | system local         |
 | `ENGRAM_AGENT_CLI`              | LLM runner name used by `engram conflicts scan --semantic` and the HTTP `/conflicts/scan` endpoint. Accepted values: `claude`, `opencode`.                                                                                                                | (unset)              |
 | `ENGRAM_CLOUD_AUTOSYNC`         | Set to `1` to enable background autosync. Requires `ENGRAM_CLOUD_TOKEN` and `ENGRAM_CLOUD_SERVER` to also be set.                                                                                                                                         | (unset — disabled)   |
@@ -929,7 +923,13 @@ Guardrails:
 
 For monorepos, detection now honors the **nearest** `.engram/config.json` at or below the enclosing git root. That lets `repo/backend/.engram/config.json` and `repo/frontend/.engram/config.json` behave as independent projects without letting `~/.engram/config.json` leak into nested workspaces.
 
-`mem_save_prompt` keeps the older cwd/default behavior by default and only uses `project` for the narrow ambiguous-project recovery override: after a previous `ambiguous_project` error, the agent may retry with `project=<one of available_projects>` and `project_choice_reason=user_selected_after_ambiguous_project`.
+`mem_save_prompt` is a Diagnostic capture request, not a Memory write. Capture is
+disabled by default and persistence requires explicit local consent for the
+resolved project and `prompt` content type. It keeps the older cwd/default
+resolution behavior and only uses `project` for the narrow ambiguous-project
+recovery override: after a previous `ambiguous_project` error, the agent may
+retry with `project=<one of available_projects>` and
+`project_choice_reason=user_selected_after_ambiguous_project`.
 
 ### Read tools (optional project override)
 
@@ -1026,7 +1026,7 @@ Save structured observations. The tool description teaches agents the format:
 - **type**: `decision` | `architecture` | `bugfix` | `pattern` | `config` | `discovery` | `learning`
 - **scope**: `project` (default) | `personal` | `global` — see [Team Usage](docs/TEAM-USAGE.md) for conventions and sync caveats
 - **topic_key**: optional canonical topic id (e.g. `architecture/auth-model`) used to upsert evolving memories
-- **capture_prompt**: optional boolean, default `true`; when current prompt context is available in the same MCP process for the same project/session, Engram best-effort records it alongside the observation. If that process-local context is unavailable or prompt capture fails, `mem_save` still succeeds. Automated pipeline saves such as SDD artifacts should pass `false`.
+- **capture_prompt**: optional boolean, default `false`. When explicitly true, current process-local prompt context is offered to the Core consent gate; no Diagnostic write occurs without an active local project/content-type grant. The Memory save remains independent if context is unavailable or capture is denied.
 - **content**: Structured with `**What**`, `**Why**`, `**Where**`, `**Learned**`; required unless the legacy `observation` alias is provided
 - **observation**: backward-compatible alias for `content` for older/raw MCP clients; prefer `content` for new integrations
 
@@ -1074,18 +1074,31 @@ Delete an observation by ID. Uses soft-delete by default (`deleted_at`); optiona
 
 ### mem_save_prompt
 
-Save user prompts — records what the user asked so future sessions have context about user goals. It applies the same post-redaction byte limit and truncation metadata as `mem_save`; `mem_save_prompt` warns when it truncates.
-When called in the same MCP process, this also feeds process-local current prompt context used by later `mem_save` calls with `capture_prompt=true`. The same MCP process lifecycle must receive the prompt context before the later save; prompt capture is best-effort and `mem_save` still succeeds when no context is available.
+Offer a user prompt to the Core-owned local Diagnostic capture gate. Capture is
+disabled by default and persistence requires explicit consent scoped to the
+project and `prompt` content type. The operation applies post-redaction byte
+limits and reports whether content was captured; it never makes a prompt part
+of Memory, Recall, context, or Memory statistics.
+
+When persistence is denied, the same MCP process retains the prompt as
+short-lived current-prompt activity for a later explicit
+`mem_save(capture_prompt=true)` retry. That later request passes through the
+same consent gate; `mem_save` succeeds independently when context is unavailable
+or capture is denied. A successful `mem_save_prompt` is not cached for a second
+capture, and a different MCP process does not inherit the ephemeral activity.
 
 ### mem_context
 
-Get recent memory context from previous sessions — shows sessions, prompts, and observations, with optional scope filtering for observations.
+Get recent Memory context from previous sessions — shows sessions and
+observations with optional scope filtering. Diagnostic and Legacy prompts are
+excluded.
 
 Scope values accepted by the `scope` parameter: `project` (default), `personal`, `global`. When `scope: personal` is passed without an explicit `project` override, the project filter is cleared and personal observations are returned across all projects (cross-project personal scope).
 
 ### mem_stats
 
-Show memory system statistics — sessions, observations, prompts, projects.
+Show Memory system statistics — sessions, observations, and projects.
+Diagnostic and Legacy prompt rows are excluded.
 
 ### mem_timeline
 
@@ -1124,7 +1137,7 @@ Extract structured learnings from text output. Looks for `## Key Learnings:` sec
 
 ### mem_merge_projects
 
-**Admin tool.** Merge multiple project name variants into a single canonical name. Requires `from` as a comma-separated list of source project names and `to` as the target canonical name. All observations, sessions, and prompts from the source projects are reassigned to the canonical project.
+**Admin tool.** Merge multiple project name variants into a single canonical name. Requires `from` as a comma-separated list of source project names and `to` as the target canonical name. Observations, sessions, and local review state are reassigned; the frozen Legacy prompt archive is never reclassified.
 
 ### mem_current_project
 
@@ -1205,7 +1218,7 @@ The `agent` profile exposes exactly five tools:
 
 Use `curation` for independent authoring, optional Session summaries, context,
 review, relations, diagnosis, and pins. Use `lifecycle` for host session events,
-prompt save, and passive Content capture. Use `admin` for destructive and
+consent-gated Diagnostic capture requests, and passive Content capture. Use `admin` for destructive and
 operational maintenance. `all` and explicit tool-name selection preserve
 compatibility for deliberate broad integrations.
 
@@ -1256,7 +1269,7 @@ When saving to a project that doesn't exist yet, Engram checks for similar exist
 
 Use `engram projects consolidate --project <name>` to interactively merge legacy project names that are equivalent after normalization. In a strong config- or remote-backed repo, `--project` may be omitted. Use `mem_merge_projects` for agent-driven consolidation.
 
-Use `engram projects rescue-ownership --project <name> [--session <id>] [--observation <id>] [--prompt <id>]` to assign ownership to legacy rows that carry none. It prints how many sessions, observations, and prompts moved, and — when anything was left behind — exactly which items and why. It works against the local store, so it needs no running server and no `ENGRAM_HTTP_TOKEN`.
+Use `engram projects rescue-ownership --project <name> [--session <id>] [--observation <id>]` to assign ownership to legacy session or observation rows that carry none. It prints what moved and, when anything was left behind, exactly which items and why. The historical `--prompt` input reports `legacy_prompt_frozen` and never reclassifies the archive. The command works against the local store, so it needs no running server and no `ENGRAM_HTTP_TOKEN`.
 
 ---
 
@@ -1281,19 +1294,23 @@ Three-layer pattern for token-efficient memory retrieval:
 `<private>...</private>` content is stripped at TWO levels:
 
 1. **Plugin layer** (TypeScript) — Strips before data leaves the process
-2. **Store layer** (Go) — `stripPrivateTags()` runs inside `AddObservation()` and `AddPrompt()`
+2. **Store layer** (Go) — `stripPrivateTags()` runs inside Memory and Diagnostic capture write boundaries
 
 Example: `Set up API with <private>sk-abc123</private>` becomes `Set up API with [REDACTED]`
 
-### User Prompt Storage
+### Diagnostic Capture and Legacy Prompts
 
-Separate table captures what the USER asked (not just tool calls). Gives future sessions the "why" behind the "what". Full FTS5 search support.
+Prompt capture is a separate local-only Diagnostic facility, disabled by
+default and gated by explicit project/content-type consent. It has no FTS and
+never feeds Recall, context, Memory statistics, ordinary export/import, sync,
+cloud, or Obsidian. Historical `user_prompts` rows remain a frozen Legacy
+archive available only through explicit `engram legacy-prompts` operations.
 
 ### Export / Import
 
 Share memories across machines, backup, or migrate:
 
-- `engram export` — JSON dump of all sessions, observations, prompts
+- `engram export` — JSON dump of ordinary sessions and observations; Diagnostic and Legacy prompts are excluded
 - `engram import <file>` — Load from JSON, sessions use INSERT OR IGNORE (skip duplicates), atomic transaction
 
 ### Git Sync (Chunked)
@@ -1338,7 +1355,7 @@ Instead of a separate LLM service, the agent itself compresses observations. The
 
 Engram does not record a firehose of raw tool calls. Raw tool calls (`edit: {file: "foo.go"}`, `bash: {command: "go build"}`) are noisy and pollute FTS5 search. The agent's curated summaries are higher signal, more searchable, and don't bloat the database. Shell history and git provide the raw audit trail.
 
-Since v1.15.3, `mem_save` can also best-effort attach the current user prompt when prompt context was already provided to the same MCP process for the same project/session (typically by `mem_save_prompt`) and `capture_prompt` is not disabled. That is not raw event capture: it stores user intent tied to a curated save, and the save still succeeds if prompt context is missing.
+`mem_save` never captures the current prompt by default. With `capture_prompt=true`, it may offer same-process prompt context to Core, but persistence still requires explicit local consent for that project and content type. Diagnostic capture remains separate from the curated Memory save, and the save still succeeds if context is missing or capture is denied.
 
 ---
 
@@ -1350,7 +1367,7 @@ Interactive Bubbletea-based terminal UI. Launch with `engram tui`.
 
 | Screen                  | Description                                                       |
 | ----------------------- | ----------------------------------------------------------------- |
-| **Dashboard**           | Stats overview (sessions, observations, prompts, projects) + menu |
+| **Dashboard**           | Stats overview (sessions, observations, projects) + menu          |
 | **Search**              | FTS5 text search with text input                                  |
 | **Search Results**      | Browsable results list from search                                |
 | **Recent Observations** | Browse all observations, newest first                             |
@@ -1567,7 +1584,7 @@ Register-ScheduledTask `
 4. **Agent-driven compression** — The agent already has an LLM. No separate compression service.
 5. **Privacy at two layers** — Strip in plugin AND store. Defense in depth.
 6. **Pure Go SQLite (modernc.org/sqlite)** — No CGO means true cross-platform binary distribution.
-7. **No raw tool-call auto-capture** — The agent saves curated summaries; `mem_save` may best-effort capture process-local prompt context tied to that save, but Engram does not ingest raw tool-call firehoses. Shell history and git provide the raw audit trail.
+7. **No raw tool-call auto-capture** — The agent saves curated summaries; an explicit `mem_save(capture_prompt=true)` may request consent-gated local Diagnostic capture of same-process prompt context, but Engram does not ingest raw tool-call firehoses. Shell history and git provide the raw audit trail.
 8. **TUI with Bubbletea** — Interactive terminal UI following Gentleman Bubbletea patterns.
 
 ---

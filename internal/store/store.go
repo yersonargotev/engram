@@ -52,6 +52,7 @@ var (
 	ErrSessionNotFound             = errors.New("session not found")
 	ErrSessionIDRequired           = errors.New("session id is required")
 	ErrSessionHasObservations      = errors.New("session still has observations")
+	ErrSessionHasLegacyPrompts     = errors.New("session still has Legacy prompts")
 	ErrSessionDeleteBlocked        = errors.New("session deletion is blocked while cloud sync enrollment is active")
 	ErrObservationNotFound         = errors.New("observation not found")
 	ErrPromptNotFound              = errors.New("prompt not found")
@@ -507,6 +508,11 @@ type Config struct {
 	MaxContextResults    int
 	MaxSearchResults     int
 	DedupeWindow         time.Duration
+
+	// Test seams for deterministic Diagnostic capture retention. Production
+	// callers leave both unset and use the wall clock plus the bounded ticker.
+	diagnosticCaptureNow          func() time.Time
+	diagnosticCaptureJanitorTicks <-chan time.Time
 }
 
 func DefaultConfig() (Config, error) {
@@ -547,6 +553,11 @@ type Store struct {
 	db    *sql.DB
 	cfg   Config
 	hooks storeHooks
+
+	diagnosticCaptureJanitorCancel context.CancelFunc
+	diagnosticCaptureJanitorDone   chan struct{}
+	closeOnce                      sync.Once
+	closeErr                       error
 
 	repairMu        sync.Mutex
 	repairDone      bool
@@ -734,6 +745,9 @@ func New(cfg Config) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		return nil, fmt.Errorf("engram: migration: %w", err)
 	}
+	if err := s.startDiagnosticCaptureRetention(); err != nil {
+		return nil, fmt.Errorf("engram: Diagnostic capture retention: %w", err)
+	}
 
 	succeeded = true
 	return s, nil
@@ -772,11 +786,19 @@ func newWithoutRepair(cfg Config) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		return nil, fmt.Errorf("engram: migration: %w", err)
 	}
+	if err := s.startDiagnosticCaptureRetention(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("engram: Diagnostic capture retention: %w", err)
+	}
 	return s, nil
 }
 
 func (s *Store) Close() error {
-	return s.db.Close()
+	s.closeOnce.Do(func() {
+		s.stopDiagnosticCaptureRetention()
+		s.closeErr = s.db.Close()
+	})
+	return s.closeErr
 }
 
 // ─── Migrations ──────────────────────────────────────────────────────────────
@@ -850,13 +872,6 @@ func (s *Store) migrate() error {
 		CREATE INDEX IF NOT EXISTS idx_prompts_session ON user_prompts(session_id);
 		CREATE INDEX IF NOT EXISTS idx_prompts_project ON user_prompts(project);
 		CREATE INDEX IF NOT EXISTS idx_prompts_created ON user_prompts(created_at DESC);
-
-		CREATE VIRTUAL TABLE IF NOT EXISTS prompts_fts USING fts5(
-			content,
-			project,
-			content='user_prompts',
-			content_rowid='id'
-		);
 
 			CREATE TABLE IF NOT EXISTS sync_chunks (
 				target_key  TEXT NOT NULL DEFAULT 'local',
@@ -1094,13 +1109,7 @@ func (s *Store) migrate() error {
 		return err
 	}
 
-	if _, err := s.execHook(s.db, `UPDATE user_prompts SET project = '' WHERE project IS NULL`); err != nil {
-		return err
-	}
 	if _, err := s.execHook(s.db, `UPDATE prompt_tombstones SET project = '' WHERE project IS NULL`); err != nil {
-		return err
-	}
-	if _, err := s.execHook(s.db, `UPDATE user_prompts SET sync_id = 'prompt-' || lower(hex(randomblob(16))) WHERE sync_id IS NULL OR sync_id = ''`); err != nil {
 		return err
 	}
 	if _, err := s.execHook(s.db, `INSERT OR IGNORE INTO sync_state (target_key, lifecycle, updated_at) VALUES ('cloud', 'idle', datetime('now'))`); err != nil {
@@ -1146,36 +1155,6 @@ func (s *Store) migrate() error {
 
 	if err := s.migrateFTSTopicKey(); err != nil {
 		return err
-	}
-
-	// Prompts FTS triggers (separate idempotent check)
-	var promptTrigger string
-	err = s.db.QueryRow(
-		"SELECT name FROM sqlite_master WHERE type='trigger' AND name='prompt_fts_insert'",
-	).Scan(&promptTrigger)
-
-	if err == sql.ErrNoRows {
-		promptTriggers := `
-			CREATE TRIGGER prompt_fts_insert AFTER INSERT ON user_prompts BEGIN
-				INSERT INTO prompts_fts(rowid, content, project)
-				VALUES (new.id, new.content, new.project);
-			END;
-
-			CREATE TRIGGER prompt_fts_delete AFTER DELETE ON user_prompts BEGIN
-				INSERT INTO prompts_fts(prompts_fts, rowid, content, project)
-				VALUES ('delete', old.id, old.content, old.project);
-			END;
-
-			CREATE TRIGGER prompt_fts_update AFTER UPDATE ON user_prompts BEGIN
-				INSERT INTO prompts_fts(prompts_fts, rowid, content, project)
-				VALUES ('delete', old.id, old.content, old.project);
-				INSERT INTO prompts_fts(rowid, content, project)
-				VALUES (new.id, new.content, new.project);
-			END;
-		`
-		if _, err := s.execHook(s.db, promptTriggers); err != nil {
-			return err
-		}
 	}
 
 	// Deferred relation lifecycle, including operator-created applied tombstones.
@@ -1286,6 +1265,9 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if err := s.migrateAdmissionTombstone(); err != nil {
+		return err
+	}
+	if err := s.migrateContentCapture(); err != nil {
 		return err
 	}
 
@@ -1698,6 +1680,7 @@ func (s *Store) listPendingProjectMutationsTx(tx *sql.Tx, project string) ([]Syn
 		SELECT seq, target_key, entity, entity_key, op, payload, source, project, occurred_at, acked_at
 		FROM sync_mutations
 		WHERE target_key = ? AND project = ? AND acked_at IS NULL AND disposition = ?
+		  AND entity <> 'prompt'
 		ORDER BY seq ASC
 	`, DefaultSyncTargetKey, project, SyncMutationDispositionPending)
 	if err != nil {
@@ -2886,20 +2869,7 @@ func (s *Store) AddPrompt(p AddPromptParams) (int64, error) {
 		if err != nil {
 			return err
 		}
-		var createdAt string
-		if err := tx.QueryRow(`SELECT created_at FROM user_prompts WHERE id = ?`, promptID).Scan(&createdAt); err != nil {
-			return err
-		}
-		if _, err := s.execHook(tx, `DELETE FROM prompt_tombstones WHERE sync_id = ?`, syncID); err != nil {
-			return err
-		}
-		return s.enqueueSyncMutationTx(tx, SyncEntityPrompt, syncID, SyncOpUpsert, syncPromptPayload{
-			SyncID:    syncID,
-			SessionID: p.SessionID,
-			Content:   content,
-			Project:   nullableString(p.Project),
-			CreatedAt: createdAt,
-		})
+		return nil
 	})
 	if err != nil {
 		return 0, err
@@ -2949,21 +2919,8 @@ func (s *Store) AddPromptIfMissing(p AddPromptParams) (int64, bool, error) {
 		if err != nil {
 			return err
 		}
-		var createdAt string
-		if err := tx.QueryRow(`SELECT created_at FROM user_prompts WHERE id = ?`, promptID).Scan(&createdAt); err != nil {
-			return err
-		}
-		if _, err := s.execHook(tx, `DELETE FROM prompt_tombstones WHERE sync_id = ?`, syncID); err != nil {
-			return err
-		}
 		inserted = true
-		return s.enqueueSyncMutationTx(tx, SyncEntityPrompt, syncID, SyncOpUpsert, syncPromptPayload{
-			SyncID:    syncID,
-			SessionID: p.SessionID,
-			Content:   content,
-			Project:   nullableString(p.Project),
-			CreatedAt: createdAt,
-		})
+		return nil
 	})
 	if err != nil {
 		return 0, false, err
@@ -3000,111 +2957,21 @@ func truncateContent(content string, max int) string {
 }
 
 func (s *Store) RecentPrompts(project string, limit int) ([]Prompt, error) {
-	// Normalize project filter for case-insensitive matching
-	project, _ = NormalizeProject(project)
-
-	if limit <= 0 {
-		limit = 20
-	}
-
-	query := `SELECT id, ifnull(sync_id, '') as sync_id, session_id, content, ifnull(project, '') as project, created_at FROM user_prompts`
-	args := []any{}
-
-	if project != "" {
-		query += " WHERE project = ?"
-		args = append(args, project)
-	}
-
-	query += " ORDER BY created_at DESC LIMIT ?"
-	args = append(args, limit)
-
-	rows, err := s.queryItHook(s.db, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var results []Prompt
-	for rows.Next() {
-		var p Prompt
-		if err := rows.Scan(&p.ID, &p.SyncID, &p.SessionID, &p.Content, &p.Project, &p.CreatedAt); err != nil {
-			return nil, err
-		}
-		results = append(results, p)
-	}
-	return results, rows.Err()
-}
-
-func (s *Store) compactionPrompts(sessionID, project string, limit int) ([]Prompt, error) {
-	if limit <= 0 {
-		limit = 10
-	}
-
-	rows, err := s.queryItHook(s.db, `
-		SELECT id, ifnull(sync_id, '') as sync_id, session_id, content, ifnull(project, '') as project, created_at
-		FROM user_prompts
-		WHERE session_id = ? AND LOWER(ifnull(project, '')) = ?
-		ORDER BY created_at DESC
-		LIMIT ?`, sessionID, project, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var results []Prompt
-	for rows.Next() {
-		var p Prompt
-		if err := rows.Scan(&p.ID, &p.SyncID, &p.SessionID, &p.Content, &p.Project, &p.CreatedAt); err != nil {
-			return nil, err
-		}
-		results = append(results, p)
-	}
-	return results, rows.Err()
+	// Legacy prompts are available only through AccessLegacyPrompts.
+	return []Prompt{}, nil
 }
 
 func (s *Store) SearchPrompts(query string, project string, limit int) ([]Prompt, error) {
-	if limit <= 0 {
-		limit = 10
-	}
-
-	ftsQuery := sanitizeFTS(query)
-
-	sql := `
-		SELECT p.id, ifnull(p.sync_id, '') as sync_id, p.session_id, p.content, ifnull(p.project, '') as project, p.created_at
-		FROM prompts_fts fts
-		JOIN user_prompts p ON p.id = fts.rowid
-		WHERE prompts_fts MATCH ?
-	`
-	args := []any{ftsQuery}
-
-	if project != "" {
-		sql += " AND p.project = ?"
-		args = append(args, project)
-	}
-
-	sql += " ORDER BY fts.rank LIMIT ?"
-	args = append(args, limit)
-
-	rows, err := s.queryItHook(s.db, sql, args...)
-	if err != nil {
-		return nil, fmt.Errorf("search prompts: %w", err)
-	}
-	defer rows.Close()
-
-	var results []Prompt
-	for rows.Next() {
-		var p Prompt
-		if err := rows.Scan(&p.ID, &p.SyncID, &p.SessionID, &p.Content, &p.Project, &p.CreatedAt); err != nil {
-			return nil, err
-		}
-		results = append(results, p)
-	}
-	return results, rows.Err()
+	// Legacy prompts are available only through the explicit Legacy archive API.
+	// Keep this historical ordinary API inert so callers cannot accidentally
+	// reintroduce prompt content into Recall or context assembly.
+	return []Prompt{}, nil
 }
 
 // ─── Delete Session ──────────────────────────────────────────────────────────
 
-// DeleteSession hard-deletes a session and its prompts.
+// DeleteSession hard-deletes a session only when doing so cannot orphan the
+// frozen Legacy prompt archive.
 // It returns ErrSessionHasObservations if the session has any observations
 // (including soft-deleted ones) to prevent orphaned rows.
 // It returns ErrSessionNotFound if no session with that ID exists.
@@ -3151,8 +3018,11 @@ func (s *Store) DeleteSession(id string) error {
 			return fmt.Errorf("%w: session %q has %d observation(s)", ErrSessionHasObservations, id, count)
 		}
 
-		if _, err := s.execHook(tx, `DELETE FROM user_prompts WHERE session_id = ?`, id); err != nil {
-			return fmt.Errorf("delete session: remove prompts: %w", err)
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE session_id = ?`, id).Scan(&count); err != nil {
+			return fmt.Errorf("delete session: count Legacy prompts: %w", err)
+		}
+		if count > 0 {
+			return fmt.Errorf("%w: session %q has %d prompt(s)", ErrSessionHasLegacyPrompts, id, count)
 		}
 
 		res, err := s.execHook(tx, `DELETE FROM sessions WHERE id = ?`, id)
@@ -3188,24 +3058,18 @@ func (s *Store) DeleteSession(id string) error {
 
 // ─── Delete Prompt ───────────────────────────────────────────────────────────
 
-// DeletePrompt hard-deletes a single prompt by ID and records a sync tombstone.
+// DeletePrompt hard-deletes a single Legacy prompt by ID. Legacy purges are
+// local-only: they never create a tombstone or sync mutation.
 // It returns ErrPromptNotFound if no prompt with that ID exists.
 func (s *Store) DeletePrompt(id int64) error {
 	return s.withTx(func(tx *sql.Tx) error {
-		var payload syncPromptPayload
-		var project string
-		if err := tx.QueryRow(`SELECT sync_id, session_id, ifnull(project, '') FROM user_prompts WHERE id = ?`, id).Scan(&payload.SyncID, &payload.SessionID, &project); err != nil {
+		var exists int
+		if err := tx.QueryRow(`SELECT 1 FROM user_prompts WHERE id = ?`, id).Scan(&exists); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return fmt.Errorf("%w: prompt #%d", ErrPromptNotFound, id)
 			}
 			return fmt.Errorf("delete prompt: load row: %w", err)
 		}
-		payload.Project = nullableString(project)
-		now := Now()
-		payload.Deleted = true
-		payload.HardDelete = true
-		payload.DeletedAt = &now
-
 		res, err := s.execHook(tx, `DELETE FROM user_prompts WHERE id = ?`, id)
 		if err != nil {
 			return fmt.Errorf("delete prompt: %w", err)
@@ -3216,17 +3080,6 @@ func (s *Store) DeletePrompt(id int64) error {
 		}
 		if n == 0 {
 			return fmt.Errorf("%w: prompt #%d", ErrPromptNotFound, id)
-		}
-		if _, err := s.execHook(tx,
-			`INSERT INTO prompt_tombstones (sync_id, session_id, project, deleted_at)
-			 VALUES (?, ?, ?, ?)
-			 ON CONFLICT(sync_id) DO UPDATE SET session_id = excluded.session_id, project = excluded.project, deleted_at = excluded.deleted_at`,
-			payload.SyncID, payload.SessionID, payload.Project, now,
-		); err != nil {
-			return fmt.Errorf("delete prompt: upsert tombstone: %w", err)
-		}
-		if err := s.enqueueSyncMutationTx(tx, SyncEntityPrompt, payload.SyncID, SyncOpDelete, payload); err != nil {
-			return fmt.Errorf("delete prompt: enqueue mutation: %w", err)
 		}
 		return nil
 	})
@@ -3687,7 +3540,6 @@ func (s *Store) Stats() (*Stats, error) {
 
 	s.db.QueryRow("SELECT COUNT(*) FROM sessions").Scan(&stats.TotalSessions)
 	s.db.QueryRow("SELECT COUNT(*) FROM observations WHERE deleted_at IS NULL").Scan(&stats.TotalObservations)
-	s.db.QueryRow("SELECT COUNT(*) FROM user_prompts").Scan(&stats.TotalPrompts)
 
 	rows, err := s.queryItHook(s.db, "SELECT project FROM observations WHERE project IS NOT NULL AND deleted_at IS NULL GROUP BY project ORDER BY MAX(created_at) DESC")
 	if err != nil {
@@ -3708,7 +3560,8 @@ func (s *Store) Stats() (*Stats, error) {
 // ─── Project Existence ───────────────────────────────────────────────────────
 
 // ProjectExists returns true if the named project has at least one record in
-// any of observations, sessions, prompts, enrollment, or local checkpoint tables.
+// any of observations, sessions, enrollment, or local checkpoint tables.
+// Legacy prompts are intentionally not an ordinary project-existence signal.
 // Uses a single UNION ALL LIMIT 1 query for efficiency (REQ-315).
 // The sync_enrolled_projects branch ensures a project enrolled via EnrollProject()
 // without any other data is still recognized (JC1).
@@ -3723,14 +3576,12 @@ SELECT 1 FROM (
   UNION ALL
   SELECT project FROM sessions WHERE LOWER(project) = ?
   UNION ALL
-  SELECT project FROM user_prompts WHERE LOWER(project) = ?
-  UNION ALL
   SELECT project FROM sync_enrolled_projects WHERE LOWER(project) = ?
   UNION ALL
   SELECT project FROM memory_proposals WHERE LOWER(project) = ?
 ) LIMIT 1`
 	var dummy int
-	err := s.db.QueryRow(query, name, name, name, name, name).Scan(&dummy)
+	err := s.db.QueryRow(query, name, name, name, name).Scan(&dummy)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
@@ -3758,12 +3609,7 @@ func (s *Store) FormatContext(project, scope string) (string, error) {
 		return "", err
 	}
 
-	prompts, err := s.RecentPrompts(project, 10)
-	if err != nil {
-		return "", err
-	}
-
-	if len(sessions) == 0 && len(pinned) == 0 && len(observations) == 0 && len(prompts) == 0 {
+	if len(sessions) == 0 && len(pinned) == 0 && len(observations) == 0 {
 		return "", nil
 	}
 
@@ -3779,14 +3625,6 @@ func (s *Store) FormatContext(project, scope string) (string, error) {
 			}
 			fmt.Fprintf(&b, "- **%s** (%s)%s [%d observations]\n",
 				sess.Project, timeutil.FormatLocal(sess.StartedAt), summary, sess.ObservationCount)
-		}
-		b.WriteString("\n")
-	}
-
-	if len(prompts) > 0 {
-		b.WriteString("### Recent User Prompts\n")
-		for _, p := range prompts {
-			fmt.Fprintf(&b, "- %s: %s\n", timeutil.FormatLocal(p.CreatedAt), truncate(p.Content, 200))
 		}
 		b.WriteString("\n")
 	}
@@ -3834,11 +3672,6 @@ func (s *Store) FormatCompactionContext(sessionID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	prompts, err := s.compactionPrompts(session.ID, project, 10)
-	if err != nil {
-		return "", err
-	}
-
 	var b strings.Builder
 	b.WriteString("## Memory from This Session\n\n")
 	b.WriteString("### Session\n")
@@ -3848,13 +3681,6 @@ func (s *Store) FormatCompactionContext(sessionID string) (string, error) {
 	}
 	fmt.Fprintf(&b, "- **%s** (%s)%s [%d observations]\n\n", session.ID, timeutil.FormatLocal(session.StartedAt), summary, observationCount)
 
-	if len(prompts) > 0 {
-		b.WriteString("### Recent User Prompts\n")
-		for _, p := range prompts {
-			fmt.Fprintf(&b, "- %s: %s\n", timeutil.FormatLocal(p.CreatedAt), truncate(p.Content, 200))
-		}
-		b.WriteString("\n")
-	}
 	if len(pinned) > 0 {
 		b.WriteString("### Pinned\n")
 		for _, obs := range pinned {
@@ -3968,12 +3794,8 @@ func (s *Store) exportWithProjectScope(project string) (*ExportData, error) {
 				SELECT session_id FROM observations
 				 WHERE ifnull(project, '') = ?
 				    OR (ifnull(project, '') = '' AND session_id IN (SELECT id FROM sessions WHERE project = ?))
-				UNION
-				SELECT session_id FROM user_prompts
-				 WHERE ifnull(project, '') = ?
-				    OR (ifnull(project, '') = '' AND session_id IN (SELECT id FROM sessions WHERE project = ?))
 			)`
-		sessionArgs = append(sessionArgs, project, project, project, project, project)
+		sessionArgs = append(sessionArgs, project, project, project)
 	}
 	sessionQuery += " ORDER BY started_at"
 
@@ -4021,32 +3843,6 @@ func (s *Store) exportWithProjectScope(project string) (*ExportData, error) {
 		data.Observations = append(data.Observations, o)
 	}
 	if err := obsRows.Err(); err != nil {
-		return nil, err
-	}
-
-	// Prompts
-	promptQuery := "SELECT id, ifnull(sync_id, '') as sync_id, session_id, content, ifnull(project, '') as project, created_at FROM user_prompts"
-	promptArgs := []any{}
-	if project != "" {
-		promptQuery += `
-			WHERE ifnull(project, '') = ?
-			   OR (ifnull(project, '') = '' AND session_id IN (SELECT id FROM sessions WHERE project = ?))`
-		promptArgs = append(promptArgs, project, project)
-	}
-	promptQuery += " ORDER BY id"
-	promptRows, err := s.queryItHook(s.db, promptQuery, promptArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("export prompts: %w", err)
-	}
-	defer promptRows.Close()
-	for promptRows.Next() {
-		var p Prompt
-		if err := promptRows.Scan(&p.ID, &p.SyncID, &p.SessionID, &p.Content, &p.Project, &p.CreatedAt); err != nil {
-			return nil, err
-		}
-		data.Prompts = append(data.Prompts, p)
-	}
-	if err := promptRows.Err(); err != nil {
 		return nil, err
 	}
 
@@ -4112,19 +3908,6 @@ func (s *Store) Import(data *ExportData) (*ImportResult, error) {
 		}
 		n, _ := res.RowsAffected()
 		result.ObservationsImported += int(n)
-	}
-
-	// Import prompts
-	for _, p := range data.Prompts {
-		_, err := s.execHook(tx,
-			`INSERT INTO user_prompts (sync_id, session_id, content, project, created_at)
-			 VALUES (?, ?, ?, ?, ?)`,
-			normalizeExistingSyncID(p.SyncID, "prompt"), p.SessionID, p.Content, p.Project, p.CreatedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("import prompt %d: %w", p.ID, err)
-		}
-		result.PromptsImported++
 	}
 
 	if err := s.commitHook(tx); err != nil {
@@ -4204,6 +3987,7 @@ func (s *Store) ListPendingSyncMutations(targetKey string, limit int) ([]SyncMut
 		FROM sync_mutations sm
 		LEFT JOIN sync_enrolled_projects sep ON sm.project = sep.project
 		WHERE sm.target_key = ? AND sm.acked_at IS NULL AND sm.disposition = 'pending'
+		  AND sm.entity <> 'prompt'
 		  AND (sm.project = '' OR sep.project IS NOT NULL)
 		ORDER BY sm.seq ASC
 		LIMIT ?`, targetKey, limit)
@@ -4233,6 +4017,7 @@ func (s *Store) ListPendingSyncMutationsAfterSeq(targetKey string, afterSeq int6
 		FROM sync_mutations sm
 		LEFT JOIN sync_enrolled_projects sep ON sm.project = sep.project
 		WHERE sm.target_key = ? AND sm.acked_at IS NULL AND sm.disposition = 'pending'
+		  AND sm.entity <> 'prompt'
 		  AND sm.seq > ?
 		  AND (sm.project = '' OR sep.project IS NOT NULL)
 		ORDER BY sm.seq ASC
@@ -4264,7 +4049,7 @@ func (s *Store) QuarantineIrreparableSyncMutations(project string, apply bool) (
 		affectedProjects := map[string]struct{}{}
 		quarantinedAny := false
 		query := `SELECT seq, target_key, entity, entity_key, op, payload, source, project, occurred_at, acked_at
-			FROM sync_mutations WHERE target_key = ? AND acked_at IS NULL AND disposition = 'pending'`
+			FROM sync_mutations WHERE target_key = ? AND acked_at IS NULL AND disposition = 'pending' AND entity <> 'prompt'`
 		args := []any{DefaultSyncTargetKey}
 		if project != "" {
 			query += ` AND project = ?`
@@ -4348,6 +4133,7 @@ func (s *Store) CountPendingNonEnrolledSyncMutations(targetKey string) ([]Pendin
 		WHERE sm.target_key = ?
 		  AND sm.acked_at IS NULL
 		  AND sm.disposition = 'pending'
+		  AND sm.entity <> 'prompt'
 		  AND sm.project != ''
 		  AND sep.project IS NULL
 		GROUP BY sm.project
@@ -4379,6 +4165,7 @@ func (s *Store) SkipAckNonEnrolledMutations(targetKey string) (int64, error) {
 		WHERE target_key = ?
 		  AND acked_at IS NULL
 		  AND disposition = 'pending'
+		  AND entity <> 'prompt'
 		  AND project != ''
 		  AND project NOT IN (SELECT project FROM sync_enrolled_projects)`,
 		targetKey,
@@ -4399,7 +4186,7 @@ func (s *Store) AckSyncMutations(targetKey string, lastAckedSeq int64) error {
 		if targetKey == DefaultSyncTargetKey {
 			rows, err := s.queryItHook(tx,
 				`SELECT DISTINCT ifnull(project, '') FROM sync_mutations
-				 WHERE target_key = ? AND seq <= ? AND acked_at IS NULL AND disposition = 'pending'`,
+				 WHERE target_key = ? AND seq <= ? AND acked_at IS NULL AND disposition = 'pending' AND entity <> 'prompt'`,
 				targetKey, lastAckedSeq,
 			)
 			if err != nil {
@@ -4429,7 +4216,7 @@ func (s *Store) AckSyncMutations(targetKey string, lastAckedSeq int64) error {
 			return err
 		}
 		if _, err := s.execHook(tx,
-			`UPDATE sync_mutations SET acked_at = datetime('now') WHERE target_key = ? AND seq <= ? AND acked_at IS NULL AND disposition = 'pending'`,
+			`UPDATE sync_mutations SET acked_at = datetime('now') WHERE target_key = ? AND seq <= ? AND acked_at IS NULL AND disposition = 'pending' AND entity <> 'prompt'`,
 			targetKey, lastAckedSeq,
 		); err != nil {
 			return err
@@ -4518,7 +4305,7 @@ func (s *Store) AckSyncMutationSeqs(targetKey string, seqs []int64) error {
 				continue
 			}
 			if _, err := s.execHook(tx,
-				`UPDATE sync_mutations SET acked_at = datetime('now') WHERE target_key = ? AND seq = ? AND acked_at IS NULL AND disposition = 'pending'`,
+				`UPDATE sync_mutations SET acked_at = datetime('now') WHERE target_key = ? AND seq = ? AND acked_at IS NULL AND disposition = 'pending' AND entity <> 'prompt'`,
 				targetKey, seq,
 			); err != nil {
 				return err
@@ -4528,7 +4315,7 @@ func (s *Store) AckSyncMutationSeqs(targetKey string, seqs []int64) error {
 			}
 		}
 		var remaining int
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM sync_mutations WHERE target_key = ? AND acked_at IS NULL AND disposition = 'pending'`, targetKey).Scan(&remaining); err != nil {
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM sync_mutations WHERE target_key = ? AND acked_at IS NULL AND disposition = 'pending' AND entity <> 'prompt'`, targetKey).Scan(&remaining); err != nil {
 			return err
 		}
 		lifecycle := SyncLifecyclePending
@@ -4573,7 +4360,7 @@ func (s *Store) HasPendingSyncMutationsForProject(project string) (bool, error) 
 
 	var count int
 	err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM sync_mutations WHERE target_key = ? AND project = ? AND acked_at IS NULL AND disposition = 'pending'`,
+		`SELECT COUNT(*) FROM sync_mutations WHERE target_key = ? AND project = ? AND acked_at IS NULL AND disposition = 'pending' AND entity <> 'prompt'`,
 		DefaultSyncTargetKey,
 		project,
 	).Scan(&count)
@@ -4599,7 +4386,7 @@ func (s *Store) refreshProjectSyncStateTx(tx *sql.Tx, project string) error {
 	if err := tx.QueryRow(
 		`SELECT ifnull(MAX(seq), 0)
 		 FROM sync_mutations
-		 WHERE target_key = ? AND project = ? AND acked_at IS NOT NULL`,
+		 WHERE target_key = ? AND project = ? AND acked_at IS NOT NULL AND entity <> 'prompt'`,
 		DefaultSyncTargetKey,
 		project,
 	).Scan(&maxAckedSeq); err != nil {
@@ -4613,7 +4400,7 @@ func (s *Store) refreshProjectSyncStateTx(tx *sql.Tx, project string) error {
 	if err := tx.QueryRow(
 		`SELECT ifnull(MAX(seq), 0)
 		 FROM sync_mutations
-		 WHERE target_key = ? AND project = ?`,
+		 WHERE target_key = ? AND project = ? AND entity <> 'prompt'`,
 		DefaultSyncTargetKey,
 		project,
 	).Scan(&maxEnqueuedSeq); err != nil {
@@ -4627,7 +4414,7 @@ func (s *Store) refreshProjectSyncStateTx(tx *sql.Tx, project string) error {
 	if err := tx.QueryRow(
 		`SELECT COUNT(*)
 		 FROM sync_mutations
-		 WHERE target_key = ? AND project = ? AND acked_at IS NULL AND disposition = 'pending'`,
+		 WHERE target_key = ? AND project = ? AND acked_at IS NULL AND disposition = 'pending' AND entity <> 'prompt'`,
 		DefaultSyncTargetKey,
 		project,
 	).Scan(&pendingCount); err != nil {
@@ -4852,6 +4639,23 @@ func (s *Store) MarkSyncPending(targetKey string) error {
 	})
 }
 
+// AdvancePulledCursor persists a server cursor that is newer than the current
+// local position without materializing a mutation. This is used when the cloud
+// examined only local-only historical rows after the last visible mutation.
+func (s *Store) AdvancePulledCursor(targetKey string, seq int64) error {
+	targetKey = normalizeSyncTargetKey(targetKey)
+	return s.withTx(func(tx *sql.Tx) error {
+		state, err := s.getSyncStateTx(tx, targetKey)
+		if err != nil {
+			return err
+		}
+		if seq <= state.LastPulledSeq {
+			return nil
+		}
+		return s.advancePulledCursorTx(tx, targetKey, seq)
+	})
+}
+
 // ApplyPulledMutation applies one remote mutation and advances the pull cursor.
 //
 // Session-identity semantics are skip-plus-evidence, not fail-closed. A blank
@@ -4891,14 +4695,18 @@ func (s *Store) ApplyPulledMutation(targetKey string, mutation SyncMutation) err
 			}
 		}
 
-		_, err = s.execHook(tx,
-			`UPDATE sync_state
-			 SET last_pulled_seq = ?, lifecycle = ?, consecutive_failures = 0, backoff_until = NULL, reason_code = NULL, reason_message = NULL, last_error = NULL, updated_at = datetime('now')
-			 WHERE target_key = ?`,
-			mutation.Seq, SyncLifecycleHealthy, targetKey,
-		)
-		return err
+		return s.advancePulledCursorTx(tx, targetKey, mutation.Seq)
 	})
+}
+
+func (s *Store) advancePulledCursorTx(tx *sql.Tx, targetKey string, seq int64) error {
+	_, err := s.execHook(tx,
+		`UPDATE sync_state
+		 SET last_pulled_seq = ?, lifecycle = ?, consecutive_failures = 0, backoff_until = NULL, reason_code = NULL, reason_message = NULL, last_error = NULL, updated_at = datetime('now')
+		 WHERE target_key = ?`,
+		seq, SyncLifecycleHealthy, targetKey,
+	)
+	return err
 }
 
 // relationApplyFailureSyncID derives the sync_apply_deferred key for a failed
@@ -5263,6 +5071,9 @@ const (
 	RescueBlockedDependentRecordOwnedByOtherProject = "dependent_record_owned_by_other_project"
 	// RescueBlockedMissing means the requested row does not exist.
 	RescueBlockedMissing = "missing"
+	// RescueBlockedLegacyPromptFrozen means ordinary ownership repair cannot
+	// reclassify a row in the frozen Legacy prompt archive.
+	RescueBlockedLegacyPromptFrozen = "legacy_prompt_frozen"
 )
 
 // ProjectRescueBlocked names one row the rescue deliberately did not move, and
@@ -5336,12 +5147,12 @@ func (s *Store) RescueNullProjectOwnership(p ProjectRescueParams) (*ProjectRescu
 		if err != nil {
 			return err
 		}
-		prompts, err := loadRescueRecordsTx(tx, rescuePromptQuery, p.PromptIDs)
-		if err != nil {
-			return err
+		for _, id := range p.PromptIDs {
+			result.countOutcome(rescueConflict)
+			result.block("prompt", strconv.FormatInt(id, 10), RescueBlockedLegacyPromptFrozen, "")
 		}
 
-		scope := resolveRescueSessionScope(p.SessionIDs, observations, prompts)
+		scope := resolveRescueSessionScope(p.SessionIDs, observations)
 		plan, err := planRescueSessionsTx(tx, scope, target, result)
 		if err != nil {
 			return err
@@ -5351,11 +5162,6 @@ func (s *Store) RescueNullProjectOwnership(p ProjectRescueParams) (*ProjectRescu
 		if err != nil {
 			return err
 		}
-		promptMoves, err := planRescueRecordsTx(tx, rescuePromptQuery, "prompt", prompts, plan, target, result)
-		if err != nil {
-			return err
-		}
-
 		// Plan settled — only now does anything change.
 		for _, sessionID := range plan.claim {
 			if _, err := s.execHook(tx, rescueSessionQuery.updateProject, target, sessionID); err != nil {
@@ -5369,7 +5175,6 @@ func (s *Store) RescueNullProjectOwnership(p ProjectRescueParams) (*ProjectRescu
 			count *int64
 		}{
 			{rescueObservationQuery, observationMoves, &result.RescuedObservations},
-			{rescuePromptQuery, promptMoves, &result.RescuedPrompts},
 		} {
 			for _, id := range query.moves {
 				if _, err := s.execHook(tx, query.query.updateProject, target, id); err != nil {
@@ -5597,10 +5402,8 @@ func (s *Store) MigrateProject(oldName, newName string) (*MigrateResult, error) 
 			UNION ALL
 			SELECT 1 FROM sessions WHERE project = ?
 			UNION ALL
-			SELECT 1 FROM user_prompts WHERE project = ?
-			UNION ALL
 			SELECT 1 FROM memory_proposals WHERE project = ?
-		)`, oldName, oldName, oldName, oldName,
+		)`, oldName, oldName, oldName,
 	).Scan(&exists)
 	if err != nil {
 		return nil, fmt.Errorf("check old project: %w", err)
@@ -5624,12 +5427,6 @@ func (s *Store) MigrateProject(oldName, newName string) (*MigrateResult, error) 
 			return fmt.Errorf("migrate sessions: %w", err)
 		}
 		result.SessionsUpdated, _ = res.RowsAffected()
-
-		res, err = s.execHook(tx, `UPDATE user_prompts SET project = ? WHERE project = ?`, newName, oldName)
-		if err != nil {
-			return fmt.Errorf("migrate prompts: %w", err)
-		}
-		result.PromptsUpdated, _ = res.RowsAffected()
 
 		if _, err := s.execHook(tx, `UPDATE memory_checkpoint_proposal_references SET project = ? WHERE project = ?`, newName, oldName); err != nil {
 			return fmt.Errorf("migrate Memory proposal references: %w", err)
@@ -5771,33 +5568,6 @@ func (s *Store) ListProjectsWithStats() ([]ProjectStats, error) {
 		}
 	}
 
-	// Prompt counts per project
-	promptRows, err := s.queryItHook(s.db,
-		`SELECT project, COUNT(*) as cnt
-		 FROM user_prompts
-		 WHERE project IS NOT NULL AND project != ''
-		 GROUP BY project`,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("list projects prompts: %w", err)
-	}
-	defer promptRows.Close()
-
-	for promptRows.Next() {
-		var name string
-		var cnt int
-		if err := promptRows.Scan(&name, &cnt); err != nil {
-			return nil, err
-		}
-		if statsMap[name] == nil {
-			statsMap[name] = &ProjectStats{Name: name}
-		}
-		statsMap[name].PromptCount = cnt
-	}
-	if err := promptRows.Err(); err != nil {
-		return nil, err
-	}
-
 	// Convert to slice, sorted by observation count descending
 	results := make([]ProjectStats, 0, len(statsMap))
 	for _, ps := range statsMap {
@@ -5889,25 +5659,21 @@ func (s *Store) previewMergeProjects(sources []string, canonical string, allowNo
 		for i, v := range variants {
 			args[i] = v
 		}
-		var observations, sessions, prompts, proposals int64
+		var observations, sessions, proposals int64
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM observations WHERE project IN (`+placeholders+`)`, args...).Scan(&observations); err != nil {
 			return nil, err
 		}
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE project IN (`+placeholders+`)`, args...).Scan(&sessions); err != nil {
 			return nil, err
 		}
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE project IN (`+placeholders+`)`, args...).Scan(&prompts); err != nil {
-			return nil, err
-		}
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM memory_proposals WHERE project IN (`+placeholders+`)`, args...).Scan(&proposals); err != nil {
 			return nil, err
 		}
-		if observations+sessions+prompts+proposals > 0 {
+		if observations+sessions+proposals > 0 {
 			result.SourcesMerged = append(result.SourcesMerged, normalized)
 		}
 		result.ObservationsUpdated += observations
 		result.SessionsUpdated += sessions
-		result.PromptsUpdated += prompts
 		result.MemoryProposalsUpdated += proposals
 	}
 	return result, nil
@@ -6015,14 +5781,6 @@ func (s *Store) mergeProjects(sources []string, canonical string, allowNonEquiva
 			result.SessionsUpdated += n
 			sourceRowsUpdated += n
 
-			res, err = s.execHook(tx, `UPDATE user_prompts SET project = ? WHERE project IN (`+placeholders+`)`, args...)
-			if err != nil {
-				return fmt.Errorf("merge prompts %q → %q: %w", srcNormalized, canonical, err)
-			}
-			n, _ = res.RowsAffected()
-			result.PromptsUpdated += n
-			sourceRowsUpdated += n
-
 			if _, err := s.execHook(tx, `UPDATE memory_checkpoint_proposal_references SET project = ? WHERE project IN (`+placeholders+`)`, args...); err != nil {
 				return fmt.Errorf("merge Memory proposal references %q → %q: %w", srcNormalized, canonical, err)
 			}
@@ -6108,10 +5866,9 @@ func (s *Store) hasOnlyLocalProjectArtifacts(project string) (bool, error) {
 	if err := s.db.QueryRow(`
 		SELECT
 			(SELECT COUNT(*) FROM observations WHERE project = ?) +
-			(SELECT COUNT(*) FROM sessions WHERE project = ?) +
-			(SELECT COUNT(*) FROM user_prompts WHERE project = ?),
+			(SELECT COUNT(*) FROM sessions WHERE project = ?),
 			(SELECT COUNT(*) FROM memory_proposals WHERE project = ?)
-	`, project, project, project, project).Scan(&durable, &local); err != nil {
+	`, project, project, project).Scan(&durable, &local); err != nil {
 		return false, err
 	}
 	return durable == 0 && local > 0, nil
@@ -6123,9 +5880,8 @@ func (s *Store) projectHasNoArtifacts(project string) (bool, error) {
 		SELECT
 			(SELECT COUNT(*) FROM observations WHERE project = ?) +
 			(SELECT COUNT(*) FROM sessions WHERE project = ?) +
-			(SELECT COUNT(*) FROM user_prompts WHERE project = ?) +
 			(SELECT COUNT(*) FROM memory_proposals WHERE project = ?)
-	`, project, project, project, project).Scan(&count); err != nil {
+	`, project, project, project).Scan(&count); err != nil {
 		return false, err
 	}
 	return count == 0, nil
@@ -6179,6 +5935,7 @@ func (s *Store) migrateProjectSyncIdentityTx(tx *sql.Tx, sources []string, canon
 			END,
 			project = ?
 		WHERE acked_at IS NULL
+		  AND entity <> 'prompt'
 		  AND (project IN (`+placeholders+`)
 		       OR (json_valid(payload) AND json_extract(payload, '$.project') IN (`+placeholders+`)))`,
 		args...,
@@ -6218,9 +5975,9 @@ type PruneResult struct {
 	PromptsDeleted  int64  `json:"prompts_deleted"`
 }
 
-// PruneProject removes prompts and sessions without observations for a project
-// that has zero active observations. Soft-deleted observations and their
-// sessions are retained.
+// PruneProject removes sessions without observations or Legacy prompts for a
+// project that has zero active observations. The Legacy prompt archive is
+// never mutated by this ordinary lifecycle operation.
 func (s *Store) PruneProject(project string) (*PruneResult, error) {
 	if project == "" {
 		return nil, fmt.Errorf("project name must not be empty")
@@ -6238,15 +5995,10 @@ func (s *Store) PruneProject(project string) (*PruneResult, error) {
 	result := &PruneResult{Project: project}
 
 	err = s.withTx(func(tx *sql.Tx) error {
-		res, err := s.execHook(tx, `DELETE FROM user_prompts WHERE project = ?`, project)
-		if err != nil {
-			return fmt.Errorf("prune prompts: %w", err)
-		}
-		result.PromptsDeleted, _ = res.RowsAffected()
-
-		res, err = s.execHook(tx, `DELETE FROM sessions
+		res, err := s.execHook(tx, `DELETE FROM sessions
 			WHERE project = ?
-			  AND NOT EXISTS (SELECT 1 FROM observations WHERE observations.session_id = sessions.id)`, project)
+			  AND NOT EXISTS (SELECT 1 FROM observations WHERE observations.session_id = sessions.id)
+			  AND NOT EXISTS (SELECT 1 FROM user_prompts WHERE user_prompts.session_id = sessions.id)`, project)
 		if err != nil {
 			return fmt.Errorf("prune sessions: %w", err)
 		}
@@ -6277,12 +6029,12 @@ type DeleteProjectResult struct {
 // DeleteProject removes all data associated with a project in a single
 // transaction.
 //
-// When hardDelete is true: observation rows are permanently removed, prompts
-// are hard-deleted, and sessions are hard-deleted. memory_relations that
+// When hardDelete is true: observation rows are permanently removed and
+// sessions without Legacy prompts are hard-deleted. memory_relations that
 // reference any removed observation are marked orphaned (audit history).
 //
-// When hardDelete is false: observations are soft-deleted (deleted_at set),
-// and prompts are hard-deleted. Sessions are NOT removed in this path because
+// When hardDelete is false: observations are soft-deleted (deleted_at set).
+// Sessions are NOT removed in this path because
 // observations.session_id is a NOT NULL FK to sessions — removing sessions
 // while soft-deleted observation rows still reference them would violate the FK
 // constraint. The session rows remain and can be cleaned up with
@@ -6347,16 +6099,9 @@ func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectRe
 			result.ObservationsDeleted, _ = res.RowsAffected()
 		}
 
-		// 2. Delete prompts for the project (no soft-delete mechanism exists).
-		res, err := s.execHook(tx, `DELETE FROM user_prompts WHERE project = ?`, project)
-		if err != nil {
-			return fmt.Errorf("delete project: delete prompts: %w", err)
-		}
-		result.PromptsDeleted, _ = res.RowsAffected()
-
-		// 3. Remove terminal checkpoints that own proposal references for this
+		// 2. Remove terminal checkpoints that own proposal references for this
 		//    project, then remove both referenced and standalone local proposals.
-		res, err = s.execHook(tx, `
+		res, err := s.execHook(tx, `
 			DELETE FROM memory_checkpoints
 			WHERE id IN (
 				SELECT r.checkpoint_id
@@ -6375,11 +6120,13 @@ func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectRe
 		}
 		result.MemoryProposalsDeleted, _ = res.RowsAffected()
 
-		// 4. Delete sessions — only when hard-deleting, because observation rows
+		// 3. Delete sessions — only when hard-deleting, because observation rows
 		//    reference sessions via a NOT NULL FK and soft-deleted rows are still
 		//    present in the table.
 		if hardDelete {
-			res, err = s.execHook(tx, `DELETE FROM sessions WHERE project = ?`, project)
+			res, err = s.execHook(tx, `DELETE FROM sessions
+				WHERE project = ?
+				  AND NOT EXISTS (SELECT 1 FROM user_prompts WHERE user_prompts.session_id = sessions.id)`, project)
 			if err != nil {
 				return fmt.Errorf("delete project: delete sessions: %w", err)
 			}
@@ -6498,9 +6245,6 @@ func (s *Store) backfillProjectSyncMutationsTx(tx *sql.Tx, project string) error
 	if err := s.backfillObservationSyncMutationsTx(tx, project); err != nil {
 		return err
 	}
-	if err := s.backfillPromptSyncMutationsTx(tx, project); err != nil {
-		return err
-	}
 	return s.backfillRelationSyncMutationsTx(tx, project)
 }
 
@@ -6546,22 +6290,6 @@ func (s *Store) enqueueRescuedProjectMutationsTx(tx *sql.Tx, target string, sess
 		}
 		journaled = journaled || canonical
 	}
-	for _, id := range p.PromptIDs {
-		var payload syncPromptPayload
-		err := tx.QueryRow(`SELECT sync_id, session_id, content, project, created_at FROM user_prompts WHERE id = ? AND project = ?`, id, target).
-			Scan(&payload.SyncID, &payload.SessionID, &payload.Content, &payload.Project, &payload.CreatedAt)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return false, err
-		}
-		canonical, err := s.enqueueMissingLocalMutationTx(tx, SyncEntityPrompt, payload.SyncID, payload)
-		if err != nil {
-			return false, err
-		}
-		journaled = journaled || canonical
-	}
 	return journaled, nil
 }
 
@@ -6590,9 +6318,8 @@ func (s *Store) enqueueMissingLocalMutationTx(tx *sql.Tx, entity, entityKey stri
 	return true, nil
 }
 
-// projectNeedsBackfill returns true when a project has any sessions, live observations,
-// or prompts that are missing a corresponding sync_mutation row.
-// It runs three lightweight COUNT queries — no cursor is held open.
+// projectNeedsBackfill returns true when a project has sessions, live
+// observations, or relations missing a corresponding sync_mutation row.
 func (s *Store) projectNeedsBackfill(project string) (bool, error) {
 	type countQuery struct {
 		q    string
@@ -6624,16 +6351,6 @@ func (s *Store) projectNeedsBackfill(project string) (bool, error) {
 			        WHERE sm.target_key = ? AND sm.entity = ? AND sm.entity_key = o.sync_id AND sm.source = ?
 			      )`,
 			args: []any{project, project, DefaultSyncTargetKey, SyncEntityObservation, SyncSourceLocal},
-		},
-		{
-			q: `SELECT COUNT(*) FROM user_prompts p
-			    LEFT JOIN sessions s ON s.id = p.session_id
-			    WHERE (ifnull(p.project,'') = ? OR (ifnull(p.project,'') = '' AND ifnull(s.project,'') = ?))
-			      AND NOT EXISTS (
-			        SELECT 1 FROM sync_mutations sm
-			        WHERE sm.target_key = ? AND sm.entity = ? AND sm.entity_key = p.sync_id AND sm.source = ?
-			      )`,
-			args: []any{project, project, DefaultSyncTargetKey, SyncEntityPrompt, SyncSourceLocal},
 		},
 		{
 			// Count only fully-judged relations (not orphaned, not pending, with
@@ -6926,106 +6643,6 @@ func (s *Store) backfillObservationSyncMutationsTx(tx *sql.Tx, project string) e
 	// Phase 2: insert deleted observation mutations.
 	for _, payload := range deletedPending {
 		if err := s.enqueueSyncMutationTx(tx, SyncEntityObservation, payload.SyncID, SyncOpDelete, payload); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Store) backfillPromptSyncMutationsTx(tx *sql.Tx, project string) error {
-	// ── Live prompts ──────────────────────────────────────────────────────────
-	rows, err := s.queryItHook(tx, `
-		SELECT p.sync_id, p.session_id, p.content, p.project, p.created_at
-		FROM user_prompts p
-		LEFT JOIN sessions s ON s.id = p.session_id
-		WHERE (
-			ifnull(p.project, '') = ?
-			OR (ifnull(p.project, '') = '' AND ifnull(s.project, '') = ?)
-		)
-		  AND NOT EXISTS (
-			SELECT 1
-			FROM sync_mutations sm
-			WHERE sm.target_key = ?
-			  AND sm.entity = ?
-			  AND sm.entity_key = p.sync_id
-			  AND sm.source = ?
-		  )
-		ORDER BY p.id ASC`,
-		project, project, DefaultSyncTargetKey, SyncEntityPrompt, SyncSourceLocal,
-	)
-	if err != nil {
-		return err
-	}
-
-	// Phase 1: collect live prompts before any INSERT.
-	var pending []syncPromptPayload
-	for rows.Next() {
-		var payload syncPromptPayload
-		if err := rows.Scan(&payload.SyncID, &payload.SessionID, &payload.Content, &payload.Project, &payload.CreatedAt); err != nil {
-			return closeRowsWithError(rows, err)
-		}
-		pending = append(pending, payload)
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-
-	// Phase 2: insert live prompt mutations.
-	for _, payload := range pending {
-		if err := s.enqueueSyncMutationTx(tx, SyncEntityPrompt, payload.SyncID, SyncOpUpsert, payload); err != nil {
-			return err
-		}
-	}
-
-	// ── Tombstoned prompts ────────────────────────────────────────────────────
-	tombstoneRows, err := s.queryItHook(tx, `
-		SELECT prompt_tombstones.sync_id, prompt_tombstones.session_id, prompt_tombstones.project, prompt_tombstones.deleted_at
-		FROM prompt_tombstones
-		LEFT JOIN sessions s ON s.id = prompt_tombstones.session_id
-		WHERE (
-			ifnull(prompt_tombstones.project, '') = ?
-			OR (ifnull(prompt_tombstones.project, '') = '' AND ifnull(s.project, '') = ?)
-		)
-		  AND NOT EXISTS (
-			SELECT 1
-			FROM sync_mutations sm
-			WHERE sm.target_key = ?
-			  AND sm.entity = ?
-			  AND sm.entity_key = prompt_tombstones.sync_id
-			  AND sm.source = ?
-			  AND sm.op = ?
-		  )
-		ORDER BY deleted_at ASC`,
-		project, project, DefaultSyncTargetKey, SyncEntityPrompt, SyncSourceLocal, SyncOpDelete,
-	)
-	if err != nil {
-		return err
-	}
-
-	// Phase 1: collect tombstones before any INSERT.
-	var tombstonePending []syncPromptPayload
-	for tombstoneRows.Next() {
-		var payload syncPromptPayload
-		if err := tombstoneRows.Scan(&payload.SyncID, &payload.SessionID, &payload.Project, &payload.DeletedAt); err != nil {
-			return closeRowsWithError(tombstoneRows, err)
-		}
-		payload.Deleted = true
-		payload.HardDelete = true
-		tombstonePending = append(tombstonePending, payload)
-	}
-	if err := tombstoneRows.Close(); err != nil {
-		return err
-	}
-	if err := tombstoneRows.Err(); err != nil {
-		return err
-	}
-
-	// Phase 2: insert tombstone mutations.
-	for _, payload := range tombstonePending {
-		if err := s.enqueueSyncMutationTx(tx, SyncEntityPrompt, payload.SyncID, SyncOpDelete, payload); err != nil {
 			return err
 		}
 	}
@@ -7407,14 +7024,10 @@ func (s *Store) applyPulledMutationTx(tx *sql.Tx, mutation SyncMutation) error {
 		}
 		return s.applyObservationUpsertTx(tx, payload)
 	case SyncEntityPrompt:
-		var payload syncPromptPayload
-		if err := decodeSyncPayload([]byte(mutation.Payload), &payload); err != nil {
-			return err
-		}
-		if mutation.Op == SyncOpDelete || payload.Deleted || payload.HardDelete {
-			return s.applyPromptDeleteTx(tx, payload)
-		}
-		return s.applyPromptUpsertTx(tx, payload)
+		// Prompt mutations are historical wire input. Advancing the pull cursor
+		// while leaving the Legacy archive untouched prevents retry loops without
+		// materializing, deleting, or rewriting prompt rows.
+		return nil
 	default:
 		return fmt.Errorf("unknown sync entity %q", mutation.Entity)
 	}
@@ -7783,8 +7396,15 @@ func (s *Store) applySessionDeleteTx(tx *sql.Tx, payload syncSessionPayload) err
 	if err := validateSessionID(sessionID); err != nil {
 		return err
 	}
-	if _, err := s.execHook(tx, `DELETE FROM user_prompts WHERE session_id = ?`, sessionID); err != nil {
+	var legacyPromptCount int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE session_id = ?`, sessionID).Scan(&legacyPromptCount); err != nil {
 		return err
+	}
+	// A remote session tombstone is not authority to mutate the frozen local
+	// Legacy prompt archive. Preserve both the archive rows and their owning
+	// session so the foreign-key relationship remains intact.
+	if legacyPromptCount > 0 {
+		return nil
 	}
 	_, err := s.execHook(tx, `DELETE FROM sessions WHERE id = ?`, sessionID)
 	return err
@@ -7956,81 +7576,6 @@ func (s *Store) applyObservationDeleteTx(tx *sql.Tx, payload syncObservationPayl
 		deletedAt, existing.ID,
 	)
 	return err
-}
-
-func (s *Store) applyPromptUpsertTx(tx *sql.Tx, payload syncPromptPayload) error {
-	var tombstoneDeletedAt string
-	err := tx.QueryRow(`SELECT deleted_at FROM prompt_tombstones WHERE sync_id = ?`, payload.SyncID).Scan(&tombstoneDeletedAt)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if err == nil {
-		if isStalePromptUpsert(payload, tombstoneDeletedAt) {
-			return nil
-		}
-		if _, err := s.execHook(tx, `DELETE FROM prompt_tombstones WHERE sync_id = ?`, payload.SyncID); err != nil {
-			return err
-		}
-	}
-
-	var existingID int64
-	err = tx.QueryRow(`SELECT id FROM user_prompts WHERE sync_id = ? ORDER BY id DESC LIMIT 1`, payload.SyncID).Scan(&existingID)
-	if err == sql.ErrNoRows {
-		if strings.TrimSpace(payload.CreatedAt) == "" {
-			_, err = s.execHook(tx,
-				`INSERT INTO user_prompts (sync_id, session_id, content, project) VALUES (?, ?, ?, ?)`,
-				payload.SyncID, payload.SessionID, payload.Content, payload.Project,
-			)
-		} else {
-			_, err = s.execHook(tx,
-				`INSERT INTO user_prompts (sync_id, session_id, content, project, created_at) VALUES (?, ?, ?, ?, ?)`,
-				payload.SyncID, payload.SessionID, payload.Content, payload.Project, payload.CreatedAt,
-			)
-		}
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	_, err = s.execHook(tx,
-		`UPDATE user_prompts
-		 SET session_id = ?,
-		     content = ?,
-		     project = ?,
-		     created_at = CASE WHEN ? = '' THEN created_at ELSE ? END
-		 WHERE id = ?`,
-		payload.SessionID, payload.Content, payload.Project, strings.TrimSpace(payload.CreatedAt), payload.CreatedAt, existingID,
-	)
-	return err
-}
-
-func (s *Store) applyPromptDeleteTx(tx *sql.Tx, payload syncPromptPayload) error {
-	if strings.TrimSpace(payload.SyncID) == "" {
-		return nil
-	}
-	if _, err := s.execHook(tx, `DELETE FROM user_prompts WHERE sync_id = ?`, payload.SyncID); err != nil {
-		return err
-	}
-	deletedAt := payload.DeletedAt
-	if deletedAt == nil || strings.TrimSpace(*deletedAt) == "" {
-		now := Now()
-		deletedAt = &now
-	}
-	_, err := s.execHook(tx,
-		`INSERT INTO prompt_tombstones (sync_id, session_id, project, deleted_at)
-		 VALUES (?, ?, ?, ?)
-		 ON CONFLICT(sync_id) DO UPDATE SET session_id = excluded.session_id, project = excluded.project, deleted_at = excluded.deleted_at`,
-		payload.SyncID, payload.SessionID, payload.Project, *deletedAt,
-	)
-	return err
-}
-
-func isStalePromptUpsert(payload syncPromptPayload, tombstoneDeletedAt string) bool {
-	upsertTime := normalizeComparableTimestamp(payload.CreatedAt)
-	if strings.TrimSpace(upsertTime) == "" {
-		return true
-	}
-	return upsertTime <= normalizeComparableTimestamp(tombstoneDeletedAt)
 }
 
 func normalizeComparableTimestamp(value string) string {

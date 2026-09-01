@@ -174,10 +174,6 @@ templ DashboardStatsPartial(stats []cloudstore.DashboardProjectRow, projects []s
 				<span class="metric-value">{ fmt.Sprint(totalStatObservations(stats)) }</span>
 				<span class="metric-label">Observations</span>
 			</a>
-			<a href="/dashboard/browser?tab=prompts" class="metric-card stat-card-link">
-				<span class="metric-value">{ fmt.Sprint(totalStatPrompts(stats)) }</span>
-				<span class="metric-label">Prompts</span>
-			</a>
 			<a href="/dashboard/projects" class="metric-card stat-card-link">
 				<span class="metric-value">{ fmt.Sprint(len(stats)) }</span>
 				<span class="metric-label">Projects Synced</span>
@@ -233,7 +229,6 @@ templ DashboardActivityPartial(stats []cloudstore.DashboardProjectRow, pg Pagina
 					<th>Project</th>
 					<th>Sessions</th>
 					<th>Observations</th>
-					<th>Prompts</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -244,7 +239,6 @@ templ DashboardActivityPartial(stats []cloudstore.DashboardProjectRow, pg Pagina
 						</td>
 						<td>{ fmt.Sprint(s.Sessions) }</td>
 						<td>{ fmt.Sprint(s.Observations) }</td>
-						<td>{ fmt.Sprint(s.Prompts) }</td>
 					</tr>
 				}
 			</tbody>
@@ -309,12 +303,6 @@ templ BrowserPage(projects []string, types []string, activeProject string, searc
 				hx-swap="innerHTML"
 				hx-include="#browser-project, #browser-search, #browser-type"
 				hx-on::after-request="document.querySelectorAll('#browser-tabs [role=tab]').forEach(t=>t.classList.remove('active'));this.classList.add('active')">Sessions</a>
-			<a role="tab" aria-selected="false"
-				hx-get="/dashboard/browser/prompts"
-				hx-target="#browser-content"
-				hx-swap="innerHTML"
-				hx-include="#browser-project, #browser-search, #browser-type"
-				hx-on::after-request="document.querySelectorAll('#browser-tabs [role=tab]').forEach(t=>t.classList.remove('active'));this.classList.add('active')">Prompts</a>
 		</div>
 		<div class="browser-content-frame" id="browser-content" hx-get="/dashboard/browser/observations" hx-trigger="load" hx-swap="innerHTML" hx-include="#browser-project, #browser-search, #browser-type">
 			<p class="htmx-indicator">Loading...</p>
@@ -520,10 +508,6 @@ templ ProjectsListPartial(stats []cloudstore.DashboardProjectRow, controls map[s
 								<span class="stat-value">{ fmt.Sprint(s.Observations) }</span>
 								<span class="stat-label">Observations</span>
 							</div>
-							<div class="stat">
-								<span class="stat-value">{ fmt.Sprint(s.Prompts) }</span>
-								<span class="stat-label">Prompts</span>
-							</div>
 						</div>
 						<footer>
 							if !projectControl(controls, s.Project).SyncEnabled && projectControl(controls, s.Project).PausedReason != nil {
@@ -582,10 +566,6 @@ templ ProjectDetailPage(project string, stats *cloudstore.DashboardProjectRow, c
 					<span class="stat-value">{ fmt.Sprint(stats.Observations) }</span>
 					<span class="stat-label">Observations</span>
 				</div>
-				<div class="stat-card">
-					<span class="stat-value">{ fmt.Sprint(stats.Prompts) }</span>
-					<span class="stat-label">Prompts</span>
-				</div>
 			</div>
 		}
 		<div class="browser-subtabs" role="tablist" id="project-tabs">
@@ -599,11 +579,6 @@ templ ProjectDetailPage(project string, stats *cloudstore.DashboardProjectRow, c
 				hx-target="#project-content"
 				hx-swap="innerHTML"
 				hx-on::after-request="document.querySelectorAll('#project-tabs [role=tab]').forEach(t=>t.classList.remove('active'));this.classList.add('active')">Sessions</a>
-			<a role="tab" aria-selected="false"
-				hx-get={ fmt.Sprintf("/dashboard/projects/%s/prompts", url.PathEscape(project)) }
-				hx-target="#project-content"
-				hx-swap="innerHTML"
-				hx-on::after-request="document.querySelectorAll('#project-tabs [role=tab]').forEach(t=>t.classList.remove('active'));this.classList.add('active')">Prompts</a>
 		</div>
 		<div class="browser-content-frame" id="project-content"
 			hx-get={ fmt.Sprintf("/dashboard/projects/%s/observations", url.PathEscape(project)) }
@@ -710,8 +685,6 @@ templ ContributorDetailPage(contributor *cloudstore.DashboardContributorRow, ses
 			@SessionsPartial(sessions, Pagination{})
 			<h3 class="section-block-title">Recent Observations</h3>
 			@ObservationsPartial(observations, Pagination{})
-			<h3 class="section-block-title">Recent Prompts</h3>
-			@PromptsPartial(prompts, Pagination{})
 		}
 	</section>
 }
@@ -784,10 +757,6 @@ templ AdminPage(health *cloudstore.DashboardSystemHealth, controls []cloudstore.
 				<div class="stat-card">
 					<span class="stat-value">{ fmt.Sprint(health.Observations) }</span>
 					<span class="stat-label">Observations</span>
-				</div>
-				<div class="stat-card">
-					<span class="stat-value">{ fmt.Sprint(health.Prompts) }</span>
-					<span class="stat-label">Prompts</span>
 				</div>
 				<div class="stat-card">
 					<span class="stat-value">{ fmt.Sprint(health.Projects) }</span>
@@ -1170,10 +1139,6 @@ templ AdminHealthPage(health *cloudstore.DashboardSystemHealth) {
 						<td>{ fmt.Sprint(health.Observations) }</td>
 					</tr>
 					<tr>
-						<th>Prompts</th>
-						<td>{ fmt.Sprint(health.Prompts) }</td>
-					</tr>
-					<tr>
 						<th>Total Chunks</th>
 						<td>{ fmt.Sprint(health.Chunks) }</td>
 					</tr>
@@ -1229,10 +1194,6 @@ templ SessionDetailPage(session *cloudstore.DashboardSessionRow, observations []
 					<span class="stat-label">Observations</span>
 				</div>
 				<div class="stat-card">
-					<span class="stat-value">{ fmt.Sprint(len(prompts)) }</span>
-					<span class="stat-label">Prompts</span>
-				</div>
-				<div class="stat-card">
 					<span class="stat-value stat-copy">{ formatTimestamp(session.StartedAt) }</span>
 					<span class="stat-label">Started</span>
 				</div>
@@ -1269,8 +1230,6 @@ templ SessionDetailPage(session *cloudstore.DashboardSessionRow, observations []
 			</div>
 			<h3 class="section-block-title">Observations in this Session</h3>
 			@ObservationsPartial(observations, Pagination{})
-			<h3 class="section-block-title">Prompts in this Session</h3>
-			@PromptsPartial(prompts, Pagination{})
 		}
 	</section>
 }

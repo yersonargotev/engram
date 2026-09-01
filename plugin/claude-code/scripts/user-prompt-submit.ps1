@@ -52,15 +52,15 @@ function Resolve-EngramProject {
   }
 }
 
-function Invoke-EngramPromptPersist {
+function Invoke-EngramPromptCaptureRequest {
   param(
     [string]$EngramUrl,
     [string]$SessionId,
     [string]$Project,
     [string]$Prompt
   )
-  # Fail-silent and bounded: a short timeout keeps a slow/unreachable server
-  # from stalling prompt submission, and any error is swallowed.
+  # Fail-silent and bounded. Core persists only with explicit capture consent;
+  # the adapter cannot infer or grant it.
   if ([string]::IsNullOrWhiteSpace($Prompt) -or [string]::IsNullOrWhiteSpace($SessionId) -or [string]::IsNullOrWhiteSpace($Project)) { return }
   try {
     $body = [PSCustomObject]@{
@@ -87,10 +87,10 @@ try {
     $sessionID = "windows-$PID"
   }
 
-  # Persist only after canonical server resolution; do not infer a project in
-  # the hook when the server is unavailable, invalid, or ambiguous.
+  # Request capture only after canonical server resolution; do not infer a
+  # project in the hook when the server is unavailable, invalid, or ambiguous.
   $project = Resolve-EngramProject -EngramUrl $engramUrl -Cwd $cwd
-  Invoke-EngramPromptPersist -EngramUrl $engramUrl -SessionId $sessionID -Project $project -Prompt $prompt
+  Invoke-EngramPromptCaptureRequest -EngramUrl $engramUrl -SessionId $sessionID -Project $project -Prompt $prompt
 
   $safeSessionID = $sessionID -replace '[^a-zA-Z0-9_-]', '_'
   $stateFile = Join-Path ([IO.Path]::GetTempPath()) "engram-claude-$safeSessionID-tools-loaded"

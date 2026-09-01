@@ -406,7 +406,7 @@ export const Engram: Plugin = async (ctx) => {
 
     },
 
-    // ─── User Prompt Capture ──────────────────────────────────────
+    // ─── User Prompt Capture Request ──────────────────────────────
     // chat.message is called once per user message, before the LLM sees it.
     // input.sessionID is always reliable here (no knownSessions workaround).
     // output.message is typed as UserMessage (role:"user" already guaranteed).
@@ -431,7 +431,8 @@ export const Engram: Plugin = async (ctx) => {
 
       const finalContent = content || fallback
 
-      // Only capture non-trivial prompts (>10 chars)
+      // Only request non-trivial prompts (>10 chars). Core persists them only
+      // when this project or session has explicit capture consent.
       if (finalContent.length > 10) {
         const registered = await ensureSession(sessionId)
         const confirmedSessionID = await resolveAuthoritativeSessionID(input.sessionID)

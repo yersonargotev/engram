@@ -88,11 +88,12 @@ SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty')
 PROJECT=""
 
 # ──────────────────────────────────────────────────────────────────────────────
-# PROMPT PERSIST
+# PROMPT CAPTURE REQUEST
 #
-# Every user message is captured to POST /prompts for SessionActivity. The canonical project is resolved by
-# the server before this script writes. Fire-and-forget: never blocks and never
-# fails the hook.
+# Every user message may request POST /prompts. Core persists it only when the
+# project or session has explicit prompt-capture consent. The canonical project
+# is resolved by the server before this script writes. Fire-and-forget: never
+# blocks and never fails the hook.
 # ──────────────────────────────────────────────────────────────────────────────
 PROMPT=$(echo "$INPUT" | jq -r '.prompt // empty')
 if [ -n "$PROMPT" ] && [ -n "$SESSION_ID" ]; then

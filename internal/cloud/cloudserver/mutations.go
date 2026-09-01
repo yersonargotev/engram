@@ -183,6 +183,16 @@ func (s *CloudServer) handleMutationPush(w http.ResponseWriter, r *http.Request)
 	// Any failure rejects the ENTIRE batch (atomic — no partial inserts).
 	var invalid []map[string]any
 	for i, entry := range req.Entries {
+		if chunkcodec.IsLocalOnlyEntity(entry.Entity) {
+			jsonResponse(w, http.StatusBadRequest, map[string]any{
+				"error":       "local-only capture entities cannot be synchronized",
+				"reason_code": "local_only_content",
+				"invalid": []map[string]any{{
+					"index": i, "field": "entity", "entity": entry.Entity,
+				}},
+			})
+			return
+		}
 		if field, ok := validateMutationEntry(entry); !ok {
 			invalid = append(invalid, map[string]any{
 				"index":  i,
@@ -303,6 +313,14 @@ func (s *CloudServer) handleMutationPull(w http.ResponseWriter, r *http.Request)
 	if mutations == nil {
 		mutations = []StoredMutation{}
 	}
+	visible := mutations[:0]
+	for _, mutation := range mutations {
+		if chunkcodec.IsLocalOnlyEntity(mutation.Entity) {
+			continue
+		}
+		visible = append(visible, mutation)
+	}
+	mutations = visible
 
 	// REQ-414: include project envelope in 200 pull response.
 	jsonResponse(w, http.StatusOK, map[string]any{

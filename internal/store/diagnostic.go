@@ -236,9 +236,6 @@ func (s *Store) ListInvalidSessionIdentityEvidence(project string) ([]InvalidSes
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM observations WHERE session_id = ?`, item.SessionID).Scan(&item.ObservationCount); err != nil {
 			return nil, err
 		}
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE session_id = ?`, item.SessionID).Scan(&item.PromptCount); err != nil {
-			return nil, err
-		}
 	}
 	return evidence, nil
 }
@@ -448,10 +445,6 @@ func (s *Store) EstimateSessionProjectReclassification(actions []SessionProjectR
 			return counts, fmt.Errorf("estimate observations: %w", err)
 		}
 		counts.Observations += n
-		if err := s.db.QueryRow(`SELECT count(*) FROM user_prompts WHERE session_id = ? AND project = ?`, action.SessionID, action.FromProject).Scan(&n); err != nil {
-			return counts, fmt.Errorf("estimate prompts: %w", err)
-		}
-		counts.Prompts += n
 	}
 	return counts, nil
 }
@@ -480,12 +473,6 @@ func (s *Store) ApplySessionProjectReclassification(actions []SessionProjectRecl
 			n, _ = res.RowsAffected()
 			result.Counts.Observations += n
 
-			res, err = s.execHook(tx, `UPDATE user_prompts SET project = ? WHERE session_id = ? AND project = ?`, action.ToProject, action.SessionID, action.FromProject)
-			if err != nil {
-				return fmt.Errorf("reclassify prompts for session %q: %w", action.SessionID, err)
-			}
-			n, _ = res.RowsAffected()
-			result.Counts.Prompts += n
 		}
 		return nil
 	})

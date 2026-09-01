@@ -2,11 +2,192 @@ package chunkcodec
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/yersonargotev/engram/internal/store"
 )
+
+func TestCloudPayloadRejectsLocalOnlyCaptureEntities(t *testing.T) {
+	tests := []string{
+		`{"sessions":[],"observations":[],"prompts":[{"sync_id":"legacy-1"}]}`,
+		`{"sessions":[],"observations":[],"mutations":[{"entity":"prompt","entity_key":"legacy-1","op":"upsert","payload":"{}"}]}`,
+		`{"sessions":[],"observations":[],"mutations":[{"entity":"diagnostic_capture","entity_key":"capture-1","op":"upsert","payload":"{}"}]}`,
+		`{"sessions":[],"observations":[],"mutations":[{"entity":"capture_consent","entity_key":"grant-1","op":"upsert","payload":"{}"}]}`,
+		`{"sessions":[],"observations":[],"diagnostic_captures":[{"id":"capture-1"}]}`,
+	}
+
+	for _, payload := range tests {
+		if _, err := CanonicalizeForProject([]byte(payload), "proj-a"); !errors.Is(err, ErrLocalOnlyContent) {
+			t.Fatalf("CanonicalizeForProject(%s) error = %v, want ErrLocalOnlyContent", payload, err)
+		}
+	}
+}
+
+func TestCloudPayloadRejectsLocalOnlyCollectionKeysCaseInsensitive(t *testing.T) {
+	tests := []string{
+		`{"Prompts":[{"content":"legacy"}]}`,
+		`{"DIAGNOSTIC_CAPTURES":[{"content":"diagnostic"}]}`,
+		`{"Capture_Consents":[{"project":"proj-a"}]}`,
+	}
+	for _, payload := range tests {
+		if err := ValidateCloudPayload([]byte(payload)); !errors.Is(err, ErrLocalOnlyContent) {
+			t.Fatalf("ValidateCloudPayload(%s) error = %v, want ErrLocalOnlyContent", payload, err)
+		}
+	}
+}
+
+func TestCloudPayloadRejectsLocalOnlyEntitiesInMixedCaseMutationKeys(t *testing.T) {
+	tests := []string{
+		`{"Mutations":[{"entity":"prompt","payload":"{\"content\":\"legacy secret\"}"}]}`,
+		`{"MUTATIONS":[{"entity":"diagnostic_capture","payload":"{\"content\":\"diagnostic secret\"}"}]}`,
+		`{"mUtAtIoNs":[{"entity":"capture_consent","payload":"{\"project\":\"secret\"}"}]}`,
+	}
+	for _, payload := range tests {
+		if err := ValidateCloudPayload([]byte(payload)); !errors.Is(err, ErrLocalOnlyContent) {
+			t.Fatalf("ValidateCloudPayload(%s) error = %v, want ErrLocalOnlyContent", payload, err)
+		}
+	}
+}
+
+func TestRedactMixedCaseMutationKeysFiltersOnlyLocalEntities(t *testing.T) {
+	payload := []byte(`{
+		"Mutations":[
+			{"entity":"observation","entity_key":"o-1","payload":"{\"content\":\"ordinary one\"}"},
+			{"entity":"prompt","entity_key":"p-1","payload":"{\"content\":\"legacy secret\"}"}
+		],
+		"MUTATIONS":[
+			{"entity":"session","entity_key":"s-1","payload":"{\"directory\":\"ordinary two\"}"},
+			{"entity":"diagnostic_capture","entity_key":"d-1","payload":"{\"content\":\"diagnostic secret\"}"},
+			{"entity":"capture_consent","entity_key":"c-1","payload":"{\"project\":\"consent secret\"}"}
+		]
+	}`)
+	redacted, err := RedactLocalOnlyContent(payload)
+	if err != nil {
+		t.Fatalf("RedactLocalOnlyContent: %v", err)
+	}
+	if strings.Contains(string(redacted), "secret") {
+		t.Fatalf("mixed-case mutations leaked local-only payload: %s", redacted)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(redacted, &doc); err != nil {
+		t.Fatalf("decode redacted payload: %v", err)
+	}
+	wantEntities := map[string]string{"Mutations": "observation", "MUTATIONS": "session"}
+	for key, wantEntity := range wantEntities {
+		var rows []struct {
+			Entity string `json:"entity"`
+		}
+		if err := json.Unmarshal(doc[key], &rows); err != nil {
+			t.Fatalf("decode %s: %v", key, err)
+		}
+		if len(rows) != 1 || rows[0].Entity != wantEntity {
+			t.Fatalf("%s mutations = %+v, want only %q", key, rows, wantEntity)
+		}
+	}
+}
+
+func TestRedactMixedCaseMutationEntityFieldFiltersOnlyLocalEntities(t *testing.T) {
+	payload := []byte(`{
+		"Mutations":[
+			{"Entity":"prompt","entity_key":"p-1","payload":"{\"content\":\"legacy secret\"}"},
+			{"Entity":"observation","entity_key":"o-1","payload":"{\"content\":\"ordinary content\"}","metadata":{"source":"preserved"}}
+		]
+	}`)
+	redacted, err := RedactLocalOnlyContent(payload)
+	if err != nil {
+		t.Fatalf("RedactLocalOnlyContent: %v", err)
+	}
+	if strings.Contains(string(redacted), "legacy secret") {
+		t.Fatalf("mixed-case entity field leaked local-only payload: %s", redacted)
+	}
+	var doc map[string][]map[string]any
+	if err := json.Unmarshal(redacted, &doc); err != nil {
+		t.Fatalf("decode redacted payload: %v", err)
+	}
+	rows := doc["Mutations"]
+	if len(rows) != 1 {
+		t.Fatalf("Mutations rows = %+v, want one ordinary row", rows)
+	}
+	if rows[0]["Entity"] != "observation" || rows[0]["entity_key"] != "o-1" {
+		t.Fatalf("ordinary mutation fields changed: %+v", rows[0])
+	}
+	metadata, ok := rows[0]["metadata"].(map[string]any)
+	if !ok || metadata["source"] != "preserved" {
+		t.Fatalf("ordinary mutation metadata changed: %+v", rows[0])
+	}
+}
+
+func TestRedactLocalOnlyCollectionKeysCaseInsensitive(t *testing.T) {
+	payload := []byte(`{
+		"Prompts":[{"content":"legacy secret"}],
+		"DIAGNOSTIC_CAPTURES":[{"content":"diagnostic secret"}],
+		"Capture_Consents":[{"project":"secret project"}],
+		"observations":[{"content":"ordinary content"}]
+	}`)
+	redacted, err := RedactLocalOnlyContent(payload)
+	if err != nil {
+		t.Fatalf("RedactLocalOnlyContent: %v", err)
+	}
+	if strings.Contains(string(redacted), "secret") {
+		t.Fatalf("redacted payload leaked mixed-case local-only content: %s", redacted)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(redacted, &doc); err != nil {
+		t.Fatalf("decode redacted payload: %v", err)
+	}
+	for key, raw := range doc {
+		switch strings.ToLower(key) {
+		case "prompts":
+			var rows []json.RawMessage
+			if err := json.Unmarshal(raw, &rows); err != nil || len(rows) != 0 {
+				t.Fatalf("mixed-case prompts key was not emptied: key=%q raw=%s err=%v", key, raw, err)
+			}
+		case "diagnostic_captures", "capture_consents":
+			t.Fatalf("mixed-case local-only key survived redaction: %q", key)
+		}
+	}
+	if _, ok := doc["observations"]; !ok {
+		t.Fatalf("ordinary content was removed: %s", redacted)
+	}
+}
+
+func TestRedactLocalOnlyContentPreservesOrdinaryRows(t *testing.T) {
+	payload := []byte(`{
+		"sessions":[{"id":"s-1"}],
+		"observations":[{"sync_id":"o-1"}],
+		"prompts":[{"sync_id":"legacy-1","content":"secret legacy prompt"}],
+		"diagnostic_captures":[{"id":"capture-1","content":"diagnostic secret"}],
+		"mutations":[
+			{"entity":"observation","entity_key":"o-1","op":"upsert","payload":"{}"},
+			{"entity":"prompt","entity_key":"legacy-1","op":"upsert","payload":"{}"},
+			{"entity":"diagnostic_capture","entity_key":"capture-1","op":"upsert","payload":"{}"}
+		]
+	}`)
+
+	redacted, err := RedactLocalOnlyContent(payload)
+	if err != nil {
+		t.Fatalf("RedactLocalOnlyContent: %v", err)
+	}
+	if strings.Contains(string(redacted), "secret") || strings.Contains(string(redacted), "diagnostic_captures") {
+		t.Fatalf("redacted payload leaked local-only content: %s", redacted)
+	}
+	var doc struct {
+		Sessions     []json.RawMessage `json:"sessions"`
+		Observations []json.RawMessage `json:"observations"`
+		Prompts      []json.RawMessage `json:"prompts"`
+		Mutations    []struct {
+			Entity string `json:"entity"`
+		} `json:"mutations"`
+	}
+	if err := json.Unmarshal(redacted, &doc); err != nil {
+		t.Fatalf("decode redacted payload: %v", err)
+	}
+	if len(doc.Sessions) != 1 || len(doc.Observations) != 1 || len(doc.Prompts) != 0 || len(doc.Mutations) != 1 || doc.Mutations[0].Entity != "observation" {
+		t.Fatalf("unexpected redacted payload: %+v", doc)
+	}
+}
 
 func TestCanonicalizeForProjectPreservesMutationMetadataPayloadFields(t *testing.T) {
 	raw := []byte(`{
@@ -24,13 +205,6 @@ func TestCanonicalizeForProjectPreservesMutationMetadataPayloadFields(t *testing
 				"op": "upsert",
 				"project": "wrong",
 				"payload": "{\"sync_id\":\"obs-1\",\"session_id\":\"sess-1\",\"type\":\"note\",\"title\":\"metadata\",\"content\":\"keep fields\",\"scope\":\"project\",\"project\":\"wrong\",\"created_at\":\"2026-04-09T10:00:00Z\",\"updated_at\":\"2026-04-10T11:00:00Z\",\"last_seen_at\":\"2026-04-10T11:30:00Z\",\"revision_count\":9,\"duplicate_count\":4}"
-			},
-			{
-				"entity": "prompt",
-				"entity_key": "prompt-1",
-				"op": "upsert",
-				"project": "wrong",
-				"payload": "{\"sync_id\":\"prompt-1\",\"session_id\":\"sess-1\",\"content\":\"prompt body\",\"project\":\"wrong\",\"created_at\":\"2026-04-08T09:00:00Z\"}"
 			}
 		]
 	}`)
@@ -46,8 +220,8 @@ func TestCanonicalizeForProjectPreservesMutationMetadataPayloadFields(t *testing
 	if err := json.Unmarshal(normalized, &chunk); err != nil {
 		t.Fatalf("decode canonicalized chunk: %v", err)
 	}
-	if len(chunk.Mutations) != 3 {
-		t.Fatalf("expected 3 mutations, got %d", len(chunk.Mutations))
+	if len(chunk.Mutations) != 2 {
+		t.Fatalf("expected 2 mutations, got %d", len(chunk.Mutations))
 	}
 
 	assertPayloadField := func(index int, key string, want any) {
@@ -70,7 +244,6 @@ func TestCanonicalizeForProjectPreservesMutationMetadataPayloadFields(t *testing
 	assertPayloadField(1, "last_seen_at", "2026-04-10T11:30:00Z")
 	assertPayloadField(1, "revision_count", float64(9))
 	assertPayloadField(1, "duplicate_count", float64(4))
-	assertPayloadField(2, "created_at", "2026-04-08T09:00:00Z")
 }
 
 func TestCanonicalizeForProjectAcceptsRelationUpsertMutation(t *testing.T) {

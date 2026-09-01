@@ -36,7 +36,7 @@ Install it once. Keep coding. Pi remembers.
 - **One brain for many agents** — Pi, Claude Code, OpenCode, Gemini CLI, Codex, VS Code/Copilot, Cursor, Windsurf, Antigravity, and any MCP-compatible agent can read/write the same Engram memory.
 - **Local-first memory** — a single Go binary writes to SQLite + FTS5 on your machine. No Node service, Python stack, or hosted account required for the core path.
 - **Cloud when the team needs it** — Engram Cloud adds opt-in, project-scoped replication, shared access, and a browser dashboard while keeping local SQLite authoritative.
-- **Token-efficient by design** — Engram stores curated summaries, decisions, prompts, and session handoffs instead of a noisy firehose of raw tool calls. Agents search first, then fetch only the relevant memory.
+- **Token-efficient by design** — Engram stores curated summaries, decisions, and session handoffs instead of a noisy firehose of raw tool calls. Optional prompt capture is a separate local Diagnostic facility, disabled by default and excluded from Recall.
 - **Compaction survival** — Pi's host lifecycle capture can retain a recovery summary, while the agent continues the same root turn and commits its terminal disposition only after work settles.
 - **Simple Pi setup** — install the Pi package, install the MCP adapter, run `pi-engram init`, restart Pi.
 - **Built in public** — Engram is developed as an open-source, hands-on agentic-coding tool rather than a toy demo.
@@ -73,7 +73,10 @@ Engram does not try to make the model read everything. Its default protocol sele
   <img width="380" alt="Engram search results" src="https://raw.githubusercontent.com/yersonargotev/engram/main/assets/tui-search.png" />
 </p>
 
-Engram includes a terminal UI for browsing sessions, observations, prompts, projects, timelines, and search results. Engram Cloud adds browser visibility for shared project memory.
+Engram includes a terminal UI for browsing sessions, observations, projects,
+timelines, and Memory search results. Diagnostic prompt content and the frozen
+Legacy prompt archive are not ordinary browsing surfaces. Engram Cloud adds
+browser visibility for shared project Memory.
 
 ## Quick start
 
@@ -91,7 +94,7 @@ Restart Pi after installation, then ask Pi what it remembers about the current p
 
 | Path         | Purpose                                                                                                                                |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Pi extension | Captures prompts/session events, injects the Terminal Memory policy, and exposes the five default Pi-native Memory tools.             |
+| Pi extension | Reports session events, injects the Terminal Memory policy, exposes the five default Pi-native Memory tools, and offers prompts only to the explicit default-off local Diagnostic consent gate. |
 | MCP tools    | Keeps Engram's MCP surface available through `pi-mcp-adapter` for clients and flows that use MCP directly.                             |
 
 ```text
@@ -101,7 +104,14 @@ Pi MCP tools   -> pi-mcp-adapter -> ENGRAM_BIN / engram mcp -> SQLite
 
 The default Pi-native profile exposes exactly `mem_current_project`, `mem_search`, `mem_get_observation`, `mem_checkpoint`, and `mem_checkpoint_status`. It commits one terminal disposition—`saved`, `needs_review`, or `skipped(no_durable_knowledge)`—for each settled root user turn. Current user intent, maintained source, and runtime evidence override Memory.
 
-Independent save, optional Session summary, prompt save, passive capture, review, diagnostics, and administration remain callable through the explicit specialized profile: set `ENGRAM_PI_TOOL_PROFILE=all`. Use that profile only for curation, lifecycle, capture, or operational workflows; those operations are not part of the default agent contract. MCP tools remain a separate stdio path and `engram mcp --tools=agent` uses the same five-tool default.
+Independent save, optional Session summary, consent-gated Diagnostic capture
+requests, passive capture, review, diagnostics, and administration remain
+callable through the explicit specialized profile: set
+`ENGRAM_PI_TOOL_PROFILE=all`. Diagnostic capture is disabled by default and
+never feeds Recall, context, or Memory statistics. Use that profile only for
+curation, lifecycle, capture, or operational workflows; those operations are
+not part of the default agent contract. MCP tools remain a separate stdio path
+and `engram mcp --tools=agent` uses the same five-tool default.
 
 ## Compact memory tool rendering
 
@@ -141,12 +151,14 @@ Full tool details remain available by expanding the tool output in Pi. If `gentl
 - Bug fixes, root causes, and gotchas
 - User preferences and project conventions
 - Session goals, next steps, and handoff summaries
-- Prompt context tied to meaningful saved observations
+- Optional local Diagnostic prompt capture after explicit project/content-type consent; it remains outside Memory and Recall
 - Cross-machine/team memory once a project is enrolled in Engram Cloud
 
 ## Private blocks
 
-`gentle-engram` redacts explicit private blocks before sending captured prompts, passive observations, or compaction summaries to Engram:
+`gentle-engram` redacts explicit private blocks before offering prompts to the
+default-off local Diagnostic consent gate or sending passive observations and
+compaction summaries to Engram:
 
 ```text
 <private>
@@ -225,12 +237,13 @@ The command respects `PI_CODING_AGENT_DIR`; otherwise it writes to `~/.pi/agent`
 
 ## Project detection
 
-Pi event capture and Pi-native tools consume one configured Engram HTTP provider.
+Pi lifecycle events, default-off Diagnostic capture requests, and Pi-native
+tools consume one configured Engram HTTP provider.
 Terminal commits use `POST /checkpoints` and `GET /checkpoints/status`; Recall and
 write authority consume Engram core's `/project/current` classification from that
 same provider. `config` and `git_remote` are strong automatic identities;
 `git_root`, `git_child`, and `dir_basename` remain available for reads but cannot
-create sessions, prompts, or observations implicitly. A weak write reports
+create sessions, Diagnostic captures, or observations implicitly. A weak write reports
 `weak_project_identity` and asks for an explicit project. If the route is missing
 on an older running server, the adapter accepts only the nearest local
 `.engram/config.json` as a strong compatibility fallback and returns a

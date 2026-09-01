@@ -11,7 +11,7 @@
 | **Persistent memory for agents** | Agents normally use `mem_checkpoint` for one Terminal Memory commit; specialized curation and lifecycle operations remain separate in `internal/mcp`. |
 | **Local-first** | `internal/store` persists to SQLite; interfaces read/write there first. |
 | **A Go binary** | `cmd/engram` composes store, server, MCP, TUI, setup, sync, and cloud. |
-| **SQLite + FTS5** | `internal/store/store.go` defines sessions, observations, prompts, FTS, dedupe, topic upserts, and soft deletes. |
+| **SQLite + FTS5** | `internal/store/store.go` defines sessions, Memory observations, FTS, dedupe, topic upserts, and soft deletes; local Diagnostic capture is isolated from Memory search. |
 | **Agent-agnostic** | Integrations go through MCP, manual MCP configuration, or thin plugins in `plugin/`; `internal/setup` covers only the automated flows that are implemented. |
 | **Optional cloud** | `engram cloud serve` exposes sync transport, dashboard, and auth, but does not replace the local store. |
 | **Documented by current behavior** | `DOCS.md`, `docs/ARCHITECTURE.md`, `docs/AGENT-SETUP.md`, `docs/PLUGINS.md`, and `docs/engram-cloud/*` are living references. |
@@ -44,7 +44,8 @@ cmd/engram
         │
         ▼
 internal/store
-  SQLite + FTS5 + sessions + observations + prompts + relations + sync mutations
+  SQLite + FTS5 + sessions + observations + relations + sync mutations
+  isolated local Diagnostic capture + frozen Legacy prompt archive
         │
         ├── internal/sync                   git-friendly chunks / transport
         └── internal/cloud/autosync         optional background push/pull
@@ -99,6 +100,11 @@ Boundary tests before verbal confidence.
 ```
 
 Engram stays healthy when each package does one clear thing and every surface tells the same story: **an agent saves curated memories, local SQLite preserves them, and cloud only replicates or makes them visible when the user explicitly chooses it**.
+
+Raw Content is a separate privacy domain. Prompt capture is disabled by default
+and requires explicit local consent scoped by project and content type, with an
+optional expiring session grant. Setup and status may report capability and
+consent metadata, but they do not enable capture or read captured content.
 
 ---
 

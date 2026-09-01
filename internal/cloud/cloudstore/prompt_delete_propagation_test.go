@@ -102,50 +102,15 @@ func promptListedOnDashboard(t *testing.T, transport *captureTransport, project,
 	return false
 }
 
-// TestPromptDeletePropagatesFromLocalStoreToDashboard is the end-to-end check for
-// #837: save a prompt, sync it, delete it locally, sync again, and confirm the
-// dashboard stops listing it. It runs the real local store and the real cloud
-// exporter; only the network is replaced, and the cloud side is driven through
-// the same materialization and dashboard read model a Postgres deployment uses.
-func TestPromptDeletePropagatesFromLocalStoreToDashboard(t *testing.T) {
-	const project = "proj-e2e-prompt-delete"
-	const promptContent = "delete me after sync"
-
-	local := newPropagationTestStore(t)
+func TestHistoricalPromptNeverAppearsOnCurrentDashboard(t *testing.T) {
+	const project = "proj-e2e-prompt-freeze"
+	const promptContent = "historical prompt must stay private"
 	transport := newCaptureTransport()
-	syncer := engramsync.NewCloudWithTransport(local, transport, project)
-
-	if err := local.EnrollProject(project); err != nil {
-		t.Fatalf("enroll project: %v", err)
-	}
-	if err := local.CreateSession("sess-e2e", project, "/tmp/"+project); err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	promptID, err := local.AddPrompt(store.AddPromptParams{SessionID: "sess-e2e", Content: promptContent, Project: project})
-	if err != nil {
-		t.Fatalf("add prompt: %v", err)
-	}
-
-	if result, err := syncer.Export("dev", project); err != nil {
-		t.Fatalf("first export: %v", err)
-	} else if result.IsEmpty {
-		t.Fatal("expected the first export to upload the prompt")
-	}
-	if !promptListedOnDashboard(t, transport, project, promptContent) {
-		t.Fatal("expected the synced prompt to be listed on the dashboard before deletion")
-	}
-
-	if err := local.DeletePrompt(promptID); err != nil {
-		t.Fatalf("delete prompt: %v", err)
-	}
-	if result, err := syncer.Export("dev", project); err != nil {
-		t.Fatalf("second export: %v", err)
-	} else if result.IsEmpty {
-		t.Fatal("expected the second export to upload the prompt delete")
-	}
-
+	payload := []byte(`{"sessions":[{"id":"sess-e2e","project":"proj-e2e-prompt-freeze"}],"prompts":[{"sync_id":"legacy-1","session_id":"sess-e2e","project":"proj-e2e-prompt-freeze","content":"historical prompt must stay private"}]}`)
+	transport.manifest.Chunks = append(transport.manifest.Chunks, engramsync.ChunkEntry{ID: "legacy-chunk"})
+	transport.chunks["legacy-chunk"] = payload
 	if promptListedOnDashboard(t, transport, project, promptContent) {
-		t.Fatal("deleted prompt is still listed on the dashboard after syncing the delete")
+		t.Fatal("historical Legacy prompt appeared on current dashboard")
 	}
 }
 

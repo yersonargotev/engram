@@ -116,6 +116,18 @@ func (s *fakeLocalStore) ApplyPulledMutation(_ string, mutation store.SyncMutati
 		return s.pullErr
 	}
 	s.appliedMuts = append(s.appliedMuts, mutation)
+	if mutation.Seq > s.syncState.LastPulledSeq {
+		s.syncState.LastPulledSeq = mutation.Seq
+	}
+	return nil
+}
+
+func (s *fakeLocalStore) AdvancePulledCursor(_ string, seq int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if seq > s.syncState.LastPulledSeq {
+		s.syncState.LastPulledSeq = seq
+	}
 	return nil
 }
 
@@ -186,6 +198,8 @@ type fakeCloudTransport struct {
 	pushResult          *PushMutationsResult
 	pushHook            func(string)
 	pullResult          *PullMutationsResponse
+	pullResultsBySince  map[int64]*PullMutationsResponse
+	pullSince           []int64
 	pushed              [][]MutationEntry
 	attempted           [][]MutationEntry
 }
@@ -229,14 +243,95 @@ func (t *fakeCloudTransport) PushMutations(mutations []MutationEntry) (*PushMuta
 	return t.pushResult, nil
 }
 
-func (t *fakeCloudTransport) PullMutations(_ int64, _ int) (*PullMutationsResponse, error) {
+func (t *fakeCloudTransport) PullMutations(sinceSeq int64, _ int) (*PullMutationsResponse, error) {
 	atomic.AddInt32(&t.pullCalls, 1)
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.pullSince = append(t.pullSince, sinceSeq)
 	if t.pullErr != nil {
 		return nil, t.pullErr
 	}
+	if result, ok := t.pullResultsBySince[sinceSeq]; ok {
+		return result, nil
+	}
 	return t.pullResult, nil
+}
+
+func TestPullPersistsTerminalCursorWhenPageContainsOnlyFilteredHistory(t *testing.T) {
+	ls := newFakeLocalStore()
+	tr := newFakeTransport()
+	tr.pullResult = &PullMutationsResponse{
+		Mutations: []PulledMutation{},
+		HasMore:   false,
+		LatestSeq: 212,
+	}
+	mgr := New(ls, tr, DefaultConfig())
+
+	if err := mgr.pull(context.Background()); err != nil {
+		t.Fatalf("first pull: %v", err)
+	}
+	if err := mgr.pull(context.Background()); err != nil {
+		t.Fatalf("second pull: %v", err)
+	}
+
+	tr.mu.Lock()
+	pullSince := append([]int64(nil), tr.pullSince...)
+	tr.mu.Unlock()
+	if fmt.Sprint(pullSince) != "[0 212]" {
+		t.Fatalf("pull cursors = %v, want [0 212] so filtered history is not rescanned", pullSince)
+	}
+	ls.mu.Lock()
+	lastPulledSeq := ls.syncState.LastPulledSeq
+	ls.mu.Unlock()
+	if lastPulledSeq != 212 {
+		t.Fatalf("persisted cursor = %d, want 212", lastPulledSeq)
+	}
+}
+
+func TestPullConsumesHasMoreContinuationCursor(t *testing.T) {
+	ls := newFakeLocalStore()
+	tr := newFakeTransport()
+	tr.pullResultsBySince = map[int64]*PullMutationsResponse{
+		0:   {Mutations: []PulledMutation{}, HasMore: true, LatestSeq: 101},
+		101: {Mutations: []PulledMutation{}, HasMore: false, LatestSeq: 150},
+	}
+
+	if err := New(ls, tr, DefaultConfig()).pull(context.Background()); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	tr.mu.Lock()
+	pullSince := append([]int64(nil), tr.pullSince...)
+	tr.mu.Unlock()
+	if fmt.Sprint(pullSince) != "[0 101]" {
+		t.Fatalf("pull cursors = %v, want [0 101]", pullSince)
+	}
+	ls.mu.Lock()
+	lastPulledSeq := ls.syncState.LastPulledSeq
+	ls.mu.Unlock()
+	if lastPulledSeq != 150 {
+		t.Fatalf("persisted cursor = %d, want terminal latest 150", lastPulledSeq)
+	}
+}
+
+func TestPullDoesNotRegressCursorToAuthoritativeLatestBelowSince(t *testing.T) {
+	ls := newFakeLocalStore()
+	ls.syncState.LastPulledSeq = 100
+	tr := newFakeTransport()
+	tr.pullResult = &PullMutationsResponse{
+		Mutations: []PulledMutation{},
+		HasMore:   false,
+		LatestSeq: 50,
+	}
+
+	if err := New(ls, tr, DefaultConfig()).pull(context.Background()); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	ls.mu.Lock()
+	lastPulledSeq := ls.syncState.LastPulledSeq
+	ls.mu.Unlock()
+	if lastPulledSeq != 100 {
+		t.Fatalf("persisted cursor regressed to %d, want 100", lastPulledSeq)
+	}
 }
 
 func attemptedProjects(t *fakeCloudTransport) []string {

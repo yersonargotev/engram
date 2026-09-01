@@ -152,7 +152,7 @@ selection, or `--tools=all`:
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | **agent**              | Five-tool Recall and terminal-checkpoint surface                                                                  |
 | **curation**           | Independent save/update, optional Session summary, context, review, relations, diagnosis, and pins               |
-| **lifecycle**          | Host session start/end, prompt save, and passive Content capture                                                  |
+| **lifecycle**          | Host session start/end, consent-gated Diagnostic Content capture, and passive Content capture                     |
 | **admin**              | Delete, statistics, timeline, and project merge                                                                   |
 | **all**                | All 24 tools for compatibility and deliberate broad integrations                                                  |
 
@@ -408,8 +408,12 @@ Your production engram is fully untouched throughout.
 | `engram suggest-topic-key [inputs]`        | Suggest a stable topic key without writing                      |
 | `engram delete <obs_id>`                   | Delete an observation (soft by default; `--hard` removes permanently) |
 | `engram delete session <id>`               | Delete a session by ID (must have no observations)                    |
-| `engram delete prompt <id>`                | Delete a prompt by ID (permanent)                                     |
-| `engram delete project <name> [--hard]`    | Cascade-delete a project and its local review data; soft-deletes observations by default (`--hard` also removes sessions) |
+| `engram capture status --project <name> --type prompt` | Inspect local Diagnostic capture capability and consent without reading captured content |
+| `engram capture enable --project <name> --type prompt` | Grant local capture consent; retention defaults to 7 days and cannot exceed 30 days |
+| `engram capture disable --project <name> --type prompt` | Revoke future capture without deleting previously captured Diagnostic content |
+| `engram capture purge --project <name> --type prompt` | Separately confirm and purge Diagnostic prompt content |
+| `engram legacy-prompts inventory\|access\|export\|purge` | Explicitly administer the frozen Legacy prompt archive |
+| `engram delete project <name> [--hard]`    | Cascade-delete project Memory and local review data while preserving the frozen Legacy prompt archive |
 | `engram timeline <obs_id>`                 | Chronological context                                           |
 | `engram context [project]`                 | Recent session context                                           |
 | `engram activation-study verify\|run\|analyze` | Verify, execute, or analyze a frozen disposable Codex activation cohort |
@@ -428,6 +432,25 @@ Your production engram is fully untouched throughout.
 | `engram version`                           | Show version                                                    |
 
 Full CLI with all flags → [docs/ARCHITECTURE.md#cli-reference](docs/ARCHITECTURE.md#cli-reference)
+
+### Private Diagnostic capture
+
+Prompt capture is disabled by default and remains local. Enabling it requires
+explicit consent scoped to a project and content type; an optional session
+grant expires. Retention is 7 days by default and at most 30 days. Status,
+enable, disable, and purge are deliberately separate, and status never reads
+captured content.
+
+Diagnostic Content is not Memory and never enters FTS/Recall/context,
+sync/cloud, ordinary export/import, Obsidian, or retired candidate/promotion flows. Existing
+prompt rows are a frozen Legacy archive with explicit inventory, access,
+export, and separately confirmed purge operations only. Host/session/root-turn
+identity continues to work even when prompt persistence is disabled.
+Use `legacy-prompts inventory --all` for a content-free archive total; content
+access and purge remain deliberately narrower. Legacy purge removes canonical
+Engram-owned journal and FTS copies in the same transaction; if customized FTS
+state could retain content, it stops without deleting anything so user-owned
+state is preserved and a partial purge is never reported as successful.
 
 ### Codex activation evaluation
 

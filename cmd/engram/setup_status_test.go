@@ -37,6 +37,17 @@ func TestCmdSetupStatusCodexJSONDoesNotInstall(t *testing.T) {
 			SchemaVersion: setup.CodexIntegrationStatusSchemaVersion,
 			Mode:          setup.CodexModeManualSkillCLI,
 			Compatibility: compatibility,
+			PromptCapture: setup.CodexPromptCaptureStatus{
+				Capability:     setup.CodexCheckReady,
+				Identity:       setup.CodexCheckMissing,
+				DefaultConsent: setup.CodexCaptureConsentDisabled,
+				CurrentConsent: setup.CodexCaptureConsentDisabled,
+				Project:        "engram",
+				ContentType:    store.CaptureContentTypePrompt,
+				Scope:          setup.CodexCaptureScopeNone,
+				RetentionDays:  store.DefaultDiagnosticRetentionDays,
+				ReasonCode:     "capture_consent_disabled",
+			},
 			Checks: []setup.CodexIntegrationCheck{
 				{
 					Capability: "engram_cli",
@@ -70,6 +81,12 @@ func TestCmdSetupStatusCodexJSONDoesNotInstall(t *testing.T) {
 	}
 	if got.Compatibility.Status != protocolcontract.CompatibilityReady || len(got.Compatibility.Axes) != 4 {
 		t.Fatalf("setup status compatibility = %#v", got.Compatibility)
+	}
+	if got.PromptCapture.Capability != setup.CodexCheckReady ||
+		got.PromptCapture.DefaultConsent != setup.CodexCaptureConsentDisabled ||
+		got.PromptCapture.CurrentConsent != setup.CodexCaptureConsentDisabled ||
+		got.PromptCapture.Project != "engram" {
+		t.Fatalf("setup prompt capture status = %#v", got.PromptCapture)
 	}
 }
 
@@ -113,7 +130,21 @@ func TestPrintCodexIntegrationStatusReportsTheFourVersionAxes(t *testing.T) {
 		protocolcontract.Declaration{Version: "0.1.6", Provenance: "plugin:def", Supported: &protocolcontract.VersionRange{Minimum: 1, Maximum: 1}},
 	)
 	stdout, stderr, recovered := captureOutputAndRecover(t, func() {
-		printCodexIntegrationStatus(setup.CodexIntegrationStatus{Mode: setup.CodexModeCheckpointReady, Compatibility: report})
+		printCodexIntegrationStatus(setup.CodexIntegrationStatus{
+			Mode:          setup.CodexModeCheckpointReady,
+			Compatibility: report,
+			Checks: []setup.CodexIntegrationCheck{{
+				Capability: "prompt_capture",
+				Status:     setup.CodexCheckReady,
+				ReasonCode: "prompt_capture_available",
+				Reason:     "Local Diagnostic prompt capture is available and disabled by default.",
+				Evidence: []setup.CodexIntegrationEvidence{
+					{Name: "identity", Value: "ready"},
+					{Name: "default_consent", Value: "disabled"},
+					{Name: "current_consent", Value: "disabled"},
+				},
+			}},
+		})
 	})
 	if recovered != nil || stderr != "" {
 		t.Fatalf("print status failed: panic=%v stderr=%q", recovered, stderr)
@@ -125,6 +156,10 @@ func TestPrintCodexIntegrationStatusReportsTheFourVersionAxes(t *testing.T) {
 		"Codex plugin: 0.1.6; Protocol 1..1; plugin:def",
 		"Protocol contract: 1; Protocol 1..1; engram-core",
 		"Protocol intersection: 1..1",
+		"prompt_capture: ready",
+		"identity: ready",
+		"default_consent: disabled",
+		"current_consent: disabled",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("human status output does not contain %q:\n%s", want, stdout)

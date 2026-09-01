@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yersonargotev/engram/internal/memoryops"
 	"github.com/yersonargotev/engram/internal/store"
 )
 
@@ -576,8 +577,8 @@ func TestValidationAndImportExportErrorsE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search prompts without q: %v", err)
 	}
-	if promptsMissingQResp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("expected 400 prompts search missing q, got %d", promptsMissingQResp.StatusCode)
+	if promptsMissingQResp.StatusCode != http.StatusGone {
+		t.Fatalf("expected 410 for retired prompt search, got %d", promptsMissingQResp.StatusCode)
 	}
 	promptsMissingQResp.Body.Close()
 
@@ -616,8 +617,8 @@ func TestValidationAndImportExportErrorsE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recent prompts: %v", err)
 	}
-	if recentPromptsResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 recent prompts, got %d", recentPromptsResp.StatusCode)
+	if recentPromptsResp.StatusCode != http.StatusGone {
+		t.Fatalf("expected 410 for retired recent prompts, got %d", recentPromptsResp.StatusCode)
 	}
 	recentPromptsResp.Body.Close()
 }
@@ -658,8 +659,8 @@ func TestCompactionContextE2EIsSessionScoped(t *testing.T) {
 
 	for _, item := range []struct{ sessionID, content string }{{"runtime-a", "prompt-a"}, {"runtime-b", "prompt-b"}} {
 		resp := postJSON(t, client, ts.URL+"/prompts", map[string]any{"session_id": item.sessionID, "content": item.content, "project": "engram"})
-		if resp.StatusCode != http.StatusCreated {
-			t.Fatalf("create %s: got %d", item.content, resp.StatusCode)
+		if resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("default-off capture %s: got %d", item.content, resp.StatusCode)
 		}
 		resp.Body.Close()
 	}
@@ -672,12 +673,12 @@ func TestCompactionContextE2EIsSessionScoped(t *testing.T) {
 		t.Fatalf("compaction context status = %d, want 200", response.StatusCode)
 	}
 	context := decodeJSON[map[string]string](t, response)["context"]
-	for _, value := range []string{"runtime-a", "prompt-a", "recent-a"} {
+	for _, value := range []string{"runtime-a", "recent-a"} {
 		if !strings.Contains(context, value) {
 			t.Errorf("context missing %q:\n%s", value, context)
 		}
 	}
-	for _, value := range []string{"runtime-b", "prompt-b", "recent-b"} {
+	for _, value := range []string{"runtime-b", "prompt-a", "prompt-b", "recent-b"} {
 		if strings.Contains(context, value) {
 			t.Errorf("context leaked %q:\n%s", value, context)
 		}
@@ -709,7 +710,7 @@ func TestCompactionContextE2EIsSessionScoped(t *testing.T) {
 		t.Fatalf("manual context status = %d, want 200", manual.StatusCode)
 	}
 	manualContext := decodeJSON[map[string]string](t, manual)["context"]
-	if !strings.Contains(manualContext, "prompt-a") || !strings.Contains(manualContext, "prompt-b") ||
+	if strings.Contains(manualContext, "prompt-a") || strings.Contains(manualContext, "prompt-b") ||
 		!strings.Contains(manualContext, "recent-a") || !strings.Contains(manualContext, "recent-b") {
 		t.Fatalf("manual project context must remain project-scoped:\n%s", manualContext)
 	}
@@ -733,10 +734,13 @@ func TestPromptAndObservationMutationHandlersE2E(t *testing.T) {
 		"content":    "How to fix auth panic?",
 		"project":    "engram",
 	})
-	if addPrompt.StatusCode != http.StatusCreated {
-		t.Fatalf("expected 201 adding prompt, got %d", addPrompt.StatusCode)
+	if addPrompt.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202 evaluating default-off capture, got %d", addPrompt.StatusCode)
 	}
-	addPrompt.Body.Close()
+	addPromptBody := decodeJSON[map[string]any](t, addPrompt)
+	if addPromptBody["captured"] != false || addPromptBody["reason_code"] != memoryops.CaptureReasonConsentDisabled {
+		t.Fatalf("unexpected capture response: %v", addPromptBody)
+	}
 
 	addPromptMissing := postJSON(t, client, ts.URL+"/prompts", map[string]any{
 		"session_id": "s-mutate",
@@ -750,13 +754,10 @@ func TestPromptAndObservationMutationHandlersE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search prompts: %v", err)
 	}
-	if searchPromptResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 searching prompts, got %d", searchPromptResp.StatusCode)
+	if searchPromptResp.StatusCode != http.StatusGone {
+		t.Fatalf("expected 410 for retired prompt search, got %d", searchPromptResp.StatusCode)
 	}
-	prompts := decodeJSON[[]map[string]any](t, searchPromptResp)
-	if len(prompts) == 0 {
-		t.Fatalf("expected prompt search results")
-	}
+	searchPromptResp.Body.Close()
 
 	obs := postJSON(t, client, ts.URL+"/observations", map[string]any{
 		"session_id": "s-mutate",
@@ -849,6 +850,48 @@ func TestPromptAndObservationMutationHandlersE2E(t *testing.T) {
 	timelineBadIDResp.Body.Close()
 }
 
+func TestPromptCaptureWithConsentE2E(t *testing.T) {
+	s, ts := newE2EServer(t)
+	client := ts.Client()
+	if _, err := memoryops.New(s).EnableCapture(memoryops.CaptureEnableInput{
+		Project: "engram", ContentType: store.CaptureContentTypePrompt,
+	}); err != nil {
+		t.Fatalf("enable capture: %v", err)
+	}
+	create := postJSON(t, client, ts.URL+"/sessions", map[string]any{
+		"id": "s-consented-capture", "project": "engram",
+	})
+	if create.StatusCode != http.StatusCreated {
+		t.Fatalf("create session status=%d", create.StatusCode)
+	}
+	create.Body.Close()
+
+	const sentinel = "E2E-CONSENTED-PROMPT-MUST-NOT-LEAK"
+	response := postJSON(t, client, ts.URL+"/prompts", map[string]any{
+		"session_id": "s-consented-capture", "project": "engram", "content": sentinel,
+	})
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("capture status=%d, want 201", response.StatusCode)
+	}
+	body := decodeJSON[map[string]any](t, response)
+	if body["captured"] != true || body["reason_code"] != memoryops.CaptureReasonCaptured || body["expires_at"] == nil {
+		t.Fatalf("capture metadata=%v", body)
+	}
+	if encoded, err := json.Marshal(body); err != nil || strings.Contains(string(encoded), sentinel) {
+		t.Fatalf("capture response leaked content: %s err=%v", encoded, err)
+	}
+	var diagnosticCount, legacyCount int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM diagnostic_captures WHERE content = ?`, sentinel).Scan(&diagnosticCount); err != nil {
+		t.Fatalf("count Diagnostic capture: %v", err)
+	}
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM user_prompts`).Scan(&legacyCount); err != nil {
+		t.Fatalf("count Legacy prompts: %v", err)
+	}
+	if diagnosticCount != 1 || legacyCount != 0 {
+		t.Fatalf("capture boundary Diagnostic=%d Legacy=%d", diagnosticCount, legacyCount)
+	}
+}
+
 func TestServerHandlersReturn500WhenStoreClosed(t *testing.T) {
 	s, ts := newE2EServer(t)
 	client := ts.Client()
@@ -880,8 +923,8 @@ func TestServerHandlersReturn500WhenStoreClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recent prompts closed store: %v", err)
 	}
-	if recentPromptsResp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("expected 500 recent prompts with closed store, got %d", recentPromptsResp.StatusCode)
+	if recentPromptsResp.StatusCode != http.StatusGone {
+		t.Fatalf("expected 410 recent prompts independent of store state, got %d", recentPromptsResp.StatusCode)
 	}
 	recentPromptsResp.Body.Close()
 
@@ -889,8 +932,8 @@ func TestServerHandlersReturn500WhenStoreClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search prompts closed store: %v", err)
 	}
-	if searchPromptsResp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("expected 500 search prompts with closed store, got %d", searchPromptsResp.StatusCode)
+	if searchPromptsResp.StatusCode != http.StatusGone {
+		t.Fatalf("expected 410 prompt search independent of store state, got %d", searchPromptsResp.StatusCode)
 	}
 	searchPromptsResp.Body.Close()
 
@@ -1099,16 +1142,10 @@ func TestStoreClosedExtraServerBranchesE2E(t *testing.T) {
 	exportResp.Body.Close()
 }
 
-// TestPiPromptPersistenceE2E replays the exact wire sequence the Pi plugin's mem_save_prompt
-// issues (POST /sessions, then POST /prompts) and proves the prompt is durably persisted,
-// retrievable, and scoped to its project.
-//
-// Regression for #706: the reported symptom was a "saved" response carrying an id that resolved
-// to an unrelated entry from another project. The id was never stale — prompts are numbered from
-// user_prompts, a sequence independent of observations — so the response id must read back as the
-// prompt that was just saved, and must not resolve as an observation.
-func TestPiPromptPersistenceE2E(t *testing.T) {
-	_, ts := newE2EServer(t)
+// TestPiPromptCaptureDefaultsOffE2E replays the Pi adapter's POST sequence and
+// proves Core evaluates it without writing or exposing the raw prompt.
+func TestPiPromptCaptureDefaultsOffE2E(t *testing.T) {
+	s, ts := newE2EServer(t)
 	client := ts.Client()
 
 	const (
@@ -1157,99 +1194,37 @@ func TestPiPromptPersistenceE2E(t *testing.T) {
 		"content":    promptContent,
 		"project":    targetProject,
 	})
-	if promptResp.StatusCode != http.StatusCreated {
-		t.Fatalf("expected 201 creating prompt, got %d", promptResp.StatusCode)
+	if promptResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202 evaluating default-off capture, got %d", promptResp.StatusCode)
 	}
 	created := decodeJSON[map[string]any](t, promptResp)
-	if created["status"] != "saved" {
-		t.Fatalf("expected saved status, got %v", created["status"])
+	if created["captured"] != false || created["reason_code"] != memoryops.CaptureReasonConsentDisabled {
+		t.Fatalf("unexpected capture metadata: %v", created)
 	}
-	promptID, ok := created["id"].(float64)
-	if !ok || promptID <= 0 {
-		t.Fatalf("expected a positive prompt id, got %v", created["id"])
+	if encoded, err := json.Marshal(created); err != nil || strings.Contains(string(encoded), promptContent) {
+		t.Fatalf("capture response leaked prompt content: %s err=%v", encoded, err)
 	}
-
-	// The prompt is retrievable under its own project, and the returned id resolves to the
-	// content that was just written — not to some pre-existing row.
-	recentResp, err := client.Get(ts.URL + "/prompts/recent?project=" + targetProject)
-	if err != nil {
-		t.Fatalf("recent prompts: %v", err)
+	var diagnosticCount, legacyCount int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM diagnostic_captures`).Scan(&diagnosticCount); err != nil {
+		t.Fatalf("count Diagnostic captures: %v", err)
 	}
-	if recentResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 recent prompts, got %d", recentResp.StatusCode)
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM user_prompts`).Scan(&legacyCount); err != nil {
+		t.Fatalf("count Legacy prompts: %v", err)
 	}
-	recent := decodeJSON[[]store.Prompt](t, recentResp)
-	var saved *store.Prompt
-	for i := range recent {
-		if recent[i].ID == int64(promptID) {
-			saved = &recent[i]
-			break
-		}
+	if diagnosticCount != 0 || legacyCount != 0 {
+		t.Fatalf("default-off capture wrote Diagnostic=%d Legacy=%d", diagnosticCount, legacyCount)
 	}
-	if saved == nil {
-		t.Fatalf("prompt id %d not retrievable from /prompts/recent for project %q (got %d prompts)", int64(promptID), targetProject, len(recent))
-	}
-	if saved.Content != promptContent {
-		t.Fatalf("prompt id %d resolved to unexpected content %q", int64(promptID), saved.Content)
-	}
-	if saved.Project != targetProject {
-		t.Fatalf("expected prompt project %q, got %q", targetProject, saved.Project)
-	}
-	if saved.SessionID != targetSession {
-		t.Fatalf("expected prompt session %q, got %q", targetSession, saved.SessionID)
-	}
-	// A sync_id is what carries this prompt to the cloud dashboard; without it the row is local-only.
-	if strings.TrimSpace(saved.SyncID) == "" {
-		t.Fatalf("expected prompt %d to carry a sync_id for cloud replication", int64(promptID))
-	}
-
-	// Project scoping: another project must not see this prompt.
-	otherResp, err := client.Get(ts.URL + "/prompts/recent?project=" + otherProject)
-	if err != nil {
-		t.Fatalf("recent prompts other project: %v", err)
-	}
-	if otherResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 recent prompts for other project, got %d", otherResp.StatusCode)
-	}
-	for _, p := range decodeJSON[[]store.Prompt](t, otherResp) {
-		if p.ID == int64(promptID) {
-			t.Fatalf("prompt %d leaked into project %q", int64(promptID), otherProject)
-		}
-	}
-
-	// Search is the other retrieval surface the dashboard and agents use.
-	searchResp, err := client.Get(ts.URL + "/prompts/search?q=rotation&project=" + targetProject + "&limit=5")
-	if err != nil {
-		t.Fatalf("search prompts: %v", err)
-	}
-	if searchResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 searching prompts, got %d", searchResp.StatusCode)
-	}
-	found := false
-	for _, p := range decodeJSON[[]store.Prompt](t, searchResp) {
-		if p.ID == int64(promptID) {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("prompt %d not found via /prompts/search", int64(promptID))
-	}
-
-	// The disambiguation #706 asked for: the prompt id is not an observation id. Reading it as one
-	// must never answer with this prompt's content.
-	obsLookup, err := client.Get(ts.URL + "/observations/" + strconv.FormatInt(int64(promptID), 10))
-	if err != nil {
-		t.Fatalf("observation lookup: %v", err)
-	}
-	defer obsLookup.Body.Close()
-	if obsLookup.StatusCode == http.StatusOK {
-		raw, err := io.ReadAll(obsLookup.Body)
+	for _, path := range []string{
+		"/prompts/recent?project=" + targetProject,
+		"/prompts/search?q=rotation&project=" + targetProject,
+	} {
+		response, err := client.Get(ts.URL + path)
 		if err != nil {
-			t.Fatalf("read observation lookup: %v", err)
+			t.Fatalf("GET %s: %v", path, err)
 		}
-		if strings.Contains(string(raw), promptContent) {
-			t.Fatalf("prompt id %d resolved to an observation carrying the prompt content", int64(promptID))
+		response.Body.Close()
+		if response.StatusCode != http.StatusGone {
+			t.Fatalf("GET %s status=%d, want 410", path, response.StatusCode)
 		}
 	}
 }

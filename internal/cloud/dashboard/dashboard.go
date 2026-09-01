@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a-h/templ"
 	"github.com/yersonargotev/engram/internal/cloud/cloudstore"
 	"github.com/yersonargotev/engram/internal/cloud/constants"
-	"github.com/a-h/templ"
 )
 
 type SyncStatus struct {
@@ -128,7 +128,7 @@ func Mount(mux *http.ServeMux, cfg MountConfig) {
 	mux.HandleFunc("GET /dashboard/browser/observations", h.requireSession(h.handleBrowserObservations))
 	mux.HandleFunc("GET /dashboard/browser/sessions", h.requireSession(h.handleBrowserSessions))
 	mux.HandleFunc("GET /dashboard/browser/sessions/{sessionID}", h.requireSession(h.handleBrowserSessionDetail))
-	mux.HandleFunc("GET /dashboard/browser/prompts", h.requireSession(h.handleBrowserPrompts))
+	mux.HandleFunc("GET /dashboard/browser/prompts", h.requireSession(h.handleLegacyPromptGone))
 	mux.HandleFunc("GET /dashboard/projects", h.requireSession(h.handleProjects))
 	mux.HandleFunc("GET /dashboard/projects/{project}", h.requireSession(h.handleProjectDetail))
 	mux.HandleFunc("GET /dashboard/contributors", h.requireSession(h.handleContributors))
@@ -143,7 +143,7 @@ func Mount(mux *http.ServeMux, cfg MountConfig) {
 	mux.HandleFunc("GET /dashboard/projects/list", h.requireSession(h.handleProjectsList))
 	mux.HandleFunc("GET /dashboard/projects/{name}/observations", h.requireSession(h.handleProjectObservationsPartial))
 	mux.HandleFunc("GET /dashboard/projects/{name}/sessions", h.requireSession(h.handleProjectSessionsPartial))
-	mux.HandleFunc("GET /dashboard/projects/{name}/prompts", h.requireSession(h.handleProjectPromptsPartial))
+	mux.HandleFunc("GET /dashboard/projects/{name}/prompts", h.requireSession(h.handleLegacyPromptGone))
 	mux.HandleFunc("GET /dashboard/admin/users", h.requireSession(h.handleAdminUsers))
 	mux.HandleFunc("GET /dashboard/admin/users/list", h.requireSession(h.handleAdminUsersList))
 	mux.HandleFunc("GET /dashboard/admin/health", h.requireSession(h.handleAdminHealth))
@@ -151,11 +151,22 @@ func Mount(mux *http.ServeMux, cfg MountConfig) {
 	mux.HandleFunc("GET /dashboard/admin/projects/{name}/sync/form", h.requireSession(h.handleAdminSyncToggleForm))
 	mux.HandleFunc("GET /dashboard/sessions/{project}/{sessionID}", h.requireSession(h.handleSessionDetail))
 	mux.HandleFunc("GET /dashboard/observations/{project}/{sessionID}/{syncID}", h.requireSession(h.handleObservationDetail))
-	mux.HandleFunc("GET /dashboard/prompts/{project}/{sessionID}/{syncID}", h.requireSession(h.handlePromptDetail))
+	mux.HandleFunc("GET /dashboard/prompts/{project}/{sessionID}/{syncID}", h.requireSession(h.handleLegacyPromptGone))
 
 	// Audit log routes — admin-gated (REQ-408, REQ-409).
 	mux.HandleFunc("GET /dashboard/admin/audit-log", h.requireSession(h.handleAdminAuditLog))
 	mux.HandleFunc("GET /dashboard/admin/audit-log/list", h.requireSession(h.handleAdminAuditLogList))
+}
+
+func (h *handlers) handleLegacyPromptGone(w http.ResponseWriter, r *http.Request) {
+	p := h.principalFromRequest(r)
+	renderComponentStatus(w, r, http.StatusGone, Layout(
+		"Legacy Prompt Archive",
+		p.DisplayName(),
+		"browser",
+		p.IsAdmin(),
+		EmptyState("Legacy Prompt Archive", "Prompt content is no longer available through the ordinary cloud dashboard."),
+	))
 }
 
 func Handler() http.Handler {

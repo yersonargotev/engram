@@ -105,6 +105,12 @@ interface PromptBody {
   project: string;
 }
 
+interface CaptureResponse {
+  captured: boolean;
+  reason_code: string;
+  expires_at?: string;
+}
+
 interface PassiveCaptureBody {
   session_id: string;
   content: string;
@@ -784,7 +790,7 @@ const MEMORY_TOOL_SCHEMAS: Record<string, ReturnType<typeof Type.Object>> = {
     scope: optionalString("Scope: project or personal"),
     topic_key: optionalString("Stable topic key for upserts"),
     project: optionalString("Optional explicit project"),
-    capture_prompt: optionalBoolean("Capture current prompt when available"),
+    capture_prompt: optionalBoolean("Request Diagnostic capture of the current prompt when available and separately consented (default: false)"),
   }),
   mem_update: Type.Object({
     id: Type.Number({ description: "Observation ID to update" }),
@@ -1015,11 +1021,11 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
       if (!requestedProject) requireWriteProject();
       const promptSessionId = runtimeSessionForWrite();
       await ensureSession(promptSessionId, activeProject);
-      const response = await engramFetch<{ id: number }>("/prompts", {
+      const response = await engramFetch<CaptureResponse>("/prompts", {
         method: "POST",
         body: { session_id: promptSessionId, content: params.content, project: activeProject },
       });
-      return response ? { prompt_id: response.id, status: "saved" } : response;
+      return response;
     }
     case "mem_session_summary": {
       if (!requestedProject) requireWriteProject();

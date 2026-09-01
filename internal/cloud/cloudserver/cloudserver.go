@@ -432,6 +432,11 @@ func (s *CloudServer) handlePullManifest(w http.ResponseWriter, r *http.Request)
 		http.Error(w, fmt.Sprintf("read manifest: %v", err), http.StatusInternalServerError)
 		return
 	}
+	if manifest != nil {
+		for i := range manifest.Chunks {
+			manifest.Chunks[i].Prompts = 0
+		}
+	}
 	jsonResponse(w, http.StatusOK, manifest)
 }
 
@@ -455,6 +460,11 @@ func (s *CloudServer) handlePullChunk(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, fmt.Sprintf("read chunk: %v", err), http.StatusInternalServerError)
+		return
+	}
+	chunk, err = chunkcodec.RedactLocalOnlyContent(chunk)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("read chunk: redact local-only content: %v", err), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -88,8 +88,7 @@ func TestChunkPushMaterializesMutationsForAutosyncPull(t *testing.T) {
 		"created_by":"tester",
 		"data":{
 			"sessions":[{"id":"s-1","directory":"/tmp/s-1","started_at":"2026-04-29T10:00:00Z"}],
-			"observations":[{"sync_id":"obs-1","session_id":"s-1","type":"decision","title":"Decision","content":"Content","scope":"project","created_at":"2026-04-29T10:01:00Z","updated_at":"2026-04-29T10:01:00Z"}],
-			"prompts":[{"sync_id":"prompt-1","session_id":"s-1","content":"Prompt","created_at":"2026-04-29T10:02:00Z"}]
+			"observations":[{"sync_id":"obs-1","session_id":"s-1","type":"decision","title":"Decision","content":"Content","scope":"project","created_at":"2026-04-29T10:01:00Z","updated_at":"2026-04-29T10:01:00Z"}]
 		}
 	}`)
 
@@ -104,11 +103,11 @@ func TestChunkPushMaterializesMutationsForAutosyncPull(t *testing.T) {
 	if len(ms.chunks) != 1 {
 		t.Fatalf("expected one stored chunk, got %d", len(ms.chunks))
 	}
-	if len(ms.mutations) != 3 {
-		t.Fatalf("expected 3 materialized mutations, got %d: %+v", len(ms.mutations), ms.mutations)
+	if len(ms.mutations) != 2 {
+		t.Fatalf("expected 2 ordinary materialized mutations, got %d: %+v", len(ms.mutations), ms.mutations)
 	}
-	if ms.mutations[0].Entity != store.SyncEntitySession || ms.mutations[1].Entity != store.SyncEntityObservation || ms.mutations[2].Entity != store.SyncEntityPrompt {
-		t.Fatalf("expected session/observation/prompt order, got %+v", ms.mutations)
+	if ms.mutations[0].Entity != store.SyncEntitySession || ms.mutations[1].Entity != store.SyncEntityObservation {
+		t.Fatalf("expected session/observation order, got %+v", ms.mutations)
 	}
 	if ms.mutations[1].Project != "proj-a" || ms.mutations[1].EntityKey != "obs-1" || ms.mutations[1].Op != store.SyncOpUpsert {
 		t.Fatalf("unexpected materialized observation mutation: %+v", ms.mutations[1])
@@ -127,7 +126,7 @@ func TestChunkPushMaterializesMutationsForAutosyncPull(t *testing.T) {
 	if err := json.NewDecoder(pullRec.Body).Decode(&pulled); err != nil {
 		t.Fatalf("decode pull response: %v", err)
 	}
-	if len(pulled.Mutations) != 3 || pulled.Mutations[1].Entity != store.SyncEntityObservation || pulled.Mutations[1].EntityKey != "obs-1" {
+	if len(pulled.Mutations) != 2 || pulled.Mutations[1].Entity != store.SyncEntityObservation || pulled.Mutations[1].EntityKey != "obs-1" {
 		t.Fatalf("expected pulled observation mutation after chunk push, got %+v", pulled.Mutations)
 	}
 }
@@ -195,15 +194,19 @@ func (s *fakeMutationStore) ListMutationsSince(ctx context.Context, sinceSeq int
 	// allowedProjects == nil means no enrollment filter; non-nil (even empty) means filter by enrollment.
 	useFilter := allowedProjects != nil
 	var all []StoredMutation
+	latestSeq := int64(0)
 	for i, m := range s.mutations {
 		seq := int64(i + 1)
-		if seq <= sinceSeq {
-			continue
-		}
 		if useFilter {
 			if _, ok := allowed[m.Project]; !ok {
 				continue
 			}
+		}
+		if seq > latestSeq {
+			latestSeq = seq
+		}
+		if seq <= sinceSeq {
+			continue
 		}
 		all = append(all, StoredMutation{
 			Seq:        seq,
@@ -217,12 +220,9 @@ func (s *fakeMutationStore) ListMutationsSince(ctx context.Context, sinceSeq int
 	}
 
 	hasMore := false
-	latestSeq := int64(0)
 	if len(all) > limit {
 		all = all[:limit]
 		hasMore = true
-	}
-	if len(all) > 0 {
 		latestSeq = all[len(all)-1].Seq
 	}
 	return all, hasMore, latestSeq, nil
@@ -413,6 +413,35 @@ func TestMutationPullEndpointSinceSeq(t *testing.T) {
 	}
 }
 
+func TestMutationPullFiltersHistoricalLocalOnlyEntities(t *testing.T) {
+	ms := newFakeMutationStore()
+	_, _ = ms.InsertMutationBatch(context.Background(), []MutationEntry{
+		{Project: "proj-a", Entity: store.SyncEntityPrompt, EntityKey: "legacy-1", Op: store.SyncOpUpsert, Payload: json.RawMessage(`{"content":"legacy secret"}`)},
+		{Project: "proj-a", Entity: "diagnostic_capture", EntityKey: "capture-1", Op: store.SyncOpUpsert, Payload: json.RawMessage(`{"content":"diagnostic secret"}`)},
+		{Project: "proj-a", Entity: store.SyncEntityObservation, EntityKey: "obs-1", Op: store.SyncOpUpsert, Payload: json.RawMessage(`{}`)},
+	})
+	srv := newMutationTestServer(ms, "secret", []string{"proj-a"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sync/mutations/pull?since_seq=0&limit=100", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("pull status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "legacy secret") || strings.Contains(rec.Body.String(), "diagnostic secret") {
+		t.Fatalf("mutation pull exposed local-only content: %q", rec.Body.String())
+	}
+	var body struct {
+		Mutations []StoredMutation `json:"mutations"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode pull: %v", err)
+	}
+	if len(body.Mutations) != 1 || body.Mutations[0].Entity != store.SyncEntityObservation {
+		t.Fatalf("unexpected visible mutations: %+v", body.Mutations)
+	}
+}
+
 func TestMutationPullEndpointHasMore(t *testing.T) {
 	// REQ-201: 150 mutations, limit=100 → has_more=true, 100 mutations returned
 	ms := newFakeMutationStore()
@@ -466,7 +495,7 @@ func TestMutationPullEndpointUnauth(t *testing.T) {
 func TestMutationPullEndpointBeyondLatest(t *testing.T) {
 	// REQ-201: since_seq beyond latest → empty
 	ms := newFakeMutationStore()
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 50; i++ {
 		_, _ = ms.InsertMutationBatch(context.Background(), []MutationEntry{
 			{Project: "proj-a", Entity: "obs", EntityKey: fmt.Sprintf("k%d", i), Op: "upsert", Payload: json.RawMessage(`{}`)},
 		})
@@ -485,6 +514,7 @@ func TestMutationPullEndpointBeyondLatest(t *testing.T) {
 	var resp struct {
 		Mutations []json.RawMessage `json:"mutations"`
 		HasMore   bool              `json:"has_more"`
+		LatestSeq int64             `json:"latest_seq"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -494,6 +524,9 @@ func TestMutationPullEndpointBeyondLatest(t *testing.T) {
 	}
 	if resp.HasMore {
 		t.Fatal("expected has_more=false")
+	}
+	if resp.LatestSeq != 50 {
+		t.Fatalf("latest_seq = %d, want authoritative stored seq 50", resp.LatestSeq)
 	}
 }
 

@@ -137,7 +137,7 @@ plugin/claude-code/
 3. Leaves disposition selection to the canonical skill after causal work settles.
 
 **On user prompt submit**:
-1. The hook resolves `/project/current` and persists only when `project_strength` is `strong` or `explicit`; weak identities fail closed without blocking the user prompt.
+1. The hook reports the opaque host/session/root-turn identity independently of prompt persistence. It offers prompt content only to Core's local consent gate after strong or explicit project resolution; weak identities and disabled consent fail closed without blocking the user prompt.
 2. The first prompt injects a ToolSearch instruction so Claude Code loads Engram MCP tools before responding.
 3. Later prompts may inject a save reminder if the local Engram API is fast and available.
 4. On Windows Git Bash/MSYS2, the hook uses a bash-builtin-only safe path to avoid fork-heavy helpers (`jq`, `git`, `curl`, `date`). In that mode first-prompt ToolSearch still works, but later save reminders degrade to `{}` so prompt submission stays fast.
@@ -191,7 +191,7 @@ plugin/codex/
 │   ├── _checkpoint.sh             # Extracts and renders the canonical cue
 │   ├── session-start.sh           # startup, resume, and clear
 │   ├── post-compaction.sh         # compact
-│   ├── user-prompt-submit.sh      # Prompt capture + opaque root identity
+│   ├── user-prompt-submit.sh      # Opaque root identity + consent-gated capture offer
 │   └── stop.sh                    # Unix exact-checkpoint verifier
 └── skills/memory/SKILL.md         # Canonical cue and complete rubric
 ```
@@ -206,6 +206,9 @@ policy. Codex runs them exactly once for each supported source: `startup`,
 `UserPromptSubmit` forwards Codex's `turn_id` as Engram's `root_turn_id` beside
 the session ID. It does not finalize a checkpoint. This preserves one root-turn
 identity for the root agent while tools and subagents remain internal activity.
+Identity reporting does not require prompt persistence: Diagnostic capture is
+off by default and Core evaluates any content offer against explicit local
+project/content-type consent.
 
 `Stop` delegates the complete event to
 `engram checkpoint verify-stop --host=codex`; Windows invokes that command
@@ -348,9 +351,19 @@ Old clients that read only the `result` string continue to work — these fields
 
 ### mem_save prompt capture
 
-`mem_save` accepts `capture_prompt` as an optional boolean. The default is `true`: if the same MCP process lifecycle already has the current user prompt for the same project and session, Engram best-effort stores it in `user_prompts` using exact project + session + content dedupe. Passing `capture_prompt=false` skips that prompt capture path and is intended for automated artifacts such as SDD progress saves.
+`mem_save` accepts `capture_prompt` as an optional boolean and defaults it to
+`false`. Passing `capture_prompt=true` only offers same-process prompt context
+to Core's Diagnostic capture gate. A write requires explicit local consent for
+the project and `prompt` content type; an optional session grant must have an
+expiry. Retention defaults to 7 days and cannot exceed 30 days.
 
-If no current prompt is available to the MCP process, or if best-effort prompt capture fails, `mem_save` still succeeds and no prompt is invented from the observation content. Plugins/protocol hooks that can observe user prompts must feed that prompt context before relying on automatic capture. Calling `mem_save_prompt` in the same MCP process records the prompt and makes it available to later `mem_save` calls for the same project/session; a different MCP process lifecycle does not inherit that in-memory prompt context.
+If no current prompt is available, consent is disabled, or capture fails,
+`mem_save` still succeeds and no prompt is invented from observation content.
+`mem_save_prompt` is subject to the same gate and never affects opaque root-turn
+identity. Diagnostic Content is local-only and excluded from Memory, FTS,
+Recall, context, sync/cloud, ordinary export/import, Obsidian, and retired candidate and
+Promotion. Existing `user_prompts` rows form a frozen Legacy archive accessible
+only through explicit inventory, access, export, and separately confirmed purge.
 
 ---
 

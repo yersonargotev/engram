@@ -800,6 +800,31 @@ func TestHandlerRejectsProjectOutsideTokenScope(t *testing.T) {
 	}
 }
 
+func TestPullBoundariesRedactHistoricalPromptContent(t *testing.T) {
+	st := &fakeStore{
+		manifest: engramsync.Manifest{Version: 1, Chunks: []engramsync.ChunkEntry{{ID: "legacy", Prompts: 3}}},
+		chunks: map[string][]byte{
+			"legacy": []byte(`{"sessions":[{"id":"s-1"}],"prompts":[{"content":"legacy secret"}],"mutations":[{"entity":"prompt","entity_key":"p-1","op":"upsert","payload":"{}"}]}`),
+		},
+	}
+	srv := New(st, fakeAuth{}, 0)
+
+	manifestRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(manifestRec, httptest.NewRequest(http.MethodGet, "/sync/pull?project=proj-a", nil))
+	if manifestRec.Code != http.StatusOK || strings.Contains(manifestRec.Body.String(), `"prompts":3`) {
+		t.Fatalf("manifest exposed Legacy prompt count: status=%d body=%q", manifestRec.Code, manifestRec.Body.String())
+	}
+
+	chunkRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(chunkRec, httptest.NewRequest(http.MethodGet, "/sync/pull/legacy?project=proj-a", nil))
+	if chunkRec.Code != http.StatusOK {
+		t.Fatalf("chunk pull status=%d body=%q", chunkRec.Code, chunkRec.Body.String())
+	}
+	if strings.Contains(chunkRec.Body.String(), "legacy secret") || strings.Contains(chunkRec.Body.String(), `"entity":"prompt"`) {
+		t.Fatalf("chunk pull exposed Legacy prompt content: %q", chunkRec.Body.String())
+	}
+}
+
 func TestHandlerEnforcesProjectAllowlistWithoutBearerAuth(t *testing.T) {
 	srv := New(&fakeStore{}, nil, 0, WithProjectAuthorizer(fakeAuth{projectErr: errors.New("project \"proj-c\" is not allowed for this token (allowed: proj-a,proj-b)")}))
 	rec := httptest.NewRecorder()
@@ -815,7 +840,7 @@ func TestHandlerEnforcesProjectAllowlistWithoutBearerAuth(t *testing.T) {
 func TestHandlerPushRewritesEmbeddedProjectToRequestProject(t *testing.T) {
 	st := &fakeStore{}
 	srv := New(st, fakeAuth{}, 0)
-	payload := []byte(`{"sessions":[{"id":"s-1","project":"other","directory":"/tmp/s-1"}],"observations":[{"sync_id":"obs-1","session_id":"s-1","type":"decision","title":"t","content":"c","scope":"project","project":"different"}],"prompts":[{"sync_id":"prompt-1","session_id":"s-1","content":"hello","project":"third"}]}`)
+	payload := []byte(`{"sessions":[{"id":"s-1","project":"other","directory":"/tmp/s-1"}],"observations":[{"sync_id":"obs-1","session_id":"s-1","type":"decision","title":"t","content":"c","scope":"project","project":"different"}]}`)
 	normalizedPayload, err := coerceChunkProject(payload, "proj-a")
 	if err != nil {
 		t.Fatalf("coerce payload: %v", err)
@@ -836,7 +861,7 @@ func TestHandlerPushRewritesEmbeddedProjectToRequestProject(t *testing.T) {
 	if err := json.Unmarshal(st.chunks[chunkID], &got); err != nil {
 		t.Fatalf("decode stored payload: %v", err)
 	}
-	for _, key := range []string{"sessions", "observations", "prompts"} {
+	for _, key := range []string{"sessions", "observations"} {
 		items, ok := got[key].([]any)
 		if !ok || len(items) == 0 {
 			t.Fatalf("expected non-empty %s array in stored payload", key)
@@ -1066,7 +1091,7 @@ func TestHandlerPushRejectsMutationUpsertsMissingRequiredFields(t *testing.T) {
 		{
 			name:    "prompt upsert missing content",
 			payload: `{"mutations":[{"entity":"prompt","entity_key":"p-1","op":"upsert","payload":"{\"sync_id\":\"p-1\",\"session_id\":\"s-1\"}"}]}`,
-			wantErr: "prompt payload content is required for upsert",
+			wantErr: "local-only content",
 		},
 	}
 
@@ -1107,7 +1132,7 @@ func TestHandlerPushRejectsDirectChunkArraysMissingRequiredFields(t *testing.T) 
 		{
 			name:    "prompt missing content",
 			payload: `{"sessions":[{"id":"s-1","directory":"/tmp/s-1"}],"prompts":[{"sync_id":"p-1","session_id":"s-1"}]}`,
-			wantErr: "prompts[0].content is required",
+			wantErr: "local-only content",
 		},
 	}
 

@@ -553,6 +553,7 @@ type cloudExportPart struct {
 // part is durably written. An interrupted export therefore resumes from the
 // first unacknowledged mutation instead of replaying the whole ledger (#833).
 func (sy *Syncer) exportCloudMutationChunks(manifest *Manifest, knownChunks map[string]bool, locallySyncedChunks map[string]bool, chunkTargetKey, createdBy, project string, chunk *ChunkData, mutationSeqs []int64) (*SyncResult, error) {
+	chunk, mutationSeqs = excludeLegacyPromptsFromChunk(chunk, mutationSeqs)
 	if len(chunk.Sessions) == 0 && len(chunk.Observations) == 0 && len(chunk.Prompts) == 0 && len(chunk.Mutations) == 0 {
 		if len(mutationSeqs) > 0 {
 			if err := storeAckMutationSeq(sy.store, store.DefaultSyncTargetKey, mutationSeqs); err != nil {
@@ -645,6 +646,7 @@ func (sy *Syncer) exportCloudMutationChunks(manifest *Manifest, knownChunks map[
 // A single mutation whose cost exceeds maxBytes still ships alone in its own
 // part rather than being dropped.
 func splitCloudExportChunk(chunk *ChunkData, seqs []int64, maxBytes int) []cloudExportPart {
+	chunk, seqs = excludeLegacyPromptsFromChunk(chunk, seqs)
 	if chunk == nil || len(chunk.Mutations) == 0 {
 		return nil
 	}
@@ -774,6 +776,30 @@ func splitCloudExportChunk(chunk *ChunkData, seqs []int64, maxBytes int) []cloud
 	closeCurrent()
 
 	return parts
+}
+
+func excludeLegacyPromptsFromChunk(chunk *ChunkData, seqs []int64) (*ChunkData, []int64) {
+	if chunk == nil {
+		return &ChunkData{}, nil
+	}
+	filtered := *chunk
+	filtered.Prompts = nil
+	filtered.Mutations = make([]store.SyncMutation, 0, len(chunk.Mutations))
+	aligned := len(seqs) == len(chunk.Mutations)
+	filteredSeqs := make([]int64, 0, len(seqs))
+	for i, mutation := range chunk.Mutations {
+		if mutation.Entity == store.SyncEntityPrompt {
+			continue
+		}
+		filtered.Mutations = append(filtered.Mutations, mutation)
+		if aligned {
+			filteredSeqs = append(filteredSeqs, seqs[i])
+		}
+	}
+	if !aligned {
+		filteredSeqs = nil
+	}
+	return &filtered, filteredSeqs
 }
 
 func marshaledSizeForSplit(v any) int {
@@ -1035,7 +1061,12 @@ func buildImportMutations(chunk ChunkData) []store.SyncMutation {
 		return synthesizeMutationsFromChunk(chunk)
 	}
 
-	explicit := chunk.Mutations
+	explicit := make([]store.SyncMutation, 0, len(chunk.Mutations))
+	for _, mutation := range chunk.Mutations {
+		if mutation.Entity != store.SyncEntityPrompt {
+			explicit = append(explicit, mutation)
+		}
+	}
 	requiredSessionIDs := referencedSessionIDsFromMutations(explicit)
 	synthesized := synthesizeMutationsFromChunk(chunk)
 	if len(synthesized) == 0 {
@@ -1083,7 +1114,7 @@ func referencedSessionIDsFromMutations(mutations []store.SyncMutation) map[strin
 			if sessionID != "" {
 				required[sessionID] = struct{}{}
 			}
-		case store.SyncEntityObservation, store.SyncEntityPrompt:
+		case store.SyncEntityObservation:
 			var payload struct {
 				SessionID string `json:"session_id"`
 			}
@@ -1106,7 +1137,7 @@ func referencedSessionIDsFromNonSessionUpserts(mutations []store.SyncMutation) m
 			continue
 		}
 		switch mutation.Entity {
-		case store.SyncEntityObservation, store.SyncEntityPrompt:
+		case store.SyncEntityObservation:
 			var payload struct {
 				SessionID string `json:"session_id"`
 			}
@@ -1129,7 +1160,7 @@ func referencedSessionProjectsFromNonSessionUpserts(mutations []store.SyncMutati
 			continue
 		}
 		switch mutation.Entity {
-		case store.SyncEntityObservation, store.SyncEntityPrompt:
+		case store.SyncEntityObservation:
 			var payload struct {
 				SessionID string  `json:"session_id"`
 				Project   *string `json:"project"`
@@ -1206,7 +1237,7 @@ func orderMutationsForApply(mutations []store.SyncMutation) []store.SyncMutation
 }
 
 func synthesizeMutationsFromChunk(chunk ChunkData) []store.SyncMutation {
-	mutations := make([]store.SyncMutation, 0, len(chunk.Sessions)+len(chunk.Observations)+len(chunk.Prompts))
+	mutations := make([]store.SyncMutation, 0, len(chunk.Sessions)+len(chunk.Observations))
 	for _, session := range chunk.Sessions {
 		payload, err := json.Marshal(map[string]any{
 			"id":         session.ID,
@@ -1260,24 +1291,6 @@ func synthesizeMutationsFromChunk(chunk ChunkData) []store.SyncMutation {
 			Payload:   string(payload),
 		})
 	}
-	for _, prompt := range chunk.Prompts {
-		payload, err := json.Marshal(map[string]any{
-			"sync_id":    prompt.SyncID,
-			"session_id": prompt.SessionID,
-			"content":    prompt.Content,
-			"project":    prompt.Project,
-			"created_at": prompt.CreatedAt,
-		})
-		if err != nil {
-			continue
-		}
-		mutations = append(mutations, store.SyncMutation{
-			Entity:    store.SyncEntityPrompt,
-			EntityKey: strings.TrimSpace(prompt.SyncID),
-			Op:        store.SyncOpUpsert,
-			Payload:   string(payload),
-		})
-	}
 	return mutations
 }
 
@@ -1293,8 +1306,6 @@ func estimateMutationImportResult(chunk ChunkData) *store.ImportResult {
 			res.SessionsImported++
 		case store.SyncEntityObservation:
 			res.ObservationsImported++
-		case store.SyncEntityPrompt:
-			res.PromptsImported++
 		}
 	}
 	return res
@@ -1421,7 +1432,6 @@ func (sy *Syncer) filterNewData(data *store.ExportData, lastChunkTime string) *C
 		// First sync — everything is new
 		chunk.Sessions = data.Sessions
 		chunk.Observations = data.Observations
-		chunk.Prompts = data.Prompts
 		return chunk
 	}
 
@@ -1442,12 +1452,6 @@ func (sy *Syncer) filterNewData(data *store.ExportData, lastChunkTime string) *C
 		}
 	}
 
-	for _, p := range data.Prompts {
-		if normalizeTime(p.CreatedAt) > cutoff {
-			chunk.Prompts = append(chunk.Prompts, p)
-		}
-	}
-
 	return chunk
 }
 
@@ -1456,6 +1460,7 @@ func (sy *Syncer) filterNewData(data *store.ExportData, lastChunkTime string) *C
 // same project as the requested chunk.
 func filterExportDataToProjectScope(data *store.ExportData) *store.ExportData {
 	filtered := *data
+	filtered.Prompts = nil
 	filtered.Observations = make([]store.Observation, 0, len(data.Observations))
 	for _, observation := range data.Observations {
 		if observation.Scope == "project" {
@@ -1634,22 +1639,7 @@ func filterByProject(data *store.ExportData, project string) *store.ExportData {
 		}
 	}
 
-	// Step 3: prompts — match by own project OR by session
-	for _, p := range data.Prompts {
-		match := sessionIDs[p.SessionID]
-		if !match {
-			promptProject, _ := store.NormalizeProject(p.Project)
-			if promptProject == targetProject {
-				match = true
-			}
-		}
-		if match {
-			result.Prompts = append(result.Prompts, p)
-			referencedSessionIDs[p.SessionID] = true
-		}
-	}
-
-	// Step 4: include sessions that matched directly or are referenced by included entities
+	// Step 3: include sessions that matched directly or are referenced by included entities
 	for _, s := range data.Sessions {
 		if sessionIDs[s.ID] || referencedSessionIDs[s.ID] {
 			result.Sessions = append(result.Sessions, s)
@@ -1673,7 +1663,6 @@ func (sy *Syncer) filterByPendingMutations(data *store.ExportData, project strin
 	availableSessionIDs := make(map[string]struct{}, len(data.Sessions))
 	sessionProjectByID := make(map[string]string, len(data.Sessions))
 	availableObservationSyncIDs := make(map[string]struct{}, len(data.Observations))
-	availablePromptSyncIDs := make(map[string]struct{}, len(data.Prompts))
 	for _, session := range data.Sessions {
 		availableSessionIDs[session.ID] = struct{}{}
 		normalizedSessionProject, _ := store.NormalizeProject(session.Project)
@@ -1682,17 +1671,16 @@ func (sy *Syncer) filterByPendingMutations(data *store.ExportData, project strin
 	for _, observation := range data.Observations {
 		availableObservationSyncIDs[observation.SyncID] = struct{}{}
 	}
-	for _, prompt := range data.Prompts {
-		availablePromptSyncIDs[prompt.SyncID] = struct{}{}
-	}
 
 	sessionKeys := make(map[string]struct{})
 	observationSyncIDs := make(map[string]struct{})
-	promptSyncIDs := make(map[string]struct{})
 	seqs := make([]int64, 0, len(mutations))
 	selectedMutations := make([]store.SyncMutation, 0, len(mutations))
 
 	for _, mutation := range mutations {
+		if mutation.Entity == store.SyncEntityPrompt {
+			continue
+		}
 		mutationProject := resolveMutationProject(mutation, sessionProjectByID)
 		if mutationProject != project {
 			if mutationProject != "" {
@@ -1707,10 +1695,6 @@ func (sy *Syncer) filterByPendingMutations(data *store.ExportData, project strin
 				if _, ok := availableObservationSyncIDs[mutation.EntityKey]; !ok {
 					continue
 				}
-			case store.SyncEntityPrompt:
-				if _, ok := availablePromptSyncIDs[mutation.EntityKey]; !ok {
-					continue
-				}
 			default:
 				continue
 			}
@@ -1722,8 +1706,6 @@ func (sy *Syncer) filterByPendingMutations(data *store.ExportData, project strin
 			sessionKeys[mutation.EntityKey] = struct{}{}
 		case store.SyncEntityObservation:
 			observationSyncIDs[mutation.EntityKey] = struct{}{}
-		case store.SyncEntityPrompt:
-			promptSyncIDs[mutation.EntityKey] = struct{}{}
 		}
 	}
 
@@ -1739,14 +1721,6 @@ func (sy *Syncer) filterByPendingMutations(data *store.ExportData, project strin
 		}
 		chunk.Observations = append(chunk.Observations, observation)
 		referencedSessionIDs[observation.SessionID] = struct{}{}
-	}
-
-	for _, prompt := range data.Prompts {
-		if _, ok := promptSyncIDs[prompt.SyncID]; !ok {
-			continue
-		}
-		chunk.Prompts = append(chunk.Prompts, prompt)
-		referencedSessionIDs[prompt.SessionID] = struct{}{}
 	}
 
 	for _, session := range data.Sessions {

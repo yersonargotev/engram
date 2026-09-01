@@ -30,12 +30,14 @@ The cloud server MUST expose `POST /sync/mutations/push` requiring `Authorizatio
 
 ### REQ-201: Mutation pull endpoint contract
 
-The cloud server MUST expose `GET /sync/mutations/pull` requiring `Authorization: Bearer <token>`. The endpoint MUST accept query parameters `since_seq` (int, default 0) and `limit` (int, default 100, max 100). The response MUST be JSON: `{"mutations": [...], "has_more": bool, "latest_seq": int}`. When there are more mutations beyond the requested `limit`, `has_more` MUST be `true`. A missing or invalid token MUST yield HTTP 401.
+The cloud server MUST expose `GET /sync/mutations/pull` requiring `Authorization: Bearer <token>`. The endpoint MUST accept query parameters `since_seq` (int, default 0) and `limit` (int, default 100, max 100). The response MUST be JSON: `{"mutations": [...], "has_more": bool, "latest_seq": int}`. When `has_more` is `true`, `latest_seq` MUST be a safe continuation cursor past every authorized row consumed by the response, including rows omitted by current visibility policy, but MUST NOT advance past a visible lookahead mutation that was not returned. When `has_more` is `false`, `latest_seq` MUST be the newest stored sequence authorized for the caller, even when it is lower than `since_seq`. A missing or invalid token MUST yield HTTP 401.
 
 **Scenarios**:
 
 - **Happy path — pull mutations since seq**: GIVEN 10 mutations stored with seqs 1–10 and a request `since_seq=5&limit=100`, WHEN `GET /sync/mutations/pull` is called with a valid token, THEN the response contains 5 mutations (seqs 6–10), `has_more: false`, and `latest_seq: 10`.
 - **Happy path — has_more pagination**: GIVEN 150 mutations stored and a request `since_seq=0&limit=100`, WHEN `GET /sync/mutations/pull` is called, THEN `has_more: true` and the mutations array contains exactly 100 items.
+- **Edge case — bounded hidden history**: GIVEN more than one physical page of authorized rows omitted by current visibility policy and an ordinary mutation later in sequence order, WHEN `GET /sync/mutations/pull` is called, THEN each response performs bounded work, returns `has_more: true` with an advancing `latest_seq` as needed, and a request using that cursor eventually returns the ordinary mutation without exposing hidden rows.
+- **Edge case — hidden rows before visible lookahead**: GIVEN `limit=1`, a visible mutation at seq 1, hidden local-only mutations at seqs 2–100, and a visible mutation at seq 101, WHEN the first page is returned, THEN it contains seq 1 with `has_more: true` and `latest_seq: 100`; the next request returns seq 101 rather than re-scanning hidden rows or skipping the undispatched visible mutation.
 - **Unauthenticated**: GIVEN no `Authorization` header, WHEN `GET /sync/mutations/pull` is called, THEN the server responds HTTP 401.
 - **Edge case — since_seq beyond latest**: GIVEN the latest stored seq is 50 and the request sends `since_seq=100`, WHEN `GET /sync/mutations/pull` is called, THEN `mutations: []`, `has_more: false`, and `latest_seq: 50`.
 

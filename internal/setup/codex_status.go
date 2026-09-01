@@ -9,8 +9,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	projectpkg "github.com/yersonargotev/engram/internal/project"
 	"github.com/yersonargotev/engram/internal/protocolcontract"
+	"github.com/yersonargotev/engram/internal/store"
 	"golang.org/x/mod/semver"
 )
 
@@ -59,12 +62,49 @@ type CodexIntegrationCheck struct {
 	Evidence   []CodexIntegrationEvidence  `json:"evidence"`
 }
 
+// CodexCaptureConsentState reports whether prompt Diagnostic capture is
+// currently consented for the inspected project.
+type CodexCaptureConsentState string
+
+const (
+	CodexCaptureConsentDisabled    CodexCaptureConsentState = "disabled"
+	CodexCaptureConsentEnabled     CodexCaptureConsentState = "enabled"
+	CodexCaptureConsentUnavailable CodexCaptureConsentState = "unavailable"
+)
+
+// CodexCaptureScope identifies the grant selected for the reported consent.
+type CodexCaptureScope string
+
+const (
+	CodexCaptureScopeNone    CodexCaptureScope = "none"
+	CodexCaptureScopeProject CodexCaptureScope = "project"
+	CodexCaptureScopeSession CodexCaptureScope = "session"
+)
+
+// CodexPromptCaptureStatus keeps identity readiness separate from local
+// content consent. Capability describes this binary, while CurrentConsent is
+// a read-only snapshot of the local project grant.
+type CodexPromptCaptureStatus struct {
+	Capability     CodexIntegrationCheckStatus `json:"capability"`
+	Identity       CodexIntegrationCheckStatus `json:"identity"`
+	DefaultConsent CodexCaptureConsentState    `json:"default_consent"`
+	CurrentConsent CodexCaptureConsentState    `json:"current_consent"`
+	Project        string                      `json:"project,omitempty"`
+	ContentType    string                      `json:"content_type"`
+	Scope          CodexCaptureScope           `json:"scope"`
+	SessionID      string                      `json:"session_id,omitempty"`
+	RetentionDays  int                         `json:"retention_days"`
+	ExpiresAt      string                      `json:"expires_at,omitempty"`
+	ReasonCode     string                      `json:"reason_code"`
+}
+
 // CodexIntegrationStatus is a deterministic, read-only capability snapshot.
 type CodexIntegrationStatus struct {
 	SchemaVersion string                               `json:"schema_version"`
 	Agent         string                               `json:"agent"`
 	Mode          CodexOperatingMode                   `json:"mode"`
 	Compatibility protocolcontract.CompatibilityReport `json:"compatibility"`
+	PromptCapture CodexPromptCaptureStatus             `json:"prompt_capture"`
 	Checks        []CodexIntegrationCheck              `json:"checks"`
 }
 
@@ -159,6 +199,8 @@ func inspectCodexStatus(runningVersion, runningRevision, workingDirectory string
 		codexPluginCapabilityCheck(plugin, "stop_verifier", plugin.Capabilities.VerifierReady),
 	)
 
+	promptCapture := inspectCodexPromptCaptureStatus(workingDirectory, checks)
+	checks = append(checks, codexPromptCaptureCheck(promptCapture))
 	mode := deriveCodexOperatingMode(checks)
 	if mode == CodexModeCheckpointReady && compatibility.Status != protocolcontract.CompatibilityReady {
 		mode = CodexModePartialPlugin
@@ -168,8 +210,108 @@ func inspectCodexStatus(runningVersion, runningRevision, workingDirectory string
 		Agent:         "codex",
 		Mode:          mode,
 		Compatibility: compatibility,
+		PromptCapture: promptCapture,
 		Checks:        checks,
 	}, nil
+}
+
+func codexPromptCaptureCheck(status CodexPromptCaptureStatus) CodexIntegrationCheck {
+	evidence := []CodexIntegrationEvidence{
+		codexEvidence("identity", string(status.Identity)),
+		codexEvidence("default_consent", string(status.DefaultConsent)),
+		codexEvidence("current_consent", string(status.CurrentConsent)),
+		codexEvidence("content_type", status.ContentType),
+		codexEvidence("scope", string(status.Scope)),
+		codexEvidence("retention_days", strconv.Itoa(status.RetentionDays)),
+	}
+	if status.Project != "" {
+		evidence = append(evidence, codexEvidence("project", status.Project))
+	}
+	if status.SessionID != "" {
+		evidence = append(evidence, codexEvidence("session_id", status.SessionID))
+	}
+	if status.ExpiresAt != "" {
+		evidence = append(evidence, codexEvidence("expires_at", status.ExpiresAt))
+	}
+	return codexStatusCheck(
+		"prompt_capture",
+		status.Capability,
+		"prompt_capture_available",
+		"Local Diagnostic prompt capture is available, disabled by default, and independent of identity readiness.",
+		evidence...,
+	)
+}
+
+func inspectCodexPromptCaptureStatus(workingDirectory string, checks []CodexIntegrationCheck) CodexPromptCaptureStatus {
+	status := CodexPromptCaptureStatus{
+		Capability:     CodexCheckReady,
+		Identity:       CodexCheckUnavailable,
+		DefaultConsent: CodexCaptureConsentDisabled,
+		CurrentConsent: CodexCaptureConsentDisabled,
+		ContentType:    store.CaptureContentTypePrompt,
+		Scope:          CodexCaptureScopeNone,
+		RetentionDays:  store.DefaultDiagnosticRetentionDays,
+		ReasonCode:     "capture_consent_disabled",
+	}
+	for _, check := range checks {
+		if check.Capability == "prompt_hook" {
+			status.Identity = check.Status
+			break
+		}
+	}
+
+	projectName, explicit := projectpkg.ProcessOverride("")
+	if !explicit {
+		detected := projectpkg.DetectProjectFull(workingDirectory)
+		if detected.Error != nil {
+			status.CurrentConsent = CodexCaptureConsentUnavailable
+			status.ReasonCode = "capture_project_unavailable"
+			return status
+		}
+		projectName = detected.Project
+	}
+	projectName, _ = store.NormalizeProject(projectName)
+	status.Project = projectName
+
+	dataDir := os.Getenv("ENGRAM_DATA_DIR")
+	if dataDir == "" {
+		home, err := userHomeDir()
+		if err != nil || strings.TrimSpace(home) == "" {
+			status.CurrentConsent = CodexCaptureConsentUnavailable
+			status.ReasonCode = "capture_store_unavailable"
+			return status
+		}
+		dataDir = filepath.Join(home, ".engram")
+	}
+	inspection, err := store.InspectCaptureConsentReadOnly(
+		dataDir,
+		projectName,
+		store.CaptureContentTypePrompt,
+		"",
+		time.Now().UTC(),
+	)
+	if err != nil {
+		status.CurrentConsent = CodexCaptureConsentUnavailable
+		status.ReasonCode = "capture_status_unavailable"
+		return status
+	}
+	if inspection.Consent == nil {
+		return status
+	}
+
+	consent := inspection.Consent
+	status.CurrentConsent = CodexCaptureConsentEnabled
+	status.RetentionDays = consent.RetentionDays
+	status.SessionID = consent.SessionID
+	status.Scope = CodexCaptureScopeProject
+	status.ReasonCode = "capture_consent_enabled"
+	if consent.SessionID != "" {
+		status.Scope = CodexCaptureScopeSession
+	}
+	if consent.ExpiresAt != nil {
+		status.ExpiresAt = consent.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	return status
 }
 
 type codexStatusMarketplaceInspection struct {

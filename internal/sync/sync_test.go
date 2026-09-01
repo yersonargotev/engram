@@ -375,7 +375,7 @@ func TestExportImportFlowWithProjectFilter(t *testing.T) {
 	if exportResult.IsEmpty {
 		t.Fatal("expected non-empty export")
 	}
-	if exportResult.SessionsExported != 1 || exportResult.ObservationsExported != 1 || exportResult.PromptsExported != 1 {
+	if exportResult.SessionsExported != 1 || exportResult.ObservationsExported != 1 || exportResult.PromptsExported != 0 {
 		t.Fatalf("unexpected export counts: %+v", exportResult)
 	}
 
@@ -410,7 +410,7 @@ func TestExportImportFlowWithProjectFilter(t *testing.T) {
 	if importResult.ChunksImported != 1 || importResult.ChunksSkipped != 0 {
 		t.Fatalf("unexpected chunk import counts: %+v", importResult)
 	}
-	if importResult.SessionsImported != 1 || importResult.ObservationsImported != 1 || importResult.PromptsImported != 1 {
+	if importResult.SessionsImported != 1 || importResult.ObservationsImported != 1 || importResult.PromptsImported != 0 {
 		t.Fatalf("unexpected imported row counts: %+v", importResult)
 	}
 
@@ -2057,7 +2057,7 @@ func TestLocalImportDependencySafeAcrossChunksRegardlessManifestOrder(t *testing
 	if err != nil {
 		t.Fatalf("local import should retry dependency chunks safely: %v", err)
 	}
-	if res.ChunksImported != 2 || res.SessionsImported != 1 || res.ObservationsImported != 1 || res.PromptsImported != 1 {
+	if res.ChunksImported != 2 || res.SessionsImported != 1 || res.ObservationsImported != 1 || res.PromptsImported != 0 {
 		t.Fatalf("unexpected import result: %+v", res)
 	}
 	sess, err := s.GetSession("sess-cross-chunk")
@@ -2072,8 +2072,8 @@ func TestLocalImportDependencySafeAcrossChunksRegardlessManifestOrder(t *testing
 		t.Fatalf("expected imported observation, results=%d err=%v", len(results), err)
 	}
 	prompts, err := s.RecentPrompts(project, 5)
-	if err != nil || len(prompts) != 1 {
-		t.Fatalf("expected imported prompt, prompts=%d err=%v", len(prompts), err)
+	if err != nil || len(prompts) != 0 {
+		t.Fatalf("Legacy prompt was imported, prompts=%d err=%v", len(prompts), err)
 	}
 }
 
@@ -2270,8 +2270,8 @@ func TestLocalImportOrdersExplicitMutationsAndDirectArraysSafely(t *testing.T) {
 		t.Fatalf("expected direct observation, results=%d err=%v", len(results), err)
 	}
 	prompts, err := s.RecentPrompts(project, 5)
-	if err != nil || len(prompts) != 1 || prompts[0].SyncID != "prompt-explicit-mixed" {
-		t.Fatalf("expected explicit prompt imported, prompts=%+v err=%v", prompts, err)
+	if err != nil || len(prompts) != 0 {
+		t.Fatalf("explicit Legacy prompt mutation was imported, prompts=%+v err=%v", prompts, err)
 	}
 }
 
@@ -2290,7 +2290,7 @@ func TestLocalImportRecoversLegacyChunkWithMissingSessionStub(t *testing.T) {
 	if err != nil {
 		t.Fatalf("local import should recover malformed legacy missing session chunk: %v", err)
 	}
-	if res.ChunksImported != 1 || res.SessionsImported != 1 || res.ObservationsImported != 1 || res.PromptsImported != 1 {
+	if res.ChunksImported != 1 || res.SessionsImported != 1 || res.ObservationsImported != 1 || res.PromptsImported != 0 {
 		t.Fatalf("unexpected import result: %+v", res)
 	}
 	sess, err := s.GetSession("does-not-exist")
@@ -2305,8 +2305,8 @@ func TestLocalImportRecoversLegacyChunkWithMissingSessionStub(t *testing.T) {
 		t.Fatalf("expected recovered observation, results=%d err=%v", len(results), err)
 	}
 	prompts, err := s.RecentPrompts(project, 5)
-	if err != nil || len(prompts) != 1 || prompts[0].SyncID != "prompt-missing-session" {
-		t.Fatalf("expected recovered prompt, prompts=%+v err=%v", prompts, err)
+	if err != nil || len(prompts) != 0 {
+		t.Fatalf("Legacy prompt was recovered from ordinary import, prompts=%+v err=%v", prompts, err)
 	}
 }
 
@@ -2531,8 +2531,8 @@ func TestCloudExportRepairsEnrolledJournalBeforeListingMutations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cloud export: %v", err)
 	}
-	if result.IsEmpty || result.MutationsExported != 3 {
-		t.Fatalf("export result = %+v, want three repaired mutations", result)
+	if result.IsEmpty || result.MutationsExported != 2 {
+		t.Fatalf("export result = %+v, want two repaired mutations", result)
 	}
 	if transport.writeChunkCalls != 1 {
 		t.Fatalf("write chunk calls = %d, want 1", transport.writeChunkCalls)
@@ -3531,8 +3531,8 @@ func TestFilterFunctionsAndTimeNormalization(t *testing.T) {
 	if len(projectOnly.Observations) != 1 || projectOnly.Observations[0].SessionID != "s1" {
 		t.Fatalf("unexpected filtered observations: %+v", projectOnly.Observations)
 	}
-	if len(projectOnly.Prompts) != 1 || projectOnly.Prompts[0].SessionID != "s1" {
-		t.Fatalf("unexpected filtered prompts: %+v", projectOnly.Prompts)
+	if len(projectOnly.Prompts) != 0 {
+		t.Fatalf("project filter exposed Legacy prompts: %+v", projectOnly.Prompts)
 	}
 
 	projectOnlyNormalized := filterByProject(data, " PROJ-A ")
@@ -3542,7 +3542,7 @@ func TestFilterFunctionsAndTimeNormalization(t *testing.T) {
 
 	sy := New(nil, t.TempDir())
 	all := sy.filterNewData(data, "")
-	if len(all.Sessions) != 2 || len(all.Observations) != 2 || len(all.Prompts) != 2 {
+	if len(all.Sessions) != 2 || len(all.Observations) != 2 || len(all.Prompts) != 0 {
 		t.Fatalf("expected first sync to include all data, got %+v", all)
 	}
 
@@ -3553,8 +3553,8 @@ func TestFilterFunctionsAndTimeNormalization(t *testing.T) {
 	if len(newOnly.Observations) != 1 || newOnly.Observations[0].ID != 2 {
 		t.Fatalf("unexpected new observations: %+v", newOnly.Observations)
 	}
-	if len(newOnly.Prompts) != 1 || newOnly.Prompts[0].ID != 2 {
-		t.Fatalf("unexpected new prompts: %+v", newOnly.Prompts)
+	if len(newOnly.Prompts) != 0 {
+		t.Fatalf("incremental filter exposed Legacy prompts: %+v", newOnly.Prompts)
 	}
 
 	if got := normalizeTime("2025-01-01T15:04:05Z"); got != "2025-01-01 15:04:05" {
@@ -3670,19 +3670,8 @@ func TestFilterByProjectEntityLevel(t *testing.T) {
 		t.Error("observation 4 (nil project, non-matching session) should be excluded")
 	}
 
-	// Prompts: IDs 1, 2 should be included
-	if len(result.Prompts) != 2 {
-		t.Fatalf("expected 2 prompts, got %d: %+v", len(result.Prompts), result.Prompts)
-	}
-	promptIDs := map[int64]bool{}
-	for _, p := range result.Prompts {
-		promptIDs[p.ID] = true
-	}
-	if !promptIDs[1] || !promptIDs[2] {
-		t.Error("expected prompts 1 and 2 to be included")
-	}
-	if promptIDs[3] {
-		t.Error("prompt 3 (wrong project, non-matching session) should be excluded")
+	if len(result.Prompts) != 0 {
+		t.Fatalf("project filter exposed Legacy prompts: %+v", result.Prompts)
 	}
 
 	// Sessions: s-match (direct), s-empty (referenced by obs 2), s-other (referenced by obs 3)
@@ -3834,15 +3823,9 @@ func TestChunkTrackingTargetKeyScopesBySyncTarget(t *testing.T) {
 	}
 }
 
-// TestCloudSyncPreservesPiPromptIdentityUnderProjectScope proves the second half of #706: a prompt
-// saved through the Pi plugin's wire shape does not stop at the local database. It must enqueue a
-// sync mutation under its own project scope and survive the cloud push/pull round trip with the
-// identity the dashboard addresses it by — its sync_id — intact.
-//
-// The dashboard resolves a prompt by sync_id (see TestPromptDetailURLUsesSyncID), so a prompt that
-// arrives without its sync_id, or under the wrong project, is a prompt the dashboard reports as
-// absent even though the local save succeeded.
-func TestCloudSyncPreservesPiPromptIdentityUnderProjectScope(t *testing.T) {
+// Legacy prompts remain local archive rows and never enter cloud sync, even
+// when historical callers still use the old Store write API.
+func TestCloudSyncExcludesLegacyPromptUnderProjectScope(t *testing.T) {
 	const (
 		targetProject = "paidosdep"
 		otherProject  = "skill-registry"
@@ -3877,10 +3860,11 @@ func TestCloudSyncPreservesPiPromptIdentityUnderProjectScope(t *testing.T) {
 		t.Fatalf("add other prompt: %v", err)
 	}
 
-	srcPrompts, err := srcStore.RecentPrompts(targetProject, 10)
+	legacyPage, err := srcStore.AccessLegacyPrompts(store.LegacyPromptScope{Project: targetProject}, 0, 10)
 	if err != nil {
-		t.Fatalf("recent prompts: %v", err)
+		t.Fatalf("access Legacy prompts: %v", err)
 	}
+	srcPrompts := legacyPage.Prompts
 	if len(srcPrompts) != 1 {
 		t.Fatalf("expected exactly one prompt in %q, got %d", targetProject, len(srcPrompts))
 	}
@@ -3889,42 +3873,15 @@ func TestCloudSyncPreservesPiPromptIdentityUnderProjectScope(t *testing.T) {
 		t.Fatal("expected the saved prompt to carry a sync_id")
 	}
 
-	// The mutation the prompt enqueues must be filed under the prompt's own project, keyed by the
-	// sync_id, and carry the project inside the payload the cloud will materialize from.
+	// The ordinary transport journal must not expose the Legacy prompt.
 	pending, err := srcStore.ListPendingProjectMutations(targetProject)
 	if err != nil {
 		t.Fatalf("list pending mutations: %v", err)
 	}
-	var promptMutation *store.SyncMutation
-	for i := range pending {
-		if pending[i].Entity == store.SyncEntityPrompt && pending[i].EntityKey == saved.SyncID {
-			promptMutation = &pending[i]
-			break
+	for _, mutation := range pending {
+		if mutation.Entity == store.SyncEntityPrompt {
+			t.Fatalf("Legacy prompt mutation escaped transport listing: %+v", mutation)
 		}
-	}
-	if promptMutation == nil {
-		t.Fatalf("no pending prompt mutation for sync_id %q under project %q", saved.SyncID, targetProject)
-	}
-	if promptMutation.Op != store.SyncOpUpsert {
-		t.Fatalf("expected upsert op, got %q", promptMutation.Op)
-	}
-	if promptMutation.Project != targetProject {
-		t.Fatalf("expected mutation project %q, got %q", targetProject, promptMutation.Project)
-	}
-	var payload struct {
-		SyncID    string  `json:"sync_id"`
-		SessionID string  `json:"session_id"`
-		Content   string  `json:"content"`
-		Project   *string `json:"project"`
-	}
-	if err := json.Unmarshal([]byte(promptMutation.Payload), &payload); err != nil {
-		t.Fatalf("decode prompt mutation payload: %v", err)
-	}
-	if payload.SyncID != saved.SyncID || payload.Content != promptContent || payload.SessionID != targetSession {
-		t.Fatalf("prompt mutation payload does not describe the saved prompt: %+v", payload)
-	}
-	if payload.Project == nil || *payload.Project != targetProject {
-		t.Fatalf("expected payload project %q, got %v", targetProject, payload.Project)
 	}
 
 	// The neighbouring project must not have picked up this prompt's mutation.
@@ -3948,7 +3905,10 @@ func TestCloudSyncPreservesPiPromptIdentityUnderProjectScope(t *testing.T) {
 		t.Fatalf("cloud export: %v", err)
 	}
 	if exportResult.IsEmpty {
-		t.Fatal("expected a non-empty cloud export carrying the prompt")
+		t.Fatal("expected target session metadata to produce a non-empty export")
+	}
+	if exportResult.PromptsExported != 0 {
+		t.Fatalf("cloud export carried %d Legacy prompts", exportResult.PromptsExported)
 	}
 
 	dstStore := newTestStore(t)
@@ -3963,29 +3923,13 @@ func TestCloudSyncPreservesPiPromptIdentityUnderProjectScope(t *testing.T) {
 		t.Fatalf("expected at least one imported chunk, got %+v", importResult)
 	}
 
-	// The pulled prompt keeps the identity the dashboard addresses it by.
+	// The destination receives no Legacy prompt content.
 	pulled, err := dstStore.RecentPrompts(targetProject, 10)
 	if err != nil {
 		t.Fatalf("recent prompts after pull: %v", err)
 	}
-	var arrived *store.Prompt
-	for i := range pulled {
-		if pulled[i].SyncID == saved.SyncID {
-			arrived = &pulled[i]
-			break
-		}
-	}
-	if arrived == nil {
-		t.Fatalf("prompt %q did not survive the cloud round trip into project %q (got %d prompts)", saved.SyncID, targetProject, len(pulled))
-	}
-	if arrived.Content != promptContent {
-		t.Fatalf("pulled prompt content changed: %q", arrived.Content)
-	}
-	if arrived.Project != targetProject {
-		t.Fatalf("expected pulled prompt project %q, got %q", targetProject, arrived.Project)
-	}
-	if arrived.SessionID != targetSession {
-		t.Fatalf("expected pulled prompt session %q, got %q", targetSession, arrived.SessionID)
+	if len(pulled) != 0 {
+		t.Fatalf("Legacy prompt crossed cloud boundary: %+v", pulled)
 	}
 
 	// The round trip must not have widened the prompt's scope.

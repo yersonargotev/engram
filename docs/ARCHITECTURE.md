@@ -60,9 +60,22 @@ A **Memory operation** reads or changes durable Memory or checkpoint state. An
 does not select a disposition. This is why Session start/end belong to
 `lifecycle`, while optional `mem_session_summary` belongs to `curation`.
 
+Diagnostic Content is a separate local-only privacy domain. Prompt capture is
+off by default on fresh installs, upgrades, and setup reruns. A grant is scoped
+to project and content type; it may be narrowed to an expiring session. Its
+retention defaults to 7 days and cannot exceed 30 days. Status, enable,
+disable, and separately confirmed purge are distinct operations. Diagnostic
+Content is excluded from Memory, FTS, Recall, context, sync/cloud, ordinary
+export/import, Obsidian, and retired candidate/promotion flows.
+
+Existing `user_prompts` data is a frozen Legacy archive. Engram does not add
+default writes, index it, include it in ordinary surfaces, reclassify it, or
+emit upload/deletion mutations during migration. Only explicit Legacy
+inventory, access, export, and separately confirmed purge may touch it.
+
 | Tool | Purpose |
 |------|---------|
-| `mem_save` | Save a structured observation (decision, bugfix, pattern, etc.); best-effort captures process-local current prompt context when available unless `capture_prompt=false` |
+| `mem_save` | Save a structured observation (decision, bugfix, pattern, etc.); `capture_prompt` is false by default and Diagnostic capture still requires explicit local consent |
 | `mem_update` | Update an existing observation by ID |
 | `mem_delete` | Delete an observation (soft-delete by default, hard-delete optional) |
 | `mem_suggest_topic_key` | Suggest a stable `topic_key` for evolving topics before saving |
@@ -71,7 +84,7 @@ does not select a disposition. This is why Session start/end belong to
 | `mem_context` | Get recent context from previous sessions |
 | `mem_timeline` | Chronological context around a specific observation |
 | `mem_get_observation` | Get full content of a specific memory |
-| `mem_save_prompt` | Save a user prompt for future context |
+| `mem_save_prompt` | Offer a user prompt to the local Diagnostic capture gate; never required for checkpoint identity or Memory saving |
 | `mem_stats` | Memory system statistics |
 | `mem_session_start` | Register a session start |
 | `mem_session_end` | Mark a session as completed |
@@ -105,7 +118,7 @@ Token-efficient memory retrieval — don't dump everything, drill in:
 
 - `mem_save` now supports `scope` (`project` default, `personal` and `global` also accepted)
 - `mem_save` also supports `topic_key`; with a topic key, saves become upserts (same project+scope+topic updates the existing memory)
-- `mem_save` supports `capture_prompt` (`true` by default). When the same MCP process lifecycle has current prompt context for the same project and session, it best-effort records that prompt alongside the observation. The prompt context must be fed before the later `mem_save` (typically via `mem_save_prompt`); `mem_save` still succeeds if context is unavailable or prompt capture fails. Automated saves such as SDD artifacts should pass `capture_prompt=false`.
+- `mem_save` supports `capture_prompt`, which defaults to `false`. When true, process-local prompt context is offered to the same Core-owned consent gate as `mem_save_prompt`; no Diagnostic write occurs without explicit local project/content-type consent, and the Memory save is independent of capture.
 - `mem_save` and `mem_search` expose lifecycle metadata: computed `state` (`active` or `needs_review`) and `review_after` when a review cycle applies.
 - `mem_review` supports `action="list"` (`project`, `limit`) and `action="mark_reviewed"` (`observation_id`). Marking reviewed is local-only for now because `review_after` is intentionally not part of sync payloads in this phase.
 - `mem_pin` and `mem_unpin` change only local context priority. Pins are intentionally excluded from sync payloads.
@@ -281,12 +294,20 @@ engram checkpoint status Inspect one exact root-turn checkpoint [--json]
 engram delete <obs_id>    Delete an observation [--hard] (soft-delete by default; --hard removes permanently)
 engram delete session <id>
                           Delete a session by ID (session must have no observations)
-engram delete prompt <id>
-                          Delete a prompt by ID (permanent)
+engram capture status --project <name> --type prompt [--session-id <id>]
+                          Inspect capability and consent without reading captured content
+engram capture enable --project <name> --type prompt [--retention-days <1..30>]
+                          Enable local Diagnostic capture (7-day retention by default)
+engram capture disable --project <name> --type prompt [--session-id <id>]
+                          Disable future capture without deleting stored content
+engram capture purge --project <name> --type prompt
+                          Separately confirm deletion of Diagnostic prompt content
+engram legacy-prompts inventory|access|export|purge
+                          Explicitly administer the frozen Legacy prompt archive
 engram delete project <name> [--hard]
                           Cascade-delete a project: soft-deletes observations (or hard-deletes
-                          with --hard, which also removes sessions); always removes prompts,
-                          local Memory proposals, and their checkpoints
+                          with --hard, which also removes unreferenced sessions); preserves the
+                          frozen Legacy prompt archive while deleting project-local review state
 engram timeline <obs_id>  Chronological context around an observation
 engram context [project]  Recent context from previous sessions
                           [--scope SCOPE] [--json]
@@ -315,10 +336,10 @@ engram cloud bootstrap admin --username <name> [--email <email>]
                           [--grant-project <project>]... [--issue-token [name]]
                           Create the first managed admin (see DOCS.md for details
                           and the current server-side auth wiring limitation)
-engram projects list      Show all projects with obs/session/prompt counts
+engram projects list      Show all projects with Memory/session counts
 engram projects consolidate  Interactive merge of normalization-equivalent project names [--project NAME | --all] [--dry-run]
 engram projects prune     Remove projects with 0 observations [--dry-run]
-engram projects rescue-ownership --project <name> [--session <id>] [--observation <id>] [--prompt <id>]
+engram projects rescue-ownership --project <name> [--session <id>] [--observation <id>]
                           Assign explicit ownership to legacy rows that carry none. Reaches the local
                           store directly, so it needs no server token and works in a zero-config install.
 engram obsidian-export    Export memories to Obsidian vault (beta)
@@ -327,7 +348,7 @@ engram version            Show version
 
 Local server auth:
 
-- `ENGRAM_HTTP_TOKEN`: optional Bearer auth for `engram serve`. When set, `DELETE /sessions/{id}`, `DELETE /observations/{id}`, `DELETE /prompts/{id}`, `GET /export`, `POST /import`, and `POST /projects/migrate` require `Authorization: Bearer <token>`. `POST /projects/rescue-ownership` always requires a configured token and matching Bearer credential. Comparison is constant-time; token is read per-request. Other routes remain open when unset (zero-config default). Ownership repair does not depend on this token: `engram projects rescue-ownership` does the same work against the local store.
+- `ENGRAM_HTTP_TOKEN`: optional Bearer auth for `engram serve`. When set, destructive session/observation operations, `GET /export`, `POST /import`, and `POST /projects/migrate` require `Authorization: Bearer <token>`. Legacy prompts use only their explicit inventory/access/export/separately confirmed purge surface. `POST /projects/rescue-ownership` always requires a configured token and matching Bearer credential. Comparison is constant-time; token is read per-request. Other routes remain open when unset (zero-config default). Ownership repair does not depend on this token: `engram projects rescue-ownership` does the same work against the local store.
 - `ENGRAM_TIMEZONE`: IANA zone name for timestamp display in TUI and cloud dashboard (e.g. `America/New_York`). Falls back to system local when unset or invalid.
 
 Cloud constraints (current behavior):
@@ -342,7 +363,7 @@ Cloud route/auth split (current behavior):
 - Local runtime (`engram serve`) exposes local JSON APIs and `GET /sync/status` only.
 - Cloud runtime (`engram cloud serve`) exposes `GET /health`, `GET /sync/pull`, `GET /sync/pull/{chunkID}`, `POST /sync/push`, and `/dashboard/*`.
 - Dashboard public routes: `GET /dashboard/health`, `GET/POST /dashboard/login`, `POST /dashboard/logout`, `GET /dashboard/static/*`.
-- Dashboard protected routes: `GET /dashboard`, `/dashboard/stats`, `/dashboard/activity`, `/dashboard/browser` (`/observations`, `/sessions`, `/sessions/{sessionID}`, `/prompts`), `/dashboard/projects`, `/dashboard/projects/list`, `/dashboard/projects/{project}`, `/dashboard/projects/{name}/observations|sessions|prompts`, `/dashboard/contributors`, `/dashboard/contributors/list`, `/dashboard/contributors/{contributor}`, `/dashboard/admin`, `/dashboard/admin/projects`, `/dashboard/admin/users`, `/dashboard/admin/users/list`, `/dashboard/admin/health`, `POST /dashboard/admin/projects/{name}/sync`, `/dashboard/sessions/{project}/{sessionID}`, `/dashboard/observations/{project}/{sessionID}/{syncID}`, `/dashboard/prompts/{project}/{sessionID}/{syncID}`.
+- Dashboard protected routes: `GET /dashboard`, `/dashboard/stats`, `/dashboard/activity`, `/dashboard/browser` (`/observations`, `/sessions`, `/sessions/{sessionID}`), `/dashboard/projects`, `/dashboard/projects/list`, `/dashboard/projects/{project}`, `/dashboard/projects/{name}/observations|sessions`, `/dashboard/contributors`, `/dashboard/contributors/list`, `/dashboard/contributors/{contributor}`, `/dashboard/admin`, `/dashboard/admin/projects`, `/dashboard/admin/users`, `/dashboard/admin/users/list`, `/dashboard/admin/health`, `POST /dashboard/admin/projects/{name}/sync`, `/dashboard/sessions/{project}/{sessionID}`, and `/dashboard/observations/{project}/{sessionID}/{syncID}`. Diagnostic and Legacy prompt content has no dashboard route.
 - Note: `/dashboard/admin/contributors` was removed; user/contributor management lives under `/dashboard/admin/users`.
 - In authenticated mode, protected dashboard routes require a signed dashboard cookie (obtained via `/dashboard/login` + bearer token) and do not accept direct bearer headers as a browser session substitute.
 - In insecure mode (`ENGRAM_CLOUD_INSECURE_NO_AUTH=1` with no bearer token), dashboard auth is bypassed and `/dashboard/login` redirects to `/dashboard/`.
@@ -387,7 +408,6 @@ Detail pages use composite path parameters because the integrated store is chunk
 |------|-------------|
 | Session detail | `GET /dashboard/sessions/{project}/{sessionID}` |
 | Observation detail | `GET /dashboard/observations/{project}/{sessionID}/{syncID}` |
-| Prompt detail | `GET /dashboard/prompts/{project}/{sessionID}/{syncID}` |
 
 Path values are extracted via `r.PathValue(name)` (Go 1.22 `net/http.ServeMux`). `syncID` values are validated as non-empty with `len <= 128`.
 

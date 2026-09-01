@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/yersonargotev/engram/internal/cloud"
 	"github.com/yersonargotev/engram/internal/cloud/chunkcodec"
 	"github.com/yersonargotev/engram/internal/store"
 	engramsync "github.com/yersonargotev/engram/internal/sync"
-	"github.com/jackc/pgx/v5/pgconn"
-	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 type CloudStore struct {
@@ -197,7 +197,7 @@ func toManifestEntries(rows []manifestRow) []engramsync.ChunkEntry {
 			CreatedAt: row.manifestTime.UTC().Format(time.RFC3339),
 			Sessions:  row.sessions,
 			Memories:  row.observations,
-			Prompts:   row.prompts,
+			Prompts:   0,
 		})
 	}
 	return entries
@@ -213,6 +213,9 @@ func (cs *CloudStore) WriteChunk(ctx context.Context, project, chunkID, createdB
 	}
 	if strings.TrimSpace(chunkID) == "" {
 		return fmt.Errorf("cloudstore: chunk id is required")
+	}
+	if err := chunkcodec.ValidateCloudPayload(payload); err != nil {
+		return fmt.Errorf("cloudstore: reject chunk: %w", err)
 	}
 	expectedChunkID := chunkIDFromPayload(payload)
 	if chunkID != expectedChunkID {
@@ -382,18 +385,6 @@ func materializedChunkMutations(project string, chunk engramsync.ChunkData) ([]M
 		entries = append(entries, MutationEntry{Project: project, Entity: store.SyncEntityObservation, EntityKey: entityKey, Op: store.SyncOpUpsert, Payload: payload})
 	}
 
-	for i, prompt := range chunk.Prompts {
-		entityKey := strings.TrimSpace(prompt.SyncID)
-		if entityKey == "" {
-			return nil, fmt.Errorf("cloudstore: materialize chunk: prompts[%d].sync_id is required", i)
-		}
-		payload, err := json.Marshal(prompt)
-		if err != nil {
-			return nil, fmt.Errorf("cloudstore: materialize chunk prompt %q: %w", entityKey, err)
-		}
-		entries = append(entries, MutationEntry{Project: project, Entity: store.SyncEntityPrompt, EntityKey: entityKey, Op: store.SyncOpUpsert, Payload: payload})
-	}
-
 	// Relations travel only as relation-entity entries in chunk.Mutations — there is no
 	// typed collection for them like Sessions/Observations/Prompts — so materialize them
 	// here to mirror the mutation-push path (#379).
@@ -440,7 +431,7 @@ func materializableChunkMutation(entity, op string) bool {
 	case store.SyncEntityRelation:
 		// Relations have no typed collection, so every relation entry materializes.
 		return true
-	case store.SyncEntitySession, store.SyncEntityObservation, store.SyncEntityPrompt:
+	case store.SyncEntitySession, store.SyncEntityObservation:
 		// Upserts already came from the typed collections; only tombstones are missing.
 		return op == store.SyncOpDelete
 	default:
@@ -576,7 +567,15 @@ func (cs *CloudStore) ReadChunk(ctx context.Context, project, chunkID string) ([
 	if err != nil {
 		return nil, fmt.Errorf("cloudstore: read chunk: %w", err)
 	}
-	return payload, nil
+	return redactCloudChunk(payload)
+}
+
+func redactCloudChunk(payload []byte) ([]byte, error) {
+	redacted, err := chunkcodec.RedactLocalOnlyContent(payload)
+	if err != nil {
+		return nil, fmt.Errorf("cloudstore: redact local-only chunk content: %w", err)
+	}
+	return redacted, nil
 }
 
 func (cs *CloudStore) migrate(ctx context.Context) error {
@@ -837,6 +836,11 @@ func (cs *CloudStore) InsertMutationBatch(ctx context.Context, batch []MutationE
 	if len(batch) == 0 {
 		return []int64{}, nil
 	}
+	for i, entry := range batch {
+		if chunkcodec.IsLocalOnlyEntity(entry.Entity) {
+			return nil, fmt.Errorf("%w: entries[%d].entity %q", chunkcodec.ErrLocalOnlyContent, i, strings.TrimSpace(entry.Entity))
+		}
+	}
 	chunks, err := materializedMutationBatchChunks(batch)
 	if err != nil {
 		return nil, err
@@ -1096,6 +1100,9 @@ func materializedMutationBatchChunk(batch []MutationEntry) ([]byte, chunkSummary
 			return nil, chunkSummary{}, fmt.Errorf("cloudstore: materialize mutation batch: mixed projects %q and %q", project, entryProject)
 		}
 		entity := strings.TrimSpace(entry.Entity)
+		if chunkcodec.IsLocalOnlyEntity(entity) {
+			return nil, chunkSummary{}, fmt.Errorf("%w: entries[%d].entity %q", chunkcodec.ErrLocalOnlyContent, i, entity)
+		}
 		if !isChunkMaterializableMutationEntity(entity) {
 			continue
 		}
@@ -1134,15 +1141,6 @@ func materializedMutationBatchChunk(batch []MutationEntry) ([]byte, chunkSummary
 				observation.SyncID = strings.TrimSpace(entry.EntityKey)
 			}
 			chunk.Observations = append(chunk.Observations, observation)
-		case store.SyncEntityPrompt:
-			var prompt store.Prompt
-			if err := json.Unmarshal(payload, &prompt); err != nil {
-				return nil, chunkSummary{}, fmt.Errorf("cloudstore: materialize mutation batch prompt %q: %w", entry.EntityKey, err)
-			}
-			if strings.TrimSpace(prompt.SyncID) == "" {
-				prompt.SyncID = strings.TrimSpace(entry.EntityKey)
-			}
-			chunk.Prompts = append(chunk.Prompts, prompt)
 		}
 	}
 	if len(chunk.Mutations) == 0 {
@@ -1162,7 +1160,7 @@ func materializedMutationBatchChunk(batch []MutationEntry) ([]byte, chunkSummary
 
 func isChunkMaterializableMutationEntity(entity string) bool {
 	switch strings.TrimSpace(entity) {
-	case store.SyncEntitySession, store.SyncEntityObservation, store.SyncEntityPrompt, store.SyncEntityRelation:
+	case store.SyncEntitySession, store.SyncEntityObservation, store.SyncEntityRelation:
 		return true
 	default:
 		return false
@@ -1228,7 +1226,11 @@ func canonicalMutationPayload(payload []byte) (string, error) {
 // ListMutationsSince returns mutations with seq > sinceSeq, filtered to allowedProjects.
 // If allowedProjects is nil, no project filter is applied (returns all).
 // If allowedProjects is non-nil (even empty), only those projects are returned.
-// Returns (mutations, hasMore, latestSeq, error).
+// Returns (mutations, hasMore, latestSeq, error). While hasMore is true,
+// latestSeq is a safe continuation cursor over every row consumed by the
+// response, including filtered local-only history, but never past an
+// undispatched visible lookahead. On a terminal page it is the newest stored
+// sequence in the caller's allowed-project scope, even when below sinceSeq.
 func (cs *CloudStore) ListMutationsSince(ctx context.Context, sinceSeq int64, limit int, allowedProjects []string) ([]StoredMutation, bool, int64, error) {
 	if cs == nil || cs.db == nil {
 		return nil, false, 0, fmt.Errorf("cloudstore: not initialized")
@@ -1242,31 +1244,43 @@ func (cs *CloudStore) ListMutationsSince(ctx context.Context, sinceSeq int64, li
 		return []StoredMutation{}, false, 0, nil
 	}
 
-	// Fetch limit+1 to detect hasMore.
-	fetchLimit := limit + 1
-
-	var rows *sql.Rows
+	var newestSeq int64
 	var err error
-
 	if allowedProjects == nil {
-		// No enrollment filter.
-		rows, err = cs.db.QueryContext(ctx, `
-			SELECT seq, project, entity, entity_key, op, payload::text, occurred_at
-			FROM cloud_mutations
-			WHERE seq > $1
-			ORDER BY seq ASC
-			LIMIT $2`,
-			sinceSeq, fetchLimit,
-		)
+		err = cs.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM cloud_mutations`).Scan(&newestSeq)
 	} else {
-		// Filter by allowed projects.
+		err = cs.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM cloud_mutations WHERE project = ANY($1)`, allowedProjects).Scan(&newestSeq)
+	}
+	if err != nil {
+		return nil, false, 0, fmt.Errorf("cloudstore: read latest mutation sequence: %w", err)
+	}
+	if newestSeq <= sinceSeq {
+		return []StoredMutation{}, false, newestSeq, nil
+	}
+
+	// One physical page bounds database work even when historical local-only
+	// rows vastly outnumber visible mutations. The extra raw row proves whether
+	// another continuation is required without approximating Go normalization in SQL.
+	const rawWorkLimit = 101
+	const rawQueryLimit = rawWorkLimit + 1
+	var rows *sql.Rows
+	if allowedProjects == nil {
 		rows, err = cs.db.QueryContext(ctx, `
 			SELECT seq, project, entity, entity_key, op, payload::text, occurred_at
 			FROM cloud_mutations
-			WHERE seq > $1 AND project = ANY($2)
+			WHERE seq > $1 AND seq <= $2
 			ORDER BY seq ASC
 			LIMIT $3`,
-			sinceSeq, allowedProjects, fetchLimit,
+			sinceSeq, newestSeq, rawQueryLimit,
+		)
+	} else {
+		rows, err = cs.db.QueryContext(ctx, `
+			SELECT seq, project, entity, entity_key, op, payload::text, occurred_at
+			FROM cloud_mutations
+			WHERE seq > $1 AND seq <= $2 AND project = ANY($3)
+			ORDER BY seq ASC
+			LIMIT $4`,
+			sinceSeq, newestSeq, allowedProjects, rawQueryLimit,
 		)
 	}
 	if err != nil {
@@ -1274,33 +1288,54 @@ func (cs *CloudStore) ListMutationsSince(ctx context.Context, sinceSeq int64, li
 	}
 	defer rows.Close()
 
-	var all []StoredMutation
+	raw := make([]StoredMutation, 0, rawQueryLimit)
 	for rows.Next() {
-		var m StoredMutation
+		var mutation StoredMutation
 		var payloadStr string
 		var occurredAt time.Time
-		if err := rows.Scan(&m.Seq, &m.Project, &m.Entity, &m.EntityKey, &m.Op, &payloadStr, &occurredAt); err != nil {
+		if err := rows.Scan(&mutation.Seq, &mutation.Project, &mutation.Entity, &mutation.EntityKey, &mutation.Op, &payloadStr, &occurredAt); err != nil {
 			return nil, false, 0, fmt.Errorf("cloudstore: scan mutation: %w", err)
 		}
-		m.Payload = json.RawMessage(payloadStr)
-		m.OccurredAt = occurredAt.UTC().Format(time.RFC3339)
-		all = append(all, m)
+		mutation.Payload = json.RawMessage(payloadStr)
+		mutation.OccurredAt = occurredAt.UTC().Format(time.RFC3339)
+		raw = append(raw, mutation)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, 0, fmt.Errorf("cloudstore: iterate mutations: %w", err)
 	}
 
-	hasMore := len(all) > limit
-	if hasMore {
-		all = all[:limit]
+	rawHasMore := len(raw) > rawWorkLimit
+	if rawHasMore {
+		raw = raw[:rawWorkLimit]
+	}
+	visible := make([]StoredMutation, 0, min(limit, len(raw)))
+	examinedSeq := sinceSeq
+	safeContinuationSeq := sinceSeq
+	visibleLookahead := false
+	for _, mutation := range raw {
+		if mutation.Seq <= examinedSeq {
+			return nil, false, 0, fmt.Errorf("cloudstore: mutation pagination did not advance beyond seq %d", examinedSeq)
+		}
+		examinedSeq = mutation.Seq
+		if chunkcodec.IsLocalOnlyEntity(mutation.Entity) {
+			safeContinuationSeq = mutation.Seq
+			continue
+		}
+		if len(visible) == limit {
+			visibleLookahead = true
+			break
+		}
+		visible = append(visible, mutation)
+		safeContinuationSeq = mutation.Seq
 	}
 
-	latestSeq := int64(0)
-	if len(all) > 0 {
-		latestSeq = all[len(all)-1].Seq
+	if visibleLookahead {
+		return visible, true, safeContinuationSeq, nil
 	}
-
-	return all, hasMore, latestSeq, nil
+	if rawHasMore {
+		return visible, true, safeContinuationSeq, nil
+	}
+	return visible, false, newestSeq, nil
 }
 
 func parseClientCreatedAt(value string) (*time.Time, error) {
@@ -1350,6 +1385,6 @@ func summarizeChunk(payload []byte) chunkSummary {
 	return chunkSummary{
 		sessions:     len(body.Sessions),
 		observations: len(body.Observations),
-		prompts:      len(body.Prompts),
+		prompts:      0,
 	}
 }

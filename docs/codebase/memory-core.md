@@ -21,8 +21,8 @@ The memory flow does not start in the database. It starts with the agent decidin
    weak git root/child/basename → read-only discovery or actionable rejection
 
 5. internal/store persists
-   sessions / observations / user_prompts / memory_relations / sync_mutations
-   FTS5 indexes for search
+   sessions / observations / memory_relations / sync_mutations
+   FTS5 indexes for Memory search
 
 6. Later work
    mem_search → mem_get_observation when full detail can change the task
@@ -35,7 +35,8 @@ The memory flow does not start in the database. It starts with the agent decidin
 | `sessions` | Groups work from one agent session. | `internal/store/store.go`, `internal/mcp/activity.go` |
 | `observations` | Curated memories: decisions, bugs, patterns, discoveries, summaries. | `internal/store/store.go`, `internal/store/store_test.go` |
 | `observations_fts` | FTS5 search index. | `internal/store/store.go`, `DOCS.md#database-schema` |
-| `user_prompts` / `prompts_fts` | User prompt as retrievable context. | `internal/store/store.go`, `internal/server/server.go` |
+| `diagnostic_captures` / `capture_consents` | Local-only Diagnostic Content and explicit project/content-type consent. Capture is disabled by default; retention is 7 days by default and at most 30 days. | `internal/store/capture.go`, `internal/memoryops/capture.go` |
+| `user_prompts` | Frozen Legacy prompt archive. It is available only through explicit inventory, access, export, and separately confirmed purge operations; canonical journal/FTS copies are purged transactionally, while customized FTS ownership blocks the purge before mutation. | `internal/store/store.go`, `internal/memoryops/legacy_prompt.go` |
 | `memory_relations` | Relationships/judgments between memories for semantic conflict surfacing. | `internal/store/relations.go`, `internal/mcp/mcp_judge_test.go` |
 | `sync_mutations` | Queue of changes for sync/autosync. | `internal/store/store.go`, `internal/sync/sync.go`, `internal/cloud/autosync/manager.go` |
 | `sync_apply_deferred` | Pull mutations deferred because dependencies are missing. | `internal/store/sync_apply_test.go`, `internal/server/server.go` |
@@ -53,6 +54,8 @@ For schema details, use [DOCS.md — Database Schema](../../DOCS.md#database-sch
 - Soft delete (`deleted_at`) hides data without physically deleting it unless explicit hard delete is used.
 - Project detection is not write authority. Strong `config`/`git_remote` and validated explicit/session sources may write; weak `git_root`/`git_child`/`dir_basename` sources remain read-only until the caller supplies explicit authority.
 - Search is progressive: compact results first, `mem_get_observation` only when full content is needed.
+- Diagnostic Content is not Memory. It is excluded from Memory/FTS/Recall/context, ordinary export/import, sync/cloud, Obsidian, and retired candidate/promotion flows.
+- Legacy prompts are preserved byte-for-byte during migration and remain outside those same ordinary surfaces. Migration neither reclassifies nor uploads them and creates no deletion tombstone.
 
 ## Local store change checklist
 

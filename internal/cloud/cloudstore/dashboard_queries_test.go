@@ -7,6 +7,34 @@ import (
 	"time"
 )
 
+func TestDashboardReadModelFreezesLegacyPrompts(t *testing.T) {
+	rows := []dashboardChunkRow{{
+		chunkID: "legacy-chunk", project: "proj-a", createdBy: "alice", createdAt: time.Now().UTC(),
+		parsed: parseMustChunk(t, []byte(`{
+			"sessions":[{"id":"s-1","project":"proj-a"}],
+			"observations":[{"sync_id":"o-1","session_id":"s-1","project":"proj-a","type":"decision","title":"visible","content":"ordinary","scope":"project"}],
+			"prompts":[{"sync_id":"p-1","session_id":"s-1","project":"proj-a","content":"legacy secret"}],
+			"mutations":[{"entity":"prompt","entity_key":"p-2","op":"upsert","payload":"{\"sync_id\":\"p-2\",\"session_id\":\"s-1\",\"content\":\"another secret\"}"}]
+		}`)),
+	}}
+	model, err := buildDashboardReadModel(rows)
+	if err != nil {
+		t.Fatalf("buildDashboardReadModel: %v", err)
+	}
+	cs := &CloudStore{dashboardReadModelLoad: func() (dashboardReadModel, error) { return model, nil }}
+	detail, err := cs.ProjectDetail("proj-a")
+	if err != nil {
+		t.Fatalf("ProjectDetail: %v", err)
+	}
+	if detail.Stats.Prompts != 0 || len(detail.Prompts) != 0 || len(detail.Observations) != 1 {
+		t.Fatalf("legacy prompts not frozen in dashboard model: %+v", detail)
+	}
+	prompts, err := cs.ListRecentPrompts("proj-a", "", 10)
+	if err != nil || len(prompts) != 0 {
+		t.Fatalf("ListRecentPrompts = %+v, %v; want empty", prompts, err)
+	}
+}
+
 // TestGetContributorDetailReturnsScopedData seeds a read model with 2 contributors
 // across 2 projects and asserts that GetContributorDetail("alice") returns only
 // sessions/observations/prompts scoped to alice's projects. Satisfies (h).
@@ -70,13 +98,8 @@ func TestGetContributorDetailReturnsScopedData(t *testing.T) {
 			t.Errorf("expected observation project=proj-alice, got %q", o.Project)
 		}
 	}
-	if len(prompts) == 0 {
-		t.Error("expected at least one prompt for alice")
-	}
-	for _, p := range prompts {
-		if p.Project != "proj-alice" {
-			t.Errorf("expected prompt project=proj-alice, got %q", p.Project)
-		}
+	if len(prompts) != 0 {
+		t.Errorf("expected frozen Legacy prompts to be omitted, got %+v", prompts)
 	}
 
 	// Assert bob's data is NOT included.
@@ -210,13 +233,8 @@ func TestDashboardRowDetailFields(t *testing.T) {
 		t.Errorf("expected DashboardSessionRow.Directory to be non-empty, got %q", sess.Directory)
 	}
 
-	// Assert DashboardPromptRow.ChunkID is populated.
-	if len(detail.Prompts) == 0 {
-		t.Fatalf("expected at least one prompt in detail")
-	}
-	prompt := detail.Prompts[0]
-	if prompt.ChunkID == "" {
-		t.Errorf("expected DashboardPromptRow.ChunkID to be non-empty, got %q", prompt.ChunkID)
+	if len(detail.Prompts) != 0 {
+		t.Fatalf("expected Legacy prompts omitted from detail, got %+v", detail.Prompts)
 	}
 }
 
@@ -292,8 +310,8 @@ func TestCloudstoreSystemHealthAggregates(t *testing.T) {
 	if health.Observations != 10 {
 		t.Errorf("expected Observations=10, got %d", health.Observations)
 	}
-	if health.Prompts != 5 {
-		t.Errorf("expected Prompts=5, got %d", health.Prompts)
+	if health.Prompts != 0 {
+		t.Errorf("expected frozen Prompts=0, got %d", health.Prompts)
 	}
 	// DBConnected should be false (no real DB).
 	if health.DBConnected {
@@ -608,28 +626,10 @@ func TestPromptDetailDistinguishesMultiplePromptsPerChunk(t *testing.T) {
 		dashboardReadModelLoad: func() (dashboardReadModel, error) { return model, nil },
 	}
 
-	// Look up alpha.
-	promptAlpha, _, _, err := cs.GetPromptDetail("proj-c1p", "s-c1p", "prompt-c1-alpha")
-	if err != nil {
-		t.Fatalf("GetPromptDetail(alpha): %v", err)
-	}
-	if promptAlpha.Content != "Alpha prompt" {
-		t.Errorf("C1: expected alpha Content=%q, got %q", "Alpha prompt", promptAlpha.Content)
-	}
-	if promptAlpha.SyncID != "prompt-c1-alpha" {
-		t.Errorf("C1: expected alpha SyncID=%q, got %q", "prompt-c1-alpha", promptAlpha.SyncID)
-	}
-
-	// Look up beta.
-	promptBeta, _, _, err := cs.GetPromptDetail("proj-c1p", "s-c1p", "prompt-c1-beta")
-	if err != nil {
-		t.Fatalf("GetPromptDetail(beta): %v", err)
-	}
-	if promptBeta.Content != "Beta prompt" {
-		t.Errorf("C1: expected beta Content=%q, got %q", "Beta prompt", promptBeta.Content)
-	}
-	if promptBeta.SyncID != "prompt-c1-beta" {
-		t.Errorf("C1: expected beta SyncID=%q, got %q", "prompt-c1-beta", promptBeta.SyncID)
+	for _, syncID := range []string{"prompt-c1-alpha", "prompt-c1-beta"} {
+		if _, _, _, err := cs.GetPromptDetail("proj-c1p", "s-c1p", syncID); !errors.Is(err, ErrDashboardPromptNotFound) {
+			t.Fatalf("GetPromptDetail(%s) error = %v, want frozen prompt not found", syncID, err)
+		}
 	}
 }
 
@@ -694,16 +694,8 @@ func TestPromptMutationPreservesChunkID(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected project detail for proj-mut")
 	}
-	if len(detail.Prompts) == 0 {
-		t.Fatalf("expected at least one prompt in detail")
-	}
-	prompt := detail.Prompts[0]
-	// C2: ChunkID must survive the mutation upsert.
-	if prompt.ChunkID == "" {
-		t.Errorf("C2: DashboardPromptRow.ChunkID is empty after mutation — prompt URL will be malformed")
-	}
-	if prompt.ChunkID != "chunk-mut-1" {
-		t.Errorf("C2: expected ChunkID=%q, got %q", "chunk-mut-1", prompt.ChunkID)
+	if len(detail.Prompts) != 0 {
+		t.Fatalf("expected prompt mutation omitted from detail: %+v", detail.Prompts)
 	}
 }
 
@@ -1108,30 +1100,8 @@ func TestPromptMutationPreservesSessionIDAndCreatedAt(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected project detail for proj-r34")
 	}
-	if len(detail.Prompts) == 0 {
-		t.Fatalf("expected at least one prompt in detail")
-	}
-	prompt := detail.Prompts[0]
-
-	// R3-4: SessionID must survive a mutation that omits session_id.
-	if prompt.SessionID == "" {
-		t.Errorf("R3-4: DashboardPromptRow.SessionID wiped by partial mutation (was: sess-r34)")
-	}
-	if prompt.SessionID != "sess-r34" {
-		t.Errorf("R3-4: expected SessionID=%q, got %q", "sess-r34", prompt.SessionID)
-	}
-
-	// R3-4: CreatedAt must survive a mutation that omits created_at.
-	if prompt.CreatedAt == "" {
-		t.Errorf("R3-4: DashboardPromptRow.CreatedAt wiped by partial mutation (was: 2026-04-23T09:10:00Z)")
-	}
-	if prompt.CreatedAt != "2026-04-23T09:10:00Z" {
-		t.Errorf("R3-4: expected CreatedAt=%q, got %q", "2026-04-23T09:10:00Z", prompt.CreatedAt)
-	}
-
-	// Content must be updated to the mutation value.
-	if prompt.Content != "Updated prompt content via mutation" {
-		t.Errorf("R3-4: expected Content=%q (from mutation), got %q", "Updated prompt content via mutation", prompt.Content)
+	if len(detail.Prompts) != 0 {
+		t.Fatalf("expected prompt mutation omitted from detail: %+v", detail.Prompts)
 	}
 }
 
@@ -1483,11 +1453,8 @@ func TestDashboardCurrentStateKeepsDuplicateEntityKeysAcrossProjects(t *testing.
 		if detail.Observations[0].SyncID != "shared-observation" || detail.Observations[0].Title != observationTitle {
 			t.Fatalf("unexpected observation for %s: %+v", project, detail.Observations[0])
 		}
-		if detail.Stats.Prompts != 1 || len(detail.Prompts) != 1 {
-			t.Fatalf("expected one prompt for %s, stats=%+v rows=%+v", project, detail.Stats, detail.Prompts)
-		}
-		if detail.Prompts[0].SyncID != "shared-prompt" || detail.Prompts[0].Content != promptContent {
-			t.Fatalf("unexpected prompt for %s: %+v", project, detail.Prompts[0])
+		if detail.Stats.Prompts != 0 || len(detail.Prompts) != 0 {
+			t.Fatalf("expected frozen prompts omitted for %s, stats=%+v rows=%+v", project, detail.Stats, detail.Prompts)
 		}
 	}
 
@@ -1674,52 +1641,23 @@ func TestDashboardCountsPiSavedPromptUnderItsProject(t *testing.T) {
 	if targetRow == nil {
 		t.Fatalf("project %q missing from the dashboard project list", targetProject)
 	}
-	if targetRow.Prompts != 1 {
-		t.Fatalf("expected 1 prompt on the %q dashboard row, got %d", targetProject, targetRow.Prompts)
+	if targetRow.Prompts != 0 {
+		t.Fatalf("expected frozen prompt count 0 on %q, got %d", targetProject, targetRow.Prompts)
 	}
 
 	prompts, err := cs.ListRecentPrompts(targetProject, "", 10)
 	if err != nil {
 		t.Fatalf("ListRecentPrompts: %v", err)
 	}
-	var listed *DashboardPromptRow
-	for i := range prompts {
-		if prompts[i].SyncID == promptSyncID {
-			listed = &prompts[i]
-			break
-		}
+	if len(prompts) != 0 {
+		t.Fatalf("expected no Legacy prompts in ordinary dashboard, got %+v", prompts)
 	}
-	if listed == nil {
-		t.Fatalf("prompt %q not listed on the %q dashboard (got %d prompts)", promptSyncID, targetProject, len(prompts))
-	}
-	if listed.Content != promptContent {
-		t.Fatalf("dashboard prompt content changed: %q", listed.Content)
-	}
-	if listed.SessionID != promptSession {
-		t.Fatalf("expected dashboard prompt session %q, got %q", promptSession, listed.SessionID)
-	}
-	if listed.Project != targetProject {
-		t.Fatalf("expected dashboard prompt project %q, got %q", targetProject, listed.Project)
-	}
-
-	// The detail page is addressed by sync_id, so that identity must resolve.
-	detail, _, _, err := cs.GetPromptDetail(targetProject, promptSession, promptSyncID)
-	if err != nil {
-		t.Fatalf("GetPromptDetail: %v", err)
-	}
-	if detail.SyncID != promptSyncID || detail.Content != promptContent {
-		t.Fatalf("prompt detail does not describe the saved prompt: %+v", detail)
-	}
-
-	// Scope: the neighbouring project must not show this prompt.
 	otherPrompts, err := cs.ListRecentPrompts(otherProject, "", 10)
 	if err != nil {
 		t.Fatalf("ListRecentPrompts other project: %v", err)
 	}
-	for _, p := range otherPrompts {
-		if p.SyncID == promptSyncID {
-			t.Fatalf("prompt %q leaked onto the %q dashboard", promptSyncID, otherProject)
-		}
+	if len(otherPrompts) != 0 {
+		t.Fatalf("expected no Legacy prompts for neighbouring project, got %+v", otherPrompts)
 	}
 }
 

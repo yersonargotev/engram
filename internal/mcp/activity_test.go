@@ -165,6 +165,21 @@ func TestSessionActivity_ClearSession(t *testing.T) {
 	a.ClearSession("non-existent")
 }
 
+func TestSessionActivityPromptContextExpires(t *testing.T) {
+	a := NewSessionActivity(10 * time.Minute)
+	now := time.Date(2026, time.August, 31, 20, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+	a.RecordPrompt("prompt-expiry", "engram", "short-lived prompt")
+
+	if content, ok := a.CurrentPrompt("prompt-expiry", "engram"); !ok || content != "short-lived prompt" {
+		t.Fatalf("fresh prompt context = %q, %v", content, ok)
+	}
+	now = now.Add(10 * time.Minute)
+	if content, ok := a.CurrentPrompt("prompt-expiry", "engram"); ok || content != "" {
+		t.Fatalf("expired prompt context = %q, %v", content, ok)
+	}
+}
+
 func TestSessionActivity_Pluralization(t *testing.T) {
 	a := NewSessionActivity(10 * time.Minute)
 	sid := "plural-test"

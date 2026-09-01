@@ -17,6 +17,7 @@ import (
 
 	mcppkg "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/yersonargotev/engram/internal/memoryops"
 	"github.com/yersonargotev/engram/internal/project"
 	"github.com/yersonargotev/engram/internal/protocolcontract"
 	"github.com/yersonargotev/engram/internal/store"
@@ -157,23 +158,6 @@ func assertSessionSyncMutationDirectory(t *testing.T, s *store.Store, sessionID,
 	t.Fatalf("expected pending session upsert sync mutation for %q; got %#v", sessionID, mutations)
 }
 
-func countPromptUpsertSyncMutations(t *testing.T, s *store.Store) int {
-	t.Helper()
-
-	mutations, err := s.ListPendingSyncMutations(store.DefaultSyncTargetKey, 100)
-	if err != nil {
-		t.Fatalf("list pending sync mutations: %v", err)
-	}
-
-	count := 0
-	for _, mutation := range mutations {
-		if mutation.Entity == store.SyncEntityPrompt && mutation.Op == store.SyncOpUpsert {
-			count++
-		}
-	}
-	return count
-}
-
 func assertTruncationMetadata(t *testing.T, body map[string]any, originalBytes, limitBytes int, truncated bool) {
 	metadata, ok := body["truncation"].(map[string]any)
 	if !ok || metadata["original_bytes"] != float64(originalBytes) || metadata["limit_bytes"] != float64(limitBytes) || metadata["truncated"] != truncated {
@@ -227,20 +211,6 @@ func TestMCPWriteToolsReportByteTruncation(t *testing.T) {
 				return res, observation.Content
 			},
 		},
-		{
-			name: "mem_save_prompt",
-			write: func(t *testing.T, s *store.Store) (*mcppkg.CallToolResult, string) {
-				res, err := handleSavePrompt(s, MCPConfig{}, nil)(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{"content": content, "project": "engram"}}})
-				if err != nil {
-					t.Fatalf("mem_save_prompt: %v", err)
-				}
-				prompts, err := s.RecentPrompts("engram", 1)
-				if err != nil {
-					t.Fatalf("recent prompts: %v", err)
-				}
-				return res, prompts[0].Content
-			},
-		},
 	}
 
 	for _, tc := range tests {
@@ -258,6 +228,38 @@ func TestMCPWriteToolsReportByteTruncation(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("mem_save_prompt", func(t *testing.T) {
+		s := newMCPTestStoreWithMaxContentLength(t, limit)
+		if _, err := memoryops.New(s).EnableCapture(memoryops.CaptureEnableInput{
+			Project: "engram", ContentType: store.CaptureContentTypePrompt,
+		}); err != nil {
+			t.Fatalf("enable capture: %v", err)
+		}
+		res, err := handleSavePrompt(s, MCPConfig{DefaultProject: "engram"}, nil)(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+			"content": content,
+		}}})
+		if err != nil || res.IsError {
+			t.Fatalf("mem_save_prompt: err=%v result=%s", err, callResultText(t, res))
+		}
+		var persisted string
+		if err := s.DB().QueryRow(`SELECT content FROM diagnostic_captures`).Scan(&persisted); err != nil {
+			t.Fatalf("read Diagnostic capture: %v", err)
+		}
+		if persisted != want || !utf8.ValidString(persisted) {
+			t.Fatalf("persisted content = %q, want valid UTF-8 %q", persisted, want)
+		}
+		body := callResultJSON(t, res)
+		if body["captured"] != true || body["reason_code"] != memoryops.CaptureReasonCaptured {
+			t.Fatalf("capture metadata = %#v", body)
+		}
+		if strings.Contains(callResultText(t, res), content) {
+			t.Fatalf("capture response leaked prompt content: %s", callResultText(t, res))
+		}
+		if _, exposesTruncation := body["truncation"]; exposesTruncation {
+			t.Fatalf("capture response exposed content-derived truncation metadata: %#v", body)
+		}
+	})
 }
 
 func TestMCPTruncationUsesRedactedByteCounts(t *testing.T) {
@@ -651,7 +653,7 @@ func TestSaveHandlersExposeStoreAdmissionErrors(t *testing.T) {
 	}
 }
 
-func TestHandleSaveAutoCapturesCurrentPromptByDefault(t *testing.T) {
+func TestHandleSaveDoesNotCaptureCurrentPromptByDefault(t *testing.T) {
 	s := newMCPTestStore(t)
 	if err := s.EnrollProject("engram"); err != nil {
 		t.Fatalf("enroll project: %v", err)
@@ -676,33 +678,7 @@ func TestHandleSaveAutoCapturesCurrentPromptByDefault(t *testing.T) {
 		t.Fatalf("unexpected save error: %s", callResultText(t, res))
 	}
 
-	prompts, err := s.RecentPrompts("engram", 5)
-	if err != nil {
-		t.Fatalf("recent prompts: %v", err)
-	}
-	if len(prompts) != 1 {
-		t.Fatalf("expected one auto-captured prompt, got %d: %#v", len(prompts), prompts)
-	}
-	if prompts[0].SessionID != sessionID || prompts[0].Content != "please persist the auth decision" {
-		t.Fatalf("unexpected prompt row: %#v", prompts[0])
-	}
-
-	// Saving another observation in the same session should reuse the prompt row,
-	// not duplicate exact same project+session+content context.
-	res, err = h(context.Background(), req)
-	if err != nil || res.IsError {
-		t.Fatalf("second save failed: err=%v isError=%v text=%q", err, res.IsError, callResultText(t, res))
-	}
-	prompts, err = s.RecentPrompts("engram", 5)
-	if err != nil {
-		t.Fatalf("recent prompts after second save: %v", err)
-	}
-	if len(prompts) != 1 {
-		t.Fatalf("expected prompt dedupe to keep one row, got %d: %#v", len(prompts), prompts)
-	}
-	if got := countPromptUpsertSyncMutations(t, s); got != 1 {
-		t.Fatalf("expected prompt dedupe to keep one prompt sync mutation, got %d", got)
-	}
+	assertMCPPromptCaptureBoundaryCounts(t, s, 0, 0)
 }
 
 func TestHandleSaveRecordsActivityForExplicitSessionID(t *testing.T) {
@@ -902,17 +878,18 @@ func TestHandleSavePromptCaptureFailureIsNonFatal(t *testing.T) {
 	activity.RecordPrompt(defaultSessionID("engram"), "engram", "prompt capture should fail non-fatally")
 	h := handleSave(s, MCPConfig{}, activity)
 
-	originalAddPromptIfMissing := addPromptIfMissing
-	addPromptIfMissing = func(*store.Store, store.AddPromptParams) (int64, bool, error) {
-		return 0, false, errors.New("forced prompt capture failure")
+	originalCaptureDiagnostic := captureDiagnostic
+	captureDiagnostic = func(*store.Store, memoryops.CaptureInput) (*memoryops.CaptureResult, error) {
+		return nil, errors.New("forced prompt capture failure")
 	}
-	t.Cleanup(func() { addPromptIfMissing = originalAddPromptIfMissing })
+	t.Cleanup(func() { captureDiagnostic = originalCaptureDiagnostic })
 
 	res, err := h(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
-		"title":   "Non fatal prompt capture",
-		"content": "**What**: saved despite prompt capture failure\n**Why**: regression test",
-		"type":    "bugfix",
-		"project": "engram",
+		"title":          "Non fatal prompt capture",
+		"content":        "**What**: saved despite prompt capture failure\n**Why**: regression test",
+		"type":           "bugfix",
+		"project":        "engram",
+		"capture_prompt": true,
 	}}})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -930,7 +907,7 @@ func TestHandleSavePromptCaptureFailureIsNonFatal(t *testing.T) {
 	}
 }
 
-func TestHandleSavePromptFeedsAutoCaptureContext(t *testing.T) {
+func TestHandleSavePromptFeedsExpiringContextForLaterConsentedCapture(t *testing.T) {
 	s := newMCPTestStore(t)
 	activity := NewSessionActivity(10 * time.Minute)
 	savePrompt := handleSavePrompt(s, MCPConfig{}, activity)
@@ -946,12 +923,26 @@ func TestHandleSavePromptFeedsAutoCaptureContext(t *testing.T) {
 	if promptRes.IsError {
 		t.Fatalf("unexpected save prompt error: %s", callResultText(t, promptRes))
 	}
+	promptBody := callResultJSON(t, promptRes)
+	if promptBody["captured"] != false || promptBody["reason_code"] != memoryops.CaptureReasonConsentDisabled {
+		t.Fatalf("expected denied capture metadata, got %v", promptBody)
+	}
+	if strings.Contains(callResultText(t, promptRes), "user asked for prompt-linked bugfix memory") {
+		t.Fatalf("mem_save_prompt response leaked prompt content: %s", callResultText(t, promptRes))
+	}
+	assertMCPPromptCaptureBoundaryCounts(t, s, 0, 0)
+	if _, err := memoryops.New(s).EnableCapture(memoryops.CaptureEnableInput{
+		Project: "engram", ContentType: store.CaptureContentTypePrompt,
+	}); err != nil {
+		t.Fatalf("enable capture: %v", err)
+	}
 
 	saveRes, err := save(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
-		"title":   "Prompt linked bugfix",
-		"content": "**What**: linked prompt context\n**Why**: user asked",
-		"type":    "bugfix",
-		"project": "engram",
+		"title":          "Prompt linked bugfix",
+		"content":        "**What**: linked prompt context\n**Why**: user asked",
+		"type":           "bugfix",
+		"project":        "engram",
+		"capture_prompt": true,
 	}}})
 	if err != nil {
 		t.Fatalf("save handler error: %v", err)
@@ -960,15 +951,13 @@ func TestHandleSavePromptFeedsAutoCaptureContext(t *testing.T) {
 		t.Fatalf("unexpected save error: %s", callResultText(t, saveRes))
 	}
 
-	prompts, err := s.RecentPrompts("engram", 5)
-	if err != nil {
-		t.Fatalf("recent prompts: %v", err)
+	assertMCPPromptCaptureBoundaryCounts(t, s, 1, 0)
+	var captured string
+	if err := s.DB().QueryRow(`SELECT content FROM diagnostic_captures`).Scan(&captured); err != nil {
+		t.Fatalf("read later Diagnostic capture: %v", err)
 	}
-	if len(prompts) != 1 {
-		t.Fatalf("expected mem_save_prompt row to feed auto-capture without duplicate, got %d: %#v", len(prompts), prompts)
-	}
-	if prompts[0].Content != "user asked for prompt-linked bugfix memory" {
-		t.Fatalf("unexpected prompt content: %#v", prompts[0])
+	if captured != "user asked for prompt-linked bugfix memory" {
+		t.Fatalf("captured content = %q", captured)
 	}
 }
 
@@ -5610,10 +5599,10 @@ func TestMemSavePrompt_AmbiguousWithValidUserChoiceSucceeds(t *testing.T) {
 	if body["project_path"] != filepath.Join(parent, "repo-prompt-a") {
 		t.Fatalf("expected project_path to point at selected prompt repo root, got %v", body)
 	}
-	prompts, err := s.RecentPrompts("repo-prompt-a", 5)
-	if err != nil || len(prompts) != 1 {
-		t.Fatalf("expected prompt in selected project, prompts=%d err=%v", len(prompts), err)
+	if body["captured"] != false || body["reason_code"] != memoryops.CaptureReasonConsentDisabled {
+		t.Fatalf("expected default-off capture metadata, got %v", body)
 	}
+	assertMCPPromptCaptureBoundaryCounts(t, s, 0, 0)
 }
 
 func TestMemSavePrompt_AmbiguousRecoveryRejectsSyntheticUserChoiceReason(t *testing.T) {
@@ -6185,10 +6174,10 @@ func TestHandleSaveAndPromptUseConfigProjectForWrites(t *testing.T) {
 	if err != nil || len(obs) != 1 {
 		t.Fatalf("expected observation written to config-backed explicit project, obs=%d err=%v", len(obs), err)
 	}
-	prompts, err := s.RecentPrompts("config-locked", 5)
-	if err != nil || len(prompts) != 1 {
-		t.Fatalf("expected prompt written to config project, prompts=%d err=%v", len(prompts), err)
+	if body["captured"] != false || body["reason_code"] != memoryops.CaptureReasonConsentDisabled {
+		t.Fatalf("expected default-off config-scoped capture metadata, got %v", body)
 	}
+	assertMCPPromptCaptureBoundaryCounts(t, s, 0, 0)
 	if wrong, _ := s.Search("memory saved under config project", store.SearchOptions{Project: "attempted-override", Limit: 5}); len(wrong) != 0 {
 		t.Fatal("mem_save_prompt-only override text must not create an unrelated project bucket")
 	}

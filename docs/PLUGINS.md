@@ -44,7 +44,9 @@ The plugin auto-starts the HTTP server if it's not already running — no manual
 
 The plugin:
 - **Auto-starts** the engram server if not running
-- **Consumes core project identity** from `/project/current`; weak identities remain readable but cannot trigger session or memory writes
+- **Consumes core project identity** from `/project/current`; weak identities
+  allow generic discovery but candidate Recall returns empty with one warning
+  and cannot trigger session or Memory writes
 - **Auto-imports** git-synced memories from `.engram/manifest.json` only when the current project has strong write authority
 - **Creates sessions** on-demand via `ensureSession()` (resilient to restarts/reconnects)
 - **Injects the Memory Protocol** into the agent's system prompt via `chat.system.transform` — selective Recall plus one terminal Memory checkpoint per settled root user turn. The protocol is concatenated into the existing system message (not pushed as a separate one), ensuring compatibility with models that only accept a single system block (Qwen, Mistral/Ministral via llama.cpp, etc.)
@@ -176,7 +178,9 @@ PowerShell local override/testing example for locked-down Windows endpoints:
 **Memory Protocol skill** (always available):
 
 - Owns the single `saved`, `needs_review`, or `skipped(no_durable_knowledge)` rubric.
-- Uses selective Recall only when it can change the work.
+- Uses selective Recall only when prior history can change the work: automatic
+  project Recall requires strong/explicit identity, begins at five candidates
+  and 4 KiB, and fails open visibly without blocking the task.
 - Commits one terminal checkpoint per settled root user turn, including across compaction.
 - Reserves independent save and optional Session summary for explicit curation.
 
@@ -296,56 +300,34 @@ On error (unknown `judgment_id` or invalid `relation`), returns `IsError: true`.
 
 Re-judging an already-judged `judgment_id` overwrites the verdict (deliberate revision is allowed).
 
-### Search annotation behavior (observed)
+### Candidate Recall relation behavior
 
-After a verdict is recorded, `mem_search` annotations surface as follows:
+After a verdict is recorded, bounded `mem_search` candidates behave as follows:
 
-| Relation verdict | Annotation in `mem_search` results |
-|-----------------|-----------------------------------|
-| `supersedes` | `supersedes: #<id> (<title>)` on the source observation; `superseded_by: #<id> (<title>)` on the target |
-| `supersedes` (target deleted) | `supersedes: #<id> (deleted)` — falls back to `(deleted)` when the related observation is missing |
-| `conflicts_with` (judged) | `conflicts: #<id> (<title>)` on both observations — one line per conflict |
-| `pending` (not yet judged) | `conflict: contested by #<id> (pending)` on both observations |
-| `compatible`, `related`, `scoped`, `not_conflict` | No annotation line. Judgment is stored but not surfaced. |
+| Relation verdict | Candidate Recall behavior |
+|-----------------|---------------------------|
+| `supersedes` | The judged target is excluded as obsolete; the current source may still qualify. |
+| `conflicts_with` (judged) | Both eligible sides carry a structured `conflicts[]` entry with `status: "judged"`. |
+| `pending` (not yet judged) | Both eligible sides carry a structured `conflicts[]` entry with `status: "pending"`. |
+| `compatible`, `related`, `scoped`, `not_conflict` | The judgment is stored but not surfaced as a Recall conflict. |
+
+Deleted, inactive, and superseded Memories are excluded before the limit.
+Conflict entries contain `relation_id`, the related Memory ID/sync ID/title,
+and status only when the counterpart independently passes the same active,
+current, project, and scope boundary. They are warnings, not an instruction to
+silently choose one side.
 
 ### Multi-actor sync_id namespace
 
 Multiple agents can independently analyze the same pair of observations and each produce a distinct `memory_relations` row — even if they refer to the same `(source_id, target_id)` pair. Each row receives its own unique `sync_id`, so there is **no uniqueness constraint** on `(source_id, target_id)`.
 
-Consequences for annotation parsers:
-
-- `mem_search` may return **duplicate annotation lines** with the `conflicts:` prefix for the same `(source, target)` pair — one line per relation row. This is intentional, not a bug.
-- Each line represents a distinct verdict from a distinct actor.
-- The provenance fields `marked_by_actor`, `marked_by_kind`, and `marked_by_model` on the `memory_relations` row identify which agent produced each verdict.
-- When displaying or resolving conflicts, parsers MUST treat each `conflicts:` line as a separate entry keyed on the relation's `sync_id`, not on the observation pair.
-
-Example: two agents both flag observations `#10` and `#20` as conflicting. The `mem_search` result for observation `#10` may include:
-
-```
-conflicts: #20 (Some title)
-conflicts: #20 (Some title)
-```
-
-Both lines are valid. Match by prefix and process all entries — do not deduplicate based on target ID alone.
-
-### Annotation format contract (REQ-012)
-
-The annotation format is a stable, versioned contract. Agent parsers use prefix-based matching — these prefixes will not change in Phase 3:
-
-```
-supersedes: #<id> (<title>)
-superseded_by: #<id> (<title>)
-conflicts: #<id> (<title>)
-conflict: contested by #<id> (pending)
-```
-
-Multiple entries appear on separate lines (one per related observation), in query-return order. The `<title>` is retrieved via JOIN at search time (no N+1 queries). When the related observation has been deleted, `(deleted)` replaces the title.
-
-> **Parser note**: match by prefix (`supersedes:`, `superseded_by:`, `conflicts:`, `conflict:`). The format `#<integer-id> (<title>)` within parentheses is stable. Do not attempt to parse the title itself — it may contain any characters.
+Each row remains a distinct conflict entry, keyed by `relation_id`; consumers
+must not deduplicate multiple actors merely because they reference the same
+Memory pair. Actor/model provenance remains on the underlying relation row.
 
 ### Cloud sync for judgments
 
-When a project is enrolled in Engram Cloud and autosync is enabled, `mem_judge` verdicts sync across machines. The `memory_relations` table propagates via the standard mutation push/pull cycle — the same pipeline used for observations and sessions. Judgments appear in `mem_search` annotations on any machine that has pulled the relevant mutations.
+When a project is enrolled in Engram Cloud and autosync is enabled, `mem_judge` verdicts sync across machines. The `memory_relations` table propagates via the standard mutation push/pull cycle — the same pipeline used for observations and sessions. Judgments affect candidate eligibility and structured conflicts on any machine that has pulled the relevant mutations.
 
 Relations where the referenced observation does not yet exist locally are deferred (see `sync_apply_deferred`) and retried automatically on subsequent pull cycles.
 

@@ -134,15 +134,16 @@ test("a slow health probe never authorizes a duplicate spawn", async () => {
   });
 });
 
-test("a child that exits before readiness surfaces a normalized tool error", async () => {
+test("a child that exits before readiness gives Recall one visible fail-open warning", async () => {
   await withFixture({ exitCode: 1 }, async ({ tools, ctx }) => {
     const memSearch = tools.get("mem_search");
     assert.ok(memSearch, "mem_search is registered");
 
     const result = await memSearch.execute("call-1", { query: "startup" }, undefined, undefined, ctx);
 
-    assert.equal(result.isError, true, "a failed startup is a tool error, not a rejection");
-    assert.match(result.content[0].text, /could not initialize the Engram memory provider/);
+    assert.notEqual(result.isError, true);
+    assert.equal(result.details.data.result_count, 0);
+    assert.equal(result.details.data.warning.code, "recall_unavailable");
   });
 });
 
@@ -173,8 +174,8 @@ test("a persistently failing provider does not restart Engram on every tool call
 
     for (let call = 0; call < 50; call += 1) {
       const result = await memSearch.execute(`call-${call}`, { query: "startup" }, undefined, undefined, ctx);
-      assert.equal(result.isError, true);
-      assert.match(result.content[0].text, /could not initialize the Engram memory provider/);
+      assert.notEqual(result.isError, true);
+      assert.equal(result.details.data.warning.code, "recall_unavailable");
     }
 
     const spawns = await countSpawns(spawnLog);

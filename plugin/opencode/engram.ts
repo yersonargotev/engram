@@ -59,9 +59,15 @@ after all causal agent, tool, subagent, compaction, and continuation work settle
 \`mem_current_project\`, \`mem_search\`, \`mem_get_observation\`, \`mem_checkpoint\`, \`mem_checkpoint_status\`
 
 Current user intent, maintained source, and runtime evidence override Memory.
-Recall only when it can change the work; empty Recall is successful. Reuse the
-supplied opaque root-turn identity across continuations. The canonical
-engram-memory skill owns the durability and disposition rubric.
+Recall only when prior decisions, tracked work, release/configuration,
+preferences, or failures can change the work; self-contained work needs no
+search. Automatic Recall requires strong or explicit project identity. Start
+with one narrow project search (at most 5 candidates/4 KiB) and reformulate at
+most once. Limits 6-10 and personal/cross-project scope require deliberate
+relevance. Empty or unavailable Recall does not block the task; conflicts and
+the single fail-open warning remain explicit. Reuse the supplied opaque
+root-turn identity across continuations. The canonical engram-memory skill owns
+the detailed Recall, durability, and disposition rubric.
 
 Session summary and independent save are optional curation workflows, not
 default lifecycle requirements. Capture and lifecycle operations are outside

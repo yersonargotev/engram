@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1228,7 +1229,7 @@ func TestHandleSearchAndCRUDHandlers(t *testing.T) {
 	if searchRes.IsError {
 		t.Fatalf("unexpected search error: %s", callResultText(t, searchRes))
 	}
-	if !strings.Contains(callResultText(t, searchRes), "Found 1 memories") {
+	if !strings.Contains(callResultText(t, searchRes), "Found 1 bounded Memory candidates") {
 		t.Fatalf("expected non-empty search result")
 	}
 	searchBody := callResultJSON(t, searchRes)
@@ -1237,9 +1238,6 @@ func TestHandleSearchAndCRUDHandlers(t *testing.T) {
 		t.Fatalf("expected structured search results with lifecycle metadata, got %v", searchBody["results"])
 	}
 	firstResult, _ := results[0].(map[string]any)
-	if firstResult["state"] != store.ObservationStateActive {
-		t.Fatalf("expected search result state active, got %v", firstResult["state"])
-	}
 	if firstResult["pinned"] != true {
 		t.Fatalf("expected search result pinned=true, got %v", firstResult["pinned"])
 	}
@@ -1283,6 +1281,86 @@ func TestHandleSearchAndCRUDHandlers(t *testing.T) {
 	}
 	if !strings.Contains(callResultText(t, delRes), "permanently deleted") {
 		t.Fatalf("expected hard delete message")
+	}
+}
+
+func TestHandleSearchReturnsBoundedRecallEnvelope(t *testing.T) {
+	s := newMCPTestStore(t)
+	if err := s.CreateSession("recall-mcp", "engram", "/work/engram"); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := s.AddObservation(store.AddObservationParams{
+		SessionID: "recall-mcp", Project: "engram", Scope: "project", Type: "decision",
+		Title: "Bounded Recall MCP", Content: "candidate summary content",
+	}); err != nil {
+		t.Fatalf("seed Memory: %v", err)
+	}
+
+	result, err := handleSearch(s, MCPConfig{BinaryVersion: "9.9.9-test", BinaryRevision: "revision-test"}, NewSessionActivity(time.Minute))(
+		context.Background(),
+		mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+			"query": "Bounded Recall", "project": "engram",
+		}}},
+	)
+	if err != nil || result.IsError {
+		t.Fatalf("search result=%#v error=%v", result, err)
+	}
+	payload := callResultJSON(t, result)
+	if recallID, _ := payload["recall_id"].(string); !strings.HasPrefix(recallID, "recall-") {
+		t.Fatalf("recall_id=%v", payload["recall_id"])
+	}
+	if payload["result_count"] != float64(1) || len(payload["result_ids"].([]any)) != 1 || len(payload["results"].([]any)) != 1 {
+		t.Fatalf("result metadata=%v", payload)
+	}
+	if delivered, _ := payload["delivered_utf8_bytes"].(float64); delivered <= 0 || delivered > memoryops.RecallCandidateBudgetBytes {
+		t.Fatalf("delivered_utf8_bytes=%v", payload["delivered_utf8_bytes"])
+	}
+	provenance := payload["provenance"].(map[string]any)
+	if provenance["protocol_version"] != float64(protocolcontract.Version) || provenance["binary_version"] != "9.9.9-test" || provenance["binary_revision"] != "revision-test" {
+		t.Fatalf("provenance=%v", provenance)
+	}
+	candidate := payload["results"].([]any)[0].(map[string]any)
+	if candidate["summary"] != "candidate summary content" {
+		t.Fatalf("candidate=%v", candidate)
+	}
+	if prose, _ := payload["result"].(string); strings.Contains(prose, "candidate summary content") {
+		t.Fatalf("prose duplicated candidate payload: %q", prose)
+	}
+}
+
+func TestHandleSearchRejectsInvalidScopeAndNonIntegerOrZeroLimits(t *testing.T) {
+	s := newMCPTestStore(t)
+	for _, test := range []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{name: "unknown scope", args: map[string]any{"query": "secret", "scope": "typo"}, want: "invalid recall scope"},
+		{name: "zero", args: map[string]any{"query": "secret", "project": "engram", "limit": float64(0)}, want: "limit must be between 1 and 10"},
+		{name: "fractional", args: map[string]any{"query": "secret", "project": "engram", "limit": 10.9}, want: "limit must be an integer"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := handleSearch(s, MCPConfig{}, nil)(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: test.args}})
+			if err != nil || !result.IsError || !strings.Contains(callResultText(t, result), test.want) {
+				t.Fatalf("result=%#v err=%v, want %q", result, err, test.want)
+			}
+		})
+	}
+}
+
+func TestMemSearchSchemaPublishesScopeAndIntegerLimitBounds(t *testing.T) {
+	s := newMCPTestStore(t)
+	tool := NewServerWithTools(s, ResolveTools("mem_search")).ListTools()["mem_search"]
+	if tool == nil {
+		t.Fatal("mem_search is not registered")
+	}
+	limit, ok := tool.Tool.InputSchema.Properties["limit"].(map[string]any)
+	if !ok || limit["minimum"] != float64(1) || limit["maximum"] != float64(memoryops.MaximumRecallCandidateLimit) || limit["multipleOf"] != float64(1) {
+		t.Fatalf("limit schema=%#v", tool.Tool.InputSchema.Properties["limit"])
+	}
+	scope, ok := tool.Tool.InputSchema.Properties["scope"].(map[string]any)
+	if !ok || !reflect.DeepEqual(scope["enum"], []string{"project", "personal", "global"}) {
+		t.Fatalf("scope schema=%#v", tool.Tool.InputSchema.Properties["scope"])
 	}
 }
 
@@ -1620,7 +1698,7 @@ func TestMCPHandlersErrorBranches(t *testing.T) {
 	if noResultsRes.IsError {
 		t.Fatalf("expected non-error no-results response")
 	}
-	if !strings.Contains(callResultText(t, noResultsRes), "No memories found") {
+	if !strings.Contains(callResultText(t, noResultsRes), "No Memory candidates found") {
 		t.Fatalf("expected no memories response")
 	}
 
@@ -1704,8 +1782,13 @@ func TestMCPHandlersReturnErrorsWhenStoreClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("closed store search call: %v", err)
 	}
-	if !searchRes.IsError {
-		t.Fatalf("expected search to return tool error when store is closed")
+	if searchRes.IsError {
+		t.Fatalf("expected search to fail open when store is closed")
+	}
+	searchBody := callResultJSON(t, searchRes)
+	warning, _ := searchBody["warning"].(map[string]any)
+	if warning["code"] != "recall_unavailable" || searchBody["result_count"] != float64(0) {
+		t.Fatalf("expected visible fail-open search response, got %v", searchBody)
 	}
 
 	updateRes, err := handleUpdate(s, MCPConfig{})(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{"id": 1.0, "title": "new"}}})
@@ -2655,14 +2738,14 @@ func TestHandleSearch_SupersededAnnotation(t *testing.T) {
 		t.Fatalf("unexpected search error: %s", callResultText(t, searchRes))
 	}
 
-	text := callResultText(t, searchRes)
-	// oldObs should show superseded_by annotation.
-	// newObs should show supersedes annotation.
-	if !strings.Contains(text, "superseded_by:") {
-		t.Fatalf("expected superseded_by annotation in search results, got %q", text)
+	body := callResultJSON(t, searchRes)
+	results, _ := body["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("expected only the current replacement candidate, got %v", results)
 	}
-	if !strings.Contains(text, "supersedes:") {
-		t.Fatalf("expected supersedes annotation in search results, got %q", text)
+	result, _ := results[0].(map[string]any)
+	if result["id"] != float64(newObs.ID) {
+		t.Fatalf("expected current candidate %d and exclusion of superseded %d, got %v", newObs.ID, oldObs.ID, results)
 	}
 }
 
@@ -2724,10 +2807,17 @@ func TestHandleSearch_PendingAsContested(t *testing.T) {
 		t.Fatalf("search handler error: %v", err)
 	}
 
-	text := callResultText(t, searchRes)
-	// Pending relation should surface as "conflict: contested by"
-	if !strings.Contains(text, "conflict: contested by") {
-		t.Fatalf("expected conflict annotation for pending relation, got %q", text)
+	body := callResultJSON(t, searchRes)
+	results, _ := body["results"].([]any)
+	if len(results) != 2 {
+		t.Fatalf("expected both contested candidates, got %v", results)
+	}
+	for _, item := range results {
+		candidate, _ := item.(map[string]any)
+		conflicts, _ := candidate["conflicts"].([]any)
+		if len(conflicts) != 1 || conflicts[0].(map[string]any)["status"] != store.JudgmentStatusPending {
+			t.Fatalf("expected one explicit pending conflict for each candidate, got %v", candidate)
+		}
 	}
 }
 
@@ -2769,7 +2859,7 @@ func TestHandleSearch_NoRelationsUnchanged(t *testing.T) {
 		t.Fatalf("expected no relation annotations when no relations exist, got %q", text)
 	}
 	// Standard format must be preserved.
-	if !strings.Contains(text, "Found 1 memories") {
+	if !strings.Contains(text, "Found 1 bounded Memory candidates") {
 		t.Fatalf("expected standard search output format, got %q", text)
 	}
 }
@@ -3706,50 +3796,6 @@ func TestHandleSave_ExplicitProjectWinsOverAutoDetect(t *testing.T) {
 	obs2, err := s.RecentObservations("llm-selected-project", "project", 5)
 	if err != nil || len(obs2) == 0 {
 		t.Fatal("expected observation in explicit project")
-	}
-}
-
-func TestSearchResponseIncludesNudgeAfterInactivity(t *testing.T) {
-	s := newMCPTestStore(t)
-
-	// Seed a memory to search for
-	s.CreateSession("s1", "myproject", "")
-	s.AddObservation(store.AddObservationParams{
-		SessionID: "s1",
-		Type:      "manual",
-		Title:     "test memory",
-		Content:   "some content",
-		Project:   "myproject",
-	})
-
-	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-	activity := NewSessionActivity(10 * time.Minute)
-	activity.now = func() time.Time { return now }
-
-	sessionID := defaultSessionID("myproject")
-
-	// Simulate prior activity: > 5 tool calls so nudge criteria is met
-	for i := 0; i < 6; i++ {
-		activity.RecordToolCall(sessionID)
-	}
-
-	// Advance time past nudge threshold
-	now = now.Add(15 * time.Minute)
-
-	search := handleSearch(s, MCPConfig{}, activity)
-	res, err := search(context.Background(), mcppkg.CallToolRequest{
-		Params: mcppkg.CallToolParams{Arguments: map[string]any{
-			"query":   "test memory",
-			"project": "myproject",
-		}},
-	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
-	}
-
-	text := callResultText(t, res)
-	if !strings.Contains(text, "No mem_save calls for this project") {
-		t.Fatalf("expected nudge in search response, got: %q", text)
 	}
 }
 
@@ -5816,8 +5862,7 @@ func TestMemSearch_ExplicitKnownProject(t *testing.T) {
 	}
 }
 
-// TestMemSearch_UnknownProjectError: unknown override returns structured error (REQ-311)
-func TestMemSearch_UnknownProjectError(t *testing.T) {
+func TestMemSearch_UnknownExplicitProjectReturnsEmptySuccess(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
@@ -5831,12 +5876,12 @@ func TestMemSearch_UnknownProjectError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
-	if !res.IsError {
-		t.Fatal("expected error for unknown project override")
+	if res.IsError {
+		t.Fatalf("expected empty success for unknown explicit project, got %q", callResultText(t, res))
 	}
-	text := callResultText(t, res)
-	if !strings.Contains(text, "unknown_project") {
-		t.Errorf("expected error_code unknown_project, got: %q", text)
+	body := callResultJSON(t, res)
+	if body["result_count"] != float64(0) || body["project"] != "does-not-exist-project" {
+		t.Fatalf("expected scoped empty Recall envelope, got %v", body)
 	}
 }
 
@@ -7239,11 +7284,19 @@ func TestMemSearch_AnnotatesConflictsWith_Judged(t *testing.T) {
 		t.Fatalf("search error: %v", err)
 	}
 
-	text := callResultText(t, searchRes)
-	// obsA should have annotation: conflicts: #<obsBID> (Use Redis for caching)
-	want := fmt.Sprintf("conflicts: #%d (Use Redis for caching)", obsBID)
-	if !strings.Contains(text, want) {
-		t.Fatalf("expected annotation %q in search result, got:\n%s", want, text)
+	body := callResultJSON(t, searchRes)
+	results, _ := body["results"].([]any)
+	if len(results) == 0 {
+		t.Fatal("expected at least one conflict-bearing candidate")
+	}
+	first, _ := results[0].(map[string]any)
+	conflicts, _ := first["conflicts"].([]any)
+	if len(conflicts) != 1 {
+		t.Fatalf("expected one explicit conflict, got %v", first)
+	}
+	conflict, _ := conflicts[0].(map[string]any)
+	if conflict["memory_id"] != float64(obsBID) || conflict["title"] != "Use Redis for caching" || conflict["status"] != store.JudgmentStatusJudged {
+		t.Fatalf("unexpected conflict metadata: %v", conflict)
 	}
 }
 
@@ -7308,21 +7361,19 @@ func TestMemSearch_PendingConflict_KeepsPhase1Annotation(t *testing.T) {
 		t.Fatalf("search error: %v", err)
 	}
 
-	text := callResultText(t, searchRes)
-
-	// Must NOT produce a "conflicts:" annotation (that is for judged only).
-	if strings.Contains(text, "conflicts:") {
-		t.Fatalf("pending relation must not produce conflicts: annotation, got:\n%s", text)
+	body := callResultJSON(t, searchRes)
+	results, _ := body["results"].([]any)
+	if len(results) != 2 {
+		t.Fatalf("expected both pending-conflict candidates, got %v", results)
 	}
-	// Phase 1 pending annotation must be present byte-for-byte (minus target sync_id which varies).
-	if !strings.Contains(text, "conflict: contested by #") {
-		t.Fatalf("expected Phase 1 pending annotation 'conflict: contested by #', got:\n%s", text)
+	for _, item := range results {
+		candidate, _ := item.(map[string]any)
+		conflicts, _ := candidate["conflicts"].([]any)
+		if len(conflicts) != 1 || conflicts[0].(map[string]any)["status"] != store.JudgmentStatusPending {
+			t.Fatalf("expected explicit pending conflict, got %v", candidate)
+		}
 	}
-	if !strings.Contains(text, "(pending)") {
-		t.Fatalf("expected '(pending)' in annotation, got:\n%s", text)
-	}
-	// obsBID must not appear in the annotation (Phase 1 uses sync_id, not integer id in pending case).
-	_ = obsBID // used to create the relation; not checked in pending annotation format
+	_ = obsBID
 }
 
 // F.1c — MemSearch_TitleEnrichment_SupersedesAndSupersededBy
@@ -7394,17 +7445,10 @@ func TestMemSearch_TitleEnrichment_SupersedesAndSupersededBy(t *testing.T) {
 		t.Fatalf("search error: %v", err)
 	}
 
-	text := callResultText(t, searchRes)
-
-	// newObs should have: supersedes: #<oldID> (Old JWT approach)
-	wantSupersedes := fmt.Sprintf("supersedes: #%d (Old JWT approach)", oldID)
-	if !strings.Contains(text, wantSupersedes) {
-		t.Fatalf("expected %q in search result, got:\n%s", wantSupersedes, text)
-	}
-	// oldObs should have: superseded_by: #<newID> (New JWT approach)
-	wantSupersededBy := fmt.Sprintf("superseded_by: #%d (New JWT approach)", newID)
-	if !strings.Contains(text, wantSupersededBy) {
-		t.Fatalf("expected %q in search result, got:\n%s", wantSupersededBy, text)
+	body := callResultJSON(t, searchRes)
+	results, _ := body["results"].([]any)
+	if len(results) != 1 || results[0].(map[string]any)["id"] != float64(newID) {
+		t.Fatalf("expected only current replacement %d and exclusion of superseded %d, got %v", newID, oldID, results)
 	}
 }
 
@@ -7484,11 +7528,13 @@ func TestMemSearch_TitleEnrichment_FallsBackToDeleted(t *testing.T) {
 		t.Fatalf("search error: %v", err)
 	}
 
-	text := callResultText(t, searchRes)
-	// Source obs should have: supersedes: #<deletedID> (deleted)
-	wantDeleted := fmt.Sprintf("supersedes: #%d (deleted)", deletedID)
-	if !strings.Contains(text, wantDeleted) {
-		t.Fatalf("expected %q for deleted target, got:\n%s", wantDeleted, text)
+	body := callResultJSON(t, searchRes)
+	results, _ := body["results"].([]any)
+	if len(results) != 1 || results[0].(map[string]any)["id"] != float64(sourceID) {
+		t.Fatalf("expected current source and no deleted candidate, got %v", results)
+	}
+	if _, ok := results[0].(map[string]any)["conflicts"]; ok {
+		t.Fatalf("supersedes relation must not be presented as an unresolved conflict: %v", results[0])
 	}
 }
 
@@ -7631,22 +7677,16 @@ func TestMemSearch_AllThreeTypes_FormatExact(t *testing.T) {
 		t.Fatalf("search error: %v", err)
 	}
 
-	text := callResultText(t, searchRes)
-
-	// Verify exact format for all three types on central obs.
-	wantSupersedes := fmt.Sprintf("supersedes: #%d (Old architecture)", supersedesTargetID)
-	wantConflicts := fmt.Sprintf("conflicts: #%d (Competing architecture)", conflictsTargetID)
-	wantSupersededBy := fmt.Sprintf("superseded_by: #%d (Newer architecture)", supersederID)
-
-	if !strings.Contains(text, wantSupersedes) {
-		t.Fatalf("expected %q, got:\n%s", wantSupersedes, text)
+	body := callResultJSON(t, searchRes)
+	results, _ := body["results"].([]any)
+	for _, item := range results {
+		if item.(map[string]any)["id"] == float64(centralID) {
+			t.Fatalf("superseded central candidate must be excluded, got %v", results)
+		}
 	}
-	if !strings.Contains(text, wantConflicts) {
-		t.Fatalf("expected %q, got:\n%s", wantConflicts, text)
-	}
-	if !strings.Contains(text, wantSupersededBy) {
-		t.Fatalf("expected %q, got:\n%s", wantSupersededBy, text)
-	}
+	_ = supersedesTargetID
+	_ = conflictsTargetID
+	_ = supersederID
 }
 
 func TestProcessOverrideCurrentProjectBeatsAmbiguousCWD(t *testing.T) {
@@ -8100,12 +8140,12 @@ func TestHandleSearchAllProjectsReturnsResultsFromEveryProject(t *testing.T) {
 	}
 }
 
-func TestHandleSearchAllProjectsOverridesProjectArg(t *testing.T) {
+func TestHandleSearchRejectsAllProjectsWithProjectArg(t *testing.T) {
 	s := newMCPTestStore(t)
 	seedCrossProjectMemories(t, s)
 
 	search := handleSearch(s, MCPConfig{}, NewSessionActivity(10*time.Minute))
-	// Pass both project="alpha" and all_projects=true: all_projects must win.
+	// The two authority scopes are mutually exclusive.
 	req := mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
 		"query":        "auth middleware",
 		"project":      "alpha",
@@ -8117,13 +8157,8 @@ func TestHandleSearchAllProjectsOverridesProjectArg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search handler error: %v", err)
 	}
-	if res.IsError {
-		t.Fatalf("unexpected search error: %s", callResultText(t, res))
-	}
-
-	text := callResultText(t, res)
-	if !strings.Contains(text, "beta") {
-		t.Fatalf("expected result from beta even when project=alpha was supplied; got: %s", text)
+	if !res.IsError || !strings.Contains(callResultText(t, res), "all_projects cannot be combined with project") {
+		t.Fatalf("expected conflicting scope error, got: %s", callResultText(t, res))
 	}
 }
 

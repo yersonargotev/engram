@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -29,6 +30,26 @@ func TestCmdCurrentProjectExposesWeakWriteAuthority(t *testing.T) {
 	payload := decodeCLIJSON(t, stdout)
 	if payload["project_source"] != "dir_basename" || payload["project_strength"] != "weak" || payload["implicit_write_allowed"] != false || payload["safe_next_action"] != "provide an explicit project name and retry the write" {
 		t.Fatalf("current-project identity policy = %v", payload)
+	}
+}
+
+func TestCmdSearchStoreOpenFailureFailsOpen(t *testing.T) {
+	originalStoreNew := storeNew
+	storeNew = func(store.Config) (*store.Store, error) {
+		return nil, errors.New("forced open failure")
+	}
+	t.Cleanup(func() { storeNew = originalStoreNew })
+
+	withArgs(t, "engram", "search", "prior release", "--project", "engram", "--json")
+	stdout, stderr := captureOutput(t, func() { cmdSearch(store.Config{}) })
+	if stderr != "" {
+		t.Fatalf("search stderr=%q", stderr)
+	}
+	payload := decodeCLIJSON(t, stdout)
+	warning, _ := payload["warning"].(map[string]any)
+	diagnostics, _ := payload["diagnostics"].([]any)
+	if warning["code"] != "recall_unavailable" || payload["result_count"] != float64(0) || len(diagnostics) != 1 {
+		t.Fatalf("expected visible fail-open Recall, got %v", payload)
 	}
 }
 
@@ -79,6 +100,44 @@ func TestCLIMemoryJSONWorkflow(t *testing.T) {
 	stdout, stderr = captureOutput(t, func() { cmdReview(cfg) })
 	if stderr != "" || decodeCLIJSON(t, stdout)["local_only"] != true {
 		t.Fatalf("review stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestCmdSearchReturnsBoundedRecallEnvelope(t *testing.T) {
+	cfg := testConfig(t)
+	oldVersion, oldCommit := version, commit
+	version, commit = "9.9.9-test", "revision-test"
+	t.Cleanup(func() { version, commit = oldVersion, oldCommit })
+	mustSeedObservation(t, cfg, "recall-cli", "engram", "decision", "Bounded Recall CLI", "candidate summary content", "project")
+
+	withArgs(t, "engram", "search", "Bounded Recall", "--project", "engram", "--json")
+	stdout, stderr := captureOutput(t, func() { cmdSearch(cfg) })
+	if stderr != "" {
+		t.Fatalf("search stderr=%q", stderr)
+	}
+	payload := decodeCLIJSON(t, stdout)
+	if recallID, _ := payload["recall_id"].(string); !strings.HasPrefix(recallID, "recall-") {
+		t.Fatalf("recall_id=%v", payload["recall_id"])
+	}
+	if payload["result_count"] != float64(1) || len(payload["result_ids"].([]any)) != 1 || len(payload["results"].([]any)) != 1 {
+		t.Fatalf("result metadata=%v", payload)
+	}
+	if delivered, _ := payload["delivered_utf8_bytes"].(float64); delivered <= 0 || delivered > 4096 {
+		t.Fatalf("delivered_utf8_bytes=%v", payload["delivered_utf8_bytes"])
+	}
+	if _, ok := payload["elapsed_monotonic_ms"].(float64); !ok {
+		t.Fatalf("elapsed_monotonic_ms=%v", payload["elapsed_monotonic_ms"])
+	}
+	provenance := payload["provenance"].(map[string]any)
+	if provenance["protocol_version"] != float64(1) || provenance["binary_version"] != "9.9.9-test" || provenance["binary_revision"] != "revision-test" {
+		t.Fatalf("provenance=%v", provenance)
+	}
+	candidate := payload["results"].([]any)[0].(map[string]any)
+	if candidate["summary"] != "candidate summary content" {
+		t.Fatalf("candidate=%v", candidate)
+	}
+	if _, leaksFullObservation := candidate["observation"]; leaksFullObservation {
+		t.Fatalf("candidate leaked full observation: %v", candidate)
 	}
 }
 

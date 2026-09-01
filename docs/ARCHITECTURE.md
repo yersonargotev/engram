@@ -32,7 +32,11 @@ Engram trusts the **agent** to decide what's worth remembering — not a firehos
 3. Agent chooses `saved`, `needs_review`, or `skipped(no_durable_knowledge)`.
 4. `mem_checkpoint` commits the disposition, settled Memories, and any proposal
    atomically. A `needs_review` result with at least one Memory is Mixed.
-5. Later work uses selective Recall when prior Memory can change the task.
+5. Later work uses selective Recall only when prior Memory can change the task:
+   one strong/explicit project request, at most five candidates/4 KiB, and at
+   most one reformulation. Deliberate follow-up can request up to ten; broad
+   scope requires explicit relevance. Empty or unavailable Recall does not
+   block the task.
 ```
 
 ---

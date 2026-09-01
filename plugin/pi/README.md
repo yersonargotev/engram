@@ -104,6 +104,12 @@ Pi MCP tools   -> pi-mcp-adapter -> ENGRAM_BIN / engram mcp -> SQLite
 
 The default Pi-native profile exposes exactly `mem_current_project`, `mem_search`, `mem_get_observation`, `mem_checkpoint`, and `mem_checkpoint_status`. It commits one terminal disposition—`saved`, `needs_review`, or `skipped(no_durable_knowledge)`—for each settled root user turn. Current user intent, maintained source, and runtime evidence override Memory.
 
+Pi routes `mem_search` through Core's authority-aware `/recall` endpoint. The
+initial narrow project request returns at most five candidate summaries and
+4 KiB, with one possible reformulation; limits 6-10 and broad scope are
+deliberate. Empty results are a warning-free success. Weak identity or provider
+failure returns no candidates and one visible warning without blocking the task.
+
 Independent save, optional Session summary, consent-gated Diagnostic capture
 requests, passive capture, review, diagnostics, and administration remain
 callable through the explicit specialized profile: set

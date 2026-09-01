@@ -2803,6 +2803,12 @@ func TestStoreInitFailurePaths(t *testing.T) {
 	for i, fn := range cmds {
 		withArgs(t, argsByCmd[i]...)
 		_, stderr, recovered := captureOutputAndRecover(t, func() { fn(cfg) })
+		if i == 3 {
+			if recovered != nil || !strings.Contains(stderr, "Recall is unavailable") {
+				t.Fatalf("command %d: expected visible fail-open Recall, panic=%v stderr=%q", i, recovered, stderr)
+			}
+			continue
+		}
 		if _, ok := recovered.(exitCode); !ok {
 			t.Fatalf("command %d: expected exit panic, got %v", i, recovered)
 		}

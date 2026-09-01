@@ -664,12 +664,18 @@ after each settled root user turn. The canonical skill owns the detailed rubric.
 Independent save and optional Session summary remain explicit curation
 workflows.
 
+Selective Recall is authority-aware: automatic use requires strong or explicit
+project identity and starts with one narrow request capped at five candidates
+and 4 KiB, with at most one reformulation. Limits 6-10 and personal or
+cross-project scope are deliberate. Empty Recall is a warning-free success;
+unavailable Recall is non-blocking and leaves one warning plus diagnostics.
+
 See [Surviving Compaction](#surviving-compaction-recommended) for the minimal
 pointer and [DOCS.md](../DOCS.md#memory-protocol) for the canonical policy.
 
 ### Project detection in VS Code, WSL, and CI
 
-VS Code, WSL, and most CI runners start the MCP server process without inheriting the shell's working directory, so cwd-based project detection may resolve to the wrong project or fall back to a weak directory basename. Weak detection remains available for reads, but writes now fail closed with `weak_project_identity`.
+VS Code, WSL, and most CI runners start the MCP server process without inheriting the shell's working directory, so cwd-based project detection may resolve to the wrong project or fall back to a weak directory basename. Weak detection remains available for generic discovery, but candidate Recall returns empty with one warning and writes fail closed with `weak_project_identity`.
 
 The reliable fix is to pin the project explicitly at startup time. Both forms below work:
 
@@ -981,11 +987,11 @@ There is no separate dashboard or conflict list in Phase 1.
 Once the agent calls `mem_judge` with a verdict:
 
 - The relation row is persisted with `judgment_status: "judged"` and the chosen `relation`.
-- If the relation is `supersedes`, future `mem_search` results show `supersedes: #<id> (<title>)` and `superseded_by: #<id> (<title>)` annotations on the affected observations, including the related memory's title.
-- If the relation is `conflicts_with`, future `mem_search` results show `conflicts: #<id> (<title>)` on both observations.
-- If the relation is `compatible`, `related`, `scoped`, or `not_conflict`, the judgment is stored in `memory_relations` but no annotation appears in search results.
+- If the relation is `supersedes`, future candidate Recall excludes the judged target as obsolete.
+- If the relation is `conflicts_with`, future eligible candidates on both sides contain a structured `conflicts[]` warning with the relation and related Memory identity. Counterpart metadata is omitted unless that related Memory independently passes the same active, current, project, and scope boundary.
+- If the relation is `compatible`, `related`, `scoped`, or `not_conflict`, the judgment is stored in `memory_relations` but no Recall conflict appears.
 
-**Cloud sync**: when the project is enrolled in Engram Cloud and autosync is enabled, `mem_judge` verdicts propagate to other machines via the standard mutation push/pull cycle. The annotation appears in `mem_search` results on any machine that has pulled the relevant mutations. Relations that reference an observation not yet present locally are deferred and retried automatically on subsequent pull cycles — the verdict is never lost.
+**Cloud sync**: when the project is enrolled in Engram Cloud and autosync is enabled, `mem_judge` verdicts propagate to other machines via the standard mutation push/pull cycle. Candidate eligibility and structured conflicts reflect the judgment on any machine that has pulled the relevant mutations. Relations that reference an observation not yet present locally are deferred and retried automatically on subsequent pull cycles — the verdict is never lost.
 
 Nothing breaks if `mem_judge` is never called — pending relations accumulate unjudged but do not affect other operations.
 

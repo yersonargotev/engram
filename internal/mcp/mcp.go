@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,8 @@ type MCPConfig struct {
 	// ENGRAM_PROJECT). When set, it is used before cwd detection for MCP
 	// auto-resolution; per-call project arguments remain separately validated.
 	DefaultProject string
+	BinaryVersion  string
+	BinaryRevision string
 
 	// ObserveOperation receives bounded post-call metadata. It never receives
 	// request arguments or tool content and cannot alter the handler result.
@@ -253,7 +256,9 @@ DEFAULT AGENT TOOLS:
 
 Current user intent, maintained source, and runtime evidence override Memory. Empty Recall is successful. The canonical skill owns the detailed durability rubric; MCP guidance does not define a second policy.
 
-Optional Session summaries and independent Memory saves are explicit curation workflows. Host activity and Content capture belong to the lifecycle profile. Destructive and operational maintenance belongs to the admin profile. Configure curation, lifecycle, admin, all, or explicit tool names only for those specialized workflows.`
+Recall only when prior decisions, tracked work, release/configuration, preferences, or failures can change the task; self-contained work needs none. Automatic Recall requires strong or explicit project identity. Initial Recall: five candidates, 4 KiB, at most one reformulation. Deliberate follow-up: at most ten candidates; broad scope requires explicit relevance. Unavailable Recall fails open without blocking the task.
+
+Optional Session summaries and independent saves require curation; host activity and Content capture require lifecycle; destructive maintenance requires admin.`
 
 // NewServerWithTools creates an MCP server registering only the tools in
 // the allowlist. If allowlist is nil, all tools are registered.
@@ -400,7 +405,7 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 	if shouldRegister("mem_search", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_search",
-				mcp.WithDescription("Search your persistent memory across all sessions. Use this to find past decisions, bugs fixed, patterns used, files changed, or any context from previous coding sessions."),
+				mcp.WithDescription("Recall a bounded candidate set only when prior Memory can materially change the task. Automatic use requires strong or explicit project identity. The initial narrow project search returns at most 5 candidates and 4 KiB; limits 6-10 are deliberate follow-up, and personal or cross-project scope requires explicit relevance."),
 				mcp.WithTitleAnnotation("Search Memory"),
 				mcp.WithReadOnlyHintAnnotation(true),
 				mcp.WithDestructiveHintAnnotation(false),
@@ -414,19 +419,23 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 					mcp.Description("Filter by type: tool_use, file_change, command, file_read, search, manual, decision, architecture, bugfix, pattern"),
 				),
 				mcp.WithString("project",
-					mcp.Description("Filter by project name. Ignored when all_projects=true."),
+					mcp.Description("Explicit project scope. Cannot be combined with all_projects=true."),
 				),
 				mcp.WithBoolean("all_projects",
-					mcp.Description("Search across every project instead of the current one. When true, the project argument is ignored and results may come from any project. Useful for recalling decisions logged elsewhere when you don't know the project key."),
+					mcp.Description("Deliberately search across every project only when the task makes that scope relevant. Cannot be combined with project."),
 				),
 				mcp.WithString("scope",
-					mcp.Description("Filter by scope: project (default) or personal"),
+					mcp.Description("Filter by scope: project (default), personal, or global"),
+					mcp.Enum("project", "personal", "global"),
 				),
 				mcp.WithString("match_mode",
 					mcp.Description("Token matching: \"all\" (default — every token must match, FTS5 AND) or \"any\" (any token matches — broader recall for multi-token queries). Any other value returns an error."),
 				),
 				mcp.WithNumber("limit",
-					mcp.Description("Max results (default: 10, max: 20)"),
+					mcp.Description("Candidate limit (default: 5; 6-10 only for a deliberate follow-up; max: 10). The 4 KiB candidate budget always applies."),
+					mcp.Min(1),
+					mcp.Max(memoryops.MaximumRecallCandidateLimit),
+					mcp.MultipleOf(1),
 				),
 			),
 			handleSearch(s, cfg, activity),
@@ -1099,181 +1108,105 @@ func handleCurrentProject(s *store.Store, cfg MCPConfig) server.ToolHandlerFunc 
 func handleSearch(s *store.Store, cfg MCPConfig, activity *SessionActivity) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		query, _ := req.GetArguments()["query"].(string)
+		query = strings.TrimSpace(query)
+		if query == "" {
+			return mcp.NewToolResultError("query is required"), nil
+		}
 		typ, _ := req.GetArguments()["type"].(string)
 		projectOverride, _ := req.GetArguments()["project"].(string)
-		scope, _ := req.GetArguments()["scope"].(string)
-		matchMode, _ := req.GetArguments()["match_mode"].(string)
+		scope, scopeErr := memoryops.NormalizeRecallScope(stringArg(req, "scope", ""))
+		if scopeErr != nil {
+			return mcp.NewToolResultError(scopeErr.Error()), nil
+		}
+		matchMode, matchModeErr := memoryops.NormalizeRecallMatchMode(stringArg(req, "match_mode", ""))
+		if matchModeErr != nil {
+			return mcp.NewToolResultError(matchModeErr.Error()), nil
+		}
 		allProjects := boolArg(req, "all_projects", false)
-		limit := intArg(req, "limit", 10)
-
-		// Validate match_mode before any project resolution or DB work.
-		if matchMode != "" && matchMode != "all" && matchMode != "any" {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid match_mode %q: must be \"all\" or \"any\"", matchMode)), nil
+		limit, limitErr := optionalRecallLimit(req)
+		if limitErr != nil {
+			return mcp.NewToolResultError(limitErr.Error()), nil
+		}
+		if allProjects && strings.TrimSpace(projectOverride) != "" {
+			return mcp.NewToolResultError("all_projects cannot be combined with project"), nil
 		}
 
-		// all_projects=true short-circuits project resolution: we search globally
-		// regardless of the project override or any auto-detected project. This
-		// keeps the cross-project flow independent of cwd-based detection so the
-		// agent can recall context from any project without knowing its key.
 		var detRes projectpkg.DetectionResult
-		var project string
-		if allProjects {
+		switch {
+		case allProjects:
 			detRes = projectpkg.DetectionResult{Source: projectpkg.SourceAllProjects}
-		} else {
-			// Resolve project: validate override or auto-detect (REQ-310, REQ-311)
-			res, err := resolveReadProjectWithProcessOverride(s, projectOverride, cfg.DefaultProject)
-			if err != nil {
-				var upe *unknownProjectError
-				if errors.As(err, &upe) {
-					return errorWithMeta("unknown_project",
-						fmt.Sprintf("Project %q not found in store", upe.Name),
-						upe.AvailableProjects,
-					), nil
-				}
-				return mcp.NewToolResultError(fmt.Sprintf("Project resolution failed: %s", err)), nil
+		case scope != "project" && strings.TrimSpace(projectOverride) == "":
+			detRes = projectpkg.DetectionResult{Source: projectpkg.SourcePersonalScope}
+		case strings.TrimSpace(projectOverride) != "":
+			projectName, _ := store.NormalizeProject(projectOverride)
+			if projectName == "" {
+				return mcp.NewToolResultError("project must not be empty"), nil
 			}
-			detRes = res
-			project = detRes.Project
-			project, _ = store.NormalizeProject(project)
-			detRes.Project = project // JR2-1: keep envelope in sync with normalized query project
+			detRes = projectpkg.DetectionResult{Project: projectName, Source: projectpkg.SourceExplicitOverride}
+		default:
+			if processResult, ok := processProjectResult(cfg.DefaultProject); ok {
+				detRes = processResult
+			} else {
+				detRes, _ = detectCurrentProject()
+			}
+			detRes.Project, _ = store.NormalizeProject(detRes.Project)
 		}
 
-		// REQ-391: personal scope is cross-project by definition. When scope=personal
-		// and no explicit project override was provided, clear the project filter so
-		// memories from all projects are visible (not just the cwd-detected one).
-		searchProject := project
-		if scope == "personal" && strings.TrimSpace(projectOverride) == "" {
-			searchProject = ""
+		if activity != nil {
+			activity.RecordToolCall(defaultSessionID(detRes.Project))
 		}
-
-		sessionID := defaultSessionID(project)
-		activity.RecordToolCall(sessionID)
 		if err := ctx.Err(); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Search error: %s. Try simpler keywords.", err)), nil
 		}
 
-		searchResult, err := memoryops.New(s).SearchContext(ctx, memoryops.SearchInput{
-			Type:        typ,
-			Query:       query,
-			Project:     searchProject,
-			Scope:       scope,
-			Limit:       limit,
-			MatchMode:   matchMode,
-			AllProjects: allProjects || searchProject == "",
+		authority := projectpkg.IdentityPolicyForResult(detRes)
+		recallResult, err := memoryops.New(s).RecallContext(ctx, memoryops.RecallInput{
+			Type:            typ,
+			Query:           query,
+			Project:         detRes.Project,
+			Scope:           scope,
+			Limit:           limit,
+			MatchMode:       matchMode,
+			AllProjects:     allProjects || (scope != "project" && detRes.Project == ""),
+			ProjectStrength: authority.Strength,
+			DeliberateScope: allProjects || scope != "project",
+			BinaryVersion:   cfg.BinaryVersion,
+			BinaryRevision:  cfg.BinaryRevision,
 		})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("Search error: %s. Try simpler keywords.", err)), nil
 		}
 
-		if len(searchResult.Observations) == 0 {
-			// JW4: use respondWithProject even for empty results.
-			return respondWithProject(detRes, fmt.Sprintf("No memories found for: %q", query), nil), nil
+		message := fmt.Sprintf("Found %d bounded Memory candidates. Retrieve complete content only for a selected result.", recallResult.ResultCount)
+		if recallResult.ResultCount == 0 {
+			message = fmt.Sprintf("No Memory candidates found for: %q", query)
 		}
-
-		results := make([]store.SearchResult, 0, len(searchResult.Observations))
-		relationsMap := make(map[string]store.ObservationRelations, len(searchResult.Observations))
-		for _, item := range searchResult.Observations {
-			results = append(results, item.Observation)
-			relationsMap[item.Observation.SyncID] = item.Relations
+		if recallResult.Warning != nil {
+			message = "Recall returned no candidates; continue the task using current authoritative evidence."
 		}
-
-		var b strings.Builder
-		fmt.Fprintf(&b, "Found %d memories:\n\n", len(results))
-		anyTruncated := false
-		structuredResults := make([]map[string]any, 0, len(results))
-		for i, r := range results {
-			projectDisplay := ""
-			if r.Project != nil {
-				projectDisplay = fmt.Sprintf(" | project: %s", *r.Project)
-			}
-			preview := truncate(r.Content, 300)
-			if len(r.Content) > 300 {
-				anyTruncated = true
-				preview += " [preview]"
-			}
-			stateDisplay := ""
-			if r.State() == store.ObservationStateNeedsReview {
-				stateDisplay = " | state: needs_review"
-			}
-			fmt.Fprintf(&b, "[%d] #%d (%s) — %s\n    %s\n    %s%s | scope: %s%s\n",
-				i+1, r.ID, r.Type, r.Title,
-				preview,
-				timeutil.FormatLocal(r.CreatedAt), projectDisplay, r.Scope, stateDisplay)
-			entry := map[string]any{
-				"id":      r.ID,
-				"sync_id": r.SyncID,
-				"title":   r.Title,
-				"type":    r.Type,
-				"state":   r.State(),
-				"scope":   r.Scope,
-				"pinned":  r.Pinned,
-			}
-			if r.Project != nil {
-				entry["project"] = *r.Project
-			}
-			if r.ReviewAfter != nil {
-				entry["review_after"] = *r.ReviewAfter
-			}
-			structuredResults = append(structuredResults, entry)
-
-			// Append relation annotations. Skip orphaned (filtered by store).
-			//
-			// Annotation format contract (REQ-012, Design §7):
-			//   supersedes: #<id> (<title>)            judged supersedes
-			//   superseded_by: #<id> (<title>)         judged superseded_by
-			//   conflicts: #<id> (<title>)             judged conflicts_with
-			//   conflict: contested by #<id> (pending) pending (UNCHANGED from Phase 1)
-			//
-			// <id> is the observation's integer primary key. <title> is the related
-			// observation's title; "(deleted)" when the observation is missing or soft-deleted.
-			// Prefixes (supersedes:, superseded_by:, conflicts:) are stable across Phase 3.
-			if rels, ok := relationsMap[r.SyncID]; ok {
-				for _, rel := range rels.AsSource {
-					switch {
-					case rel.Relation == store.RelationSupersedes && rel.JudgmentStatus == store.JudgmentStatusJudged:
-						title := rel.TargetTitle
-						if rel.TargetMissing || title == "" {
-							title = "deleted"
-						}
-						fmt.Fprintf(&b, "    supersedes: #%d (%s)\n", rel.TargetIntID, title)
-					case rel.Relation == store.RelationConflictsWith && rel.JudgmentStatus == store.JudgmentStatusJudged:
-						title := rel.TargetTitle
-						if rel.TargetMissing || title == "" {
-							title = "deleted"
-						}
-						fmt.Fprintf(&b, "    conflicts: #%d (%s)\n", rel.TargetIntID, title)
-					case rel.JudgmentStatus == store.JudgmentStatusPending:
-						// UNCHANGED from Phase 1 — byte-for-byte preserved.
-						fmt.Fprintf(&b, "    conflict: contested by #%s (pending)\n", rel.TargetID)
-					}
-				}
-				for _, rel := range rels.AsTarget {
-					switch {
-					case rel.Relation == store.RelationSupersedes && rel.JudgmentStatus == store.JudgmentStatusJudged:
-						title := rel.SourceTitle
-						if rel.SourceMissing || title == "" {
-							title = "deleted"
-						}
-						fmt.Fprintf(&b, "    superseded_by: #%d (%s)\n", rel.SourceIntID, title)
-					case rel.JudgmentStatus == store.JudgmentStatusPending:
-						// UNCHANGED from Phase 1 — byte-for-byte preserved.
-						fmt.Fprintf(&b, "    conflict: contested by #%s (pending)\n", rel.SourceID)
-					}
-				}
-			}
-			b.WriteString("\n")
+		extra := map[string]any{
+			"recall_id":            recallResult.RecallID,
+			"results":              recallResult.Candidates,
+			"result_ids":           recallResult.ResultIDs,
+			"result_count":         recallResult.ResultCount,
+			"delivered_utf8_bytes": recallResult.DeliveredUTF8Bytes,
+			"elapsed_monotonic_ms": recallResult.ElapsedMonotonicMS,
+			"provenance":           recallResult.Provenance,
 		}
-		if anyTruncated {
-			fmt.Fprintf(&b, "---\nResults above are previews (300 chars). To read the full content of a specific memory, call mem_get_observation(id: <ID>).\n")
+		if recallResult.Warning != nil {
+			extra["warning"] = recallResult.Warning
 		}
-
-		if nudge := activity.NudgeIfNeeded(sessionID); nudge != "" {
-			b.WriteString(nudge)
+		if len(recallResult.Diagnostics) > 0 {
+			extra["diagnostics"] = recallResult.Diagnostics
 		}
-
-		// JW4: use respondWithProject for the success path (REQ-314).
-		return respondWithProject(detRes, b.String(), map[string]any{"results": structuredResults}), nil
+		return respondWithProject(detRes, message, extra), nil
 	}
+}
+
+// SearchToolHandler exposes the production mem_search adapter for cross-host
+// semantic parity tests and alternate MCP transports.
+func SearchToolHandler(s *store.Store, cfg MCPConfig) server.ToolHandlerFunc {
+	return handleSearch(s, cfg, NewSessionActivity(10*time.Minute))
 }
 
 func handlePin(s *store.Store, pinned bool) server.ToolHandlerFunc {
@@ -3151,6 +3084,33 @@ func intArg(req mcp.CallToolRequest, key string, defaultVal int) int {
 		return defaultVal
 	}
 	return int(v)
+}
+
+func stringArg(req mcp.CallToolRequest, key, defaultVal string) string {
+	v, ok := req.GetArguments()[key].(string)
+	if !ok {
+		return defaultVal
+	}
+	return v
+}
+
+func optionalRecallLimit(req mcp.CallToolRequest) (int, error) {
+	raw, present := req.GetArguments()["limit"]
+	if !present {
+		return 0, nil
+	}
+	value, ok := raw.(float64)
+	if !ok {
+		return 0, errors.New("limit must be an integer")
+	}
+	if value != math.Trunc(value) {
+		return 0, errors.New("limit must be an integer")
+	}
+	limit := int(value)
+	if limit < 1 || limit > memoryops.MaximumRecallCandidateLimit {
+		return 0, fmt.Errorf("limit must be between 1 and %d", memoryops.MaximumRecallCandidateLimit)
+	}
+	return limit, nil
 }
 
 func boolArg(req mcp.CallToolRequest, key string, defaultVal bool) bool {

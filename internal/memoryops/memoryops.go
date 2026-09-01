@@ -23,13 +23,24 @@ var (
 
 // Service coordinates domain operations without knowing about CLI, MCP, or rendering.
 type Service struct {
-	store *store.Store
-	now   func() time.Time
+	store               *store.Store
+	now                 func() time.Time
+	newRecallID         func() (string, error)
+	newRecallFallbackID func() string
+	recallStartedAt     func() time.Time
+	recallElapsed       func(time.Time) time.Duration
 }
 
 // New creates a memory operation service backed by the local source-of-truth store.
 func New(s *store.Store) *Service {
-	return &Service{store: s, now: func() time.Time { return time.Now().UTC() }}
+	return &Service{
+		store:               s,
+		now:                 func() time.Time { return time.Now().UTC() },
+		newRecallID:         newRecallID,
+		newRecallFallbackID: newRecallFallbackID,
+		recallStartedAt:     time.Now,
+		recallElapsed:       time.Since,
+	}
 }
 
 // SaveInput is the caller-resolved input for saving an observation. Project is
@@ -153,6 +164,14 @@ func (s *Service) Search(input SearchInput) (*SearchResult, error) {
 // SearchContext runs the store search and enriches every result with relations
 // without N+1 database queries while honoring caller cancellation.
 func (s *Service) SearchContext(ctx context.Context, input SearchInput) (*SearchResult, error) {
+	return s.searchContext(ctx, input, false)
+}
+
+func (s *Service) recallCandidatesContext(ctx context.Context, input SearchInput) (*SearchResult, error) {
+	return s.searchContext(ctx, input, true)
+}
+
+func (s *Service) searchContext(ctx context.Context, input SearchInput, recallCandidates bool) (*SearchResult, error) {
 	if err := s.requireStore(); err != nil {
 		return nil, err
 	}
@@ -167,13 +186,20 @@ func (s *Service) SearchContext(ctx context.Context, input SearchInput) (*Search
 		project, _ = store.NormalizeProject(input.Project)
 	}
 
-	observations, err := s.store.SearchContext(ctx, input.Query, store.SearchOptions{
+	options := store.SearchOptions{
 		Type:      input.Type,
 		Project:   project,
 		Scope:     input.Scope,
 		Limit:     input.Limit,
 		MatchMode: input.MatchMode,
-	})
+	}
+	var observations []store.SearchResult
+	var err error
+	if recallCandidates {
+		observations, err = s.store.RecallCandidatesContext(ctx, input.Query, options)
+	} else {
+		observations, err = s.store.SearchContext(ctx, input.Query, options)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("search observations: %w", err)
 	}

@@ -29,9 +29,20 @@ handoff with material loss risk; it is not an agent lifecycle requirement.
 ## Authority and recall
 
 Current user intent, maintained source, and runtime evidence override Memory.
-Recall is selective, and an empty result is successful. Treat the supplied
-`host`, `session_id`, and `root_turn_id` as opaque; reuse them unchanged across
-compaction or verifier continuations and never invent replacements.
+Recall only when prior decisions, tracked work, release/configuration,
+preferences, or known failures can materially change the task; self-contained
+work needs no search. Automatic Recall requires strong or explicit project
+identity. Start with one narrow project search of at most five candidates and
+4 KiB, then reformulate the same intent at most once. Limits 6 through 10 are a
+deliberate follow-up; personal or cross-project scope requires explicit task
+relevance or user direction. Empty Recall is successful, conflicts stay
+explicit, and unavailable Recall fails open with one warning plus diagnostics
+without blocking work.
+Retrieve complete content only for a selected candidate.
+
+Treat the supplied `host`, `session_id`, and `root_turn_id` as opaque; reuse
+them unchanged across compaction or verifier continuations and never invent
+replacements.
 
 Before finalizing prospective Memories, call `mem_checkpoint` with
 `operation: "preflight"`, the exact project, and those inline `memories`. This

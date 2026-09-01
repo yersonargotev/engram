@@ -25,6 +25,11 @@ Do not put core behavior in the command if it can live in a testable package. Th
 Important points:
 
 - `mem_current_project` is the recommended first call to confirm detection.
+- `mem_search` is a thin adapter over `internal/memoryops.Recall`: automatic
+  project Recall requires strong/explicit identity, returns at most five
+  candidates and 4 KiB by default, and fails open with one warning plus
+  diagnostics. CLI, MCP, and the HTTP `/recall` adapter preserve the same
+  candidate semantics.
 - Normal writes should not pass `project` as an arbitrary override.
 - `mem_checkpoint` preflight is a bounded read-only operation over one explicit
   project. Record mode uses the same explicit project for `saved` and
@@ -37,7 +42,10 @@ For tool parameters and envelopes, use [DOCS.md — MCP Tools](../../DOCS.md#mcp
 
 ## Local API: `internal/server`
 
-`internal/server/server.go` is a simple JSON API over the local store. It also exposes `GET /sync/status` for autosync/degraded-state visibility.
+`internal/server/server.go` is a simple JSON API over the local store. Its
+`GET /recall` route projects the shared Recall service for thin host adapters;
+legacy `GET /search` remains a generic compatibility search. It also exposes
+`GET /sync/status` for autosync/degraded-state visibility.
 
 Use it for plugins, hooks, or local external clients. Do not confuse it with cloud: the cloud runtime has its own server.
 

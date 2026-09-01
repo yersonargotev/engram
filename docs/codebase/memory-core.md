@@ -21,14 +21,15 @@ The memory flow does not start in the database. It starts with the agent decidin
 
 5. internal/project classifies identity; internal/mcp validates the contract
    strong config/remote or explicit/session authority → write
-   weak git root/child/basename → read-only discovery or actionable rejection
+   weak git root/child/basename → generic discovery only; candidate Recall warns and returns empty
 
 6. internal/store persists
    sessions / observations / memory_relations / sync_mutations
    FTS5 indexes for Memory search
 
 7. Later work
-   mem_search → mem_get_observation when full detail can change the task
+   memoryops.Recall → at most five active/current candidate summaries and 4 KiB
+   → mem_get_observation only when selected full detail can change the task
 ```
 
 ## Store mental entities
@@ -55,8 +56,16 @@ For schema details, use [DOCS.md — Database Schema](../../DOCS.md#database-sch
 - `topic_key` is for evolving topics; distinct decisions are not mixed under the same key.
 - `scope=project` is the default; `scope=personal` exists for non-shared memory.
 - Soft delete (`deleted_at`) hides data without physically deleting it unless explicit hard delete is used.
-- Project detection is not write authority. Strong `config`/`git_remote` and validated explicit/session sources may write; weak `git_root`/`git_child`/`dir_basename` sources remain read-only until the caller supplies explicit authority.
-- Search is progressive: compact results first, `mem_get_observation` only when full content is needed.
+- Project detection is not Recall/write authority. Strong `config`/`git_remote`
+  and validated explicit/session sources may run automatic candidate Recall or
+  write; weak `git_root`/`git_child`/`dir_basename` sources remain generic
+  read-only discovery until the caller supplies explicit authority.
+- Candidate Recall belongs to `internal/memoryops`; Store supplies deterministic
+  active/non-superseded candidates before `LIMIT`, while CLI, MCP, and HTTP only
+  resolve authority and render the envelope. The default is five candidates and
+  4 KiB, with up to ten only for deliberate follow-up.
+- Search is progressive: compact candidate summaries first,
+  `mem_get_observation` only when selected full content is needed.
 - Diagnostic Content is not Memory. It is excluded from Memory/FTS/Recall/context, ordinary export/import, sync/cloud, Obsidian, and retired candidate/promotion flows.
 - Legacy prompts are preserved byte-for-byte during migration and remain outside those same ordinary surfaces. Migration neither reclassifies nor uploads them and creates no deletion tombstone.
 

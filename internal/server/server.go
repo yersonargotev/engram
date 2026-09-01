@@ -64,13 +64,15 @@ type SemanticRunnerFactory func(name string) (store.SemanticRunner, error)
 type SemanticPromptBuilder func(a, b store.ObservationSnippet) string
 
 type Server struct {
-	store      *store.Store
-	mux        *http.ServeMux
-	port       int
-	listen     func(network, address string) (net.Listener, error)
-	serve      func(net.Listener, http.Handler) error
-	onWrite    func() // called after successful local writes (for autosync notification)
-	syncStatus SyncStatusProvider
+	store          *store.Store
+	mux            *http.ServeMux
+	port           int
+	listen         func(network, address string) (net.Listener, error)
+	serve          func(net.Listener, http.Handler) error
+	onWrite        func() // called after successful local writes (for autosync notification)
+	syncStatus     SyncStatusProvider
+	binaryVersion  string
+	binaryRevision string
 
 	// runnerFactory resolves a SemanticRunner by CLI name (read from ENGRAM_AGENT_CLI).
 	// When nil, semantic=true requests fail with 500.
@@ -85,6 +87,13 @@ func New(s *store.Store, port int) *Server {
 	srv.mux = http.NewServeMux()
 	srv.routes()
 	return srv
+}
+
+// SetRecallProvenance configures the executable identity returned by the
+// authority-aware Recall endpoint.
+func (s *Server) SetRecallProvenance(binaryVersion, binaryRevision string) {
+	s.binaryVersion = binaryVersion
+	s.binaryRevision = binaryRevision
 }
 
 // SetOnWrite configures a callback invoked after every successful local write.
@@ -245,6 +254,7 @@ func (s *Server) routes() {
 
 	// Search
 	s.mux.HandleFunc("GET /search", s.handleSearch)
+	s.mux.HandleFunc("GET /recall", s.handleRecall)
 
 	// Timeline
 	s.mux.HandleFunc("GET /timeline", s.handleTimeline)
@@ -499,6 +509,72 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, results)
+}
+
+func (s *Server) handleRecall(w http.ResponseWriter, r *http.Request) {
+	params := r.URL.Query()
+	query := strings.TrimSpace(params.Get("q"))
+	if query == "" {
+		jsonError(w, http.StatusBadRequest, "q parameter is required")
+		return
+	}
+	matchMode, err := memoryops.NormalizeRecallMatchMode(params.Get("match_mode"))
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit := 0
+	if rawLimit := strings.TrimSpace(params.Get("limit")); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed < 1 || parsed > memoryops.MaximumRecallCandidateLimit {
+			jsonError(w, http.StatusBadRequest, fmt.Sprintf("limit must be between 1 and %d", memoryops.MaximumRecallCandidateLimit))
+			return
+		}
+		limit = parsed
+	}
+	projectName, _ := store.NormalizeProject(params.Get("project"))
+	allProjects := queryBool(r, "all_projects", false)
+	if allProjects && projectName != "" {
+		jsonError(w, http.StatusBadRequest, "all_projects cannot be combined with project")
+		return
+	}
+	scope, err := memoryops.NormalizeRecallScope(params.Get("scope"))
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	strength := projectpkg.IdentityStrengthWeak
+	if projectName != "" {
+		strength = projectpkg.IdentityStrengthExplicit
+	}
+	if rawStrength := strings.TrimSpace(params.Get("project_strength")); rawStrength != "" {
+		strength = projectpkg.IdentityStrength(rawStrength)
+		switch strength {
+		case projectpkg.IdentityStrengthStrong, projectpkg.IdentityStrengthExplicit, projectpkg.IdentityStrengthWeak, projectpkg.IdentityStrengthAggregate:
+		default:
+			jsonError(w, http.StatusBadRequest, "invalid project_strength")
+			return
+		}
+	}
+
+	result, err := memoryops.New(s.store).RecallContext(r.Context(), memoryops.RecallInput{
+		Query:           query,
+		Type:            params.Get("type"),
+		Project:         projectName,
+		Scope:           scope,
+		Limit:           limit,
+		MatchMode:       matchMode,
+		AllProjects:     allProjects || (scope != "project" && projectName == ""),
+		ProjectStrength: strength,
+		DeliberateScope: allProjects || scope != "project",
+		BinaryVersion:   s.binaryVersion,
+		BinaryRevision:  s.binaryRevision,
+	})
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	jsonResponse(w, http.StatusOK, result)
 }
 
 func (s *Server) handleGetObservation(w http.ResponseWriter, r *http.Request) {

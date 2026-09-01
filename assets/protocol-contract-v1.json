@@ -44,6 +44,10 @@
       "needs_review",
       "skipped(no_durable_knowledge)",
       "Current user intent, maintained source, and runtime evidence override Memory.",
+      "Automatic Recall requires strong or explicit project identity.",
+      "Initial Recall: five candidates, 4 KiB, at most one reformulation.",
+      "Deliberate follow-up: at most ten candidates; broad scope requires explicit relevance.",
+      "Unavailable Recall fails open without blocking the task.",
       "mem_current_project",
       "mem_search",
       "mem_get_observation",
@@ -58,7 +62,7 @@
   "distributions": {
     "managed_pack": {
       "version": "3.3.0",
-      "skill_sha256": "eba895d3d83ce89a7a7a753a81957ad37ae45d0f7c3899c3678eae7215537233",
+      "skill_sha256": "8ec3ac2d0bf00d80c6c137393dbafa2ab62b56fc43081c8d220a898f38b1ce33",
       "legacy_compatible": true,
       "supported_protocol": {
         "minimum": 1,

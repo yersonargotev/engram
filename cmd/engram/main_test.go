@@ -571,7 +571,7 @@ func TestCmdSaveAndSearch(t *testing.T) {
 	if searchErr != "" {
 		t.Fatalf("expected no stderr from search, got: %q", searchErr)
 	}
-	if !strings.Contains(searchOut, "Found 1 memories") || !strings.Contains(searchOut, "my-title") {
+	if !strings.Contains(searchOut, "Found 1 Memory candidates") || !strings.Contains(searchOut, "my-title") {
 		t.Fatalf("unexpected search output: %q", searchOut)
 	}
 
@@ -580,8 +580,18 @@ func TestCmdSaveAndSearch(t *testing.T) {
 	if noneErr != "" {
 		t.Fatalf("expected no stderr from empty search, got: %q", noneErr)
 	}
-	if !strings.Contains(noneOut, "No memories found") {
+	if !strings.Contains(noneOut, "No Memory candidates found") {
 		t.Fatalf("expected empty search message, got: %q", noneOut)
+	}
+}
+
+func TestCmdSearchRejectsUnknownScopeBeforeProjectSelection(t *testing.T) {
+	cfg := testConfig(t)
+	stubExitWithPanic(t)
+	withArgs(t, "engram", "search", "secret", "--scope", "typo", "--json")
+	_, stderr, recovered := captureOutputAndRecover(t, func() { cmdSearch(cfg) })
+	if _, ok := recovered.(exitCode); !ok || !strings.Contains(stderr, "invalid_recall_scope") {
+		t.Fatalf("panic=%v stderr=%q", recovered, stderr)
 	}
 }
 

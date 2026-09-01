@@ -863,6 +863,7 @@ func cmdServe(cfg store.Config) {
 	defer s.Close()
 
 	srv := newHTTPServer(s, port)
+	srv.SetRecallProvenance(version, commit)
 
 	// Wire the semantic runner factory and prompt builder for POST /conflicts/scan.
 	// Both live in cmd/engram so internal/server avoids a direct dependency on internal/llm.
@@ -1022,7 +1023,7 @@ func cmdMCP(cfg store.Config) {
 	observeOperation, observeCheckpoint, closeObservers := newRecallBaselineMCPObservers(cfg)
 	defer closeObservers()
 	mcpCfg := mcp.MCPConfig{
-		DefaultProject: projectOverride, ObserveOperation: observeOperation,
+		DefaultProject: projectOverride, BinaryVersion: version, BinaryRevision: commit, ObserveOperation: observeOperation,
 		ObserveCheckpoint: observeCheckpoint,
 	}
 	allowlist := resolveMCPTools(toolsFilter)
@@ -1060,7 +1061,7 @@ func cmdSearch(cfg store.Config) {
 	}
 
 	var queryParts []string
-	opts := store.SearchOptions{Limit: 10}
+	opts := store.SearchOptions{}
 	allProjects := false
 
 	for i := 2; i < len(os.Args); i++ {
@@ -1087,8 +1088,8 @@ func cmdSearch(cfg store.Config) {
 				opts.MatchMode = value
 			case "--limit":
 				n, err := strconv.Atoi(value)
-				if err != nil || n < 1 || n > 20 {
-					failCLI(jsonMode, "invalid_limit", "limit must be between 1 and 20", nil)
+				if err != nil || n < 1 || n > memoryops.MaximumRecallCandidateLimit {
+					failCLI(jsonMode, "invalid_limit", fmt.Sprintf("limit must be between 1 and %d", memoryops.MaximumRecallCandidateLimit), nil)
 					return
 				}
 				opts.Limit = n
@@ -1107,8 +1108,15 @@ func cmdSearch(cfg store.Config) {
 		failCLI(jsonMode, "invalid_arguments", "search query is required", nil)
 		return
 	}
-	if opts.MatchMode != "" && opts.MatchMode != "all" && opts.MatchMode != "any" {
-		failCLI(jsonMode, "invalid_match_mode", "match mode must be all or any", nil)
+	var err error
+	opts.MatchMode, err = memoryops.NormalizeRecallMatchMode(opts.MatchMode)
+	if err != nil {
+		failCLI(jsonMode, "invalid_match_mode", err.Error(), nil)
+		return
+	}
+	opts.Scope, err = memoryops.NormalizeRecallScope(opts.Scope)
+	if err != nil {
+		failCLI(jsonMode, "invalid_recall_scope", err.Error(), nil)
 		return
 	}
 	if allProjects && opts.Project != "" {
@@ -1126,7 +1134,7 @@ func cmdSearch(cfg store.Config) {
 			failCLI(jsonMode, "invalid_project", "project must not be empty", nil)
 			return
 		}
-	} else if opts.Scope == "personal" {
+	} else if opts.Scope != "project" {
 		projectSource = projectpkg.SourcePersonalScope
 	} else {
 		res := projectpkg.DetectProjectFull(currentCWD())
@@ -1139,46 +1147,71 @@ func cmdSearch(cfg store.Config) {
 	}
 
 	s, err := storeNew(cfg)
-	if err != nil {
-		failCLI(jsonMode, "store_error", err.Error(), nil)
-		return
+	service := memoryops.New(s)
+	if err == nil {
+		defer s.Close()
+	} else {
+		service = memoryops.New(nil)
 	}
-	defer s.Close()
 
-	searchResult, err := memoryops.New(s).Search(memoryops.SearchInput{Query: query, Type: opts.Type, Project: opts.Project, Scope: opts.Scope, Limit: opts.Limit, MatchMode: opts.MatchMode, AllProjects: allProjects || (opts.Scope == "personal" && opts.Project == "")})
+	identity := projectpkg.ClassifyIdentitySource(projectSource)
+	recallResult, err := service.Recall(memoryops.RecallInput{
+		Query:           query,
+		Type:            opts.Type,
+		Project:         opts.Project,
+		Scope:           opts.Scope,
+		Limit:           opts.Limit,
+		MatchMode:       opts.MatchMode,
+		AllProjects:     allProjects || (opts.Scope != "project" && opts.Project == ""),
+		ProjectStrength: identity.Strength,
+		DeliberateScope: allProjects || opts.Scope != "project",
+		BinaryVersion:   version,
+		BinaryRevision:  commit,
+	})
 	if err != nil {
 		failCLI(jsonMode, "search_failed", err.Error(), nil)
 		return
 	}
-	results := make([]store.SearchResult, 0, len(searchResult.Observations))
-	relations := map[string]store.ObservationRelations{}
-	for _, item := range searchResult.Observations {
-		results = append(results, item.Observation)
-		relations[item.Observation.SyncID] = item.Relations
-	}
 	if jsonMode {
-		structured := make([]map[string]any, 0, len(results))
-		for _, result := range results {
-			structured = append(structured, map[string]any{
-				"observation": result,
-				"state":       result.State(),
-				"pinned":      result.Pinned,
-				"relations":   relations[result.SyncID],
-			})
+		payload := map[string]any{
+			"query":                  query,
+			"project":                opts.Project,
+			"project_source":         projectSource,
+			"project_path":           projectPath,
+			"project_strength":       identity.Strength,
+			"implicit_write_allowed": identity.AllowsImplicitWrite,
+			"all_projects":           allProjects,
+			"recall_id":              recallResult.RecallID,
+			"results":                recallResult.Candidates,
+			"result_ids":             recallResult.ResultIDs,
+			"result_count":           recallResult.ResultCount,
+			"delivered_utf8_bytes":   recallResult.DeliveredUTF8Bytes,
+			"elapsed_monotonic_ms":   recallResult.ElapsedMonotonicMS,
+			"provenance":             recallResult.Provenance,
 		}
-		identity := projectpkg.ClassifyIdentitySource(projectSource)
-		payload := map[string]any{"query": query, "project": opts.Project, "project_source": projectSource, "project_path": projectPath, "project_strength": identity.Strength, "implicit_write_allowed": identity.AllowsImplicitWrite, "all_projects": allProjects, "results": structured}
+		if recallResult.Warning != nil {
+			payload["warning"] = recallResult.Warning
+		}
+		if len(recallResult.Diagnostics) > 0 {
+			payload["diagnostics"] = recallResult.Diagnostics
+		}
 		if identity.Strength == projectpkg.IdentityStrengthWeak {
 			payload["safe_next_action"] = projectpkg.ExplicitProjectSafeNextAction
 		}
-		baselineOutcome = recallbaseline.OutcomeSuccess
+		if recallResult.Warning == nil {
+			baselineOutcome = recallbaseline.OutcomeSuccess
+		}
 		baselineBytes = cliJSONBytes(payload)
 		_ = writeCLIJSON(payload)
 		return
 	}
 
-	if len(results) == 0 {
-		output := fmt.Sprintf("No memories found for: %q\n", query)
+	if recallResult.Warning != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %s %s\n", recallResult.Warning.Message, recallResult.Warning.NextAction)
+		return
+	}
+	if len(recallResult.Candidates) == 0 {
+		output := fmt.Sprintf("No Memory candidates found for: %q\n", query)
 		baselineOutcome = recallbaseline.OutcomeSuccess
 		baselineBytes = recallbaseline.KnownBytes(int64(len([]byte(output))))
 		fmt.Print(output)
@@ -1186,19 +1219,18 @@ func cmdSearch(cfg store.Config) {
 	}
 
 	baselineOutcome = recallbaseline.OutcomeSuccess
-	fmt.Printf("Found %d memories:\n\n", len(results))
-	for i, r := range results {
-		project := ""
-		if r.Project != nil {
-			project = fmt.Sprintf(" | project: %s", *r.Project)
+	fmt.Printf("Found %d Memory candidates (recall %s):\n\n", len(recallResult.Candidates), recallResult.RecallID)
+	for i, candidate := range recallResult.Candidates {
+		projectDisplay := ""
+		if candidate.Project != "" {
+			projectDisplay = fmt.Sprintf(" | project: %s", candidate.Project)
 		}
-		fmt.Printf("[%d] #%d (%s) — %s\n    %s\n    %s%s | scope: %s\n\n",
-			i+1, r.ID, r.Type, r.Title,
-			truncate(r.Content, 300),
-			timeutil.FormatLocal(r.CreatedAt), project, r.Scope)
-		if rels, ok := relations[r.SyncID]; ok && (len(rels.AsSource) > 0 || len(rels.AsTarget) > 0) {
-			fmt.Printf("    relations: %d\n\n", len(rels.AsSource)+len(rels.AsTarget))
+		fmt.Printf("[%d] #%d (%s) — %s\n    %s\n    scope: %s%s\n",
+			i+1, candidate.ID, candidate.Type, candidate.Title, candidate.Summary, candidate.Scope, projectDisplay)
+		for _, conflict := range candidate.Conflicts {
+			fmt.Printf("    warning: unresolved conflict with #%d (%s) [%s]\n", conflict.MemoryID, conflict.Title, conflict.Status)
 		}
+		fmt.Println()
 	}
 }
 

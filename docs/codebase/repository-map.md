@@ -24,6 +24,7 @@
 | Change Obsidian | `internal/obsidian/` | `plugin/obsidian/`, `docs/beta/obsidian-brain.md` |
 | Change the Codex activation evaluation | `internal/activationstudy/` | `evals/codex-activation/`, `cmd/engram/activation_study.go` |
 | Change the content-free Recall baseline | `internal/recallbaseline/` | `cmd/engram/recall_baseline.go`, `plugin/codex/`, `docs/RECALL-BASELINE.md` |
+| Change candidate Recall policy or envelopes | `internal/memoryops/recall.go` | `internal/store/store.go`, CLI/MCP/HTTP adapters, canonical agent guidance |
 | Prepare a large feature | `openspec/changes/*` | `openspec/specs/*`, `CONTRIBUTING.md` |
 
 ## Package ownership

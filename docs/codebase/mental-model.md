@@ -101,10 +101,13 @@ Boundary tests before verbal confidence.
 
 Engram stays healthy when each package does one clear thing and every surface tells the same story: **an agent saves curated memories, local SQLite preserves them, and cloud only replicates or makes them visible when the user explicitly chooses it**.
 
-Raw Content is a separate privacy domain. Prompt capture is disabled by default
-and requires explicit local consent scoped by project and content type, with an
-optional expiring session grant. Setup and status may report capability and
-consent metadata, but they do not enable capture or read captured content.
+Raw Content is a separate privacy domain. Prompt and subagent-output capture
+are independently disabled by default and require explicit local consent scoped
+by project and content type, with an optional expiring session grant. Setup and
+status may report capability and consent metadata, but they do not enable
+capture or read captured content. A consented subagent path accepts only the
+bounded `engram_diagnostic` envelope and remains outside every durable Memory
+surface; the root agent owns terminal preservation.
 
 ---
 

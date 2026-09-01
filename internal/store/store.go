@@ -56,6 +56,7 @@ var (
 	ErrSessionDeleteBlocked        = errors.New("session deletion is blocked while cloud sync enrollment is active")
 	ErrObservationNotFound         = errors.New("observation not found")
 	ErrPromptNotFound              = errors.New("prompt not found")
+	ErrSubagentPassiveCapture      = errors.New("subagent output cannot enter passive Memory capture")
 	ErrProjectNotFound             = errors.New("project not found")
 	ErrProjectRequired             = errors.New("project identity is required")
 	ErrProjectRescueInvalidRequest = errors.New("project rescue request is invalid")
@@ -8181,7 +8182,7 @@ type PassiveCaptureParams struct {
 	SessionID string `json:"session_id"`
 	Content   string `json:"content"`
 	Project   string `json:"project,omitempty"`
-	Source    string `json:"source,omitempty"` // e.g. "subagent-stop", "session-end"
+	Source    string `json:"source,omitempty"` // e.g. "session-end"
 }
 
 // PassiveCaptureResult holds the output of passive memory capture.
@@ -8264,6 +8265,10 @@ func cleanMarkdown(text string) string {
 // PassiveCapture extracts learnings from text and saves them as observations.
 // It deduplicates against existing observations using content hash matching.
 func (s *Store) PassiveCapture(p PassiveCaptureParams) (*PassiveCaptureResult, error) {
+	source := strings.NewReplacer("-", "", "_", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(p.Source)))
+	if strings.Contains(source, "subagent") {
+		return nil, ErrSubagentPassiveCapture
+	}
 	// Normalize project name before storing
 	p.Project, _ = NormalizeProject(p.Project)
 

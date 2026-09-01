@@ -98,14 +98,41 @@ type CodexPromptCaptureStatus struct {
 	ReasonCode     string                      `json:"reason_code"`
 }
 
+// CodexSubagentCaptureState is the content-free lifecycle state of local
+// subagent Diagnostic capture.
+type CodexSubagentCaptureState string
+
+const (
+	CodexSubagentCaptureDefaultDisabled CodexSubagentCaptureState = "default_disabled"
+	CodexSubagentCaptureConsented       CodexSubagentCaptureState = "consented"
+	CodexSubagentCaptureExpired         CodexSubagentCaptureState = "expired"
+	CodexSubagentCaptureUnavailable     CodexSubagentCaptureState = "unavailable"
+)
+
+// CodexSubagentCaptureStatus keeps hook readiness, consent, and retention
+// separate without reading captured content or exposing session identifiers.
+type CodexSubagentCaptureStatus struct {
+	Capability    CodexIntegrationCheckStatus `json:"capability"`
+	Hook          CodexIntegrationCheckStatus `json:"hook"`
+	DefaultState  CodexSubagentCaptureState   `json:"default_state"`
+	State         CodexSubagentCaptureState   `json:"state"`
+	Project       string                      `json:"project,omitempty"`
+	ContentType   string                      `json:"content_type"`
+	Scope         CodexCaptureScope           `json:"scope"`
+	RetentionDays int                         `json:"retention_days"`
+	ExpiresAt     string                      `json:"expires_at,omitempty"`
+	ReasonCode    string                      `json:"reason_code"`
+}
+
 // CodexIntegrationStatus is a deterministic, read-only capability snapshot.
 type CodexIntegrationStatus struct {
-	SchemaVersion string                               `json:"schema_version"`
-	Agent         string                               `json:"agent"`
-	Mode          CodexOperatingMode                   `json:"mode"`
-	Compatibility protocolcontract.CompatibilityReport `json:"compatibility"`
-	PromptCapture CodexPromptCaptureStatus             `json:"prompt_capture"`
-	Checks        []CodexIntegrationCheck              `json:"checks"`
+	SchemaVersion   string                               `json:"schema_version"`
+	Agent           string                               `json:"agent"`
+	Mode            CodexOperatingMode                   `json:"mode"`
+	Compatibility   protocolcontract.CompatibilityReport `json:"compatibility"`
+	PromptCapture   CodexPromptCaptureStatus             `json:"prompt_capture"`
+	SubagentCapture CodexSubagentCaptureStatus           `json:"subagent_capture"`
+	Checks          []CodexIntegrationCheck              `json:"checks"`
 }
 
 // InspectCodexStatus inspects the active Codex integration without installing,
@@ -197,22 +224,122 @@ func inspectCodexStatus(runningVersion, runningRevision, workingDirectory string
 		codexPluginCapabilityCheck(plugin, "session_hook", plugin.Capabilities.SessionHookReady),
 		codexPluginCapabilityCheck(plugin, "activation_cue", plugin.Capabilities.ActivationCueReady),
 		codexPluginCapabilityCheck(plugin, "stop_verifier", plugin.Capabilities.VerifierReady),
+		codexPluginCapabilityCheck(plugin, "subagent_hook", plugin.Capabilities.SubagentHookReady),
 	)
 
 	promptCapture := inspectCodexPromptCaptureStatus(workingDirectory, checks)
+	subagentCapture := inspectCodexSubagentCaptureStatus(workingDirectory, checks, time.Now().UTC())
 	checks = append(checks, codexPromptCaptureCheck(promptCapture))
+	checks = append(checks, codexSubagentCaptureCheck(subagentCapture))
 	mode := deriveCodexOperatingMode(checks)
 	if mode == CodexModeCheckpointReady && compatibility.Status != protocolcontract.CompatibilityReady {
 		mode = CodexModePartialPlugin
 	}
 	return CodexIntegrationStatus{
-		SchemaVersion: CodexIntegrationStatusSchemaVersion,
-		Agent:         "codex",
-		Mode:          mode,
-		Compatibility: compatibility,
-		PromptCapture: promptCapture,
-		Checks:        checks,
+		SchemaVersion:   CodexIntegrationStatusSchemaVersion,
+		Agent:           "codex",
+		Mode:            mode,
+		Compatibility:   compatibility,
+		PromptCapture:   promptCapture,
+		SubagentCapture: subagentCapture,
+		Checks:          checks,
 	}, nil
+}
+
+func codexSubagentCaptureCheck(status CodexSubagentCaptureStatus) CodexIntegrationCheck {
+	evidence := []CodexIntegrationEvidence{
+		codexEvidence("hook", string(status.Hook)),
+		codexEvidence("default_state", string(status.DefaultState)),
+		codexEvidence("state", string(status.State)),
+		codexEvidence("content_type", status.ContentType),
+		codexEvidence("scope", string(status.Scope)),
+		codexEvidence("retention_days", strconv.Itoa(status.RetentionDays)),
+	}
+	if status.Project != "" {
+		evidence = append(evidence, codexEvidence("project", status.Project))
+	}
+	if status.ExpiresAt != "" {
+		evidence = append(evidence, codexEvidence("expires_at", status.ExpiresAt))
+	}
+	return codexStatusCheck(
+		"subagent_capture", status.Capability, "subagent_capture_available",
+		"Local subagent Diagnostic capture is available, disabled by default, and separate from durable Memory.",
+		evidence...,
+	)
+}
+
+func inspectCodexSubagentCaptureStatus(workingDirectory string, checks []CodexIntegrationCheck, now time.Time) CodexSubagentCaptureStatus {
+	status := CodexSubagentCaptureStatus{
+		Capability:    CodexCheckReady,
+		Hook:          CodexCheckUnavailable,
+		DefaultState:  CodexSubagentCaptureDefaultDisabled,
+		State:         CodexSubagentCaptureDefaultDisabled,
+		ContentType:   store.CaptureContentTypeSubagentOutput,
+		Scope:         CodexCaptureScopeNone,
+		RetentionDays: store.DefaultDiagnosticRetentionDays,
+		ReasonCode:    "subagent_capture_default_disabled",
+	}
+	for _, check := range checks {
+		if check.Capability == "subagent_hook" {
+			status.Hook = check.Status
+			break
+		}
+	}
+
+	projectName, explicit := projectpkg.ProcessOverride("")
+	if !explicit {
+		detected := projectpkg.DetectProjectFull(workingDirectory)
+		if err := projectpkg.RequireImplicitWriteAuthority(detected); err != nil {
+			status.State = CodexSubagentCaptureUnavailable
+			status.ReasonCode = "subagent_capture_project_unavailable"
+			return status
+		}
+		projectName = detected.Project
+	}
+	projectName, _ = store.NormalizeProject(projectName)
+	if projectName == "" {
+		status.State = CodexSubagentCaptureUnavailable
+		status.ReasonCode = "subagent_capture_project_unavailable"
+		return status
+	}
+	status.Project = projectName
+
+	dataDir := os.Getenv("ENGRAM_DATA_DIR")
+	if dataDir == "" {
+		home, err := userHomeDir()
+		if err != nil || strings.TrimSpace(home) == "" {
+			status.State = CodexSubagentCaptureUnavailable
+			status.ReasonCode = "subagent_capture_store_unavailable"
+			return status
+		}
+		dataDir = filepath.Join(home, ".engram")
+	}
+	inspection, err := store.InspectCaptureConsentAggregateReadOnly(
+		dataDir, projectName, store.CaptureContentTypeSubagentOutput, now,
+	)
+	if err != nil {
+		status.State = CodexSubagentCaptureUnavailable
+		status.ReasonCode = "subagent_capture_status_unavailable"
+		return status
+	}
+	if inspection.Consent != nil {
+		status.State = CodexSubagentCaptureConsented
+		status.ReasonCode = "subagent_capture_consented"
+		status.RetentionDays = inspection.Consent.RetentionDays
+		status.Scope = CodexCaptureScopeProject
+		if inspection.SessionScoped {
+			status.Scope = CodexCaptureScopeSession
+		}
+		if inspection.Consent.ExpiresAt != nil {
+			status.ExpiresAt = inspection.Consent.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		}
+		return status
+	}
+	if inspection.Expired {
+		status.State = CodexSubagentCaptureExpired
+		status.ReasonCode = "subagent_capture_expired"
+	}
+	return status
 }
 
 func codexPromptCaptureCheck(status CodexPromptCaptureStatus) CodexIntegrationCheck {
@@ -979,7 +1106,7 @@ func deriveCodexOperatingMode(checks []CodexIntegrationCheck) CodexOperatingMode
 		}
 		return false
 	}
-	checkpointCapabilities := []string{"engram_cli", "codex_cli", "plugin", "mcp_configuration", "mcp_readiness", "prompt_hook", "session_hook", "activation_cue", "stop_verifier"}
+	checkpointCapabilities := []string{"engram_cli", "codex_cli", "plugin", "mcp_configuration", "mcp_readiness", "prompt_hook", "session_hook", "activation_cue", "stop_verifier", "subagent_hook"}
 	checkpointReady := true
 	for _, capability := range checkpointCapabilities {
 		checkpointReady = checkpointReady && ready(capability)

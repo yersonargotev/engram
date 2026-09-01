@@ -936,6 +936,24 @@ func TestVerifyInstalledCodexStopVerifierRejectsModifiedLaunchers(t *testing.T) 
 	}
 }
 
+func TestVerifyInstalledCodexSubagentHookRequiresDirectCrossPlatformBoundary(t *testing.T) {
+	valid := []byte(`{"hooks":{"SubagentStop":[{"matcher":".*","hooks":[{"type":"command","command":"engram capture subagent-hook --host=codex","commandWindows":"engram capture subagent-hook --host=codex","timeout":3}]}]}}`)
+	if !verifyInstalledCodexSubagentHook(valid) {
+		t.Fatal("direct cross-platform SubagentStop boundary was not accepted")
+	}
+	for name, hooks := range map[string][]byte{
+		"legacy passive script": []byte(`{"hooks":{"SubagentStop":[{"matcher":".*","hooks":[{"type":"command","command":"\"${PLUGIN_ROOT}/scripts/subagent-stop.sh\"","timeout":10}]}]}}`),
+		"missing Windows":       []byte(`{"hooks":{"SubagentStop":[{"matcher":".*","hooks":[{"type":"command","command":"engram capture subagent-hook --host=codex","timeout":3}]}]}}`),
+		"async":                 []byte(`{"hooks":{"SubagentStop":[{"matcher":".*","hooks":[{"type":"command","command":"engram capture subagent-hook --host=codex","commandWindows":"engram capture subagent-hook --host=codex","timeout":3,"async":true}]}]}}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if verifyInstalledCodexSubagentHook(hooks) {
+				t.Fatal("unsupported SubagentStop boundary was accepted")
+			}
+		})
+	}
+}
+
 func TestVerifyInstalledCodexStopVerifierAcceptsWindowsCheckout(t *testing.T) {
 	root := t.TempDir()
 	writeCanonicalCodexActivationFixture(t, root)

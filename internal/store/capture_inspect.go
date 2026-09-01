@@ -19,19 +19,110 @@ type CaptureConsentInspection struct {
 	Consent       *CaptureConsent
 }
 
+// CaptureConsentAggregateInspection reports project-wide capture availability
+// without returning captured content or opaque session identities.
+type CaptureConsentAggregateInspection struct {
+	SchemaPresent bool
+	Consent       *CaptureConsent
+	SessionScoped bool
+	Expired       bool
+}
+
 // InspectCaptureConsentReadOnly inspects an existing local store without
 // creating its directory, running migrations, purging expired captures, or
 // reading Diagnostic capture content.
 func InspectCaptureConsentReadOnly(dataDir, project, contentType, sessionID string, now time.Time) (*CaptureConsentInspection, error) {
+	db, schemaPresent, closeInspection, err := openCaptureConsentInspection(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	defer closeInspection()
+	if !schemaPresent {
+		return &CaptureConsentInspection{}, nil
+	}
+
+	project, _ = NormalizeProject(project)
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	inspector := &Store{db: db}
+	consent, err := inspector.effectiveCaptureConsent(db, project, contentType, sessionID, now.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("inspect capture consent: %w", err)
+	}
+	return &CaptureConsentInspection{SchemaPresent: true, Consent: consent}, nil
+}
+
+// InspectCaptureConsentAggregateReadOnly distinguishes default-off, active,
+// and expired project/type consent without exposing session identifiers.
+func InspectCaptureConsentAggregateReadOnly(dataDir, project, contentType string, now time.Time) (*CaptureConsentAggregateInspection, error) {
+	db, schemaPresent, closeInspection, err := openCaptureConsentInspection(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	defer closeInspection()
+	if !schemaPresent {
+		return &CaptureConsentAggregateInspection{}, nil
+	}
+	project, _ = NormalizeProject(project)
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	inspector := &Store{db: db}
+	consent, err := inspector.effectiveCaptureConsent(db, project, contentType, "", now)
+	if err != nil {
+		return nil, fmt.Errorf("inspect project capture consent: %w", err)
+	}
+	result := &CaptureConsentAggregateInspection{SchemaPresent: true, Consent: consent}
+	if consent != nil {
+		return result, nil
+	}
+
+	var sessionID string
+	err = db.QueryRow(`
+		SELECT session_id
+		FROM capture_consents
+		WHERE project = ? AND content_type = ? AND session_id <> '' AND expires_at > ?
+		ORDER BY updated_at DESC
+		LIMIT 1`, project, contentType, now.Format(time.RFC3339Nano)).Scan(&sessionID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("inspect session capture consent: %w", err)
+	}
+	if err == nil {
+		consent, err = inspector.effectiveCaptureConsent(db, project, contentType, sessionID, now)
+		if err != nil {
+			return nil, fmt.Errorf("inspect session capture consent: %w", err)
+		}
+		if consent != nil {
+			consent.SessionID = ""
+			result.Consent = consent
+			result.SessionScoped = true
+			return result, nil
+		}
+	}
+
+	if err := db.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 FROM capture_consents
+			WHERE project = ? AND content_type = ? AND session_id <> ''
+			  AND expires_at IS NOT NULL AND expires_at <= ?
+		)`, project, contentType, now.Format(time.RFC3339Nano)).Scan(&result.Expired); err != nil {
+		return nil, fmt.Errorf("inspect expired capture consent: %w", err)
+	}
+	return result, nil
+}
+
+func openCaptureConsentInspection(dataDir string) (*sql.DB, bool, func(), error) {
 	if !filepath.IsAbs(dataDir) {
-		return nil, fmt.Errorf("engram: data directory must be an absolute path, got %q", dataDir)
+		return nil, false, func() {}, fmt.Errorf("engram: data directory must be an absolute path, got %q", dataDir)
 	}
 	dbPath := filepath.Join(dataDir, "engram.db")
 	if _, err := os.Stat(dbPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return &CaptureConsentInspection{}, nil
+			return nil, false, func() {}, nil
 		}
-		return nil, fmt.Errorf("inspect capture store: %w", err)
+		return nil, false, func() {}, fmt.Errorf("inspect capture store: %w", err)
 	}
 
 	inspectionPath := dbPath
@@ -45,9 +136,8 @@ func InspectCaptureConsentReadOnly(dataDir, project, contentType, sessionID stri
 		var copyErr error
 		inspectionPath, cleanup, copyErr = copyCaptureStoreForInspection(dbPath)
 		if copyErr != nil {
-			return nil, copyErr
+			return nil, false, func() {}, copyErr
 		}
-		defer cleanup()
 		openQuery = "mode=rw"
 	}
 	dsn := (&url.URL{
@@ -57,12 +147,17 @@ func InspectCaptureConsentReadOnly(dataDir, project, contentType, sessionID stri
 	}).String()
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("open capture store read-only: %w", err)
+		cleanup()
+		return nil, false, func() {}, fmt.Errorf("open capture store read-only: %w", err)
 	}
-	defer db.Close()
+	closeInspection := func() {
+		_ = db.Close()
+		cleanup()
+	}
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec("PRAGMA query_only = ON"); err != nil {
-		return nil, fmt.Errorf("protect capture inspection connection: %w", err)
+		closeInspection()
+		return nil, false, func() {}, fmt.Errorf("protect capture inspection connection: %w", err)
 	}
 
 	var schemaPresent int
@@ -72,22 +167,13 @@ func InspectCaptureConsentReadOnly(dataDir, project, contentType, sessionID stri
 		WHERE type = 'table' AND name = 'capture_consents'
 		LIMIT 1`).Scan(&schemaPresent)
 	if errors.Is(err, sql.ErrNoRows) {
-		return &CaptureConsentInspection{}, nil
+		return db, false, closeInspection, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("inspect capture consent schema: %w", err)
+		closeInspection()
+		return nil, false, func() {}, fmt.Errorf("inspect capture consent schema: %w", err)
 	}
-
-	project, _ = NormalizeProject(project)
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	inspector := &Store{db: db}
-	consent, err := inspector.effectiveCaptureConsent(db, project, contentType, sessionID, now.UTC())
-	if err != nil {
-		return nil, fmt.Errorf("inspect capture consent: %w", err)
-	}
-	return &CaptureConsentInspection{SchemaPresent: true, Consent: consent}, nil
+	return db, true, closeInspection, nil
 }
 
 func copyCaptureStoreForInspection(dbPath string) (string, func(), error) {

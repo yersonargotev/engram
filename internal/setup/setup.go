@@ -2213,6 +2213,7 @@ type installedCodexPlugin struct {
 	SessionHookReady   bool
 	ActivationCueReady bool
 	VerifierReady      bool
+	SubagentHookReady  bool
 }
 
 type codexInstalledPluginLocation struct {
@@ -2292,9 +2293,36 @@ func verifyCodexPluginAtLocation(version, installedPath string, verifiedPluginAs
 			capabilities.PromptHookReady = verifyInstalledCodexPromptHook(installedPath, hooksRaw)
 			capabilities.SessionHookReady = verifyInstalledCodexSessionHooks(installedPath, hooksRaw)
 			capabilities.ActivationCueReady = verifyInstalledCodexActivation(installedPath, hooksRaw)
+			capabilities.SubagentHookReady = verifyInstalledCodexSubagentHook(hooksRaw)
 		}
 	}
 	return capabilities, nil
+}
+
+func verifyInstalledCodexSubagentHook(hooksRaw []byte) bool {
+	var manifest struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Type           string `json:"type"`
+				Command        string `json:"command"`
+				CommandWindows string `json:"commandWindows"`
+				Timeout        int    `json:"timeout"`
+				Async          bool   `json:"async"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if json.Unmarshal(hooksRaw, &manifest) != nil {
+		return false
+	}
+	groups := manifest.Hooks["SubagentStop"]
+	if len(groups) != 1 || groups[0].Matcher != ".*" || len(groups[0].Hooks) != 1 {
+		return false
+	}
+	hook := groups[0].Hooks[0]
+	const command = "engram capture subagent-hook --host=codex"
+	return hook.Type == "command" && hook.Command == command && hook.CommandWindows == command &&
+		hook.Timeout == 3 && !hook.Async
 }
 
 func verifyInstalledCodexStopVerifier(hooksRaw []byte, verifiedPluginAssets map[string]codexPluginTreeEntry) bool {

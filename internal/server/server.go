@@ -424,6 +424,10 @@ func (s *Server) handlePassiveCapture(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.store.PassiveCapture(body)
 	if err != nil {
+		if errors.Is(err, store.ErrSubagentPassiveCapture) {
+			jsonError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if writeOwnershipError(w, body.SessionID, err) {
 			return
 		}

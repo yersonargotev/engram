@@ -67,7 +67,7 @@ Full per-agent config, Memory Protocol, and compaction survival → [docs/AGENT-
 
 **What `engram setup` does** — it writes MCP config and plugin files for the chosen agent. After a complete setup, restart your agent and it is ready. Codex reports plugin, checkpoint-capable CLI/MCP, activation-cue, and verifier readiness separately and does not claim completion while any required capability is unavailable. Once those replacements are verified, it retires only exact-owned legacy instruction and compaction activation; customized or ambiguous state is preserved and reported. No server to start manually.
 
-To inspect Codex without installing or repairing anything, run `engram setup status codex` (add `--json` for automation). It reports the Managed Pack, Engram binary, Codex plugin, and Protocol contract as four independent version axes, computes their declared Protocol-range intersection, and reports CLI, skill, marketplace, MCP, hook, activation-cue, and Stop-verifier state independently. `checkpoint_ready` requires attributable compatible metadata; missing, malformed, ambiguous, or non-overlapping declarations fail closed. This is a capability snapshot, not proof that the model invoked a skill or created a Memory in a particular session.
+To inspect Codex without installing or repairing anything, run `engram setup status codex` (add `--json` for automation). It reports the Managed Pack, Engram binary, Codex plugin, and Protocol contract as four independent version axes, computes their declared Protocol-range intersection, and reports CLI, skill, marketplace, MCP, prompt/session/subagent hooks, activation-cue, and Stop-verifier state independently. The content-free `subagent_capture` status distinguishes `default_disabled`, `consented`, `expired`, and `unavailable`. `checkpoint_ready` requires attributable compatible metadata; missing, malformed, ambiguous, or non-overlapping declarations fail closed. This is a capability snapshot, not proof that the model invoked a skill or created a Memory in a particular session.
 
 > **Do I need to run `engram serve` or `engram mcp` myself?**
 >
@@ -408,10 +408,10 @@ Your production engram is fully untouched throughout.
 | `engram suggest-topic-key [inputs]`        | Suggest a stable topic key without writing                      |
 | `engram delete <obs_id>`                   | Delete an observation (soft by default; `--hard` removes permanently) |
 | `engram delete session <id>`               | Delete a session by ID (must have no observations)                    |
-| `engram capture status --project <name> --type prompt` | Inspect local Diagnostic capture capability and consent without reading captured content |
-| `engram capture enable --project <name> --type prompt` | Grant local capture consent; retention defaults to 7 days and cannot exceed 30 days |
-| `engram capture disable --project <name> --type prompt` | Revoke future capture without deleting previously captured Diagnostic content |
-| `engram capture purge --project <name> --type prompt` | Separately confirm and purge Diagnostic prompt content |
+| `engram capture status --project <name> --type <prompt\|subagent_output>` | Inspect local Diagnostic capture consent without reading captured content |
+| `engram capture enable --project <name> --type <prompt\|subagent_output>` | Grant narrow local capture consent; retention defaults to 7 days and cannot exceed 30 days |
+| `engram capture disable --project <name> --type <prompt\|subagent_output>` | Revoke future capture without deleting previously captured Diagnostic content |
+| `engram capture purge --project <name> --type <prompt\|subagent_output>` | Separately confirm and purge one Diagnostic content type |
 | `engram legacy-prompts inventory\|access\|export\|purge` | Explicitly administer the frozen Legacy prompt archive |
 | `engram delete project <name> [--hard]`    | Cascade-delete project Memory and local review data while preserving the frozen Legacy prompt archive |
 | `engram timeline <obs_id>`                 | Chronological context                                           |
@@ -435,17 +435,27 @@ Full CLI with all flags → [docs/ARCHITECTURE.md#cli-reference](docs/ARCHITECTU
 
 ### Private Diagnostic capture
 
-Prompt capture is disabled by default and remains local. Enabling it requires
-explicit consent scoped to a project and content type; an optional session
-grant expires. Retention is 7 days by default and at most 30 days. Status,
-enable, disable, and purge are deliberately separate, and status never reads
-captured content.
+Prompt and subagent-output capture are independently disabled by default and
+remain local. Enabling one requires explicit consent scoped to a project and
+content type; an optional session grant must expire. Prompt consent never
+enables subagent capture. Retention is 7 days by default and at most 30 days.
+Status, enable, disable, and purge are deliberately separate, and status never
+reads captured content.
+
+A consented `SubagentStop` accepts only one bounded JSON object with the exact
+shape `{"kind":"engram_diagnostic","title":"...","learning":"...","evidence_ref":"..."}`;
+`evidence_ref` is optional. Raw transcripts, ordinary last messages, `stdout`
+fallback, extra fields, and oversized values are rejected. Subagent drafts and
+evidence are transient unless this narrow consent is active. Even then, they
+remain Diagnostic Content: only the root agent may deliberately preserve a
+settled learning as Memory or an unresolved item as a proposal in the terminal
+checkpoint.
 
 Diagnostic Content is not Memory and never enters FTS/Recall/context,
 sync/cloud, ordinary export/import, Obsidian, or retired candidate/promotion flows. Existing
 prompt rows are a frozen Legacy archive with explicit inventory, access,
 export, and separately confirmed purge operations only. Host/session/root-turn
-identity continues to work even when prompt persistence is disabled.
+identity continues to work when all Content capture is disabled.
 Use `legacy-prompts inventory --all` for a content-free archive total; content
 access and purge remain deliberately narrower. Legacy purge removes canonical
 Engram-owned journal and FTS copies in the same transaction; if customized FTS

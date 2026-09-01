@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -8,10 +9,26 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/yersonargotev/engram/internal/memoryops"
+	projectpkg "github.com/yersonargotev/engram/internal/project"
+	"github.com/yersonargotev/engram/internal/recallbaseline"
 	"github.com/yersonargotev/engram/internal/store"
 )
+
+const maxSubagentHookInputBytes = 32 * 1024
+
+type subagentHookEvent struct {
+	SessionID            *string `json:"session_id"`
+	TurnID               *string `json:"turn_id"`
+	CWD                  *string `json:"cwd"`
+	LastAssistantMessage *string `json:"last_assistant_message"`
+}
+
+type subagentHookResponse struct {
+	SystemMessage string `json:"systemMessage,omitempty"`
+}
 
 var captureInputInteractive = func() bool {
 	info, err := os.Stdin.Stat()
@@ -21,7 +38,7 @@ var captureInputInteractive = func() bool {
 func cmdCapture(cfg store.Config) {
 	jsonMode := hasArg("--json")
 	if len(os.Args) < 3 {
-		failCLI(jsonMode, "invalid_arguments", "capture requires status, enable, disable, or purge", nil)
+		failCLI(jsonMode, "invalid_arguments", "capture requires status, enable, disable, purge, or subagent-hook", nil)
 		return
 	}
 
@@ -34,11 +51,126 @@ func cmdCapture(cfg store.Config) {
 		cmdCaptureDisable(cfg, os.Args[3:])
 	case "purge":
 		cmdCapturePurge(cfg, os.Args[3:])
+	case "subagent-hook":
+		cmdCaptureSubagentHook(cfg, os.Args[3:], os.Stdin)
 	case "help", "--help", "-h":
 		printCaptureUsage()
 	default:
 		failCLI(jsonMode, "invalid_arguments", fmt.Sprintf("unknown capture command %q", os.Args[2]), nil)
 	}
+}
+
+func cmdCaptureSubagentHook(cfg store.Config, args []string, input io.Reader) {
+	set := newCaptureFlagSet("subagent-hook")
+	host := ""
+	set.StringVar(&host, "host", "", "hook host (codex or claude-code)")
+	if err := set.Parse(args); err != nil || set.NArg() != 0 {
+		writeSubagentHookResponse(subagentHookResponse{SystemMessage: "Engram subagent Diagnostic capture unavailable: invalid hook command."})
+		return
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host != "codex" && host != "claude-code" {
+		writeSubagentHookResponse(subagentHookResponse{SystemMessage: "Engram subagent Diagnostic capture unavailable: unsupported hook host."})
+		return
+	}
+
+	raw, err := io.ReadAll(io.LimitReader(input, maxSubagentHookInputBytes+1))
+	if err != nil || len(raw) > maxSubagentHookInputBytes || !utf8.Valid(raw) {
+		writeSubagentHookResponse(subagentHookResponse{SystemMessage: "Engram subagent Diagnostic capture rejected: hook input is malformed or oversized."})
+		return
+	}
+	var event subagentHookEvent
+	if err := json.Unmarshal(raw, &event); err != nil {
+		writeSubagentHookResponse(subagentHookResponse{SystemMessage: "Engram subagent Diagnostic capture rejected: hook input is malformed or oversized."})
+		return
+	}
+
+	sessionID := subagentHookSessionID(host, event)
+	recordRecallBaselineEvents(cfg, recallbaseline.Event{
+		Kind: recallbaseline.EventSubagentStop, Surface: recallbaseline.SurfaceLifecycle,
+		Operation: "subagent_stop", Outcome: recallbaseline.OutcomeObserved,
+	})
+	if event.LastAssistantMessage == nil || strings.TrimSpace(*event.LastAssistantMessage) == "" {
+		writeSubagentHookResponse(subagentHookResponse{})
+		return
+	}
+
+	project, err := resolveSubagentHookProject(event.CWD)
+	if err != nil {
+		recordSubagentCaptureBaseline(cfg, recallbaseline.OutcomeUnknown)
+		writeSubagentHookResponse(subagentHookResponse{SystemMessage: "Engram subagent Diagnostic capture unavailable: project identity is not authoritative."})
+		return
+	}
+	s, err := storeNew(cfg)
+	if err != nil {
+		recordSubagentCaptureBaseline(cfg, recallbaseline.OutcomeUnknown)
+		writeSubagentHookResponse(subagentHookResponse{SystemMessage: "Engram subagent Diagnostic capture unavailable: local storage could not be opened."})
+		return
+	}
+	defer s.Close()
+
+	result, err := memoryops.New(s).CaptureSubagentDiagnostic(memoryops.SubagentDiagnosticInput{
+		Project: project, SessionID: sessionID, Envelope: *event.LastAssistantMessage,
+	})
+	if errors.Is(err, memoryops.ErrSubagentDiagnosticEnvelope) {
+		recordSubagentCaptureBaseline(cfg, recallbaseline.OutcomeEnabled)
+		writeSubagentHookResponse(subagentHookResponse{SystemMessage: "Engram subagent Diagnostic capture rejected: the consented message is not a valid bounded engram_diagnostic envelope."})
+		return
+	}
+	if err != nil {
+		recordSubagentCaptureBaseline(cfg, recallbaseline.OutcomeUnknown)
+		writeSubagentHookResponse(subagentHookResponse{SystemMessage: "Engram subagent Diagnostic capture unavailable: the local capture boundary failed."})
+		return
+	}
+	if result.Captured {
+		recordSubagentCaptureBaseline(cfg, recallbaseline.OutcomeEnabled)
+	} else {
+		recordSubagentCaptureBaseline(cfg, recallbaseline.OutcomeDisabled)
+	}
+	writeSubagentHookResponse(subagentHookResponse{})
+}
+
+func subagentHookSessionID(host string, event subagentHookEvent) string {
+	if host == "codex" && event.TurnID != nil {
+		return strings.TrimSpace(*event.TurnID)
+	}
+	if host == "claude-code" && event.SessionID != nil {
+		return strings.TrimSpace(*event.SessionID)
+	}
+	return ""
+}
+
+func resolveSubagentHookProject(cwd *string) (string, error) {
+	if override, ok := projectpkg.ProcessOverride(""); ok {
+		project, _ := store.NormalizeProject(override)
+		if project != "" {
+			return project, nil
+		}
+	}
+	directory := currentCWD()
+	if cwd != nil && strings.TrimSpace(*cwd) != "" {
+		directory = strings.TrimSpace(*cwd)
+	}
+	resolved := detectProjectFull(directory)
+	if err := projectpkg.RequireImplicitWriteAuthority(resolved); err != nil {
+		return "", err
+	}
+	project, _ := store.NormalizeProject(resolved.Project)
+	if project == "" {
+		return "", memoryops.ErrProjectRequired
+	}
+	return project, nil
+}
+
+func recordSubagentCaptureBaseline(cfg store.Config, outcome recallbaseline.Outcome) {
+	recordRecallBaselineEvents(cfg, recallbaseline.Event{
+		Kind: recallbaseline.EventCapture, Surface: recallbaseline.SurfaceLifecycle,
+		Operation: "subagent", Outcome: outcome,
+	})
+}
+
+func writeSubagentHookResponse(response subagentHookResponse) {
+	_ = writeCLIJSON(response)
 }
 
 func cmdCapturePurge(cfg store.Config, args []string) {
@@ -290,11 +422,12 @@ func captureEnabledLabel(enabled bool) string {
 }
 
 func printCaptureUsage() {
-	fmt.Println(`usage: engram capture status|enable|disable|purge [options]
+	fmt.Println(`usage: engram capture status|enable|disable|purge|subagent-hook [options]
 
   status   [--project PROJECT] [--type TYPE] [--session-id ID] [--json]
   enable   --project PROJECT --type TYPE [--session-id ID --expires-at RFC3339]
            [--retention-days 1..30] [--json]
   disable  --project PROJECT --type TYPE [--session-id ID] [--json]
-  purge    --project PROJECT --type TYPE [--yes] [--json]`)
+  purge    --project PROJECT --type TYPE [--yes] [--json]
+  subagent-hook --host codex|claude-code`)
 }

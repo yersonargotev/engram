@@ -691,6 +691,10 @@ func main() {
 		}
 		runRecallBaselineCLI(cfg, operation, func() { cmdCheckpoint(cfg) })
 	case "capture":
+		if len(os.Args) >= 3 && strings.EqualFold(strings.TrimSpace(os.Args[2]), "subagent-hook") {
+			cmdCapture(cfg)
+			break
+		}
 		operation := "capture"
 		if len(os.Args) >= 3 {
 			operation += "_" + strings.ToLower(strings.TrimSpace(os.Args[2]))
@@ -747,6 +751,8 @@ func shouldCheckForUpdates(args []string) bool {
 	switch command {
 	case "mcp", "serve", "protocol-mode", "activation-study", "recall-baseline":
 		return false
+	case "capture":
+		return len(args) < 2 || strings.ToLower(strings.TrimSpace(args[1])) != "subagent-hook"
 	case "checkpoint":
 		return len(args) >= 2 && strings.ToLower(strings.TrimSpace(args[1])) != "verify-stop"
 	case "cloud":
@@ -3441,14 +3447,14 @@ Commands:
                      Verify one Codex Stop event against the checkpoint ledger
                        --host HOST (reads the Stop event from stdin)
   capture status     Inspect Diagnostic capture consent without reading captured content
-                       [--project PROJECT] [--type TYPE] [--session-id ID] [--json]
+                       [--project PROJECT] [--type prompt|subagent_output] [--session-id ID] [--json]
   capture enable     Enable explicit local Diagnostic capture consent
-                       --project PROJECT --type TYPE [--session-id ID --expires-at RFC3339]
+                       --project PROJECT --type prompt|subagent_output [--session-id ID --expires-at RFC3339]
                        [--retention-days 1..30] [--json]
   capture disable    Revoke consent without purging captured content
-                       --project PROJECT --type TYPE [--session-id ID] [--json]
+                       --project PROJECT --type prompt|subagent_output [--session-id ID] [--json]
   capture purge      Permanently purge Diagnostic captures without changing consent
-                       --project PROJECT --type TYPE [--yes] [--json]
+                       --project PROJECT --type prompt|subagent_output [--yes] [--json]
   legacy-prompts     Explicitly manage the frozen local Legacy prompt archive
                        inventory|access|export|purge (see legacy-prompts --help)
   stats              Show memory system statistics

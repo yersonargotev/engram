@@ -42,6 +42,19 @@ func TestObsidianExportExcludesLegacyAndDiagnosticCaptureContent(t *testing.T) {
 	if err != nil || !result.Captured {
 		t.Fatalf("capture Diagnostic content: result=%#v err=%v", result, err)
 	}
+	if err := s.UpsertCaptureConsent(store.CaptureConsent{
+		Project: "engram", ContentType: store.CaptureContentTypeSubagentOutput,
+		RetentionDays: store.DefaultDiagnosticRetentionDays, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("enable subagent Diagnostic capture: %v", err)
+	}
+	result, err = s.CaptureDiagnostic(store.CaptureDiagnosticParams{
+		Project: "engram", ContentType: store.CaptureContentTypeSubagentOutput,
+		SessionID: "capture-exclusion-session", Content: "SUBAGENT-DIAGNOSTIC-OBSIDIAN-CANARY-103", Now: now,
+	})
+	if err != nil || !result.Captured {
+		t.Fatalf("capture subagent Diagnostic content: result=%#v err=%v", result, err)
+	}
 
 	vault := t.TempDir()
 	if _, err := NewExporter(checkpointStoreReader{store: s}, ExportConfig{
@@ -59,7 +72,8 @@ func TestObsidianExportExcludesLegacyAndDiagnosticCaptureContent(t *testing.T) {
 			return err
 		}
 		text := string(content)
-		if strings.Contains(text, "LEGACY-OBSIDIAN-CANARY-102") || strings.Contains(text, "DIAGNOSTIC-OBSIDIAN-CANARY-102") {
+		if strings.Contains(text, "LEGACY-OBSIDIAN-CANARY-102") || strings.Contains(text, "DIAGNOSTIC-OBSIDIAN-CANARY-102") ||
+			strings.Contains(text, "SUBAGENT-DIAGNOSTIC-OBSIDIAN-CANARY-103") {
 			t.Fatalf("Obsidian file %s exposed captured content: %s", path, text)
 		}
 		return nil

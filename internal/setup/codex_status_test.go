@@ -62,7 +62,9 @@ func TestInspectCodexStatusEmptyProfileIsConservativeAndReadOnly(t *testing.T) {
 		{"session_hook", CodexCheckMissing, "plugin_missing"},
 		{"activation_cue", CodexCheckMissing, "plugin_missing"},
 		{"stop_verifier", CodexCheckMissing, "plugin_missing"},
+		{"subagent_hook", CodexCheckMissing, "plugin_missing"},
 		{"prompt_capture", CodexCheckReady, "prompt_capture_available"},
+		{"subagent_capture", CodexCheckReady, "subagent_capture_available"},
 	}
 	if len(status.Checks) != len(want) {
 		t.Fatalf("checks = %#v, want %d", status.Checks, len(want))
@@ -87,10 +89,127 @@ func TestInspectCodexStatusEmptyProfileIsConservativeAndReadOnly(t *testing.T) {
 		status.PromptCapture.RetentionDays != store.DefaultDiagnosticRetentionDays {
 		t.Fatalf("default prompt capture status = %#v", status.PromptCapture)
 	}
+	if status.SubagentCapture.Capability != CodexCheckReady ||
+		status.SubagentCapture.Hook != CodexCheckMissing ||
+		status.SubagentCapture.State != CodexSubagentCaptureUnavailable ||
+		status.SubagentCapture.ContentType != store.CaptureContentTypeSubagentOutput ||
+		status.SubagentCapture.Scope != CodexCaptureScopeNone ||
+		status.SubagentCapture.RetentionDays != store.DefaultDiagnosticRetentionDays ||
+		status.SubagentCapture.ReasonCode != "subagent_capture_project_unavailable" {
+		t.Fatalf("default subagent capture status = %#v", status.SubagentCapture)
+	}
 
 	after := snapshotStatusTestTree(t, home)
 	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("status inspection mutated isolated profile:\nbefore=%#v\nafter=%#v", before, after)
+	}
+}
+
+func TestInspectCodexSubagentCaptureStatusDistinguishesConsentLifecycleWithoutContent(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	dataDir := filepath.Join(home, ".engram")
+	t.Setenv("ENGRAM_DATA_DIR", dataDir)
+	t.Setenv("ENGRAM_PROJECT", "engram")
+	checks := []CodexIntegrationCheck{{Capability: "subagent_hook", Status: CodexCheckReady}}
+	now := time.Now().UTC()
+
+	defaultStatus := inspectCodexSubagentCaptureStatus(home, checks, now)
+	if defaultStatus.State != CodexSubagentCaptureDefaultDisabled || defaultStatus.Hook != CodexCheckReady {
+		t.Fatalf("default status = %#v", defaultStatus)
+	}
+
+	s, err := store.New(store.FallbackConfig(dataDir))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	expiredAt := now.Add(-time.Minute)
+	if err := s.UpsertCaptureConsent(store.CaptureConsent{
+		Project: "engram", ContentType: store.CaptureContentTypeSubagentOutput,
+		SessionID: "opaque-expired", RetentionDays: store.DefaultDiagnosticRetentionDays,
+		ExpiresAt: &expiredAt, UpdatedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("seed expired consent: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	expired := inspectCodexSubagentCaptureStatus(home, checks, now)
+	if expired.State != CodexSubagentCaptureExpired || expired.Scope != CodexCaptureScopeNone {
+		t.Fatalf("expired status = %#v", expired)
+	}
+
+	s, err = store.New(store.FallbackConfig(dataDir))
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	activeAt := now.Add(time.Hour)
+	if err := s.UpsertCaptureConsent(store.CaptureConsent{
+		Project: "engram", ContentType: store.CaptureContentTypeSubagentOutput,
+		SessionID: "opaque-active", RetentionDays: 4,
+		ExpiresAt: &activeAt, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed active consent: %v", err)
+	}
+	if _, err := s.DB().Exec(`INSERT INTO diagnostic_captures (
+		project, content_type, session_id, content, created_at, expires_at
+	) VALUES (?, ?, ?, ?, ?, ?)`, "engram", store.CaptureContentTypeSubagentOutput,
+		"opaque-active", "PRIVATE-SUBAGENT-CONTENT", now.Format(time.RFC3339Nano), activeAt.Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("seed private Diagnostic content: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	consented := inspectCodexSubagentCaptureStatus(home, checks, now)
+	if consented.State != CodexSubagentCaptureConsented || consented.Scope != CodexCaptureScopeSession ||
+		consented.RetentionDays != 4 || consented.ExpiresAt == "" {
+		t.Fatalf("consented status = %#v", consented)
+	}
+	raw, err := json.Marshal(consented)
+	if err != nil {
+		t.Fatalf("marshal status: %v", err)
+	}
+	for _, forbidden := range []string{"PRIVATE-SUBAGENT-CONTENT", "opaque-active", "opaque-expired"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("subagent status leaked %q: %s", forbidden, raw)
+		}
+	}
+
+	t.Setenv("ENGRAM_DATA_DIR", "relative-data-dir")
+	unavailable := inspectCodexSubagentCaptureStatus(home, checks, now)
+	if unavailable.State != CodexSubagentCaptureUnavailable {
+		t.Fatalf("unavailable status = %#v", unavailable)
+	}
+}
+
+func TestInspectCodexSubagentCaptureStatusRejectsWeakImplicitProjectIdentity(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	dataDir := filepath.Join(home, ".engram")
+	weakProjectDir := filepath.Join(home, "weak-project")
+	if err := os.MkdirAll(weakProjectDir, 0o755); err != nil {
+		t.Fatalf("create weak project directory: %v", err)
+	}
+	t.Setenv("ENGRAM_DATA_DIR", dataDir)
+	t.Setenv("ENGRAM_PROJECT", "")
+
+	s, err := store.New(store.FallbackConfig(dataDir))
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if err := s.UpsertCaptureConsent(store.CaptureConsent{
+		Project: "weak-project", ContentType: store.CaptureContentTypeSubagentOutput,
+		RetentionDays: store.DefaultDiagnosticRetentionDays, UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed weak-project consent: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	status := inspectCodexSubagentCaptureStatus(weakProjectDir, nil, time.Now().UTC())
+	if status.State != CodexSubagentCaptureUnavailable || status.ReasonCode != "subagent_capture_project_unavailable" {
+		t.Fatalf("weak implicit identity status = %#v, want unavailable", status)
 	}
 }
 
@@ -243,7 +362,7 @@ args = ["mcp", "--tools=agent"]
 		status.Compatibility.Intersection == nil || len(status.Compatibility.Axes) != 4 {
 		t.Fatalf("Protocol compatibility = %#v", status.Compatibility)
 	}
-	for _, capability := range []string{"marketplace", "plugin", "mcp_configuration", "mcp_readiness", "prompt_hook", "session_hook", "activation_cue", "stop_verifier", "prompt_capture"} {
+	for _, capability := range []string{"marketplace", "plugin", "mcp_configuration", "mcp_readiness", "prompt_hook", "session_hook", "activation_cue", "stop_verifier", "subagent_hook", "prompt_capture", "subagent_capture"} {
 		matches := statusChecksByCapability(status.Checks, capability)
 		if len(matches) != 1 || matches[0].Status != CodexCheckReady {
 			t.Fatalf("%s check = %#v", capability, matches)

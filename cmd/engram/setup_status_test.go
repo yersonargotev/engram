@@ -48,6 +48,17 @@ func TestCmdSetupStatusCodexJSONDoesNotInstall(t *testing.T) {
 				RetentionDays:  store.DefaultDiagnosticRetentionDays,
 				ReasonCode:     "capture_consent_disabled",
 			},
+			SubagentCapture: setup.CodexSubagentCaptureStatus{
+				Capability:    setup.CodexCheckReady,
+				Hook:          setup.CodexCheckMissing,
+				DefaultState:  setup.CodexSubagentCaptureDefaultDisabled,
+				State:         setup.CodexSubagentCaptureDefaultDisabled,
+				Project:       "engram",
+				ContentType:   store.CaptureContentTypeSubagentOutput,
+				Scope:         setup.CodexCaptureScopeNone,
+				RetentionDays: store.DefaultDiagnosticRetentionDays,
+				ReasonCode:    "subagent_capture_default_disabled",
+			},
 			Checks: []setup.CodexIntegrationCheck{
 				{
 					Capability: "engram_cli",
@@ -87,6 +98,12 @@ func TestCmdSetupStatusCodexJSONDoesNotInstall(t *testing.T) {
 		got.PromptCapture.CurrentConsent != setup.CodexCaptureConsentDisabled ||
 		got.PromptCapture.Project != "engram" {
 		t.Fatalf("setup prompt capture status = %#v", got.PromptCapture)
+	}
+	if got.SubagentCapture.Capability != setup.CodexCheckReady ||
+		got.SubagentCapture.Hook != setup.CodexCheckMissing ||
+		got.SubagentCapture.State != setup.CodexSubagentCaptureDefaultDisabled ||
+		got.SubagentCapture.Project != "engram" {
+		t.Fatalf("setup subagent capture status = %#v", got.SubagentCapture)
 	}
 }
 

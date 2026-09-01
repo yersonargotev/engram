@@ -46,7 +46,6 @@ printf '%s\n' "$*" >> "$BASELINE_ARGS_LOG"
 	}
 
 	run("user-prompt-submit.sh", `{"cwd":"/tmp/repo","session_id":"session-secret","turn_id":"turn-secret","prompt":"PROMPT-CONTENT-MUST-NOT-LEAK"}`)
-	run("subagent-stop.sh", `{"cwd":"/tmp/repo","session_id":"session-secret","last_assistant_message":"ASSISTANT-CONTENT-MUST-NOT-LEAK"}`)
 	sessionStartOutput := run("session-start.sh", `{"cwd":"/tmp/repo","session_id":"session-secret","source":"startup"}`)
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -55,7 +54,7 @@ printf '%s\n' "$*" >> "$BASELINE_ARGS_LOG"
 		raw, err := os.ReadFile(logPath)
 		if err == nil {
 			logged = string(raw)
-			if strings.Contains(logged, "--kind capture") && strings.Contains(logged, "--kind subagent_stop") && strings.Contains(logged, "--operation session_start") {
+			if strings.Contains(logged, "--kind capture") && strings.Contains(logged, "--operation session_start") {
 				break
 			}
 		} else if !os.IsNotExist(err) {
@@ -65,8 +64,6 @@ printf '%s\n' "$*" >> "$BASELINE_ARGS_LOG"
 	}
 	for _, want := range []string{
 		"recall-baseline record --kind capture --surface lifecycle --operation prompt --outcome unknown",
-		"recall-baseline record --kind subagent_stop --surface lifecycle --operation subagent_stop --outcome observed",
-		"recall-baseline record --kind capture --surface lifecycle --operation subagent --outcome enabled",
 		"recall-baseline record --kind operation --surface lifecycle --operation session_start --outcome success --delivered-bytes ",
 	} {
 		if !strings.Contains(logged, want) {
@@ -76,7 +73,7 @@ printf '%s\n' "$*" >> "$BASELINE_ARGS_LOG"
 	if !strings.Contains(logged, "--delivered-bytes "+strconv.Itoa(len(sessionStartOutput))) {
 		t.Fatalf("SessionStart byte count does not match %d delivered UTF-8 bytes\n%s", len(sessionStartOutput), logged)
 	}
-	for _, forbidden := range []string{"PROMPT-CONTENT-MUST-NOT-LEAK", "ASSISTANT-CONTENT-MUST-NOT-LEAK", "/tmp/repo"} {
+	for _, forbidden := range []string{"PROMPT-CONTENT-MUST-NOT-LEAK", "/tmp/repo"} {
 		if strings.Contains(logged, forbidden) {
 			t.Fatalf("baseline call leaked %q\n%s", forbidden, logged)
 		}

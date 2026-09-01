@@ -1,5 +1,5 @@
 {
-  "description": "Engram persistent memory hooks — session tracking, auto-import, compaction recovery, and passive capture",
+  "description": "Engram persistent memory hooks — session tracking, auto-import, compaction recovery, and consented Diagnostic capture",
   "hooks": {
     "SessionStart": [
       {
@@ -41,9 +41,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/subagent-stop.sh\"",
-            "timeout": 10,
-            "async": true
+            "command": "engram capture subagent-hook --host=claude-code",
+            "timeout": 3
           }
         ]
       }

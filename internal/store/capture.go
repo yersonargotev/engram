@@ -35,6 +35,7 @@ type CaptureConsent struct {
 
 type CaptureConsentStatus struct {
 	Consent         *CaptureConsent `json:"consent,omitempty"`
+	Expired         bool            `json:"expired"`
 	StoredCount     int64           `json:"stored_count"`
 	LegacyFTSStatus string          `json:"legacy_prompt_fts_status"`
 }
@@ -101,6 +102,17 @@ func (s *Store) CaptureConsentStatus(project, contentType, sessionID string, now
 	if err != nil {
 		return nil, err
 	}
+	expired := false
+	if consent == nil && sessionID != "" {
+		if err := s.db.QueryRow(`
+			SELECT EXISTS(
+				SELECT 1 FROM capture_consents
+				WHERE project = ? AND content_type = ? AND session_id = ?
+				  AND expires_at IS NOT NULL AND expires_at <= ?
+			)`, project, contentType, sessionID, now.UTC().Format(time.RFC3339Nano)).Scan(&expired); err != nil {
+			return nil, err
+		}
+	}
 	var count int64
 	if err := s.db.QueryRow(`
 		SELECT COUNT(*)
@@ -114,7 +126,7 @@ func (s *Store) CaptureConsentStatus(project, contentType, sessionID string, now
 	if err != nil {
 		return nil, err
 	}
-	return &CaptureConsentStatus{Consent: consent, StoredCount: count, LegacyFTSStatus: legacyStatus}, nil
+	return &CaptureConsentStatus{Consent: consent, Expired: expired, StoredCount: count, LegacyFTSStatus: legacyStatus}, nil
 }
 
 func (s *Store) CaptureDiagnostic(params CaptureDiagnosticParams) (*CaptureDiagnosticResult, error) {

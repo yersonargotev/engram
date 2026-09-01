@@ -118,7 +118,6 @@ plugin/claude-code/
 │   ├── post-compaction.sh         # Injects previous context + recovery instructions
 │   ├── user-prompt-submit.sh      # Loads MCP tools on first prompt; Windows Git Bash safe mode
 │   ├── user-prompt-submit.ps1     # Optional Windows-native fallback for locked-down endpoints
-│   ├── subagent-stop.sh           # Passive capture trigger on subagent completion
 │   └── session-stop.sh            # Logs end-of-session event
 └── skills/memory/SKILL.md         # Canonical terminal Memory policy
 ```
@@ -135,6 +134,12 @@ plugin/claude-code/
 1. Injects the previous session context and compacted summary.
 2. Preserves the original root-turn identity across the continuation.
 3. Leaves disposition selection to the canonical skill after causal work settles.
+
+**On subagent completion** (`SubagentStop`): the manifest delegates directly to
+`engram capture subagent-hook --host=claude-code`. The default is no
+persistence. Independent `subagent_output` consent permits only a bounded
+`engram_diagnostic` JSON envelope; raw output and `stdout` fallback are
+rejected, and no subagent event creates Memory or checkpoint state.
 
 **On user prompt submit**:
 1. The hook reports the opaque host/session/root-turn identity independently of prompt persistence. It offers prompt content only to Core's local consent gate after strong or explicit project resolution; weak identities and disabled consent fail closed without blocking the user prompt.
@@ -210,6 +215,14 @@ Identity reporting does not require prompt persistence: Diagnostic capture is
 off by default and Core evaluates any content offer against explicit local
 project/content-type consent.
 
+`SubagentStop` delegates directly to
+`engram capture subagent-hook --host=codex` on Unix and Windows. It does not
+use a passive-extraction script. Without independent `subagent_output` consent
+it persists nothing; with consent it accepts only the bounded Diagnostic
+envelope and remains outside Memory, proposals, checkpoints, summaries, and
+retired evaluation/promotion state. The root agent alone owns terminal
+preservation.
+
 `Stop` delegates the complete event to
 `engram checkpoint verify-stop --host=codex`; Windows invokes that command
 directly, while Unix uses the thin `stop.sh` launcher. The Go core queries that exact identity in the local checkpoint
@@ -230,10 +243,12 @@ complete only when both activation and checkpoint verification are ready.
 `engram setup status codex [--json]` is the non-mutating diagnostic counterpart.
 It reports standalone and plugin-provided skills, marketplace registration,
 installed/enabled plugin provenance, MCP configuration and executable preflight,
-prompt/session hooks, the canonical activation cue, and the Stop verifier as
-separate checks. It also reports Managed Pack, binary, plugin, and Protocol
-contract versions separately, with attributable range declarations and their
-computed intersection. Its `manual_skill_cli`, `mcp_only`, `partial_plugin`,
+prompt/session/subagent hooks, the canonical activation cue, and the Stop
+verifier as separate checks. Its content-free `subagent_capture` object reports
+`default_disabled`, `consented`, `expired`, or `unavailable` without reading
+captured content or exposing session identifiers. It also reports Managed Pack,
+binary, plugin, and Protocol contract versions separately, with attributable
+range declarations and their computed intersection. Its `manual_skill_cli`, `mcp_only`, `partial_plugin`,
 `checkpoint_ready`, and `unknown` modes never promote marketplace registration
 or customized, missing, malformed, ambiguous, or non-overlapping Protocol state
 to full readiness. The result is an installed-capability

@@ -3,11 +3,13 @@ package memoryops
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -110,14 +112,24 @@ func (s *Service) Recall(input RecallInput) (*RecallResult, error) {
 // RecallContext is Recall with caller cancellation propagated through Store
 // search and relation loading.
 func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*RecallResult, error) {
-	started := time.Now()
 	query := strings.TrimSpace(input.Query)
 	if query == "" {
 		return nil, errors.New("recall query is required")
 	}
-	input.Scope = strings.TrimSpace(input.Scope)
-	if input.Scope == "" {
-		input.Scope = "project"
+	var err error
+	input.Scope, err = NormalizeRecallScope(input.Scope)
+	if err != nil {
+		return nil, err
+	}
+	input.MatchMode, err = NormalizeRecallMatchMode(input.MatchMode)
+	if err != nil {
+		return nil, err
+	}
+	if input.AllProjects && strings.TrimSpace(input.Project) != "" {
+		return nil, errors.New("project and all projects cannot be used together")
+	}
+	if input.Scope != "project" && strings.TrimSpace(input.Project) == "" && !input.AllProjects {
+		return nil, errors.New("all projects is required for broad recall without an explicit project")
 	}
 	limit := input.Limit
 	if limit == 0 {
@@ -127,9 +139,10 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 		return nil, fmt.Errorf("recall limit must be between 1 and %d", MaximumRecallCandidateLimit)
 	}
 
-	recallID, err := s.newRecallID()
-	if err != nil {
-		return nil, fmt.Errorf("create recall identifier: %w", err)
+	started := s.recallStartedAt()
+	recallID, identifierErr := s.newRecallID()
+	if identifierErr != nil {
+		recallID = s.newRecallFallbackID()
 	}
 	result := &RecallResult{
 		RecallID:           recallID,
@@ -142,22 +155,17 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 			BinaryRevision:  strings.TrimSpace(input.BinaryRevision),
 		},
 	}
-	defer func() { result.ElapsedMonotonicMS = time.Since(started).Milliseconds() }()
+	defer func() { result.ElapsedMonotonicMS = s.recallElapsed(started).Milliseconds() }()
+	if identifierErr != nil {
+		setRecallUnavailable(result, "recall_identifier_failure", "recall_identifier", identifierErr)
+		return result, nil
+	}
 	if !recallAuthorityAllows(input) {
-		result.Warning = &RecallWarning{
-			Code:       "recall_project_authority_required",
-			Message:    "Recall skipped because automatic project identity is not strong or explicit.",
-			NextAction: "Provide an explicit project when prior Memory can materially change the task.",
-		}
-		result.Diagnostics = []RecallDiagnostic{{
-			Code:      project.WriteAuthorityErrorCode,
-			Operation: "recall_candidates",
-			Detail:    fmt.Sprintf("project identity strength is %s", input.ProjectStrength),
-		}}
+		setRecallAuthorityRequired(result, input)
 		return result, nil
 	}
 	if err := s.requireStore(); err != nil {
-		setRecallUnavailable(result, err)
+		setRecallUnavailable(result, "recall_store_failure", "recall_candidates", err)
 		return result, nil
 	}
 
@@ -174,7 +182,15 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
-		setRecallUnavailable(result, err)
+		setRecallUnavailable(result, "recall_store_failure", "recall_candidates", err)
+		return result, nil
+	}
+	eligibleConflictTargets, err := s.loadEligibleRecallConflictTargets(ctx, search, input)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		setRecallUnavailable(result, "recall_store_failure", "recall_conflict_eligibility", err)
 		return result, nil
 	}
 
@@ -188,7 +204,7 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 			Scope:     observation.Scope,
 			Pinned:    observation.Pinned,
 			Summary:   truncateRecallUTF8(observation.Content, recallCandidateSummaryBytes),
-			Conflicts: recallConflicts(item.Relations),
+			Conflicts: recallConflicts(item.Relations, eligibleConflictTargets),
 		}
 		if observation.Project != nil {
 			candidate.Project = *observation.Project
@@ -205,30 +221,106 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 	return result, nil
 }
 
-func setRecallUnavailable(result *RecallResult, err error) {
+// NormalizeRecallScope owns the accepted transport-neutral Recall scope values.
+// It must run before any adapter derives cross-project authority from scope.
+func NormalizeRecallScope(value string) (string, error) {
+	scope := strings.ToLower(strings.TrimSpace(value))
+	if scope == "" {
+		return "project", nil
+	}
+	switch scope {
+	case "project", "personal", "global":
+		return scope, nil
+	default:
+		return "", fmt.Errorf("invalid recall scope %q: must be project, personal, or global", value)
+	}
+}
+
+// NormalizeRecallMatchMode owns the accepted transport-neutral token matching modes.
+func NormalizeRecallMatchMode(value string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(value))
+	switch mode {
+	case "", "all", "any":
+		return mode, nil
+	default:
+		return "", fmt.Errorf("invalid match_mode %q: must be all or any", value)
+	}
+}
+
+func setRecallUnavailable(result *RecallResult, code, operation string, err error) {
 	result.Warning = &RecallWarning{
 		Code:       "recall_unavailable",
 		Message:    "Recall is unavailable; continuing without Memory.",
 		NextAction: "Retry once with narrow anchors only if prior Memory remains material to the task.",
 	}
 	result.Diagnostics = []RecallDiagnostic{{
-		Code:      "recall_store_failure",
-		Operation: "recall_candidates",
+		Code:      code,
+		Operation: operation,
 		Detail:    err.Error(),
 	}}
 }
 
-func recallConflicts(relations store.ObservationRelations) []RecallConflict {
+func setRecallAuthorityRequired(result *RecallResult, input RecallInput) {
+	if input.AllProjects || input.Scope != "project" {
+		result.Warning = &RecallWarning{
+			Code:       "recall_scope_relevance_required",
+			Message:    "Recall skipped because broad scope was not explicitly relevant to this task.",
+			NextAction: "Request personal or cross-project Recall only when that broader scope is material.",
+		}
+		result.Diagnostics = []RecallDiagnostic{{
+			Code:      "recall_scope_relevance_required",
+			Operation: "recall_candidates",
+			Detail:    fmt.Sprintf("scope=%s all_projects=%t", input.Scope, input.AllProjects),
+		}}
+		return
+	}
+	result.Warning = &RecallWarning{
+		Code:       "recall_project_authority_required",
+		Message:    "Recall skipped because automatic project identity is not strong or explicit.",
+		NextAction: "Provide an explicit project when prior Memory can materially change the task.",
+	}
+	result.Diagnostics = []RecallDiagnostic{{
+		Code:      project.WriteAuthorityErrorCode,
+		Operation: "recall_candidates",
+		Detail:    fmt.Sprintf("project identity strength is %s", input.ProjectStrength),
+	}}
+}
+
+func (s *Service) loadEligibleRecallConflictTargets(ctx context.Context, search *SearchResult, input RecallInput) (map[string]store.RecallConflictTarget, error) {
+	syncIDs := make([]string, 0)
+	for _, item := range search.Observations {
+		for _, relation := range item.Relations.AsSource {
+			if isUnresolvedRecallConflict(relation) && relation.TargetID != "" {
+				syncIDs = append(syncIDs, relation.TargetID)
+			}
+		}
+		for _, relation := range item.Relations.AsTarget {
+			if isUnresolvedRecallConflict(relation) && relation.SourceID != "" {
+				syncIDs = append(syncIDs, relation.SourceID)
+			}
+		}
+	}
+	return s.store.RecallEligibleConflictTargetsContext(ctx, syncIDs, store.SearchOptions{
+		Project: input.Project,
+		Scope:   input.Scope,
+	})
+}
+
+func recallConflicts(relations store.ObservationRelations, eligible map[string]store.RecallConflictTarget) []RecallConflict {
 	conflicts := make([]RecallConflict, 0)
 	for _, relation := range relations.AsSource {
 		if !isUnresolvedRecallConflict(relation) {
 			continue
 		}
+		target, ok := eligible[relation.TargetID]
+		if !ok {
+			continue
+		}
 		conflicts = append(conflicts, RecallConflict{
 			RelationID: relation.SyncID,
-			MemoryID:   relation.TargetIntID,
-			SyncID:     relation.TargetID,
-			Title:      relation.TargetTitle,
+			MemoryID:   target.ID,
+			SyncID:     target.SyncID,
+			Title:      target.Title,
 			Status:     relation.JudgmentStatus,
 		})
 	}
@@ -236,11 +328,15 @@ func recallConflicts(relations store.ObservationRelations) []RecallConflict {
 		if !isUnresolvedRecallConflict(relation) {
 			continue
 		}
+		target, ok := eligible[relation.SourceID]
+		if !ok {
+			continue
+		}
 		conflicts = append(conflicts, RecallConflict{
 			RelationID: relation.SyncID,
-			MemoryID:   relation.SourceIntID,
-			SyncID:     relation.SourceID,
-			Title:      relation.SourceTitle,
+			MemoryID:   target.ID,
+			SyncID:     target.SyncID,
+			Title:      target.Title,
 			Status:     relation.JudgmentStatus,
 		})
 	}
@@ -300,6 +396,14 @@ func newRecallID() (string, error) {
 		return "", err
 	}
 	return "recall-" + hex.EncodeToString(raw), nil
+}
+
+var recallFallbackSequence atomic.Uint64
+
+func newRecallFallbackID() string {
+	seed := fmt.Sprintf("%d:%d", time.Now().UnixNano(), recallFallbackSequence.Add(1))
+	digest := sha256.Sum256([]byte(seed))
+	return "recall-" + hex.EncodeToString(digest[:16])
 }
 
 func fallback(value, fallbackValue string) string {

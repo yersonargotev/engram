@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1324,6 +1325,42 @@ func TestHandleSearchReturnsBoundedRecallEnvelope(t *testing.T) {
 	}
 	if prose, _ := payload["result"].(string); strings.Contains(prose, "candidate summary content") {
 		t.Fatalf("prose duplicated candidate payload: %q", prose)
+	}
+}
+
+func TestHandleSearchRejectsInvalidScopeAndNonIntegerOrZeroLimits(t *testing.T) {
+	s := newMCPTestStore(t)
+	for _, test := range []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{name: "unknown scope", args: map[string]any{"query": "secret", "scope": "typo"}, want: "invalid recall scope"},
+		{name: "zero", args: map[string]any{"query": "secret", "project": "engram", "limit": float64(0)}, want: "limit must be between 1 and 10"},
+		{name: "fractional", args: map[string]any{"query": "secret", "project": "engram", "limit": 10.9}, want: "limit must be an integer"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := handleSearch(s, MCPConfig{}, nil)(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: test.args}})
+			if err != nil || !result.IsError || !strings.Contains(callResultText(t, result), test.want) {
+				t.Fatalf("result=%#v err=%v, want %q", result, err, test.want)
+			}
+		})
+	}
+}
+
+func TestMemSearchSchemaPublishesScopeAndIntegerLimitBounds(t *testing.T) {
+	s := newMCPTestStore(t)
+	tool := NewServerWithTools(s, ResolveTools("mem_search")).ListTools()["mem_search"]
+	if tool == nil {
+		t.Fatal("mem_search is not registered")
+	}
+	limit, ok := tool.Tool.InputSchema.Properties["limit"].(map[string]any)
+	if !ok || limit["minimum"] != float64(1) || limit["maximum"] != float64(memoryops.MaximumRecallCandidateLimit) || limit["multipleOf"] != float64(1) {
+		t.Fatalf("limit schema=%#v", tool.Tool.InputSchema.Properties["limit"])
+	}
+	scope, ok := tool.Tool.InputSchema.Properties["scope"].(map[string]any)
+	if !ok || !reflect.DeepEqual(scope["enum"], []string{"project", "personal", "global"}) {
+		t.Fatalf("scope schema=%#v", tool.Tool.InputSchema.Properties["scope"])
 	}
 }
 

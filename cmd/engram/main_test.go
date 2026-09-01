@@ -585,6 +585,16 @@ func TestCmdSaveAndSearch(t *testing.T) {
 	}
 }
 
+func TestCmdSearchRejectsUnknownScopeBeforeProjectSelection(t *testing.T) {
+	cfg := testConfig(t)
+	stubExitWithPanic(t)
+	withArgs(t, "engram", "search", "secret", "--scope", "typo", "--json")
+	_, stderr, recovered := captureOutputAndRecover(t, func() { cmdSearch(cfg) })
+	if _, ok := recovered.(exitCode); !ok || !strings.Contains(stderr, "invalid_recall_scope") {
+		t.Fatalf("panic=%v stderr=%q", recovered, stderr)
+	}
+}
+
 func TestCmdSavePreservesMalformedPrivateBlockCompatibility(t *testing.T) {
 	cfg := testConfig(t)
 	tests := []struct {

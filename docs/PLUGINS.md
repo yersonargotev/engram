@@ -313,7 +313,9 @@ After a verdict is recorded, bounded `mem_search` candidates behave as follows:
 
 Deleted, inactive, and superseded Memories are excluded before the limit.
 Conflict entries contain `relation_id`, the related Memory ID/sync ID/title,
-and status. They are warnings, not an instruction to silently choose one side.
+and status only when the counterpart independently passes the same active,
+current, project, and scope boundary. They are warnings, not an instruction to
+silently choose one side.
 
 ### Multi-actor sync_id namespace
 

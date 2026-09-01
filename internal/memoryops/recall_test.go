@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/yersonargotev/engram/internal/project"
@@ -15,6 +16,13 @@ import (
 func TestRecallCandidatesDefaultsToFiveProjectResultsWithinFourKiB(t *testing.T) {
 	service := newTestService(t)
 	service.newRecallID = func() (string, error) { return "recall-test-default", nil }
+	service.recallStartedAt = func() time.Time { return time.Unix(10, 0) }
+	service.recallElapsed = func(started time.Time) time.Duration {
+		if !started.Equal(time.Unix(10, 0)) {
+			t.Fatalf("elapsed start = %v", started)
+		}
+		return 37 * time.Millisecond
+	}
 	if err := service.store.CreateSession("recall-budget", "engram", "/work/engram"); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -54,12 +62,54 @@ func TestRecallCandidatesDefaultsToFiveProjectResultsWithinFourKiB(t *testing.T)
 	if result.Provenance.ProtocolVersion != 1 || result.Provenance.BinaryVersion != "test-version" || result.Provenance.BinaryRevision != "test-revision" {
 		t.Fatalf("provenance = %#v", result.Provenance)
 	}
+	if result.ElapsedMonotonicMS != 37 {
+		t.Fatalf("elapsed_monotonic_ms = %d, want 37", result.ElapsedMonotonicMS)
+	}
 	for _, candidate := range result.Candidates {
 		if !strings.HasSuffix(candidate.Summary, "…") {
 			t.Fatalf("candidate summary was not byte-bounded: %q", candidate.Summary)
 		}
 		if !utf8.ValidString(candidate.Summary) {
 			t.Fatalf("candidate summary is invalid UTF-8: %q", candidate.Summary)
+		}
+	}
+}
+
+func TestRecallCandidatesRejectsInvalidAuthorityDimensionsBeforeStoreAccess(t *testing.T) {
+	service := newTestService(t)
+	if err := service.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name  string
+		input RecallInput
+		want  string
+	}{
+		{name: "unknown scope", input: RecallInput{Query: "secret", Scope: "typo", AllProjects: true}, want: "invalid recall scope"},
+		{name: "invalid match mode", input: RecallInput{Query: "secret", Project: "engram", MatchMode: "or"}, want: "invalid match_mode"},
+		{name: "conflicting project selectors", input: RecallInput{Query: "secret", Project: "engram", AllProjects: true}, want: "project and all projects cannot be used together"},
+		{name: "implicit broad selector", input: RecallInput{Query: "secret", Scope: "personal", DeliberateScope: true}, want: "all projects is required"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := service.Recall(test.input)
+			if err == nil || !strings.Contains(err.Error(), test.want) || result != nil {
+				t.Fatalf("Recall() result=%#v error=%v, want %q", result, err, test.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeRecallScopeCanonicalizesKnownValuesWithoutWidening(t *testing.T) {
+	for _, test := range []struct{ input, want string }{
+		{input: "", want: "project"},
+		{input: " Project ", want: "project"},
+		{input: "PERSONAL", want: "personal"},
+		{input: "global", want: "global"},
+	} {
+		got, err := NormalizeRecallScope(test.input)
+		if err != nil || got != test.want {
+			t.Fatalf("NormalizeRecallScope(%q) = %q, %v; want %q", test.input, got, err, test.want)
 		}
 	}
 }
@@ -178,6 +228,26 @@ func TestRecallCandidatesExcludesInactiveDeletedAndSupersededMemories(t *testing
 	}
 }
 
+func TestRecallCandidatesFiltersEligibilityBeforeApplyingLimit(t *testing.T) {
+	service := newTestService(t)
+	service.newRecallID = func() (string, error) { return "recall-test-pre-limit", nil }
+	stale := saveObservation(t, service, "engram", "prelimit prelimit prelimit", "prelimit")
+	active := saveObservation(t, service, "engram", "eligible result", "prelimit")
+	if _, err := service.store.DB().Exec(`UPDATE observations SET review_after = datetime('now', '-1 day') WHERE id = ?`, stale.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := service.Recall(RecallInput{
+		Query: "prelimit", Project: "engram", ProjectStrength: project.IdentityStrengthExplicit, Limit: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ResultCount != 1 || result.Candidates[0].ID != active.ID {
+		t.Fatalf("candidates=%#v, want eligible id=%d", result.Candidates, active.ID)
+	}
+}
+
 func TestRecallCandidatesReturnsSymmetricUnresolvedConflictWarnings(t *testing.T) {
 	service := newTestService(t)
 	service.newRecallID = func() (string, error) { return "recall-test-conflict", nil }
@@ -217,6 +287,55 @@ func TestRecallCandidatesReturnsSymmetricUnresolvedConflictWarnings(t *testing.T
 		if candidate.Conflicts[0].MemoryID != otherID {
 			t.Fatalf("candidate %d conflict target = %#v, want %d", candidate.ID, candidate.Conflicts[0], otherID)
 		}
+	}
+}
+
+func TestRecallCandidatesOnlyExposeEligibleInScopeConflictCounterparts(t *testing.T) {
+	service := newTestService(t)
+	service.newRecallID = func() (string, error) { return "recall-test-conflict-authority", nil }
+	primary := saveObservation(t, service, "engram", "Authority boundary primary", "selected candidate")
+	active := saveObservation(t, service, "engram", "safe active counterpart", "does not match the query")
+	personal := saveObservation(t, service, "engram", "private personal counterpart", "does not match the query")
+	stale := saveObservation(t, service, "engram", "stale counterpart", "does not match the query")
+	deleted := saveObservation(t, service, "engram", "deleted counterpart", "does not match the query")
+	superseded := saveObservation(t, service, "engram", "superseded counterpart", "does not match the query")
+	replacement := saveObservation(t, service, "engram", "replacement counterpart", "does not match the query")
+	if _, err := service.store.DB().Exec(`UPDATE observations SET scope = 'personal' WHERE id = ?`, personal.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, counterpart := range []*store.Observation{active, personal, stale, deleted, superseded} {
+		if _, err := service.Compare(CompareInput{
+			MemoryIDA: primary.ID, MemoryIDB: counterpart.ID, Relation: "conflicts_with",
+			Confidence: 1, Reasoning: "authority boundary fixture", Model: "test",
+		}); err != nil {
+			t.Fatalf("record conflict with %d: %v", counterpart.ID, err)
+		}
+	}
+	if _, err := service.store.DB().Exec(`UPDATE observations SET review_after = datetime('now', '-1 day') WHERE id = ?`, stale.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.store.DeleteObservation(deleted.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Compare(CompareInput{
+		MemoryIDA: replacement.ID, MemoryIDB: superseded.ID, Relation: "supersedes",
+		Confidence: 1, Reasoning: "replacement is current", Model: "test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := service.Recall(RecallInput{
+		Query: "Authority boundary primary", Project: "engram", ProjectStrength: project.IdentityStrengthExplicit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ResultCount != 1 || len(result.Candidates[0].Conflicts) != 1 {
+		t.Fatalf("candidates=%#v, want exactly one safe conflict", result.Candidates)
+	}
+	conflict := result.Candidates[0].Conflicts[0]
+	if conflict.MemoryID != active.ID || conflict.Title != active.Title || conflict.SyncID != active.SyncID {
+		t.Fatalf("conflict=%#v, want active counterpart %#v", conflict, active)
 	}
 }
 
@@ -367,6 +486,28 @@ func TestRecallCandidatesOperationalFailureReturnsOneQuietWarningAndDiagnostics(
 	}
 	if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != "recall_store_failure" || result.Diagnostics[0].Operation != "recall_candidates" {
 		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+}
+
+func TestRecallCandidatesIdentifierFailureFailsOpenWithOpaqueFallback(t *testing.T) {
+	service := newTestService(t)
+	service.newRecallID = func() (string, error) { return "", errors.New("entropy unavailable") }
+	service.newRecallFallbackID = func() string { return "recall-fallback-test" }
+
+	result, err := service.Recall(RecallInput{
+		Query: "identifier failure", Project: "engram", ProjectStrength: project.IdentityStrengthExplicit,
+	})
+	if err != nil {
+		t.Fatalf("Recall() error = %v, want fail-open result", err)
+	}
+	if result.RecallID != "recall-fallback-test" || result.ResultCount != 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	if result.Warning == nil || result.Warning.Code != "recall_unavailable" || len(result.Diagnostics) != 1 {
+		t.Fatalf("warning=%#v diagnostics=%#v", result.Warning, result.Diagnostics)
+	}
+	if result.Diagnostics[0].Code != "recall_identifier_failure" || result.Diagnostics[0].Operation != "recall_identifier" {
+		t.Fatalf("diagnostics=%#v", result.Diagnostics)
 	}
 }
 

@@ -59,6 +59,7 @@ func TestHandleRecallValidatesRequestContract(t *testing.T) {
 		{path: "/recall", want: "q parameter is required"},
 		{path: "/recall?q=x&limit=11", want: "limit must be between 1 and 10"},
 		{path: "/recall?q=x&match_mode=or", want: "invalid match_mode"},
+		{path: "/recall?q=x&scope=typo", want: "invalid recall scope"},
 		{path: "/recall?q=x&project=engram&all_projects=true", want: "all_projects cannot be combined with project"},
 		{path: "/recall?q=x&project=engram&project_strength=imaginary", want: "invalid project_strength"},
 	} {

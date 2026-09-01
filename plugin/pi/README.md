@@ -107,8 +107,8 @@ The default Pi-native profile exposes exactly `mem_current_project`, `mem_search
 Pi routes `mem_search` through Core's authority-aware `/recall` endpoint. The
 initial narrow project request returns at most five candidate summaries and
 4 KiB, with one possible reformulation; limits 6-10 and broad scope are
-deliberate. Weak identity, empty results, or provider failure return no
-candidates and a visible warning without blocking the task.
+deliberate. Empty results are a warning-free success. Weak identity or provider
+failure returns no candidates and one visible warning without blocking the task.
 
 Independent save, optional Session summary, consent-gated Diagnostic capture
 requests, passive capture, review, diagnostics, and administration remain

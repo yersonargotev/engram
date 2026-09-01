@@ -518,9 +518,9 @@ func (s *Server) handleRecall(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "q parameter is required")
 		return
 	}
-	matchMode := params.Get("match_mode")
-	if matchMode != "" && matchMode != "all" && matchMode != "any" {
-		jsonError(w, http.StatusBadRequest, fmt.Sprintf("invalid match_mode %q: must be \"all\" or \"any\"", matchMode))
+	matchMode, err := memoryops.NormalizeRecallMatchMode(params.Get("match_mode"))
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	limit := 0
@@ -538,9 +538,10 @@ func (s *Server) handleRecall(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "all_projects cannot be combined with project")
 		return
 	}
-	scope := strings.TrimSpace(params.Get("scope"))
-	if scope == "" {
-		scope = "project"
+	scope, err := memoryops.NormalizeRecallScope(params.Get("scope"))
+	if err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	strength := projectpkg.IdentityStrengthWeak
 	if projectName != "" {

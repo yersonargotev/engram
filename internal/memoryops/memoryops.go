@@ -23,17 +23,23 @@ var (
 
 // Service coordinates domain operations without knowing about CLI, MCP, or rendering.
 type Service struct {
-	store       *store.Store
-	now         func() time.Time
-	newRecallID func() (string, error)
+	store               *store.Store
+	now                 func() time.Time
+	newRecallID         func() (string, error)
+	newRecallFallbackID func() string
+	recallStartedAt     func() time.Time
+	recallElapsed       func(time.Time) time.Duration
 }
 
 // New creates a memory operation service backed by the local source-of-truth store.
 func New(s *store.Store) *Service {
 	return &Service{
-		store:       s,
-		now:         func() time.Time { return time.Now().UTC() },
-		newRecallID: newRecallID,
+		store:               s,
+		now:                 func() time.Time { return time.Now().UTC() },
+		newRecallID:         newRecallID,
+		newRecallFallbackID: newRecallFallbackID,
+		recallStartedAt:     time.Now,
+		recallElapsed:       time.Since,
 	}
 }
 

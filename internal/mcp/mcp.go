@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -424,13 +425,17 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 					mcp.Description("Deliberately search across every project only when the task makes that scope relevant. Cannot be combined with project."),
 				),
 				mcp.WithString("scope",
-					mcp.Description("Filter by scope: project (default) or personal"),
+					mcp.Description("Filter by scope: project (default), personal, or global"),
+					mcp.Enum("project", "personal", "global"),
 				),
 				mcp.WithString("match_mode",
 					mcp.Description("Token matching: \"all\" (default — every token must match, FTS5 AND) or \"any\" (any token matches — broader recall for multi-token queries). Any other value returns an error."),
 				),
 				mcp.WithNumber("limit",
 					mcp.Description("Candidate limit (default: 5; 6-10 only for a deliberate follow-up; max: 10). The 4 KiB candidate budget always applies."),
+					mcp.Min(1),
+					mcp.Max(memoryops.MaximumRecallCandidateLimit),
+					mcp.MultipleOf(1),
 				),
 			),
 			handleSearch(s, cfg, activity),
@@ -1109,19 +1114,18 @@ func handleSearch(s *store.Store, cfg MCPConfig, activity *SessionActivity) serv
 		}
 		typ, _ := req.GetArguments()["type"].(string)
 		projectOverride, _ := req.GetArguments()["project"].(string)
-		scope, _ := req.GetArguments()["scope"].(string)
-		if strings.TrimSpace(scope) == "" {
-			scope = "project"
+		scope, scopeErr := memoryops.NormalizeRecallScope(stringArg(req, "scope", ""))
+		if scopeErr != nil {
+			return mcp.NewToolResultError(scopeErr.Error()), nil
 		}
-		matchMode, _ := req.GetArguments()["match_mode"].(string)
+		matchMode, matchModeErr := memoryops.NormalizeRecallMatchMode(stringArg(req, "match_mode", ""))
+		if matchModeErr != nil {
+			return mcp.NewToolResultError(matchModeErr.Error()), nil
+		}
 		allProjects := boolArg(req, "all_projects", false)
-		limit := intArg(req, "limit", 0)
-
-		if matchMode != "" && matchMode != "all" && matchMode != "any" {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid match_mode %q: must be \"all\" or \"any\"", matchMode)), nil
-		}
-		if limit < 0 || limit > memoryops.MaximumRecallCandidateLimit {
-			return mcp.NewToolResultError(fmt.Sprintf("limit must be between 1 and %d", memoryops.MaximumRecallCandidateLimit)), nil
+		limit, limitErr := optionalRecallLimit(req)
+		if limitErr != nil {
+			return mcp.NewToolResultError(limitErr.Error()), nil
 		}
 		if allProjects && strings.TrimSpace(projectOverride) != "" {
 			return mcp.NewToolResultError("all_projects cannot be combined with project"), nil
@@ -3080,6 +3084,33 @@ func intArg(req mcp.CallToolRequest, key string, defaultVal int) int {
 		return defaultVal
 	}
 	return int(v)
+}
+
+func stringArg(req mcp.CallToolRequest, key, defaultVal string) string {
+	v, ok := req.GetArguments()[key].(string)
+	if !ok {
+		return defaultVal
+	}
+	return v
+}
+
+func optionalRecallLimit(req mcp.CallToolRequest) (int, error) {
+	raw, present := req.GetArguments()["limit"]
+	if !present {
+		return 0, nil
+	}
+	value, ok := raw.(float64)
+	if !ok {
+		return 0, errors.New("limit must be an integer")
+	}
+	if value != math.Trunc(value) {
+		return 0, errors.New("limit must be an integer")
+	}
+	limit := int(value)
+	if limit < 1 || limit > memoryops.MaximumRecallCandidateLimit {
+		return 0, fmt.Errorf("limit must be between 1 and %d", memoryops.MaximumRecallCandidateLimit)
+	}
+	return limit, nil
 }
 
 func boolArg(req mcp.CallToolRequest, key string, defaultVal bool) bool {

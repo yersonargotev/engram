@@ -320,7 +320,9 @@ test("mem_save_prompt returns content-free capture metadata", () => {
 
 test("mem_search exposes and forwards match_mode and all_projects", () => {
   assert.match(source, /mem_search: Type\.Object\(\{[\s\S]*all_projects: optionalBoolean\("Deliberate cross-project Recall; cannot be combined with project"\)/);
-  assert.match(source, /mem_search: Type\.Object\(\{[\s\S]*match_mode: optionalString\("Match mode: all \(default\) or any for broader recall"\)/);
+  assert.match(source, /mem_search: Type\.Object\(\{[\s\S]*scope: Type\.Optional\(Type\.Union\([\s\S]*Type\.Literal\("project"\)[\s\S]*Type\.Literal\("personal"\)[\s\S]*Type\.Literal\("global"\)/);
+  assert.match(source, /mem_search: Type\.Object\(\{[\s\S]*limit: Type\.Optional\(Type\.Integer\(\{[\s\S]*minimum: 1[\s\S]*maximum: 10/);
+  assert.match(source, /mem_search: Type\.Object\(\{[\s\S]*match_mode: Type\.Optional\(Type\.Union\([\s\S]*Type\.Literal\("all"\)[\s\S]*Type\.Literal\("any"\)/);
   assert.match(source, /case "mem_search":[\s\S]*engramFetch\(`\/recall[\s\S]*project_strength:[\s\S]*match_mode: params\.match_mode[\s\S]*all_projects: params\.all_projects/);
 });
 

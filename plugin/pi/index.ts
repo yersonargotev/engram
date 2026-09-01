@@ -787,10 +787,20 @@ const MEMORY_TOOL_SCHEMAS: Record<string, ReturnType<typeof Type.Object>> = {
     query: Type.String({ description: "Search query — natural language or keywords" }),
     type: optionalString("Filter by observation type"),
     project: optionalString("Explicit project scope; cannot be combined with all_projects"),
-    scope: optionalString("Filter by scope: project or personal"),
-    limit: optionalNumber("Candidate limit: 5 by default; 6-10 only for deliberate follow-up"),
+    scope: Type.Optional(Type.Union(
+      [Type.Literal("project"), Type.Literal("personal"), Type.Literal("global")],
+      { description: "Filter by scope: project, personal, or global" },
+    )),
+    limit: Type.Optional(Type.Integer({
+      minimum: 1,
+      maximum: 10,
+      description: "Candidate limit: 5 by default; 6-10 only for deliberate follow-up",
+    })),
     all_projects: optionalBoolean("Deliberate cross-project Recall; cannot be combined with project"),
-    match_mode: optionalString("Match mode: all (default) or any for broader recall"),
+    match_mode: Type.Optional(Type.Union(
+      [Type.Literal("all"), Type.Literal("any")],
+      { description: "Match mode: all (default) or any for broader recall" },
+    )),
   }),
   mem_save: Type.Object({
     title: Type.String({ description: "Short, searchable title" }),
@@ -947,20 +957,23 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
   const runtimeSessionForWrite = () => requireRuntimeSessionID(ctx);
 
   switch (toolName) {
-    case "mem_search":
+    case "mem_search": {
       if (params.all_projects && requestedProject) {
         throw new EngramHttpError("all_projects cannot be combined with project", 400, { code: "incompatible_scope" });
       }
+      const scope = typeof params.scope === "string" ? params.scope.trim().toLowerCase() : "project";
+      const broadPersonal = (scope === "personal" || scope === "global") && !requestedProject;
       return engramFetch(`/recall${queryString({
         q: params.query,
         type: params.type,
-        project: params.all_projects ? undefined : requestedProject || project,
-        project_strength: params.all_projects ? "aggregate" : requestedProject ? "explicit" : projectStrength,
-        scope: params.scope,
+        project: params.all_projects || broadPersonal ? undefined : requestedProject || project,
+        project_strength: params.all_projects || broadPersonal ? "aggregate" : requestedProject ? "explicit" : projectStrength,
+        scope,
         limit: params.limit,
         match_mode: params.match_mode,
         all_projects: params.all_projects,
       })}`);
+    }
     case "mem_context":
       if (!params.project) requireResolvedProject();
       return engramFetch(`/context${queryString({ project: params.project || project, scope: params.scope })}`);
@@ -1146,14 +1159,14 @@ function unreachableMessage(timedOutMethod: string | undefined): string {
   return `gentle-engram could not reach the Engram HTTP server at ${ENGRAM_URL}. The Pi-native mem_* tools are registered, but the native memory provider is not currently responding. Run mem_doctor or restart Engram.`;
 }
 
-function unavailableRecall(message: string) {
+function unavailableRecall(message: string, elapsedMonotonicMS: number) {
   return {
     recall_id: `recall-pi-${randomUUID().replaceAll("-", "")}`,
     results: [],
     result_ids: [],
     result_count: 0,
     delivered_utf8_bytes: 2,
-    elapsed_monotonic_ms: 0,
+    elapsed_monotonic_ms: Math.max(0, Math.floor(elapsedMonotonicMS)),
     provenance: { protocol_version: 1, binary_version: "unavailable" },
     warning: {
       code: "recall_unavailable",
@@ -1166,6 +1179,7 @@ function unavailableRecall(message: string) {
 
 async function executeMemoryTool(toolName: string, params: Record<string, unknown>, ctx: MemoryToolContext) {
   const action = humanToolName(toolName);
+  const recallStartedAt = toolName === "mem_search" ? performance.now() : 0;
 
   try {
     // Initialization runs inside the guarded path: a rejected startup must reach the agent as
@@ -1188,7 +1202,7 @@ async function executeMemoryTool(toolName: string, params: Record<string, unknow
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (toolName === "mem_search" && (!(error instanceof EngramHttpError) || error.status >= 500)) {
-      const data = unavailableRecall(message);
+      const data = unavailableRecall(message, performance.now() - recallStartedAt);
       const result = { content: [{ type: "text" as const, text: textResult(data) }], details: { data } };
       ctx.ui?.setStatus?.("engram", `🧠 ${project} · ${compactResultStatus(toolName, result)}`);
       if (!(error instanceof EngramHttpError)) scheduleEngramSelfHeal(ctx);

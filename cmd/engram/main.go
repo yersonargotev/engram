@@ -1108,16 +1108,20 @@ func cmdSearch(cfg store.Config) {
 		failCLI(jsonMode, "invalid_arguments", "search query is required", nil)
 		return
 	}
-	if opts.MatchMode != "" && opts.MatchMode != "all" && opts.MatchMode != "any" {
-		failCLI(jsonMode, "invalid_match_mode", "match mode must be all or any", nil)
+	var err error
+	opts.MatchMode, err = memoryops.NormalizeRecallMatchMode(opts.MatchMode)
+	if err != nil {
+		failCLI(jsonMode, "invalid_match_mode", err.Error(), nil)
+		return
+	}
+	opts.Scope, err = memoryops.NormalizeRecallScope(opts.Scope)
+	if err != nil {
+		failCLI(jsonMode, "invalid_recall_scope", err.Error(), nil)
 		return
 	}
 	if allProjects && opts.Project != "" {
 		failCLI(jsonMode, "incompatible_flags", "--all-projects cannot be combined with --project", nil)
 		return
-	}
-	if strings.TrimSpace(opts.Scope) == "" {
-		opts.Scope = "project"
 	}
 	projectSource := projectpkg.SourceCLIExplicit
 	projectPath := ""

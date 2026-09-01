@@ -209,6 +209,7 @@ test("registered Pi-native mem_search fails open on native provider transport fa
   const originalUrl = process.env.ENGRAM_URL;
   process.env.ENGRAM_URL = "http://127.0.0.1:17437";
   globalThis.fetch = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 5));
     throw new Error("connection refused");
   };
 
@@ -240,6 +241,7 @@ test("registered Pi-native mem_search fails open on native provider transport fa
 
       assert.notEqual(result.isError, true);
       assert.equal(result.details.data.result_count, 0);
+      assert.ok(result.details.data.elapsed_monotonic_ms >= 1);
       assert.equal(result.details.data.warning.code, "recall_unavailable");
       assert.equal(result.details.data.diagnostics[0].code, "recall_transport_failure");
     });
@@ -248,6 +250,39 @@ test("registered Pi-native mem_search fails open on native provider transport fa
     if (originalUrl === undefined) delete process.env.ENGRAM_URL;
     else process.env.ENGRAM_URL = originalUrl;
   }
+});
+
+test("Pi personal Recall without an explicit project omits detected project authority", async () => {
+	const originalFetch = globalThis.fetch;
+	const originalUrl = process.env.ENGRAM_URL;
+	process.env.ENGRAM_URL = "http://127.0.0.1:17437";
+	const { calls, fetchStub } = recordingFetch([
+		{ method: "GET", path: "/health", body: { status: "ok" } },
+		{ method: "GET", path: "/project/current", body: { project: "detected-project", project_source: "git_remote", project_strength: "strong" } },
+		{ method: "GET", path: "/recall", body: { recall_id: "recall-personal", results: [], result_ids: [], result_count: 0, delivered_utf8_bytes: 2, elapsed_monotonic_ms: 1, provenance: { protocol_version: 1, binary_version: "test" } } },
+	]);
+	globalThis.fetch = fetchStub;
+
+	try {
+		await withPluginSandbox("engram-pi-contract-", async ({ sandbox }) => {
+			const { registeredTools } = await loadPluginHarness(sandbox);
+			const result = await registeredTools.get("mem_search").execute(
+				"tool-call-personal", { query: "preferences", scope: "personal" }, undefined, undefined,
+				runtimeContext("personal-session"),
+			);
+			assert.notEqual(result.isError, true);
+			const recallCall = calls.find((call) => call.path.startsWith("/recall?"));
+			assert.ok(recallCall);
+			const query = new URL(`http://localhost${recallCall.path}`).searchParams;
+			assert.equal(query.get("scope"), "personal");
+			assert.equal(query.get("project"), null);
+			assert.equal(query.get("project_strength"), "aggregate");
+		});
+	} finally {
+		globalThis.fetch = originalFetch;
+		if (originalUrl === undefined) delete process.env.ENGRAM_URL;
+		else process.env.ENGRAM_URL = originalUrl;
+	}
 });
 
 test("weak detected identity remains available to reads but cannot authorize Pi writes", async () => {

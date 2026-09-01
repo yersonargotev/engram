@@ -38,6 +38,8 @@
     "mcp_initialization_guidance": [
       "Engram provides persistent memory that survives across sessions and compactions.",
       "Terminal Memory commit",
+      "operation=preflight",
+      "Mixed Memory",
       "saved",
       "needs_review",
       "skipped(no_durable_knowledge)",
@@ -49,14 +51,14 @@
       "mem_checkpoint_status"
     ],
     "checkpoint_descriptions": {
-      "mem_checkpoint": "Record the terminal Memory checkpoint for one settled root user turn. Use saved with one or more existing memory_ids or inline memories, needs_review with exactly one inline proposal containing title and content, or skipped with reason=no_durable_knowledge.",
+      "mem_checkpoint": "Preflight prospective Memories without writes, or record the terminal Memory checkpoint for one settled root user turn. Record saved with settled Memories, needs_review with exactly one proposal plus optional settled Memories, or skipped with reason=no_durable_knowledge.",
       "mem_checkpoint_status": "Inspect the terminal Memory checkpoint for one exact root user turn."
     }
   },
   "distributions": {
     "managed_pack": {
       "version": "3.3.0",
-      "skill_sha256": "465bdbc07b1a78f1edb2a6f4c6307ec9ff5474760c62acd7bfe0145ae90fc107",
+      "skill_sha256": "eba895d3d83ce89a7a7a753a81957ad37ae45d0f7c3899c3678eae7215537233",
       "legacy_compatible": true,
       "supported_protocol": {
         "minimum": 1,

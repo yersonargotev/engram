@@ -2473,7 +2473,7 @@ func (s *Store) AllObservations(project, scope string, limit int) ([]Observation
 	}
 	if scope != "" {
 		query += " AND o.scope = ?"
-		args = append(args, normalizeScope(scope))
+		args = append(args, NormalizeObservationScope(scope))
 	}
 
 	query += " ORDER BY datetime(o.created_at) DESC, o.id DESC LIMIT ?"
@@ -2532,23 +2532,15 @@ func (s *Store) AddObservation(p AddObservationParams) (int64, error) {
 
 func (s *Store) addObservationTx(tx *sql.Tx, p AddObservationParams) (*Observation, error) {
 	p.Project, _ = NormalizeProject(p.Project)
-	title := stripPrivateTags(p.Title)
-	content, _ := s.prepareStoredContent(p.Content)
-
-	// The title guard runs on the post-strip title so redaction cannot turn a
-	// valid title into an empty one behind our back. Persisting a titleless
-	// observation also enqueues a cloud upsert that the sync validators reject,
-	// which blocks every later mutation for the project (#459).
-	if err := ValidateObservationTitle(title); err != nil {
+	prepared, err := s.prepareObservationFields(p)
+	if err != nil {
 		return nil, err
 	}
-	if content == "" {
-		return nil, ErrObservationContentRequired
-	}
-
-	scope := normalizeScope(p.Scope)
-	normHash := hashNormalized(content)
-	topicKey := normalizeTopicKey(p.TopicKey)
+	title := prepared.Title
+	content := prepared.Content
+	scope := prepared.Scope
+	normHash := prepared.NormalizedHash
+	topicKey := prepared.TopicKey
 
 	{
 		// Settle ownership first: an unowned legacy session adopts this
@@ -2599,18 +2591,20 @@ func (s *Store) addObservationTx(tx *sql.Tx, p AddObservationParams) (*Observati
 
 	window := dedupeWindowExpression(s.cfg.DedupeWindow)
 	var existingID int64
-	err := tx.QueryRow(
+	err = tx.QueryRow(
 		`SELECT id FROM observations
 		 WHERE normalized_hash = ?
 		   AND ifnull(project, '') = ifnull(?, '')
 		   AND scope = ?
 		   AND type = ?
 		   AND title = ?
+		   AND ifnull(tool_name, '') = ?
+		   AND ifnull(topic_key, '') = ?
 		   AND deleted_at IS NULL
 		   AND datetime(created_at) >= datetime('now', ?)
 		 ORDER BY created_at DESC
 		 LIMIT 1`,
-		normHash, nullableString(p.Project), scope, p.Type, title, window,
+		normHash, nullableString(p.Project), scope, p.Type, title, p.ToolName, topicKey, window,
 	).Scan(&existingID)
 	if err == nil {
 		if _, err := s.execHook(tx,
@@ -2664,6 +2658,43 @@ func (s *Store) addObservationTx(tx *sql.Tx, p AddObservationParams) (*Observati
 	return observation, nil
 }
 
+type preparedObservationFields struct {
+	Title          string
+	Content        string
+	Scope          string
+	TopicKey       string
+	NormalizedHash string
+}
+
+// prepareObservationFields is the single normalization boundary shared by
+// observation writes and read-only Terminal Memory preflight. Keeping the
+// redaction, truncation, scope, topic-key, and exact-content hash rules here
+// prevents preflight from claiming a duplicate that the final write would
+// interpret differently.
+func (s *Store) prepareObservationFields(p AddObservationParams) (preparedObservationFields, error) {
+	title := stripPrivateTags(p.Title)
+	content, _ := s.prepareStoredContent(p.Content)
+
+	// The title guard runs on the post-strip title so redaction cannot turn a
+	// valid title into an empty one behind our back. Persisting a titleless
+	// observation also enqueues a cloud upsert that the sync validators reject,
+	// which blocks every later mutation for the project (#459).
+	if err := ValidateObservationTitle(title); err != nil {
+		return preparedObservationFields{}, err
+	}
+	if content == "" {
+		return preparedObservationFields{}, ErrObservationContentRequired
+	}
+
+	return preparedObservationFields{
+		Title:          title,
+		Content:        content,
+		Scope:          NormalizeObservationScope(p.Scope),
+		TopicKey:       normalizeTopicKey(p.TopicKey),
+		NormalizedHash: hashNormalized(content),
+	}, nil
+}
+
 func (s *Store) RecentObservations(project, scope string, limit int) ([]Observation, error) {
 	// Normalize project filter for case-insensitive matching
 	project, _ = NormalizeProject(project)
@@ -2685,7 +2716,7 @@ func (s *Store) RecentObservations(project, scope string, limit int) ([]Observat
 	}
 	if scope != "" {
 		query += " AND o.scope = ?"
-		args = append(args, normalizeScope(scope))
+		args = append(args, NormalizeObservationScope(scope))
 	}
 
 	query += " ORDER BY datetime(o.created_at) DESC, o.id DESC LIMIT ?"
@@ -2710,7 +2741,7 @@ func (s *Store) PinnedObservations(project, scope string) ([]Observation, error)
 	}
 	if scope != "" {
 		query += " AND o.scope = ?"
-		args = append(args, normalizeScope(scope))
+		args = append(args, NormalizeObservationScope(scope))
 	}
 
 	query += " ORDER BY datetime(o.created_at) DESC, o.id DESC"
@@ -2762,7 +2793,7 @@ func (s *Store) recentUnpinnedObservations(project, scope string, limit int) ([]
 	}
 	if scope != "" {
 		query += " AND o.scope = ?"
-		args = append(args, normalizeScope(scope))
+		args = append(args, NormalizeObservationScope(scope))
 	}
 	query += " ORDER BY datetime(o.created_at) DESC, o.id DESC LIMIT ?"
 	args = append(args, limit)
@@ -3146,7 +3177,7 @@ func (s *Store) UpdateObservation(id int64, p UpdateObservationParams) (*Observa
 			}
 		}
 		if p.Scope != nil {
-			scope = normalizeScope(*p.Scope)
+			scope = NormalizeObservationScope(*p.Scope)
 		}
 		if p.TopicKey != nil {
 			topicKey = normalizeTopicKey(*p.TopicKey)
@@ -3404,7 +3435,7 @@ func (s *Store) SearchContext(ctx context.Context, query string, opts SearchOpti
 		}
 		if opts.Scope != "" {
 			tkSQL += " AND scope = ?"
-			tkArgs = append(tkArgs, normalizeScope(opts.Scope))
+			tkArgs = append(tkArgs, NormalizeObservationScope(opts.Scope))
 		}
 
 		tkSQL += " ORDER BY updated_at DESC LIMIT ?"
@@ -3527,7 +3558,7 @@ func buildSearchFTSQuery(ftsQuery string, opts SearchOptions, limit int) (string
 	}
 	if opts.Scope != "" {
 		sqlQ += " AND o.scope = ?"
-		args = append(args, normalizeScope(opts.Scope))
+		args = append(args, NormalizeObservationScope(opts.Scope))
 	}
 
 	sqlQ += " ORDER BY rank LIMIT ?"
@@ -3892,7 +3923,7 @@ func (s *Store) Import(data *ExportData) (*ImportResult, error) {
 			obs.Content,
 			obs.ToolName,
 			obs.Project,
-			normalizeScope(obs.Scope),
+			NormalizeObservationScope(obs.Scope),
 			nullableString(normalizeTopicKey(derefString(obs.TopicKey))),
 			hashNormalized(obs.Content),
 			maxInt(obs.RevisionCount, 1),
@@ -5429,6 +5460,9 @@ func (s *Store) MigrateProject(oldName, newName string) (*MigrateResult, error) 
 		}
 		result.SessionsUpdated, _ = res.RowsAffected()
 
+		if _, err := s.execHook(tx, `UPDATE memory_checkpoint_references SET project = ? WHERE project = ?`, newName, oldName); err != nil {
+			return fmt.Errorf("migrate Memory checkpoint references: %w", err)
+		}
 		if _, err := s.execHook(tx, `UPDATE memory_checkpoint_proposal_references SET project = ? WHERE project = ?`, newName, oldName); err != nil {
 			return fmt.Errorf("migrate Memory proposal references: %w", err)
 		}
@@ -5782,6 +5816,9 @@ func (s *Store) mergeProjects(sources []string, canonical string, allowNonEquiva
 			result.SessionsUpdated += n
 			sourceRowsUpdated += n
 
+			if _, err := s.execHook(tx, `UPDATE memory_checkpoint_references SET project = ? WHERE project IN (`+placeholders+`)`, args...); err != nil {
+				return fmt.Errorf("merge Memory checkpoint references %q → %q: %w", srcNormalized, canonical, err)
+			}
 			if _, err := s.execHook(tx, `UPDATE memory_checkpoint_proposal_references SET project = ? WHERE project IN (`+placeholders+`)`, args...); err != nil {
 				return fmt.Errorf("merge Memory proposal references %q → %q: %w", srcNormalized, canonical, err)
 			}
@@ -7501,7 +7538,7 @@ func (s *Store) applyObservationUpsertTx(tx *sql.Tx, payload syncObservationPayl
 			payload.Content,
 			payload.ToolName,
 			payload.Project,
-			normalizeScope(payload.Scope),
+			NormalizeObservationScope(payload.Scope),
 			payload.TopicKey,
 			hashNormalized(payload.Content),
 			revisionCount,
@@ -7542,7 +7579,7 @@ func (s *Store) applyObservationUpsertTx(tx *sql.Tx, payload syncObservationPayl
 		payload.Content,
 		payload.ToolName,
 		payload.Project,
-		normalizeScope(payload.Scope),
+		NormalizeObservationScope(payload.Scope),
 		payload.TopicKey,
 		hashNormalized(payload.Content),
 		revisionCount,
@@ -7910,7 +7947,8 @@ func truncate(s string, max int) string {
 	return string(runes[:max]) + "..."
 }
 
-func normalizeScope(scope string) string {
+// NormalizeObservationScope applies the persisted Memory scope default.
+func NormalizeObservationScope(scope string) string {
 	v := strings.TrimSpace(strings.ToLower(scope))
 	switch v {
 	case "personal", "global":

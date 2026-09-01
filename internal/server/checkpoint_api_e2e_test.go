@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/yersonargotev/engram/internal/memoryops"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 func TestCheckpointAPIRoundTripAndConflictE2E(t *testing.T) {
@@ -52,5 +53,50 @@ func TestCheckpointAPIRoundTripAndConflictE2E(t *testing.T) {
 	conflictBody := decodeJSON[map[string]any](t, conflictResp)
 	if conflictBody["code"] != memoryops.CheckpointErrorCodeConflict || conflictBody["message"] == "" {
 		t.Fatalf("conflict response = %#v", conflictBody)
+	}
+}
+
+func TestCheckpointPreflightAndMixedMemoryE2E(t *testing.T) {
+	s, ts := newE2EServer(t)
+	client := ts.Client()
+	if err := s.CreateSession("session-checkpoint-preflight-e2e", "engram", "/work/engram"); err != nil {
+		t.Fatalf("create preflight session: %v", err)
+	}
+	memoryID, err := s.AddObservation(store.AddObservationParams{
+		SessionID: "session-checkpoint-preflight-e2e", Project: "engram", Type: "decision",
+		Title: "E2E preflight duplicate", Content: "Reuse this exact Memory.",
+	})
+	if err != nil {
+		t.Fatalf("seed preflight Memory: %v", err)
+	}
+
+	preflightResp := postJSON(t, client, ts.URL+"/checkpoints/preflight", map[string]any{
+		"project": "engram",
+		"memories": []any{map[string]any{
+			"type": "decision", "title": "E2E preflight duplicate", "content": "Reuse this exact Memory.",
+		}},
+	})
+	if preflightResp.StatusCode != http.StatusOK {
+		t.Fatalf("preflight status = %d", preflightResp.StatusCode)
+	}
+	preflight := decodeJSON[memoryops.CheckpointPreflightResult](t, preflightResp)
+	if len(preflight.ExactDuplicates) != 1 || preflight.ExactDuplicates[0].Reference.MemoryID != memoryID {
+		t.Fatalf("preflight response = %#v", preflight)
+	}
+
+	mixedResp := postJSON(t, client, ts.URL+"/checkpoints", map[string]any{
+		"host": "pi", "session_id": "session-checkpoint-mixed-e2e", "root_turn_id": "turn-checkpoint-mixed-e2e",
+		"disposition": "needs_review", "project": "engram", "memory_ids": []int64{memoryID},
+		"memories": []any{map[string]any{
+			"type": "discovery", "title": "E2E settled discovery", "content": "This result is settled.",
+		}},
+		"proposal": map[string]any{"title": "E2E unresolved conflict", "content": "This result needs review."},
+	})
+	if mixedResp.StatusCode != http.StatusCreated {
+		t.Fatalf("Mixed Memory status = %d", mixedResp.StatusCode)
+	}
+	mixed := decodeJSON[memoryops.CheckpointRecordResult](t, mixedResp)
+	if mixed.Checkpoint == nil || len(mixed.Checkpoint.References) != 2 || mixed.Checkpoint.Proposal == nil {
+		t.Fatalf("Mixed Memory response = %#v", mixed)
 	}
 }

@@ -127,6 +127,68 @@ func TestCmdCheckpointStatusHumanOutputExposesProposalSnapshot(t *testing.T) {
 	}
 }
 
+func TestCmdCheckpointPreflightIsReadOnlyAndMixedStatusExposesBothOutcomes(t *testing.T) {
+	cfg := testConfig(t)
+	memoryIDs := seedCheckpointParityMemories(t, cfg, "engram", 1)
+
+	withArgs(t,
+		"engram", "checkpoint", "preflight",
+		"--project=engram",
+		`--memory-json={"type":"decision","title":"Parity Memory 1","content":"Durable parity content 1"}`,
+		"--json",
+	)
+	stdout, stderr := captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("preflight stderr = %q", stderr)
+	}
+	var preflight memoryops.CheckpointPreflightResult
+	if err := json.Unmarshal([]byte(stdout), &preflight); err != nil {
+		t.Fatalf("decode preflight JSON: %v\n%s", err, stdout)
+	}
+	if preflight.Project != "engram" || preflight.CandidateLimit != 3 || len(preflight.ExactDuplicates) != 1 ||
+		preflight.ExactDuplicates[0].Reference.MemoryID != memoryIDs[0] {
+		t.Fatalf("preflight result = %#v", preflight)
+	}
+
+	identity := checkpointParityIdentity{"codex", "session-human-mixed", "turn-human-mixed"}
+	withArgs(t,
+		"engram", "checkpoint", "record",
+		"--host="+identity.host,
+		"--session-id="+identity.sessionID,
+		"--root-turn-id="+identity.rootTurnID,
+		"--disposition=needs_review",
+		"--project=engram",
+		fmt.Sprintf("--memory-id=%d", memoryIDs[0]),
+		`--memory-json={"type":"discovery","title":"Mixed settled discovery","content":"This result is settled."}`,
+		`--proposal-json={"title":"Mixed unresolved proposal","content":"This conflict needs review."}`,
+	)
+	stdout, stderr = captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("Mixed record stderr = %q", stderr)
+	}
+	for _, want := range []string{"needs_review", "2 Memories", "proposal", "Memory #"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("Mixed record output %q does not contain %q", stdout, want)
+		}
+	}
+
+	withArgs(t,
+		"engram", "checkpoint", "status",
+		"--host="+identity.host,
+		"--session-id="+identity.sessionID,
+		"--root-turn-id="+identity.rootTurnID,
+	)
+	stdout, stderr = captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("Mixed status stderr = %q", stderr)
+	}
+	for _, want := range []string{"needs_review", "2 Memories", "proposal", "Memory #", "project engram"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("Mixed status output %q does not contain %q", stdout, want)
+		}
+	}
+}
+
 func TestCheckpointCLIProcessJSONContract(t *testing.T) {
 	if testing.CoverMode() != "" {
 		t.Skip("expected non-zero helper subprocess exits corrupt Go coverage output")
@@ -164,6 +226,10 @@ func TestCheckpointCLIProcessJSONContract(t *testing.T) {
 	stdout, stderr = run(t, "record", 0)
 	if stderr != "" || decodeCLIJSON(t, stdout)["idempotency"] != memoryops.CheckpointIdempotencyAlreadyRecorded {
 		t.Fatalf("replay stdout=%q stderr=%q", stdout, stderr)
+	}
+	stdout, stderr = run(t, "malformed-replay", 0)
+	if stderr != "" || decodeCLIJSON(t, stdout)["idempotency"] != memoryops.CheckpointIdempotencyAlreadyRecorded {
+		t.Fatalf("identity-first malformed replay stdout=%q stderr=%q", stdout, stderr)
 	}
 	stdout, stderr = run(t, "status", 0)
 	if stderr != "" || decodeCLIJSON(t, stdout)["checkpoint"] == nil {
@@ -215,7 +281,10 @@ func TestCheckpointProcessHelper(t *testing.T) {
 			"--json",
 		}
 	case "processing-failed":
+		os.Args[8] = "turn-process-invalid-reason"
 		os.Args[len(os.Args)-2] = "processing_failed"
+	case "malformed-replay":
+		os.Args = append(os.Args, "--memory-id=not-an-integer")
 	case "leading-dash-identity":
 		os.Args = []string{
 			"engram", "checkpoint", "record",

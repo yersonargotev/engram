@@ -8,7 +8,7 @@
 
 | Capability | What it does | Where it lives |
 |---|---|---|
-| Terminal Memory commit | Root-turn disposition plus atomically attached durable Memories. | `internal/memoryops`, `internal/mcp`, `internal/store` |
+| Terminal Memory commit | Read-only prospective-Memory preflight followed by a root-turn disposition with atomically attached settled Memories and any local proposal. | `internal/memoryops`, `internal/mcp`, `internal/store` |
 | FTS5 search | Retrieves memories by text, type, project, scope. | `internal/store`, `internal/server`, `internal/mcp` |
 | Recent context | Session summary and context for a new session. | `internal/store`, `internal/mcp` |
 | Diagnostic capture | Explicit, local, project/content-type consent with bounded retention; isolated from Memory and replication. | `internal/memoryops`, `internal/store`, thin adapters |

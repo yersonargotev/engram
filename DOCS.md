@@ -98,6 +98,8 @@ engram suggest-topic-key [--type V] [--title V|--content V] [--json]
 engram conflicts judge <judgment-id> --relation R [--confidence N] [--json]
 engram conflicts compare <id-a> <id-b> --relation R --confidence N --reasoning TEXT [--json]
 engram projects merge --from SOURCE [--from SOURCE...] --to TARGET [--dry-run] [--yes] [--json]
+engram checkpoint preflight --project PROJECT
+                            --memory-json JSON [--memory-json JSON ...] [--json]
 engram checkpoint record --host HOST --session-id ID --root-turn-id ID
                          --disposition skipped --reason no_durable_knowledge [--json]
 engram checkpoint record --host HOST --session-id ID --root-turn-id ID
@@ -105,6 +107,7 @@ engram checkpoint record --host HOST --session-id ID --root-turn-id ID
                          [--memory-id ID ...] [--memory-json JSON ...] [--json]
 engram checkpoint record --host HOST --session-id ID --root-turn-id ID
                          --disposition needs_review --project PROJECT
+                         [--memory-id ID ...] [--memory-json JSON ...]
                          --proposal-json '{"title":"...","content":"..."}' [--json]
 engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
 engram recall-baseline record|report|power|purge [options]
@@ -128,6 +131,13 @@ Checkpoint identity values are opaque. If one begins with a hyphen, use the inli
 forms `--host=VALUE`, `--session-id=VALUE`, or `--root-turn-id=VALUE` to avoid
 ambiguity with CLI options.
 
+Before finalization, repeat `--memory-json` with `checkpoint preflight` to inspect
+prospective Memories without persisting anything. The result reuses exact
+same-project duplicates and returns at most three full, same-project semantic
+candidates across the request. Preflight creates no Memory, proposal,
+checkpoint, relation, sync mutation, review state, or retired
+candidate-evaluation state.
+
 For `saved`, repeat `--memory-id` to attach Memories already saved during the
 turn. Repeat `--memory-json` to create and attach Memories during finalization;
 each JSON object accepts `title`, `content`, and the optional `type`, `tool_name`,
@@ -136,13 +146,17 @@ belong to `--project`. Creation of the session provenance, Memories, sync
 mutations, references, and terminal checkpoint is one transaction.
 
 For `needs_review`, provide exactly one `--proposal-json` object containing only
-`title` and `content`, plus the enclosing `--project`. Engram redacts private
-blocks and derives the proposal ID, normalized project, and creation timestamp
-inside the same transaction as the proposal reference and checkpoint. Record,
-idempotent replay, and status return the immutable `proposal` snapshot with
-`id`, `project`, `title`, `content`, and `created_at`. `--proposal-id` and removed
-proposal fields are rejected. Proposal fields are also rejected for `saved` and
-`skipped`. This disposition creates no Memory, sync mutation, or review workflow.
+`title` and `content`, plus the enclosing `--project`. Optional `--memory-id` and
+`--memory-json` values preserve independently settled same-project Memories in
+the same result; a checkpoint with at least one Memory is Mixed Memory. Engram
+redacts private blocks and derives the proposal ID, normalized project, and
+creation timestamp inside the same transaction as any inline Memories, ordered
+references, proposal reference, sync mutations for the Memories, and checkpoint.
+Record, idempotent replay, and status return the immutable `proposal` snapshot
+with `id`, `project`, `title`, `content`, and `created_at`. `--proposal-id` and
+removed proposal fields are rejected. Proposal fields are also rejected for
+`saved` and `skipped`. The proposal creates no Memory, sync mutation, review
+workflow, or retired candidate-evaluation state.
 
 `save` exits successfully after the memory is persisted even when its response
 contains `judgment_required: true`; callers can resolve each returned candidate
@@ -221,6 +235,7 @@ Engram is local-first: local SQLite is authoritative; cloud features are optiona
 
 ### Terminal Memory Checkpoints
 
+- `POST /checkpoints/preflight` — Inspect prospective Memories without writes. Body: `{project, memories}`
 - `POST /checkpoints` — Atomically record one root-turn checkpoint. Body: `{host, session_id, root_turn_id, disposition, reason_code?, project?, memory_ids?, memories?, proposal?}`
   - `201` with `{checkpoint, idempotency: "created"}` for a new commit
   - `200` with `{checkpoint, idempotency: "already_recorded"}` for an exact replay
@@ -898,7 +913,7 @@ Exceptions:
 
 - `mem_current_project` returns detection fields directly (`project`, `project_source`, `project_path`, `project_strength`, `implicit_write_allowed`, `cwd`, `available_projects`, optional `warning`, `error_hint`, or `safe_next_action`) and does not wrap them in `result`.
 - `mem_doctor` returns the same JSON report shape as `engram doctor --json`; it uses read-project resolution before running diagnostics but does not wrap the report in the common MCP envelope.
-- `mem_checkpoint` and `mem_checkpoint_status` use opaque host/session/root-turn identity instead of automatic project resolution. `saved` and `needs_review` writes require an explicit `project`; `skipped` and status do not. Their JSON success and error envelopes match the corresponding CLI commands; tool errors set MCP `isError=true`.
+- `mem_checkpoint` uses `operation: "preflight"` with an explicit project and prospective Memories for its read-only mode; record mode and `mem_checkpoint_status` use opaque host/session/root-turn identity instead of automatic project resolution. `saved` and `needs_review` writes require an explicit `project`; `skipped` and status do not. Their JSON success and error envelopes match the corresponding CLI commands; tool errors set MCP `isError=true`.
 
 ### Write tools (explicit/session/cwd project resolution)
 
@@ -975,19 +990,29 @@ specialized operations documented below.
 
 ### mem_checkpoint
 
-Record the terminal Memory checkpoint for one settled root user turn. `host`, `session_id`, `root_turn_id`, and `disposition` are always required.
+Preflight prospective Memories without writes, or record the terminal Memory
+checkpoint for one settled root user turn.
+
+- `operation: "preflight"` requires an explicit `project` and one or more inline
+  `memories`. It accepts no terminal identity or disposition fields. The result
+  contains exact duplicate references and at most three full same-project
+  semantic candidates across the request.
+- Record mode is the default; `host`, `session_id`, `root_turn_id`, and
+  `disposition` are required for a first finalization.
 
 - `disposition: "skipped"` requires `reason: "no_durable_knowledge"` and accepts no Memory references.
 - `disposition: "saved"` requires an explicit `project` plus at least one existing `memory_ids` entry or inline `memories` object. The two arrays may be combined. Each inline Memory accepts required `title` and `content`, plus optional `type`, `tool_name`, `scope`, and `topic_key`.
-- `disposition: "needs_review"` requires an explicit `project` plus exactly one inline `proposal` object containing only `title` and `content`.
+- `disposition: "needs_review"` requires an explicit `project` plus exactly one inline `proposal` object containing only `title` and `content`; zero or more settled `memory_ids` and inline `memories` may be attached.
 
 A saved result exposes an ordered `references` array containing `kind: "memory"`, `memory_id`, `memory_sync_id`, and `project`. Every referenced Memory must exist, remain active, and belong to the same normalized project. Inline Memories, their sync mutations, all references, and the checkpoint commit atomically.
 
-A needs-review result exposes one immutable `proposal` snapshot containing `id`,
-`project`, `title`, `content`, and `created_at`. Engram derives the identity,
-normalized ownership, and timestamp while proposal creation, its reference, and
-the checkpoint commit atomically; no Memory creation or review workflow runs
-implicitly.
+A needs-review result exposes ordered Memory references plus one immutable
+`proposal` snapshot containing `id`, `project`, `title`, `content`, and
+`created_at`. Engram derives the identity, normalized ownership, and timestamp
+while inline Memories, their sync mutations, all references, proposal creation,
+and the checkpoint commit atomically. A needs-review checkpoint with at least
+one Memory is Mixed Memory. The proposal remains local-only audit evidence and
+no review or retired candidate-evaluation workflow runs implicitly.
 
 The first call returns `idempotency: "created"`; replaying the same root-turn identity and disposition returns `idempotency: "already_recorded"` with the original checkpoint, references, proposal snapshot, and timestamps without creating Memories, proposals, or mutations again. Once the identity and disposition match, replay payload fields are ignored rather than revalidated, so retries cannot replace the original references or depend on payload availability. Invalid or empty sets on first finalization fail without changing state. Stable reference-validation codes are `invalid_checkpoint_references`, `checkpoint_memory_not_found`, and `checkpoint_project_mismatch`; terminal changes return `checkpoint_conflict`. Unknown skip reasons, including integration and processing failure labels, return `invalid_checkpoint_reason`.
 
@@ -1030,7 +1055,7 @@ Save structured observations. The tool description teaches agents the format:
 - **content**: Structured with `**What**`, `**Why**`, `**Where**`, `**Learned**`; required unless the legacy `observation` alias is provided
 - **observation**: backward-compatible alias for `content` for older/raw MCP clients; prefer `content` for new integrations
 
-Exact duplicate saves are deduplicated in a rolling time window using a normalized content hash + project + scope + type + title.
+Exact duplicate saves are deduplicated in a rolling time window using a normalized content hash + project + scope + type + title + tool_name + normalized topic_key. Empty optional identity fields compare as empty values.
 When `topic_key` is provided, `mem_save` upserts the latest observation in the same `project + scope + topic_key`, incrementing `revision_count` and attributing it to the latest writer session.
 Save responses include lifecycle metadata for the saved observation: computed `state` (`active` or `needs_review`) and `review_after` when the observation type has a review cycle. Content is redacted before the configured storage limit is applied; that limit and truncation metadata (`original_bytes`, `limit_bytes`) are UTF-8 bytes. MCP save/update responses include `truncated`, and warn when truncation occurs.
 
@@ -1198,9 +1223,16 @@ Normal work ends in one **Terminal Memory commit** after the root user turn and
 all causal work settle:
 
 - `saved` atomically commits one or more existing or inline Memories;
-- `needs_review` atomically commits one bounded, redacted proposal;
+- `needs_review` atomically commits zero or more settled Memories plus exactly
+  one bounded, redacted proposal; with at least one Memory the result is Mixed;
 - `skipped(no_durable_knowledge)` records that the settled turn produced no
   durable result.
+
+Before choosing the terminal disposition for prospective Memories, the agent
+runs bounded read-only preflight, reuses exact duplicates, and accounts for at
+most three full same-project semantic candidates. Clear low-risk outcomes can
+settle directly; ambiguity or a material architecture, policy, or decision
+conflict selects `needs_review`.
 
 Independent save is reserved for explicit curation or a long-running,
 material loss-risk handoff. `mem_session_summary` is an optional curation

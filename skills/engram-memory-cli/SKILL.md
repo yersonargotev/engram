@@ -72,7 +72,14 @@ never synthesize a replacement identity.
 
 1. Apply the canonical `engram-memory` disposition rubric after all causal work
    settles.
-2. For `saved`, attach existing Memory IDs or create concise Memories atomically
+2. Draft prospective Memories, then run the bounded read-only preflight. Reuse
+   exact duplicates and account for every returned candidate (at most three):
+
+   ```bash
+   engram checkpoint preflight --project '<project>' \
+     --memory-json '{"title":"<concise title>","content":"<durable result>"}' --json
+   ```
+3. For `saved`, attach existing Memory IDs or create concise Memories atomically
    with repeatable `--memory-json` values:
 
    ```bash
@@ -80,10 +87,12 @@ never synthesize a replacement identity.
      --root-turn-id '<root-turn>' --disposition saved --project '<project>' \
      --memory-json '{"title":"<concise title>","content":"What: <durable result>\nWhy: <future value>\nWhere: <subsystem or path>\nLearned: <non-obvious implication>"}' --json
    ```
-3. Use `skipped --reason no_durable_knowledge` only when the rubric finds no
+4. Use `skipped --reason no_durable_knowledge` only when the rubric finds no
    durable result. Use `needs_review` with one redacted `--proposal-json` when
-   potentially durable knowledge cannot be admitted directly.
-4. Treat `created` and same-disposition `already_recorded` as success. Surface
+   potentially durable knowledge cannot be admitted directly; include any
+   independently settled `--memory-id` or `--memory-json` values in the same
+   Mixed Memory checkpoint.
+5. Treat `created` and same-disposition `already_recorded` as success. Surface
    conflicts and persistence failures rather than changing the disposition.
 
 Complete normal preservation only when the exact root-turn identity has one

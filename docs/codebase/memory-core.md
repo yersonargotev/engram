@@ -11,20 +11,23 @@ The memory flow does not start in the database. It starts with the agent decidin
 ```text
 1. The root user turn and all causal work settle
 
-2. The agent chooses one terminal disposition
+2. The agent preflights prospective Memories without persistence
+   exact duplicates reused / at most three same-project candidates reviewed
+
+3. The agent chooses one terminal disposition
    saved / needs_review / skipped(no_durable_knowledge)
 
-3. mem_checkpoint commits the disposition and any inline Memory atomically
+4. mem_checkpoint commits the disposition, settled Memories, and proposal atomically
 
-4. internal/project classifies identity; internal/mcp validates the contract
+5. internal/project classifies identity; internal/mcp validates the contract
    strong config/remote or explicit/session authority → write
    weak git root/child/basename → read-only discovery or actionable rejection
 
-5. internal/store persists
+6. internal/store persists
    sessions / observations / memory_relations / sync_mutations
    FTS5 indexes for Memory search
 
-6. Later work
+7. Later work
    mem_search → mem_get_observation when full detail can change the task
 ```
 

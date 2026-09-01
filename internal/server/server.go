@@ -231,6 +231,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /sessions/{id}", requireAuth(s.handleDeleteSession))
 
 	// Terminal Memory checkpoints
+	s.mux.HandleFunc("POST /checkpoints/preflight", s.handlePreflightCheckpoint)
 	s.mux.HandleFunc("POST /checkpoints", s.handleRecordCheckpoint)
 	s.mux.HandleFunc("GET /checkpoints/status", s.handleCheckpointStatus)
 

@@ -30,8 +30,11 @@ completion requirement.
 1. Keep the supplied `(host, session_id, root_turn_id)` as the identity of the
    original root user turn.
 2. Recall prior Memory only when it can change the work.
-3. After all causal work settles, apply the disposition rubric once.
-4. Finalize through `mem_checkpoint` or the equivalent CLI command.
+3. Draft any prospective Memories, then run one read-only Terminal Memory
+   preflight for them before choosing the disposition.
+4. Account for every exact duplicate and every returned semantic candidate.
+5. After all causal work settles, apply the disposition rubric once.
+6. Finalize through `mem_checkpoint` or the equivalent CLI command.
 
 The protocol is complete when the exact identity returns `created` or
 `already_recorded` for one terminal disposition. An adapter or persistence
@@ -63,6 +66,30 @@ Memory can change the task. Follow a selected result with
 optional curation operation for explicitly requested chronological review, not
 part of the default five-tool Recall path. A routine self-contained turn does
 not require a search merely to satisfy the checkpoint protocol.
+
+## Preflight prospective Memories
+
+Before finalizing a turn that may save durable knowledge, call `mem_checkpoint`
+with `operation: "preflight"`, the exact project, and the prospective inline
+`memories`. Preflight is bounded and non-persisting: it creates no Memory,
+proposal, checkpoint, relation, sync mutation, review state, or retired
+candidate-evaluation state. It returns exact duplicate references and at most three full,
+same-project semantic candidates across the prospective set.
+
+Reuse every exact duplicate instead of creating it again. Compare every
+semantic candidate with the prospective Memory. A clear, low-risk duplicate,
+relation, or distinct outcome may settle directly. Choose `needs_review` when
+the relationship remains ambiguous or a material architecture, policy, or
+decision conflict requires human judgment. Preflight is evidence for the
+rubric; it does not create the terminal checkpoint.
+
+```json
+{
+  "operation": "preflight",
+  "project": "<exact project>",
+  "memories": [{"title": "<title>", "content": "<durable result>"}]
+}
+```
 
 ## Choose a disposition
 
@@ -101,13 +128,16 @@ not a skip disposition and must not be disguised as one.
 Choose `needs_review` when the turn surfaced potentially durable knowledge but
 it is too ambiguous, incomplete, conflicting, or sensitive to admit directly as
 a Memory. Retain one bounded, redacted Memory proposal that states the candidate
-knowledge and why review is needed.
+knowledge and why review is needed. Preserve every independently settled
+same-project Memory in the same checkpoint through `memory_ids` or inline
+`memories`. A `needs_review` result with at least one settled Memory is a Mixed
+Memory checkpoint.
 
-Use an existing proposal reference when appropriate. Otherwise prefer the
-inline `proposal` input so the core creates the proposal and checkpoint
-atomically. `needs_review` is not a fallback for infrastructure failure and does
-not mean "decide later" when the saved or skipped rubric already gives a clear
-answer.
+Provide exactly one inline `proposal` so the core creates the settled Memories,
+proposal, ordered references, and checkpoint atomically. `needs_review` is not
+a fallback for infrastructure failure and does not mean "decide later" when the
+saved or skipped rubric already gives a clear answer. A proposal remains local
+audit evidence and is never automatically promoted to Memory.
 
 ## Finalize idempotently
 
@@ -125,9 +155,10 @@ user turn:
 ```
 
 For `saved`, pass one or more `memory_ids` or inline `memories` and the exact
-project. For `needs_review`, pass exactly one inline `proposal` containing
-`title` and `content`, plus the exact project. Do not attach Memory or proposal
-references to a skipped checkpoint.
+project. For `needs_review`, pass zero or more settled `memory_ids` or inline
+`memories`, exactly one inline `proposal` containing `title` and `content`, and
+the exact project. Do not attach Memory or proposal references to a skipped
+checkpoint.
 
 If MCP is unavailable, use the equivalent CLI adapter:
 

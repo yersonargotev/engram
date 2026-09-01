@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	mcppkg "github.com/mark3labs/mcp-go/mcp"
@@ -22,6 +23,10 @@ func CheckpointToolHandler(s *store.Store) server.ToolHandlerFunc {
 // content, project paths, or any other request argument.
 func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointObservation)) server.ToolHandlerFunc {
 	return func(_ context.Context, req mcppkg.CallToolRequest) (*mcppkg.CallToolResult, error) {
+		operation := checkpointStringArg(req, "operation")
+		if operation == "" {
+			operation = "record"
+		}
 		observation := CheckpointObservation{
 			Host:       checkpointStringArg(req, "host"),
 			SessionID:  checkpointStringArg(req, "session_id"),
@@ -29,7 +34,7 @@ func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointOb
 			Outcome:    CheckpointUnknown,
 		}
 		finish := func(err error) {
-			if observe == nil {
+			if observe == nil || operation == "preflight" {
 				return
 			}
 			if err == nil {
@@ -41,6 +46,21 @@ func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointOb
 				defer func() { _ = recover() }()
 				observe(observation)
 			}()
+		}
+		service := memoryops.New(s)
+		if operation == "record" {
+			replayed, replayErr := service.ReplayCheckpoint(memoryops.CheckpointReplayInput{
+				Host: observation.Host, SessionID: observation.SessionID, RootTurnID: observation.RootTurnID,
+				Disposition: checkpointStringArg(req, "disposition"),
+			})
+			if replayErr == nil {
+				finish(nil)
+				return checkpointToolJSON(replayed), nil
+			}
+			if !errors.Is(replayErr, store.ErrCheckpointNotFound) && !errors.Is(replayErr, store.ErrCheckpointInvalidIdentity) {
+				finish(replayErr)
+				return checkpointToolError(replayErr), nil
+			}
 		}
 		if _, exists := req.GetArguments()["proposal_id"]; exists {
 			err := fmt.Errorf("%w: proposal_id is not supported", store.ErrCheckpointInvalidReferences)
@@ -57,12 +77,32 @@ func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointOb
 			finish(err)
 			return checkpointToolError(err), nil
 		}
+		if operation == "preflight" {
+			if checkpointStringArg(req, "host") != "" || checkpointStringArg(req, "session_id") != "" ||
+				checkpointStringArg(req, "root_turn_id") != "" || checkpointStringArg(req, "disposition") != "" ||
+				checkpointStringArg(req, "reason") != "" || len(memoryIDs) > 0 || req.GetArguments()["proposal"] != nil {
+				err := fmt.Errorf("%w: preflight accepts only project and memories", store.ErrCheckpointInvalidReferences)
+				return checkpointToolError(err), nil
+			}
+			result, err := service.PreflightCheckpoint(memoryops.CheckpointPreflightInput{
+				Project: checkpointStringArg(req, "project"), Memories: memories,
+			})
+			if err != nil {
+				return checkpointToolError(err), nil
+			}
+			return checkpointToolJSON(result), nil
+		}
+		if operation != "record" {
+			err := fmt.Errorf("%w: operation must be record or preflight", store.ErrCheckpointInvalidReferences)
+			finish(err)
+			return checkpointToolError(err), nil
+		}
 		proposal, err := checkpointProposalArg(req, "proposal")
 		if err != nil {
 			finish(err)
 			return checkpointToolError(err), nil
 		}
-		result, err := memoryops.New(s).RecordCheckpoint(memoryops.CheckpointRecordInput{
+		result, err := service.RecordCheckpoint(memoryops.CheckpointRecordInput{
 			Host:        observation.Host,
 			SessionID:   observation.SessionID,
 			RootTurnID:  observation.RootTurnID,

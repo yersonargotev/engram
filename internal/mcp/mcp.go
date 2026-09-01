@@ -242,13 +242,13 @@ func NewServer(s *store.Store) *server.MCPServer {
 // host explicitly selects their profile.
 const serverInstructions = `Engram provides persistent memory that survives across sessions and compactions.
 
-For every settled root user turn, use the canonical skill to finalize one terminal Memory checkpoint through a Terminal Memory commit. The dispositions are saved, needs_review, and skipped(no_durable_knowledge). Finalize once after all causal work settles; reuse the exact opaque identity across continuations.
+For every settled root user turn, use the canonical skill to finalize one terminal Memory checkpoint through a Terminal Memory commit. Before finalizing prospective Memories, call mem_checkpoint with operation=preflight; this bounded read returns exact duplicates and at most three full same-project candidates without creating state. Reuse exact duplicates and account for every candidate. The dispositions are saved, needs_review, and skipped(no_durable_knowledge). A needs_review result may preserve settled Memories plus exactly one proposal (Mixed Memory). Finalize once after all causal work settles; reuse the exact opaque identity across continuations.
 
 DEFAULT AGENT TOOLS:
   mem_current_project — establish project scope and write authority
   mem_search — recall prior Memory only when it can change the current work
   mem_get_observation — retrieve complete content for a selected search result
-  mem_checkpoint — commit the terminal Memory disposition and any durable result
+  mem_checkpoint — preflight prospective Memories or commit the disposition and durable result
   mem_checkpoint_status — inspect one exact root-turn checkpoint
 
 Current user intent, maintained source, and runtime evidence override Memory. Empty Recall is successful. The canonical skill owns the detailed durability rubric; MCP guidance does not define a second policy.
@@ -331,25 +331,26 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 	if shouldRegister("mem_checkpoint", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_checkpoint",
-				mcp.WithDescription("Record the terminal Memory checkpoint for one settled root user turn. Use saved with one or more existing memory_ids or inline memories, needs_review with exactly one inline proposal containing title and content, or skipped with reason=no_durable_knowledge."),
+				mcp.WithDescription("Preflight prospective Memories without writes, or record the terminal Memory checkpoint for one settled root user turn. Record saved with settled Memories, needs_review with exactly one proposal plus optional settled Memories, or skipped with reason=no_durable_knowledge."),
 				mcp.WithTitleAnnotation("Record Memory Checkpoint"),
 				mcp.WithReadOnlyHintAnnotation(false),
 				mcp.WithDestructiveHintAnnotation(false),
 				mcp.WithIdempotentHintAnnotation(true),
 				mcp.WithOpenWorldHintAnnotation(false),
-				mcp.WithString("host", mcp.Required(), mcp.Description("Host adapter identifier, for example codex")),
-				mcp.WithString("session_id", mcp.Required(), mcp.Description("Opaque host session identifier")),
-				mcp.WithString("root_turn_id", mcp.Required(), mcp.Description("Opaque root user turn identifier retained across continuations")),
-				mcp.WithString("disposition", mcp.Required(), mcp.Description("Terminal disposition: saved, needs_review, or skipped")),
+				mcp.WithString("operation", mcp.Description("Operation: record (default) or read-only preflight")),
+				mcp.WithString("host", mcp.Description("Required for record: host adapter identifier, for example codex")),
+				mcp.WithString("session_id", mcp.Description("Required for record: opaque host session identifier")),
+				mcp.WithString("root_turn_id", mcp.Description("Required for record: opaque root user turn identifier retained across continuations")),
+				mcp.WithString("disposition", mcp.Description("Required for record: terminal disposition saved, needs_review, or skipped")),
 				mcp.WithString("reason", mcp.Description("Required only for skipped; currently no_durable_knowledge")),
-				mcp.WithString("project", mcp.Description("Required for saved and needs_review; every referenced or created Memory or proposal must belong to this project")),
+				mcp.WithString("project", mcp.Description("Required for preflight, saved, and needs_review; every candidate, Memory, or proposal stays in this project")),
 				mcp.WithArray("memory_ids",
-					mcp.Description("Existing Memory IDs to attach to a saved checkpoint"),
+					mcp.Description("Existing settled Memory IDs to attach to a saved or needs_review checkpoint"),
 					mcp.Items(map[string]any{"type": "integer", "minimum": 1}),
 					mcp.UniqueItems(true),
 				),
 				mcp.WithArray("memories",
-					mcp.Description("Memory objects to create and attach atomically to a saved checkpoint"),
+					mcp.Description("Prospective Memories for preflight, or settled Memories to create atomically with saved or needs_review"),
 					mcp.Items(map[string]any{
 						"type": "object",
 						"properties": map[string]any{

@@ -26,7 +26,10 @@ Important points:
 
 - `mem_current_project` is the recommended first call to confirm detection.
 - Normal writes should not pass `project` as an arbitrary override.
-- `mem_checkpoint` is the exception for `saved` and `needs_review` dispositions: it requires one explicit project so the core can enforce Memory ownership and derive proposal ownership atomically.
+- `mem_checkpoint` preflight is a bounded read-only operation over one explicit
+  project. Record mode uses the same explicit project for `saved` and
+  `needs_review` so the core can enforce Memory and proposal ownership
+  atomically.
 - `ambiguous_project` recovery requires the user to choose an exact project.
 - If `mem_save` returns conflict candidates, the agent must judge with `mem_judge` or ask when the relationship is sensitive.
 

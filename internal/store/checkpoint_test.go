@@ -240,6 +240,160 @@ func TestNeedsReviewProposalIsRedactedAndExcludedFromMemorySurfacesAfterReopen(t
 	assertCheckpointExcludedFromMemorySurfaces(t, reopened, "Proposal privacy canary")
 }
 
+func TestMixedMemoryCheckpointExportsAndSyncsOnlySettledMemories(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.EnrollProject("engram"); err != nil {
+		t.Fatalf("enroll project for sync assertions: %v", err)
+	}
+	identity := CheckpointIdentity{
+		Host: "codex", SessionID: "session-mixed-exclusion", RootTurnID: "turn-mixed-exclusion-canary",
+	}
+	created, replayed, err := s.RecordNeedsReviewCheckpoint(RecordNeedsReviewCheckpointParams{
+		Identity: identity, Project: "engram", Directory: "/work/engram",
+		Memories: []AddObservationParams{{
+			Type: "decision", Title: "Settled Mixed Memory canary", Content: "settled-mixed-memory-canary",
+		}},
+		Proposal: &MemoryProposalInput{
+			Title: "Unresolved Mixed proposal canary", Content: "unresolved-mixed-proposal-canary",
+		},
+	})
+	if err != nil || replayed {
+		t.Fatalf("record Mixed Memory checkpoint: checkpoint=%#v replayed=%v err=%v", created, replayed, err)
+	}
+	if len(created.References) != 1 || created.Proposal == nil {
+		t.Fatalf("Mixed Memory checkpoint = %#v", created)
+	}
+
+	settled, err := s.Search("settled-mixed-memory-canary", SearchOptions{Project: "engram", Limit: 10, MatchMode: "any"})
+	if err != nil || len(settled) != 1 || settled[0].ID != created.References[0].MemoryID {
+		t.Fatalf("settled Memory search = %#v, err=%v", settled, err)
+	}
+	unresolved, err := s.Search("unresolved-mixed-proposal-canary", SearchOptions{Project: "engram", Limit: 10, MatchMode: "any"})
+	if err != nil || len(unresolved) != 0 {
+		t.Fatalf("proposal entered Recall: %#v, err=%v", unresolved, err)
+	}
+	context, err := s.FormatContext("engram", "project")
+	if err != nil || !strings.Contains(context, "settled-mixed-memory-canary") || strings.Contains(context, "unresolved-mixed-proposal-canary") {
+		t.Fatalf("Mixed Memory context = %q, err=%v", context, err)
+	}
+	stats, err := s.Stats()
+	if err != nil || stats.TotalSessions != 1 || stats.TotalObservations != 1 || stats.TotalPrompts != 0 {
+		t.Fatalf("Mixed Memory stats = %#v, err=%v", stats, err)
+	}
+
+	exported, err := s.ExportProject("engram")
+	if err != nil {
+		t.Fatalf("export Mixed Memory project: %v", err)
+	}
+	encodedExport, err := json.Marshal(exported)
+	if err != nil {
+		t.Fatalf("marshal Mixed Memory export: %v", err)
+	}
+	if len(exported.Observations) != 1 || !strings.Contains(string(encodedExport), "settled-mixed-memory-canary") ||
+		strings.Contains(string(encodedExport), "unresolved-mixed-proposal-canary") ||
+		strings.Contains(string(encodedExport), identity.RootTurnID) {
+		t.Fatalf("Mixed Memory export leaked local checkpoint evidence: %s", encodedExport)
+	}
+	mutations, err := s.ListPendingSyncMutations(DefaultSyncTargetKey, 100)
+	if err != nil || len(mutations) == 0 {
+		t.Fatalf("Mixed Memory mutations = %#v, err=%v", mutations, err)
+	}
+	encodedMutations, err := json.Marshal(mutations)
+	if err != nil {
+		t.Fatalf("marshal Mixed Memory mutations: %v", err)
+	}
+	if !strings.Contains(string(encodedMutations), "settled-mixed-memory-canary") ||
+		strings.Contains(string(encodedMutations), "unresolved-mixed-proposal-canary") ||
+		strings.Contains(string(encodedMutations), identity.RootTurnID) {
+		t.Fatalf("Mixed Memory sync leaked local checkpoint evidence: %s", encodedMutations)
+	}
+}
+
+func TestMixedMemoryCheckpointPersistsAcrossReopen(t *testing.T) {
+	cfg := mustDefaultConfig(t)
+	cfg.DataDir = t.TempDir()
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	identity := CheckpointIdentity{
+		Host: "codex", SessionID: "session-mixed-reopen", RootTurnID: "turn-mixed-reopen",
+	}
+	created, replayed, err := s.RecordNeedsReviewCheckpoint(RecordNeedsReviewCheckpointParams{
+		Identity: identity, Project: "engram", Directory: "/work/engram",
+		Memories: []AddObservationParams{{
+			Type: "decision", Title: "Mixed reopen Memory", Content: "Preserve this settled result.",
+		}},
+		Proposal: &MemoryProposalInput{
+			Title: "Mixed reopen proposal", Content: "Keep this unresolved result local.",
+		},
+	})
+	if err != nil || replayed {
+		t.Fatalf("record Mixed checkpoint: checkpoint=%#v replayed=%v err=%v", created, replayed, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	reopened, err := New(cfg)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	persisted, err := reopened.GetMemoryCheckpoint(identity)
+	if err != nil {
+		t.Fatalf("get Mixed checkpoint after reopen: %v", err)
+	}
+	if !reflect.DeepEqual(persisted, created) {
+		t.Fatalf("reopened Mixed checkpoint = %#v, want %#v", persisted, created)
+	}
+}
+
+func TestProjectRenameAndMergeKeepMixedCheckpointOwnershipCoherent(t *testing.T) {
+	s := newTestStore(t)
+	recordMixed := func(identity CheckpointIdentity, project string) *MemoryCheckpoint {
+		t.Helper()
+		checkpoint, replayed, err := s.RecordNeedsReviewCheckpoint(RecordNeedsReviewCheckpointParams{
+			Identity: identity, Project: project, Directory: "/work/" + project,
+			Memories: []AddObservationParams{{
+				Type: "decision", Title: "Settled " + project, Content: "Preserve settled ownership for " + project,
+			}},
+			Proposal: &MemoryProposalInput{
+				Title: "Unresolved " + project, Content: "Preserve proposal ownership for " + project,
+			},
+		})
+		if err != nil || replayed {
+			t.Fatalf("record Mixed checkpoint for %s: checkpoint=%#v replayed=%v err=%v", project, checkpoint, replayed, err)
+		}
+		return checkpoint
+	}
+	assertProject := func(identity CheckpointIdentity, want string) {
+		t.Helper()
+		checkpoint, err := s.GetMemoryCheckpoint(identity)
+		if err != nil {
+			t.Fatalf("get Mixed checkpoint after project operation: %v", err)
+		}
+		if checkpoint.Proposal == nil || checkpoint.Proposal.Project != want || len(checkpoint.References) != 1 ||
+			checkpoint.References[0].Project != want {
+			t.Fatalf("Mixed checkpoint ownership = %#v, want project %q everywhere", checkpoint, want)
+		}
+	}
+
+	renameIdentity := CheckpointIdentity{Host: "codex", SessionID: "session-mixed-rename", RootTurnID: "turn-mixed-rename"}
+	recordMixed(renameIdentity, "rename-source")
+	if _, err := s.MigrateProject("rename-source", "rename-target"); err != nil {
+		t.Fatalf("rename Mixed project: %v", err)
+	}
+	assertProject(renameIdentity, "rename-target")
+
+	mergeIdentity := CheckpointIdentity{Host: "codex", SessionID: "session-mixed-merge", RootTurnID: "turn-mixed-merge"}
+	recordMixed(mergeIdentity, "merge-source")
+	if _, err := s.MergeProjectsExplicit([]string{"merge-source"}, "merge-target"); err != nil {
+		t.Fatalf("merge Mixed project: %v", err)
+	}
+	assertProject(mergeIdentity, "merge-target")
+}
+
 func TestMemoryProposalTablesHaveNoSyncTriggers(t *testing.T) {
 	s := newTestStore(t)
 	for _, table := range []string{"memory_proposals", "memory_checkpoint_proposal_references"} {

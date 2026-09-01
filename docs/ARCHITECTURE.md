@@ -27,9 +27,12 @@ Engram trusts the **agent** to decide what's worth remembering — not a firehos
 
 ```
 1. Agent completes one settled root user turn.
-2. Agent chooses `saved`, `needs_review`, or `skipped(no_durable_knowledge)`.
-3. `mem_checkpoint` commits the disposition and any inline Memory atomically.
-4. Later work uses selective Recall when prior Memory can change the task.
+2. Agent preflights prospective Memories without persistence, reuses exact
+   duplicates, and accounts for at most three same-project candidates.
+3. Agent chooses `saved`, `needs_review`, or `skipped(no_durable_knowledge)`.
+4. `mem_checkpoint` commits the disposition, settled Memories, and any proposal
+   atomically. A `needs_review` result with at least one Memory is Mixed.
+5. Later work uses selective Recall when prior Memory can change the task.
 ```
 
 ---
@@ -101,7 +104,7 @@ inventory, access, export, and separately confirmed purge may touch it.
 | `mem_merge_projects` | Merge project name variants into canonical name (admin) |
 | `mem_current_project` | Detect project from cwd — never errors, recommended first call |
 | `mem_doctor` | Run read-only operational diagnostics for project detection and store health |
-| `mem_checkpoint` | Record an idempotent terminal disposition for one root user turn |
+| `mem_checkpoint` | Preflight prospective Memories or record an idempotent terminal disposition for one root user turn |
 | `mem_checkpoint_status` | Inspect the local checkpoint for one exact root user turn |
 | `mem_review` | List observations whose `review_after` lifecycle is stale; `mark_reviewed` resets the local review cycle |
 | `mem_pin` | Pin a memory locally so it appears before recent observations in context; pins are not synced |
@@ -131,7 +134,7 @@ Token-efficient memory retrieval — don't dump everything, drill in:
 - `mem_save` and `mem_search` expose lifecycle metadata: computed `state` (`active` or `needs_review`) and `review_after` when a review cycle applies.
 - `mem_review` supports `action="list"` (`project`, `limit`) and `action="mark_reviewed"` (`observation_id`). Marking reviewed is local-only for now because `review_after` is intentionally not part of sync payloads in this phase.
 - `mem_pin` and `mem_unpin` change only local context priority. Pins are intentionally excluded from sync payloads.
-- Exact dedupe prevents repeated inserts in a rolling window (hash + project + scope + type + title)
+- Exact dedupe prevents repeated inserts in a rolling window using a normalized content hash + project + scope + type + title + tool_name + normalized topic_key; empty optional identity fields compare as empty values
 - Duplicates update metadata (`duplicate_count`, `last_seen_at`, `updated_at`) instead of creating new rows
 - Topic upserts increment `revision_count` so evolving decisions stay in one memory
 - `mem_delete` uses soft-delete by default (`deleted_at`), with optional hard delete
@@ -143,7 +146,7 @@ Token-efficient memory retrieval — don't dump everything, drill in:
 
 ### What topic_key is
 
-`topic_key` turns `mem_save` into an **upsert**: if a memory with the same `project + scope + topic_key` already exists, the existing observation is updated in place (`revision_count++`) instead of creating a new row. Without a `topic_key`, every `mem_save` creates a new observation even when the content describes the same evolving topic.
+`topic_key` turns `mem_save` into an **upsert**: if a memory with the same `project + scope + topic_key` already exists, the existing observation is updated in place (`revision_count++`) instead of creating a new row. Without a `topic_key`, `mem_save` does not perform a topic upsert: changed content creates a new observation, while an exact duplicate within the rolling window reuses the existing row and updates duplicate metadata.
 
 Use topic keys for knowledge that changes over time: architecture decisions, long-running feature notes, recurring patterns, configuration choices. Skip them for one-off bugs, single facts, or anything that does not evolve.
 
@@ -298,6 +301,8 @@ engram review list|mark   List due memories or mark one reviewed (local-only) [-
 engram pin|unpin <obs_id> Change local-only context priority [--json]
 engram current-project    Inspect project resolution and ambiguity [--json]
 engram suggest-topic-key  Suggest a stable topic key without writing [--json]
+engram checkpoint preflight
+                          Inspect prospective Memories without writes [--json]
 engram checkpoint record Record a saved, needs_review, or skipped root-turn checkpoint [--json]
 engram checkpoint status Inspect one exact root-turn checkpoint [--json]
 engram delete <obs_id>    Delete an observation [--hard] (soft-delete by default; --hard removes permanently)

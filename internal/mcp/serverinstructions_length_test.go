@@ -47,6 +47,19 @@ func TestCurationJudgeDescriptionUsesCandidateJudgmentIDs(t *testing.T) {
 	}
 }
 
+func TestMemSearchDescriptionPublishesBoundedRecallPolicy(t *testing.T) {
+	s := newMCPTestStore(t)
+	tool := NewServerWithTools(s, ResolveTools("mem_search")).ListTools()["mem_search"]
+	if tool == nil {
+		t.Fatal("mem_search is not registered")
+	}
+	for _, required := range []string{"at most 5 candidates", "4 KiB", "6-10", "strong or explicit project identity"} {
+		if !strings.Contains(tool.Tool.Description, required) {
+			t.Errorf("mem_search description missing %q", required)
+		}
+	}
+}
+
 func TestServerInstructionsExposeOnlyProtocolToolsAndTerminalPolicy(t *testing.T) {
 	wantTools := make(map[string]bool)
 	for _, name := range protocolcontract.MinimumTools() {

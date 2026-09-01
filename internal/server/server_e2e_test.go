@@ -309,6 +309,21 @@ func TestSearchNoHitsReturnsEmptyArrayE2E(t *testing.T) {
 	}
 }
 
+func TestRecallEmptyResultIsSuccessfulE2E(t *testing.T) {
+	_, ts := newE2EServer(t)
+	resp, err := ts.Client().Get(ts.URL + "/recall?q=no-hits&project=engram")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	result := decodeJSON[memoryops.RecallResult](t, resp)
+	if result.ResultCount != 0 || len(result.Candidates) != 0 || result.Warning != nil {
+		t.Fatalf("empty Recall=%#v", result)
+	}
+}
+
 func TestPassiveCaptureEndpointRequiresSessionID(t *testing.T) {
 	_, ts := newE2EServer(t)
 	client := ts.Client()

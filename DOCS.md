@@ -113,13 +113,15 @@ engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
 engram recall-baseline record|report|power|purge [options]
 ```
 
-`engram current-project --json` separates discovery from write authority with
+`engram current-project --json` separates discovery from Recall/write authority with
 `project_strength` and `implicit_write_allowed`. Weak `git_root`, `git_child`,
-and `dir_basename` results remain useful for reads, but an implicit write fails
-with `weak_project_identity` before the store opens. Supply `--project` (or a
-documented explicit project boundary) to authorize the intended target.
+and `dir_basename` results remain useful for generic read-only discovery, but
+automatic candidate Recall returns no candidates and one warning, while an
+implicit write fails with `weak_project_identity` before the store opens.
+Supply `--project` (or a documented explicit project boundary) to authorize the
+intended target.
 `engram search --json` reports the same source, path, strength, and implicit-write
-metadata while preserving weak best-effort reads. A weak CLI mutation rejection
+metadata while failing weak candidate Recall open. A weak CLI mutation rejection
 always writes the structured error envelope to stderr, even without `--json`;
 its `details` contain `project`, `project_source`, `project_path`,
 `project_strength`, `implicit_write_allowed`, and the exact `safe_next_action`.
@@ -272,6 +274,10 @@ Engram is local-first: local SQLite is authoritative; cloud features are optiona
 - `GET /search` — FTS5 search. Query: `?q=QUERY&type=TYPE&project=PROJECT&scope=SCOPE&limit=N`
   - `200` with a JSON array of search results
   - No-result example: `GET /search?q=definitely-no-hit` returns `200` with `[]` (never `null`)
+- `GET /recall` — Authority-aware bounded candidate Recall used by thin host adapters. Query: `?q=QUERY&type=TYPE&project=PROJECT&project_strength=strong|explicit|weak|aggregate&scope=SCOPE&limit=N&match_mode=all|any&all_projects=BOOL`
+  - defaults to five candidates, always enforces a 4 KiB candidate budget, and allows at most ten candidates for deliberate follow-up
+  - returns `200` for candidates, an empty result, weak authority, or operational fail-open; warnings and diagnostics remain structured
+  - returns `400` for malformed query, match mode, limit, authority strength, or conflicting `project`/`all_projects`
 
 ### Timeline
 
@@ -948,7 +954,12 @@ retry with `project=<one of available_projects>` and
 
 ### Read tools (optional project override)
 
-`mem_search`, `mem_context`, `mem_timeline`, `mem_stats`, `mem_doctor` — `project` is an optional argument. If supplied, it is validated against the store via `ProjectExists`. Unknown project names return a structured error with `available_projects`. `mem_get_observation` resolves project from cwd for envelope metadata and does not accept a project override.
+`mem_context`, `mem_timeline`, `mem_stats`, and `mem_doctor` validate an optional
+`project` against the store and return a structured unknown-project error.
+`mem_search` instead treats an explicit project as Recall authority and returns
+a successful empty candidate set when that project has no Memory.
+`mem_get_observation` resolves project from cwd for envelope metadata and does
+not accept a project override.
 
 ### Admin tools
 
@@ -1022,26 +1033,34 @@ Inspect one exact checkpoint by `host`, `session_id`, and `root_turn_id`. Missin
 
 ### mem_search
 
-Search persistent memory across all sessions. Supports FTS5 full-text search with type/project/scope/limit filters.
+Recall the smallest useful candidate set only when prior decisions, tracked
+work, release state, configuration, preferences, or known failures can
+materially change the task. Routine self-contained work needs no search.
 
-Set `all_projects: true` to search across every project instead of the resolved one. This bypasses project detection entirely and ignores the `project` argument, so an agent can recall a decision logged elsewhere without knowing the project key. The response envelope reports `project_source: "all_projects"` and an empty `project` to reflect the cross-project scope.
+Automatic project Recall requires strong or explicit identity. Start with one
+narrow project search using one to three anchors. The default/initial request
+returns at most five candidates and 4 KiB; the same lookup intent may be
+reformulated at most once when relevant Memory is reasonably expected. A
+deliberate follow-up may request 6 through 10 candidates, but never widens scope
+or bypasses the byte budget.
 
-Scope values accepted by the `scope` parameter: `project` (default), `personal`, `global`. When `scope: personal` is passed without an explicit `project` override, the project filter is cleared and personal observations are searched across all projects (cross-project personal scope).
+`scope` defaults to `project`. Personal scope or `all_projects: true` is a
+deliberate broad request and requires explicit task relevance or user direction.
+`project` and `all_projects` are mutually exclusive. An explicit project with no
+stored Memory returns an empty success.
 
-Each structured search result includes lifecycle metadata: `state` (`active` or `needs_review`) and, when set, `review_after`. Text output also appends `state: needs_review` for stale observations.
+Candidates contain bounded summaries rather than full Memory content. Core
+returns only active, in-scope, non-deleted, non-superseded Memories. Semantic
+relevance/currentness rank first, pins move results only within the same tier,
+and recency breaks remaining ties. Pending relations and judged
+`conflicts_with` relations appear symmetrically in each candidate's structured
+`conflicts`; use `mem_get_observation` only for a selected candidate.
 
-When an observation has judged relations in `memory_relations`, the result entry includes annotation lines immediately after the title/content block:
-
-```
-supersedes: #<id> (<title>)       — this memory supersedes another
-superseded_by: #<id> (<title>)    — another memory supersedes this one
-conflicts: #<id> (<title>)        — judged conflict with another memory
-conflict: contested by #<id> (pending)  — pending (not yet judged)
-```
-
-Multiple annotation lines appear when multiple relations apply — one per related observation. Titles are retrieved via JOIN (no N+1 queries). When the related observation has been deleted, `(deleted)` replaces the title. Agent parsers should match by prefix — these prefixes are stable across versions (REQ-012).
-
-Pending relations (from `mem_save` conflict surfacing, before `mem_judge` is called) produce the `conflict: contested by #<id> (pending)` form. Judged relations produce the enriched form with title.
+Every success envelope exposes `recall_id`, `result_ids`, `result_count`,
+`delivered_utf8_bytes`, `elapsed_monotonic_ms`, and Protocol/binary
+`provenance` outside prose. Empty Recall is successful. Store or transport
+failure returns no candidates, one `recall_unavailable` warning, and structured
+diagnostics without blocking the caller's task.
 
 ### mem_save
 
@@ -1186,7 +1205,10 @@ Parameters:
 
 Re-judging an existing relation overwrites it (deliberate revision). Two agents judging the same pair persist as separate rows — Phase 1 surfaces both; cross-actor reconciliation is Phase 2.
 
-Search results subsequently expose annotation lines like `supersedes: #<id> (<title>)`, `superseded_by: #<id> (<title>)`, and `conflicts: #<id> (<title>)` so the recalling agent sees relevant verdicts at-a-glance. For enrolled projects with autosync enabled, judgments propagate to other machines via the cloud mutation pipeline — the annotation appears in `mem_search` results on any machine that has pulled the relevant mutations.
+Recall excludes judged superseded targets and exposes pending or judged
+`conflicts_with` relations as structured, symmetric candidate warnings. For
+enrolled projects with autosync enabled, judgments propagate through the cloud
+mutation pipeline and affect Recall after the relevant mutations are pulled.
 
 ### mem_compare
 
@@ -1233,6 +1255,12 @@ runs bounded read-only preflight, reuses exact duplicates, and accounts for at
 most three full same-project semantic candidates. Clear low-risk outcomes can
 settle directly; ambiguity or a material architecture, policy, or decision
 conflict selects `needs_review`.
+
+Selective Recall starts only when prior history can change the task. Its first
+project request is bounded to five candidates/4 KiB with one possible
+reformulation; limits 6-10 are deliberate follow-up, and personal or
+cross-project scope requires explicit relevance. Empty or unavailable Recall
+does not block the task.
 
 Independent save is reserved for explicit curation or a long-running,
 material loss-risk handoff. `mem_session_summary` is an optional curation

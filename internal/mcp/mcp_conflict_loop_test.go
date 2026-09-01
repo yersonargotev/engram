@@ -18,17 +18,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yersonargotev/engram/internal/store"
 	mcppkg "github.com/mark3labs/mcp-go/mcp"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 // ─── G.1 — Full save→judge→search loop ──────────────────────────────────────
 //
 // Verifies the complete end-to-end lifecycle:
-//   1. Save observation A (no candidates in empty store)
-//   2. Save observation B with overlapping title → candidates returned
-//   3. mem_judge one candidate as conflicts_with
-//   4. mem_search → B shows conflict annotation; A shows contested annotation
+//  1. Save observation A (no candidates in empty store)
+//  2. Save observation B with overlapping title → candidates returned
+//  3. mem_judge one candidate as conflicts_with
+//  4. mem_search → B shows conflict annotation; A shows contested annotation
 //
 // REQ-001 (candidate detection), REQ-002 (search annotations), REQ-003 (mem_judge)
 func TestConflictLoop_SaveJudgeSearch(t *testing.T) {
@@ -160,19 +160,13 @@ func TestConflictLoop_SaveJudgeSearch(t *testing.T) {
 	}
 
 	searchEnv := parseEnvelope(t, "G.1 search", searchRes)
-	resultText, _ := searchEnv["result"].(string)
-	if resultText == "" {
-		// Older response format returns the text as a top-level string.
-		resultText = callResultText(t, searchRes)
+	results, _ := searchEnv["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("G.1 expected only the current replacement candidate after mem_judge, got %v", results)
 	}
-
-	// REQ-002: obs B (source of supersedes) should show "supersedes:" annotation.
-	// obs A (target of supersedes) should show "superseded_by:" annotation.
-	// At least one of these must appear after the mem_judge call.
-	hasAnnotation := strings.Contains(resultText, "supersedes:") ||
-		strings.Contains(resultText, "superseded_by:")
-	if !hasAnnotation {
-		t.Fatalf("G.1 expected 'supersedes:' or 'superseded_by:' annotation in search results after mem_judge; got:\n%s", resultText)
+	candidate, _ := results[0].(map[string]any)
+	if candidate["title"] != "Switched from sessions to JWT authentication" {
+		t.Fatalf("G.1 expected the current JWT replacement and exclusion of the superseded session candidate, got %v", candidate)
 	}
 }
 

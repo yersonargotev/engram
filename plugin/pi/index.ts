@@ -7,6 +7,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -79,9 +80,15 @@ after all causal agent, tool, subagent, compaction, and continuation work settle
 \`mem_current_project\`, \`mem_search\`, \`mem_get_observation\`, \`mem_checkpoint\`, \`mem_checkpoint_status\`
 
 Current user intent, maintained source, and runtime evidence override Memory.
-Recall only when it can change the work; empty Recall is successful. Reuse the
-supplied opaque root-turn identity across continuations. The canonical
-engram-memory skill owns the durability and disposition rubric.
+Recall only when prior decisions, tracked work, release/configuration,
+preferences, or failures can change the work; self-contained work needs no
+search. Automatic Recall requires strong or explicit project identity. Start
+with one narrow project search (at most 5 candidates/4 KiB) and reformulate at
+most once. Limits 6-10 and personal/cross-project scope require deliberate
+relevance. Empty or unavailable Recall does not block the task; conflicts and
+the single fail-open warning remain explicit. Reuse the supplied opaque
+root-turn identity across continuations. The canonical engram-memory skill owns
+the detailed Recall, durability, and disposition rubric.
 
 Session summary and independent save are optional curation workflows. Capture
 and lifecycle operations stay outside the default profile. Set
@@ -612,6 +619,7 @@ function sharedInitialization(start: () => Promise<void>): Promise<void> {
 }
 
 let project = "unknown";
+let projectStrength = "weak";
 let directory = "";
 let pendingRecoveryNotice: string | undefined;
 let projectResolutionError: string | undefined;
@@ -671,6 +679,7 @@ function applyDetectedProject(detected: CurrentProjectResponse | undefined): boo
   projectDetectionPending = false;
   if (detected.project && !detected.error_hint) {
     project = detected.project;
+    projectStrength = detected.project_strength || "weak";
     projectResolutionError = undefined;
     const writeIdentityAccepted = detected.project_strength === "explicit"
       || (detected.project_strength === "strong" && detected.implicit_write_allowed === true);
@@ -777,10 +786,10 @@ const MEMORY_TOOL_SCHEMAS: Record<string, ReturnType<typeof Type.Object>> = {
   mem_search: Type.Object({
     query: Type.String({ description: "Search query — natural language or keywords" }),
     type: optionalString("Filter by observation type"),
-    project: optionalString("Filter by project name"),
+    project: optionalString("Explicit project scope; cannot be combined with all_projects"),
     scope: optionalString("Filter by scope: project or personal"),
-    limit: optionalNumber("Max results"),
-    all_projects: optionalBoolean("Search across every project; when true project is ignored"),
+    limit: optionalNumber("Candidate limit: 5 by default; 6-10 only for deliberate follow-up"),
+    all_projects: optionalBoolean("Deliberate cross-project Recall; cannot be combined with project"),
     match_mode: optionalString("Match mode: all (default) or any for broader recall"),
   }),
   mem_save: Type.Object({
@@ -939,10 +948,14 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
 
   switch (toolName) {
     case "mem_search":
-      return engramFetch(`/search${queryString({
+      if (params.all_projects && requestedProject) {
+        throw new EngramHttpError("all_projects cannot be combined with project", 400, { code: "incompatible_scope" });
+      }
+      return engramFetch(`/recall${queryString({
         q: params.query,
         type: params.type,
-        project: params.all_projects ? undefined : params.project,
+        project: params.all_projects ? undefined : requestedProject || project,
+        project_strength: params.all_projects ? "aggregate" : requestedProject ? "explicit" : projectStrength,
         scope: params.scope,
         limit: params.limit,
         match_mode: params.match_mode,
@@ -1133,6 +1146,24 @@ function unreachableMessage(timedOutMethod: string | undefined): string {
   return `gentle-engram could not reach the Engram HTTP server at ${ENGRAM_URL}. The Pi-native mem_* tools are registered, but the native memory provider is not currently responding. Run mem_doctor or restart Engram.`;
 }
 
+function unavailableRecall(message: string) {
+  return {
+    recall_id: `recall-pi-${randomUUID().replaceAll("-", "")}`,
+    results: [],
+    result_ids: [],
+    result_count: 0,
+    delivered_utf8_bytes: 2,
+    elapsed_monotonic_ms: 0,
+    provenance: { protocol_version: 1, binary_version: "unavailable" },
+    warning: {
+      code: "recall_unavailable",
+      message: "Recall is unavailable; continuing without Memory.",
+      next_action: "Retry once with narrow anchors only if prior Memory remains material to the task.",
+    },
+    diagnostics: [{ code: "recall_transport_failure", operation: "recall_candidates", detail: message }],
+  };
+}
+
 async function executeMemoryTool(toolName: string, params: Record<string, unknown>, ctx: MemoryToolContext) {
   const action = humanToolName(toolName);
 
@@ -1156,6 +1187,13 @@ async function executeMemoryTool(toolName: string, params: Record<string, unknow
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (toolName === "mem_search" && (!(error instanceof EngramHttpError) || error.status >= 500)) {
+      const data = unavailableRecall(message);
+      const result = { content: [{ type: "text" as const, text: textResult(data) }], details: { data } };
+      ctx.ui?.setStatus?.("engram", `🧠 ${project} · ${compactResultStatus(toolName, result)}`);
+      if (!(error instanceof EngramHttpError)) scheduleEngramSelfHeal(ctx);
+      return result;
+    }
     const details = error instanceof EngramHttpError
       ? { error: message, http_status: error.status, data: error.data }
       : { error: message };

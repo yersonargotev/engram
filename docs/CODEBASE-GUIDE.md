@@ -71,6 +71,7 @@ The sentence that organizes the whole repo:
 | Change the dashboard | `internal/cloud/dashboard/dashboard.go` | [Dashboard](codebase/dashboard.md), `internal/cloud/dashboard/*_templ.go`, `internal/cloud/dashboard/static/styles.css` |
 | Change agent setup | `internal/setup/registry.go`, `internal/setup/agents.go`, `internal/setup/setup.go` | [Integrations](codebase/integrations.md), `plugin/`, `docs/AGENT-SETUP.md`, `docs/PLUGINS.md` |
 | Change the content-free Recall baseline | `internal/recallbaseline/` | `cmd/engram/recall_baseline.go`, `plugin/codex/`, `docs/RECALL-BASELINE.md` |
+| Change candidate Recall policy or envelopes | `internal/memoryops/recall.go` | `internal/store/store.go`, CLI/MCP/HTTP adapters, canonical agent guidance |
 | Prepare or review a large feature | `openspec/changes/*` | [Maintainer Playbook](codebase/maintainer-playbook.md), `openspec/specs/*`, `CONTRIBUTING.md` |
 
 ## Full technical reference stays in DOCS.md

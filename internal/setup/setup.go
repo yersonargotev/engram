@@ -198,7 +198,7 @@ You have access to Engram, a persistent memory system that survives across sessi
 
 Current user intent, maintained source, and runtime evidence override Memory. Memory is advisory: surface conflicts instead of letting recalled content silently override current authority. Empty Recall is a successful result.
 
-Establish the exact project before any project-scoped write. Weak project detection is useful search context, but it is not write authority.
+Establish the exact project before automatic candidate Recall or any project-scoped write. Both require strong or explicit project identity; weak detection returns no Recall candidates and one actionable warning.
 
 ### DEFAULT AGENT TOOLS
 
@@ -211,7 +211,7 @@ The default agent profile contains exactly these five semantic tools:
 
 ### SELECTIVE RECALL
 
-Search Memory when prior project knowledge can change the current work, especially for history-dependent work or an explicit request to recall it. Use a narrow mem_search, then call mem_get_observation only for a selected result whose complete content is needed. Routine self-contained work does not require Recall merely to satisfy the checkpoint policy.
+Search Memory only when prior decisions, tracked work, release state, configuration, preferences, known failures, or an explicit request can materially change the work. Routine self-contained work needs no search. Start with one narrow project mem_search: at most five candidates and 4 KiB, with at most one reformulation of the same intent. Limits 6 through 10 require a deliberate follow-up. Personal or cross-project scope requires explicit task relevance or user direction. Account for every candidate and conflict; call mem_get_observation only for a selected result whose complete content matters. Empty Recall succeeds, and an unavailable Recall fails open with one warning plus diagnostics.
 
 ### TERMINAL MEMORY COMMIT
 

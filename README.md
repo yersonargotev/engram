@@ -147,6 +147,14 @@ and `mem_checkpoint_status`.
 This default surface uses selective Recall and ends each settled root user turn
 with one Terminal Memory commit.
 
+Automatic Recall requires strong or explicit project identity and only runs
+when prior decisions, tracked work, release/configuration, preferences, or
+known failures can change the task. The first narrow project request returns at
+most five candidate summaries and 4 KiB, with one possible reformulation;
+limits 6-10 and personal/cross-project scope are deliberate. Empty or
+unavailable Recall never blocks the task and keeps conflicts, one warning, and
+diagnostics explicit.
+
 Specialized workflows remain available through named profiles, explicit tool
 selection, or `--tools=all`:
 
@@ -400,7 +408,7 @@ Your production engram is fully untouched throughout.
 | `engram serve [port]`                      | Start HTTP API (default: 7437)                                  |
 | `engram mcp [--tools=PROFILE] [--project NAME]` | Start MCP server (stdio transport)                         |
 | `engram tui`                               | Launch terminal UI                                              |
-| `engram search <query> [--json]`           | Search full memories; supports project scope and `all|any` matching |
+| `engram search <query> [--json]`           | Recall bounded candidates; defaults to five results/4 KiB and supports `all|any` matching |
 | `engram save <title> <content> [flags]`    | Save a memory and surface pending conflict candidates; also accepts `--title TITLE --content CONTENT` |
 | `engram get <obs_id> [--json]`             | Retrieve one complete memory and its relations                  |
 | `engram update <obs_id> [fields]`          | Partially update a memory                                       |

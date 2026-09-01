@@ -105,6 +105,36 @@ func TestCanonicalAndRepositorySkillsShareTerminalMemoryAuthority(t *testing.T) 
 	}
 }
 
+func TestAgentPolicyProjectionsPublishBoundedAuthorityAwareRecall(t *testing.T) {
+	root := filepath.Join("..", "..")
+	paths := []string{
+		"plugin/codex/skills/memory/SKILL.md",
+		"plugin/claude-code/skills/memory/SKILL.md",
+		"skills/engram-memory-cli/SKILL.md",
+		"internal/setup/setup.go",
+		"plugin/opencode/engram.ts",
+		"internal/setup/plugins/opencode/engram.ts",
+		"plugin/pi/index.ts",
+	}
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?:five|5) candidate`),
+		regexp.MustCompile(`4 kib`),
+		regexp.MustCompile(`strong.{0,10}explicit`),
+		regexp.MustCompile(`(?:reformulat.{0,40}(?:once|one)|(?:once|one).{0,40}reformulat)`),
+		regexp.MustCompile(`6.{0,20}10`),
+		regexp.MustCompile(`self-contained`),
+		regexp.MustCompile(`(?:recall.{0,20}unavailable|unavailable.{0,20}recall).{0,100}(?:not block|without blocking|continue|fails open)`),
+	}
+	for _, path := range paths {
+		content := strings.ToLower(strings.Join(strings.Fields(readPolicyProjection(t, root, path)), " "))
+		for _, pattern := range patterns {
+			if !pattern.MatchString(content) {
+				t.Errorf("%s is missing Recall policy pattern %q", path, pattern)
+			}
+		}
+	}
+}
+
 func TestMaintainedDocsDescribeFiveToolTerminalPolicy(t *testing.T) {
 	root := filepath.Join("..", "..")
 	wantTools := []string{

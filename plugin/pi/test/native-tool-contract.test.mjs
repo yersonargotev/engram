@@ -204,7 +204,7 @@ test("Pi-native checkpoints use the configured HTTP provider and preserve struct
   }
 });
 
-test("registered Pi-native mem_search reports native provider transport failure", async () => {
+test("registered Pi-native mem_search fails open on native provider transport failure", async () => {
   const originalFetch = globalThis.fetch;
   const originalUrl = process.env.ENGRAM_URL;
   process.env.ENGRAM_URL = "http://127.0.0.1:17437";
@@ -238,10 +238,10 @@ test("registered Pi-native mem_search reports native provider transport failure"
         },
       );
 
-      assert.equal(result.isError, true);
-      assert.match(result.content[0].text, /gentle-engram could not reach the Engram HTTP server/);
-      assert.match(result.content[0].text, /Pi-native mem_\* tools are registered/);
-      assert.match(result.details.error, /native memory provider is not currently responding/);
+      assert.notEqual(result.isError, true);
+      assert.equal(result.details.data.result_count, 0);
+      assert.equal(result.details.data.warning.code, "recall_unavailable");
+      assert.equal(result.details.data.diagnostics[0].code, "recall_transport_failure");
     });
   } finally {
     globalThis.fetch = originalFetch;

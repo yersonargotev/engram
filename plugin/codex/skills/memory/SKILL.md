@@ -60,12 +60,27 @@ Current user intent, maintained source, and runtime evidence override Memory.
 Memory is advisory; surface unresolved conflicts, and treat empty Recall as a
 successful result rather than inventing context.
 
-Before similar or history-dependent work, use a targeted `mem_search` when prior
-Memory can change the task. Follow a selected result with
-`mem_get_observation` when its full content matters. `mem_context` is an
-optional curation operation for explicitly requested chronological review, not
-part of the default five-tool Recall path. A routine self-contained turn does
-not require a search merely to satisfy the checkpoint protocol.
+Recall only when prior decisions, tracked work, release state, configuration,
+preferences, or known failures can materially change the task, or when the user
+explicitly asks to remember prior work. A routine self-contained turn needs no
+search. Automatic Recall requires strong or explicit project identity from
+`mem_current_project`; a weak identity returns no candidates and one actionable
+warning.
+
+Start with one project-scoped `mem_search` using one to three narrow anchors.
+The initial request returns at most five candidate summaries and 4 KiB. If
+relevant Memory is reasonably expected, reformulate that same lookup intent at
+most once. A deliberate follow-up may set `limit` from 6 through 10, but the
+4 KiB budget and original scope still apply. Use `mem_get_observation` only for
+a selected candidate whose complete content matters.
+
+Personal or cross-project Recall requires explicit task relevance or user
+direction. Account for each candidate before acting. Core excludes deleted,
+inactive, and superseded Memories, orders relevance/currentness before pins and
+recency, and returns unresolved conflicts explicitly. If Recall is unavailable,
+continue the task after its single warning and structured diagnostics.
+`mem_context` remains optional curation for explicit chronological review and is
+not part of the default five-tool path.
 
 ## Preflight prospective Memories
 

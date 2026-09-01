@@ -206,6 +206,12 @@ type SearchOptions struct {
 	MatchMode string `json:"match_mode,omitempty"` // "all" (default) | "any"
 }
 
+type searchPolicy struct {
+	activeOnly        bool
+	excludeSuperseded bool
+	recallOrdering    bool
+}
+
 type AddObservationParams struct {
 	SessionID string `json:"session_id"`
 	Type      string `json:"type"`
@@ -3393,6 +3399,21 @@ func (s *Store) Search(query string, opts SearchOptions) ([]SearchResult, error)
 // SearchContext searches observations while honoring cancellation from the
 // caller, including while materializing rows.
 func (s *Store) SearchContext(ctx context.Context, query string, opts SearchOptions) ([]SearchResult, error) {
+	return s.searchContext(ctx, query, opts, searchPolicy{})
+}
+
+// RecallCandidatesContext returns only active, non-superseded Memory
+// candidates in deterministic Recall order. Generic Search remains unchanged
+// for curation and compatibility callers.
+func (s *Store) RecallCandidatesContext(ctx context.Context, query string, opts SearchOptions) ([]SearchResult, error) {
+	return s.searchContext(ctx, query, opts, searchPolicy{
+		activeOnly:        true,
+		excludeSuperseded: true,
+		recallOrdering:    true,
+	})
+}
+
+func (s *Store) searchContext(ctx context.Context, query string, opts SearchOptions, policy searchPolicy) ([]SearchResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -3420,10 +3441,11 @@ func (s *Store) SearchContext(ctx context.Context, query string, opts SearchOpti
 	if strings.Contains(query, "/") {
 		tkSQL := `
 			SELECT ` + observationSelectColumns + `
-			FROM observations
-			WHERE topic_key = ? AND deleted_at IS NULL
+			FROM observations o
+			WHERE o.topic_key = ? AND o.deleted_at IS NULL
 		`
 		tkArgs := []any{query}
+		tkSQL += searchEligibilitySQL("o", policy)
 
 		if opts.Type != "" {
 			tkSQL += " AND type = ?"
@@ -3438,7 +3460,11 @@ func (s *Store) SearchContext(ctx context.Context, query string, opts SearchOpti
 			tkArgs = append(tkArgs, NormalizeObservationScope(opts.Scope))
 		}
 
-		tkSQL += " ORDER BY updated_at DESC LIMIT ?"
+		if policy.recallOrdering {
+			tkSQL += " ORDER BY o.pinned DESC, datetime(o.updated_at) DESC, o.id DESC LIMIT ?"
+		} else {
+			tkSQL += " ORDER BY o.updated_at DESC LIMIT ?"
+		}
 		tkArgs = append(tkArgs, limit)
 
 		tkRows, err := s.db.QueryContext(ctx, tkSQL, tkArgs...)
@@ -3481,7 +3507,7 @@ func (s *Store) SearchContext(ctx context.Context, query string, opts SearchOpti
 		ftsQuery = sanitizeFTS(query)
 	}
 
-	sqlQ, args := buildSearchFTSQuery(ftsQuery, opts, limit)
+	sqlQ, args := buildSearchFTSQueryWithPolicy(ftsQuery, opts, limit, policy)
 	rows, err := s.queryItContextHook(ctx, sqlQ, args...)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -3538,6 +3564,10 @@ func (s *Store) SearchContext(ctx context.Context, query string, opts SearchOpti
 }
 
 func buildSearchFTSQuery(ftsQuery string, opts SearchOptions, limit int) (string, []any) {
+	return buildSearchFTSQueryWithPolicy(ftsQuery, opts, limit, searchPolicy{})
+}
+
+func buildSearchFTSQueryWithPolicy(ftsQuery string, opts SearchOptions, limit int, policy searchPolicy) (string, []any) {
 	sqlQ := `
 		SELECT o.id, ifnull(o.sync_id, '') as sync_id, o.session_id, o.type, o.title, o.content, o.tool_name, o.project,
 		       o.scope, o.topic_key, o.revision_count, o.duplicate_count, o.last_seen_at, o.review_after, o.pinned, o.created_at, o.updated_at, o.deleted_at,
@@ -3547,6 +3577,7 @@ func buildSearchFTSQuery(ftsQuery string, opts SearchOptions, limit int) (string
 		WHERE observations_fts MATCH ? AND o.deleted_at IS NULL
 	`
 	args := []any{ftsQuery}
+	sqlQ += searchEligibilitySQL("o", policy)
 
 	if opts.Type != "" {
 		sqlQ += " AND o.type = ?"
@@ -3561,8 +3592,29 @@ func buildSearchFTSQuery(ftsQuery string, opts SearchOptions, limit int) (string
 		args = append(args, NormalizeObservationScope(opts.Scope))
 	}
 
-	sqlQ += " ORDER BY rank LIMIT ?"
+	if policy.recallOrdering {
+		sqlQ += " ORDER BY rank, o.pinned DESC, datetime(o.updated_at) DESC, o.id DESC LIMIT ?"
+	} else {
+		sqlQ += " ORDER BY rank LIMIT ?"
+	}
 	return sqlQ, append(args, limit)
+}
+
+func searchEligibilitySQL(alias string, policy searchPolicy) string {
+	var sql strings.Builder
+	if policy.activeOnly {
+		fmt.Fprintf(&sql, " AND (datetime(%s.review_after) IS NULL OR datetime(%s.review_after) > datetime('now'))", alias, alias)
+	}
+	if policy.excludeSuperseded {
+		fmt.Fprintf(&sql, ` AND NOT EXISTS (
+			SELECT 1
+			FROM memory_relations recall_relation
+			WHERE recall_relation.target_id = %s.sync_id
+			  AND recall_relation.relation = 'supersedes'
+			  AND recall_relation.judgment_status = 'judged'
+		)`, alias)
+	}
+	return sql.String()
 }
 
 // ─── Stats ───────────────────────────────────────────────────────────────────

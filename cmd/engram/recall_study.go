@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,12 +13,12 @@ import (
 )
 
 type recallStudyFlags struct {
-	ContractPath, ContractHashPath                      string
-	CalibrationManifestPath, CalibrationHashPath        string
-	HeldOutManifestPath, HeldOutHashPath                string
-	EnvironmentPath, ConsentPath, RowsPath, MetricsPath string
-	OutputPath                                          string
-	JSONMode                                            bool
+	ContractPath, ContractHashPath               string
+	CalibrationManifestPath, CalibrationHashPath string
+	HeldOutManifestPath, HeldOutHashPath         string
+	EnvironmentPath, ConsentPath, RowsPath       string
+	OutputPath                                   string
+	JSONMode                                     bool
 }
 
 type recallStudyInputs struct {
@@ -36,14 +35,13 @@ type recallStudyRunPlan struct {
 	ContractSHA256        string                   `json:"contract_sha256"`
 	CohortID              string                   `json:"cohort_id"`
 	HeldOutInputsAccessed bool                     `json:"held_out_inputs_accessed"`
-	HeldOutRunAuthorized  bool                     `json:"held_out_run_authorized"`
 	Runs                  []recallstudy.PlannedRun `json:"runs"`
 }
 
 func cmdRecallStudy() {
 	jsonMode := hasArg("--json")
 	if len(os.Args) < 3 {
-		failCLI(jsonMode, "invalid_arguments", "recall-study requires verify, dry-run, calibrate, run-held-out, or report", nil)
+		failCLI(jsonMode, "invalid_arguments", "recall-study requires verify, dry-run, plan-calibration, or report", nil)
 		return
 	}
 	subcommand := strings.ToLower(strings.TrimSpace(os.Args[2]))
@@ -51,7 +49,7 @@ func cmdRecallStudy() {
 	case "help", "--help", "-h":
 		printRecallStudyUsage()
 		return
-	case "verify", "dry-run", "calibrate", "run-held-out", "report":
+	case "verify", "dry-run", "plan-calibration", "report":
 	default:
 		failCLI(jsonMode, "invalid_arguments", fmt.Sprintf("unknown recall-study command %q", os.Args[2]), nil)
 		return
@@ -84,22 +82,15 @@ func cmdRecallStudy() {
 			"calibration_runs": len(calibration), "held_out_runs": len(heldOut), "planned_runs": len(calibration) + len(heldOut),
 			"held_out_inputs_accessed": false,
 		})
-	case "calibrate":
-		writeRecallStudyPlan(flags, inputs, inputs.calibration, false)
-	case "run-held-out":
-		writeRecallStudyPlan(flags, inputs, inputs.heldOut, true)
+	case "plan-calibration":
+		writeRecallStudyPlan(flags, inputs, inputs.calibration)
 	case "report":
 		rows, err := recallstudy.ReadRowSet(flags.RowsPath)
 		if err != nil {
 			failCLI(flags.JSONMode, "invalid_recall_study_rows", err.Error(), nil)
 			return
 		}
-		var metrics []recallstudy.MetricEvidence
-		if err := readStrictStudyJSON(flags.MetricsPath, &metrics); err != nil {
-			failCLI(flags.JSONMode, "invalid_recall_study_metrics", err.Error(), nil)
-			return
-		}
-		report, err := inputs.study.Report(rows, metrics)
+		report, err := inputs.study.Report(rows)
 		if err != nil {
 			failCLI(flags.JSONMode, "recall_study_report_failed", err.Error(), nil)
 			return
@@ -127,12 +118,11 @@ func parseRecallStudyFlags(subcommand string, args []string) (recallStudyFlags, 
 	set.StringVar(&flags.EnvironmentPath, "environment", "", "verified Compatibility tuple JSON")
 	set.StringVar(&flags.ConsentPath, "consent", "", "explicit consent evidence JSON")
 	set.BoolVar(&flags.JSONMode, "json", false, "emit JSON")
-	if subcommand == "calibrate" || subcommand == "run-held-out" || subcommand == "report" {
+	if subcommand == "plan-calibration" || subcommand == "report" {
 		set.StringVar(&flags.OutputPath, "output", "", "output JSON path")
 	}
 	if subcommand == "report" {
 		set.StringVar(&flags.RowsPath, "rows", "", "private row-level results JSON")
-		set.StringVar(&flags.MetricsPath, "metrics", "", "aggregate metric evidence JSON")
 	}
 	if err := set.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -159,12 +149,11 @@ func parseRecallStudyFlags(subcommand string, args []string) (recallStudyFlags, 
 		"--held-out-manifest": flags.HeldOutManifestPath, "--held-out-hash": flags.HeldOutHashPath,
 		"--environment": flags.EnvironmentPath, "--consent": flags.ConsentPath,
 	}
-	if subcommand == "calibrate" || subcommand == "run-held-out" {
+	if subcommand == "plan-calibration" {
 		required["--output"] = flags.OutputPath
 	}
 	if subcommand == "report" {
 		required["--rows"] = flags.RowsPath
-		required["--metrics"] = flags.MetricsPath
 	}
 	for name, value := range required {
 		if strings.TrimSpace(value) == "" {
@@ -191,13 +180,13 @@ func loadRecallStudyInputs(flags recallStudyFlags) (recallStudyInputs, bool) {
 		failCLI(flags.JSONMode, "invalid_recall_study_manifest", err.Error(), nil)
 		return recallStudyInputs{}, false
 	}
-	var compatibility recallstudy.CompatibilityEvidence
-	if err := readStrictStudyJSON(flags.EnvironmentPath, &compatibility); err != nil {
+	compatibility, err := recallstudy.ReadCompatibilityEvidence(flags.EnvironmentPath)
+	if err != nil {
 		failCLI(flags.JSONMode, "invalid_recall_study_environment", err.Error(), nil)
 		return recallStudyInputs{}, false
 	}
-	var consent recallstudy.ConsentEvidence
-	if err := readStrictStudyJSON(flags.ConsentPath, &consent); err != nil {
+	consent, err := recallstudy.ReadConsentEvidence(flags.ConsentPath)
+	if err != nil {
 		failCLI(flags.JSONMode, "invalid_recall_study_consent", err.Error(), nil)
 		return recallStudyInputs{}, false
 	}
@@ -209,7 +198,7 @@ func loadRecallStudyInputs(flags recallStudyFlags) (recallStudyInputs, bool) {
 	return recallStudyInputs{study: study, calibration: &calibration.Manifest, heldOut: &heldOut.Manifest, verification: verification}, true
 }
 
-func writeRecallStudyPlan(flags recallStudyFlags, inputs recallStudyInputs, manifest *recallstudy.Manifest, heldOut bool) {
+func writeRecallStudyPlan(flags recallStudyFlags, inputs recallStudyInputs, manifest *recallstudy.Manifest) {
 	plan, err := inputs.study.Plan(manifest)
 	if err != nil {
 		failCLI(flags.JSONMode, "recall_study_plan_failed", err.Error(), nil)
@@ -217,8 +206,7 @@ func writeRecallStudyPlan(flags recallStudyFlags, inputs recallStudyInputs, mani
 	}
 	result := recallStudyRunPlan{
 		SchemaVersion: "recall-study-run-plan-v1", StudyID: inputs.study.Contract.StudyID, StudyVersion: inputs.study.Contract.StudyVersion,
-		ContractSHA256: inputs.study.Hash, CohortID: manifest.CohortID, HeldOutInputsAccessed: false,
-		HeldOutRunAuthorized: heldOut, Runs: plan,
+		ContractSHA256: inputs.study.Hash, CohortID: manifest.CohortID, HeldOutInputsAccessed: false, Runs: plan,
 	}
 	if err := recallstudy.WritePrivateJSON(flags.OutputPath, result); err != nil {
 		failCLI(flags.JSONMode, "output_error", err.Error(), nil)
@@ -227,24 +215,8 @@ func writeRecallStudyPlan(flags recallStudyFlags, inputs recallStudyInputs, mani
 	writeRecallStudyResult(flags.JSONMode, map[string]any{
 		"schema_version": result.SchemaVersion, "study_id": result.StudyID, "study_version": result.StudyVersion,
 		"contract_sha256": result.ContractSHA256, "cohort_id": result.CohortID, "planned_runs": len(result.Runs),
-		"held_out_inputs_accessed": false, "held_out_run_authorized": heldOut,
+		"held_out_inputs_accessed": false,
 	})
-}
-
-func readStrictStudyJSON(path string, destination any) error {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON values are not allowed")
-	}
-	return nil
 }
 
 func writeRecallStudyResult(jsonMode bool, value any) {
@@ -263,14 +235,13 @@ func writeRecallStudyResult(jsonMode bool, value any) {
 }
 
 func printRecallStudyUsage() {
-	fmt.Println(`usage: engram recall-study verify|dry-run|calibrate|run-held-out|report [options]
+	fmt.Println(`usage: engram recall-study verify|dry-run|plan-calibration|report [options]
 
 All commands require the frozen contract, both manifest metadata files and their
 SHA-256 sidecars, a verified Compatibility tuple, and explicit consent evidence.
 
   verify         Validate frozen metadata without opening held-out inputs
   dry-run        Return aggregate plan counts without opening held-out inputs
-  calibrate      Write a private calibration run plan with --output FILE
-  run-held-out   Authorize and write a private held-out run plan with --output FILE
-  report         Read --rows and --metrics; optionally write aggregate --output FILE`)
+  plan-calibration  Write a private calibration run plan with --output FILE
+  report            Derive aggregate evidence from --rows; optionally write --output FILE`)
 }

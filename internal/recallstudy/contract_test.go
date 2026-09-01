@@ -15,8 +15,9 @@ const frozenSourceRevision = "105778d820029a2326043739fd676647e5c037f6"
 func TestLoadFreezesRecallStudyContractAndRejectsDrift(t *testing.T) {
 	t.Parallel()
 
-	contract := validContract()
-	contractPath, hashPath := writeFrozenJSON(t, "contract.json", contract)
+	root := filepath.Join("..", "..", "evals", "recall-study", "v1")
+	contractPath := filepath.Join(root, "contract.json")
+	hashPath := filepath.Join(root, "contract.sha256")
 	study, err := Load(contractPath, hashPath)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -29,12 +30,18 @@ func TestLoadFreezesRecallStudyContractAndRejectsDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	drifted := strings.Replace(string(raw), `"required_total": 1551`, `"required_total": 1552`, 1)
-	if err := os.WriteFile(contractPath, []byte(drifted), 0o600); err != nil {
+	drifted := strings.Replace(string(raw), `"name": "gpt-5.6-luna"`, `"name": "changed-model"`, 1)
+	tamperedPath := filepath.Join(t.TempDir(), "contract.json")
+	if err := os.WriteFile(tamperedPath, []byte(drifted), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(contractPath, hashPath); err == nil || !strings.Contains(err.Error(), "hash mismatch") {
-		t.Fatalf("Load() error = %v, want hash mismatch", err)
+	digest := sha256.Sum256([]byte(drifted))
+	tamperedHash := filepath.Join(filepath.Dir(tamperedPath), "contract.sha256")
+	if err := os.WriteFile(tamperedHash, []byte(hex.EncodeToString(digest[:])+"  contract.json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(tamperedPath, tamperedHash); err == nil || !strings.Contains(err.Error(), "trust anchor") {
+		t.Fatalf("Load() error = %v, want trust anchor rejection", err)
 	}
 }
 
@@ -47,10 +54,13 @@ func TestLoadRejectsChangedFrozenRules(t *testing.T) {
 		want   string
 	}{
 		{"sample size", func(c *Contract) { c.Cohorts.RequiredPerTreatment = 516 }, "sample size"},
+		{"study identity", func(c *Contract) { c.StudyID = "changed-study" }, "identity"},
 		{"treatments", func(c *Contract) { c.Treatments[2].ID = "implicit-recall" }, "treatments"},
 		{"no recall scope", func(c *Contract) { c.TaskClasses[0].SelfContained = false }, "self-contained"},
 		{"source revision", func(c *Contract) { c.SourceRevision = "main" }, "source revision"},
 		{"protocol revision", func(c *Contract) { c.Revisions.ProtocolContract.Version = "2" }, "revisions"},
+		{"policy revision", func(c *Contract) { c.Revisions.Policy.Revision = "sha256:" + strings.Repeat("0", 64) }, "revisions"},
+		{"metric revision", func(c *Contract) { c.Revisions.Metric.Revision = "sha256:" + strings.Repeat("0", 64) }, "revisions"},
 		{"threshold drift", func(c *Contract) { c.Gates[0].Clauses[0].Threshold = -3 }, "gates"},
 		{"label vocabulary", func(c *Contract) { c.EvaluationRubric.Utility[0] = "helpful" }, "rubric"},
 		{"shared row output", func(c *Contract) { c.AllowedOutputs.Shared = append(c.AllowedOutputs.Shared, "row_level_runs") }, "outputs"},
@@ -62,8 +72,7 @@ func TestLoadRejectsChangedFrozenRules(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			contract := validContract()
 			test.mutate(&contract)
-			contractPath, hashPath := writeFrozenJSON(t, "contract.json", contract)
-			if _, err := Load(contractPath, hashPath); err == nil || !strings.Contains(strings.ToLower(err.Error()), test.want) {
+			if err := contract.validate(); err == nil || !strings.Contains(strings.ToLower(err.Error()), test.want) {
 				t.Fatalf("Load() error = %v, want substring %q", err, test.want)
 			}
 		})
@@ -88,7 +97,7 @@ func TestCommittedRecallStudyV1IsSelfConsistent(t *testing.T) {
 	}
 	if _, err := study.Verify(VerificationInput{
 		Calibration: &calibration.Manifest, HeldOut: &heldOut.Manifest,
-		Compatibility: CompatibilityEvidence{Revisions: study.Contract.Revisions, Ready: true},
+		Compatibility: compatibleEvidence(study),
 		Consent: ConsentEvidence{StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
 			CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: strings.Repeat("c", 64)},
 	}); err != nil {
@@ -147,13 +156,15 @@ func validContract() Contract {
 		Revisions: RevisionsContract{
 			ManagedPack: artifact("3.3.0"), EngramBinary: artifact("3.0.0"), CodexPlugin: artifact("0.1.7"),
 			ProtocolContract: artifact("1"), TelemetrySchema: artifact("recall-baseline-events-v1"),
-			CaptureSchema: artifact("diagnostic-capture-v1"), Policy: artifact("recall-policy-v1"),
-			Metric: artifact("recall-study-metrics-v1"), Source: artifact(frozenSourceRevision),
+			CaptureSchema: artifact("diagnostic-capture-v1"), Policy: ArtifactRevision{Version: "recall-policy-v1", Revision: frozenPolicyRevision},
+			Metric: ArtifactRevision{Version: "recall-study-metrics-v1", Revision: frozenMetricRevision}, Source: artifact(frozenSourceRevision),
 		},
 		Power:     PowerContract{SchemaVersion: "recall-baseline-power-v1", Method: "two-sided-two-proportion-normal-bonferroni-v1", BaselineRate: .50, MinimumDetectableDifference: .10, FamilywiseAlpha: .05, Power: .80, Comparisons: 3, Treatments: 3, RequiredPerTreatment: 517, RequiredTotal: 1551},
 		Intervals: IntervalContract{Rate: "wilson-95", PairedDifference: "deterministic-bootstrap-95", BootstrapResamples: 10000, BootstrapSeed: "codex-useful-recall-v1-bootstrap"},
 		Gates:     frozenGates(),
-		Runner:    RunnerContract{DefaultRecallEnabled: false, AutomaticRolloutEnabled: false, HeldOutMode: "run-held-out", NoHeldOutAccessModes: []string{"verify", "dry-run", "calibrate", "report"}},
+		Runner: RunnerContract{PlanSchemaVersion: "recall-study-run-plan-v1", RowSchemaVersion: RowSetSchemaVersion,
+			ExecutionStage: "issue-110", AcceptsTaskInputs: false, DefaultRecallEnabled: false, AutomaticRolloutEnabled: false,
+			HeldOutMode: "issue-110-execution-only", NoHeldOutAccessModes: []string{"verify", "dry-run", "plan-calibration", "report"}},
 	}
 }
 

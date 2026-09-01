@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/yersonargotev/engram/internal/protocolcontract"
 )
 
 func TestVerifyAndPlanFreezeNonOverlappingPairedCohorts(t *testing.T) {
@@ -15,7 +17,7 @@ func TestVerifyAndPlanFreezeNonOverlappingPairedCohorts(t *testing.T) {
 	report, err := study.Verify(VerificationInput{
 		Calibration:   calibration,
 		HeldOut:       heldOut,
-		Compatibility: CompatibilityEvidence{Revisions: study.Contract.Revisions, Ready: true},
+		Compatibility: compatibleEvidence(study),
 		Consent: ConsentEvidence{StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
 			CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: strings.Repeat("c", 64)},
 	})
@@ -39,6 +41,25 @@ func TestVerifyAndPlanFreezeNonOverlappingPairedCohorts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(calibrationPlan, mustPlan(t, study, calibration)) {
 		t.Fatal("Plan() changed for the same frozen manifest and seed")
+	}
+	changedSeed := *study
+	changedSeed.Contract.Randomization.Seed = "different-frozen-seed"
+	changedPlan := mustPlan(t, &changedSeed, calibration)
+	if reflect.DeepEqual(calibrationPlan, changedPlan) {
+		t.Fatal("Plan() ignored the frozen randomization seed")
+	}
+	for index := 0; index < len(calibrationPlan); index += len(study.Contract.Treatments) {
+		block := calibrationPlan[index : index+len(study.Contract.Treatments)]
+		for _, run := range block[1:] {
+			if run.SamplingUnitID != block[0].SamplingUnitID || run.TaskClass != block[0].TaskClass {
+				t.Fatalf("paired block split by randomization: %+v", block)
+			}
+		}
+	}
+	for index, class := range calibration.TaskClassCycle {
+		if calibrationPlan[index*len(study.Contract.Treatments)].TaskClass != class {
+			t.Fatalf("plan did not preserve task-class stratification at block %d", index)
+		}
 	}
 
 	pairs := make(map[string]map[string]bool)
@@ -77,7 +98,12 @@ func TestVerifyRejectsOverlapMissingConsentCompatibilityAndSampleDrift(t *testin
 		{"unsupported tuple", func(_ *Study, _ *Manifest, _ *Manifest, input *VerificationInput) {
 			input.Compatibility.Revisions.CodexPlugin.Version = "0.1.6"
 		}, "compatibility"},
-		{"not ready", func(_ *Study, _ *Manifest, _ *Manifest, input *VerificationInput) { input.Compatibility.Ready = false }, "compatibility"},
+		{"not ready", func(_ *Study, _ *Manifest, _ *Manifest, input *VerificationInput) {
+			input.Compatibility.Compatibility.Status = protocolcontract.CompatibilityIncompatible
+		}, "compatibility"},
+		{"unattributable tuple", func(_ *Study, _ *Manifest, _ *Manifest, input *VerificationInput) {
+			input.Compatibility.Compatibility.Axes[0].Provenance = "claimed-ready-without-frozen-source"
+		}, "compatibility"},
 		{"manifest identity", func(_ *Study, _ *Manifest, h *Manifest, _ *VerificationInput) { h.StudyVersion = "v2" }, "manifest"},
 		{"manifest selection", func(_ *Study, _ *Manifest, h *Manifest, _ *VerificationInput) { h.Namespace = "changed" }, "manifest"},
 	}
@@ -87,7 +113,7 @@ func TestVerifyRejectsOverlapMissingConsentCompatibilityAndSampleDrift(t *testin
 			study, calibration, heldOut := verifiedStudy(t)
 			input := VerificationInput{
 				Calibration: calibration, HeldOut: heldOut,
-				Compatibility: CompatibilityEvidence{Revisions: study.Contract.Revisions, Ready: true},
+				Compatibility: compatibleEvidence(study),
 				Consent: ConsentEvidence{StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
 					CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: strings.Repeat("c", 64)},
 			}
@@ -125,6 +151,23 @@ func TestLoadManifestRejectsHashDrift(t *testing.T) {
 	}
 }
 
+func TestVerifyRejectsManifestDriftWithRecomputedSidecar(t *testing.T) {
+	t.Parallel()
+
+	study, calibration, heldOut := verifiedStudy(t)
+	drifted := *heldOut
+	drifted.Namespace = "recomputed-held-out"
+	loaded := loadManifestValue(t, drifted)
+	_, err := study.Verify(VerificationInput{
+		Calibration: calibration, HeldOut: &loaded.Manifest, Compatibility: compatibleEvidence(study),
+		Consent: ConsentEvidence{StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
+			CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: strings.Repeat("c", 64)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "manifest identity") {
+		t.Fatalf("Verify() error = %v, want frozen manifest rejection", err)
+	}
+}
+
 func verifiedStudy(t *testing.T) (*Study, *Manifest, *Manifest) {
 	t.Helper()
 	contract := validContract()
@@ -135,7 +178,7 @@ func verifiedStudy(t *testing.T) (*Study, *Manifest, *Manifest) {
 	contract.Cohorts.Calibration.ManifestSHA256 = calibration.Hash
 	contract.Cohorts.HeldOut.ManifestSHA256 = heldOut.Hash
 	contractPath, hashPath := writeFrozenJSON(t, "contract.json", contract)
-	study, err := Load(contractPath, hashPath)
+	study, err := loadContract(contractPath, hashPath, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,4 +215,17 @@ func mustPlan(t *testing.T, study *Study, manifest *Manifest) []PlannedRun {
 		t.Fatal(err)
 	}
 	return plan
+}
+
+func compatibleEvidence(study *Study) CompatibilityEvidence {
+	rangeV1 := &protocolcontract.VersionRange{Minimum: 1, Maximum: 1}
+	provenance := "repository:https://github.com/yersonargotev/engram.git#revision:" + study.Contract.SourceRevision
+	return CompatibilityEvidence{
+		Revisions: study.Contract.Revisions,
+		Compatibility: protocolcontract.Evaluate(
+			protocolcontract.Declaration{Version: study.Contract.Revisions.ManagedPack.Version, Provenance: provenance, Supported: rangeV1},
+			protocolcontract.Declaration{Version: study.Contract.Revisions.EngramBinary.Version, Provenance: provenance, Supported: rangeV1},
+			protocolcontract.Declaration{Version: study.Contract.Revisions.CodexPlugin.Version, Provenance: provenance, Supported: rangeV1},
+		),
+	}
 }

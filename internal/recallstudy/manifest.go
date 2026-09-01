@@ -1,14 +1,13 @@
 package recallstudy
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"io"
 	"reflect"
 	"strings"
+
+	"github.com/yersonargotev/engram/internal/protocolcontract"
 )
 
 const (
@@ -39,8 +38,8 @@ type FrozenManifest struct {
 }
 
 type CompatibilityEvidence struct {
-	Revisions RevisionsContract `json:"revisions"`
-	Ready     bool              `json:"ready"`
+	Revisions     RevisionsContract                    `json:"revisions"`
+	Compatibility protocolcontract.CompatibilityReport `json:"compatibility"`
 }
 
 type ConsentEvidence struct {
@@ -71,6 +70,22 @@ type VerificationReport struct {
 	HeldOutInputsAccessed bool   `json:"held_out_inputs_accessed"`
 }
 
+func ReadCompatibilityEvidence(path string) (CompatibilityEvidence, error) {
+	var evidence CompatibilityEvidence
+	if err := readStrictJSON(path, maxManifestBytes, &evidence); err != nil {
+		return CompatibilityEvidence{}, fmt.Errorf("read Recall study Compatibility evidence: %w", err)
+	}
+	return evidence, nil
+}
+
+func ReadConsentEvidence(path string) (ConsentEvidence, error) {
+	var evidence ConsentEvidence
+	if err := readStrictJSON(path, maxManifestBytes, &evidence); err != nil {
+		return ConsentEvidence{}, fmt.Errorf("read Recall study consent evidence: %w", err)
+	}
+	return evidence, nil
+}
+
 func LoadManifest(manifestPath, hashPath string) (*FrozenManifest, error) {
 	raw, err := readBoundedFile(manifestPath, maxManifestBytes)
 	if err != nil {
@@ -90,14 +105,9 @@ func LoadManifest(manifestPath, hashPath string) (*FrozenManifest, error) {
 		return nil, fmt.Errorf("Recall study manifest hash mismatch: got %s, want %s", actual, want[0])
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var manifest Manifest
-	if err := decoder.Decode(&manifest); err != nil {
+	if err := decodeStrictJSON(raw, &manifest); err != nil {
 		return nil, fmt.Errorf("decode Recall study manifest: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return nil, fmt.Errorf("decode Recall study manifest: multiple JSON values are not allowed")
 	}
 	if err := manifest.validate(); err != nil {
 		return nil, err
@@ -142,7 +152,7 @@ func (study *Study) Verify(input VerificationInput) (VerificationReport, error) 
 	if err := study.verifyManifest(input.HeldOut, contract.Cohorts.HeldOut); err != nil {
 		return VerificationReport{}, err
 	}
-	if !input.Compatibility.Ready || !reflect.DeepEqual(input.Compatibility.Revisions, contract.Revisions) {
+	if !validCompatibilityEvidence(input.Compatibility, contract) {
 		return VerificationReport{}, fmt.Errorf("Recall study Compatibility tuple is unsupported or changed")
 	}
 	consent := input.Consent
@@ -156,6 +166,28 @@ func (study *Study) Verify(input VerificationInput) (VerificationReport, error) 
 		SamplingUnits: contract.Cohorts.RequiredPerTreatment, PlannedRuns: contract.Cohorts.RequiredTotal,
 		Ready: true, HeldOutInputsAccessed: false,
 	}, nil
+}
+
+func validCompatibilityEvidence(evidence CompatibilityEvidence, contract Contract) bool {
+	if !reflect.DeepEqual(evidence.Revisions, contract.Revisions) {
+		return false
+	}
+	report := evidence.Compatibility
+	if len(report.Axes) != 4 {
+		return false
+	}
+	wantVersions := []string{contract.Revisions.ManagedPack.Version, contract.Revisions.EngramBinary.Version, contract.Revisions.CodexPlugin.Version}
+	wantNames := []string{protocolcontract.AxisManagedPack, protocolcontract.AxisEngramBinary, protocolcontract.AxisCodexPlugin}
+	declarations := make([]protocolcontract.Declaration, 3)
+	for index := range declarations {
+		axis := report.Axes[index]
+		if axis.Name != wantNames[index] || axis.Version != wantVersions[index] || !strings.Contains(axis.Provenance, contract.SourceRevision) {
+			return false
+		}
+		declarations[index] = protocolcontract.Declaration{Version: axis.Version, Provenance: axis.Provenance, Supported: axis.Supported, Legacy: axis.Legacy}
+	}
+	want := protocolcontract.Evaluate(declarations[0], declarations[1], declarations[2])
+	return reflect.DeepEqual(report, want)
 }
 
 func (study *Study) verifyManifest(manifest *Manifest, cohort CohortContract) error {

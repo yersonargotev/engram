@@ -20,42 +20,58 @@ type sortableRun struct {
 	run PlannedRun
 }
 
+type plannedBlock struct {
+	key       [sha256.Size]byte
+	class     string
+	unitID    string
+	treatment []sortableRun
+}
+
 // Plan expands a frozen cohort into paired treatment cells and returns only
 // protocol identities. It never opens task inputs or retained evidence.
 func (study *Study) Plan(manifest *Manifest) ([]PlannedRun, error) {
 	if study == nil || manifest == nil {
 		return nil, fmt.Errorf("Recall study plan requires a frozen manifest")
 	}
-	var cohort CohortContract
-	switch manifest.CohortID {
-	case study.Contract.Cohorts.Calibration.ID:
-		cohort = study.Contract.Cohorts.Calibration
-	case study.Contract.Cohorts.HeldOut.ID:
-		cohort = study.Contract.Cohorts.HeldOut
-	default:
+	cohort, ok := study.Contract.cohort(manifest.CohortID)
+	if !ok {
 		return nil, fmt.Errorf("Recall study manifest names an unknown cohort")
 	}
 	if err := study.verifyManifest(manifest, cohort); err != nil {
 		return nil, err
 	}
 
-	runs := make([]sortableRun, 0, manifest.SamplingUnits*len(study.Contract.Treatments))
+	byClass := make(map[string][]plannedBlock, len(manifest.TaskClassCycle))
 	for offset := 0; offset < manifest.SamplingUnits; offset++ {
 		number := manifest.FirstSamplingUnit + offset
 		unitID := fmt.Sprintf("%s-%04d", manifest.Namespace, number)
 		class := manifest.TaskClassCycle[offset%len(manifest.TaskClassCycle)]
+		block := plannedBlock{class: class, unitID: unitID}
+		block.key = sha256.Sum256([]byte(study.Contract.Randomization.Seed + "\x00" + manifest.SelectionSeed + "\x00" + class + "\x00" + unitID))
 		for _, treatment := range study.Contract.Treatments {
 			runID := fmt.Sprintf("%s-%s", unitID, treatment.ID)
 			run := PlannedRun{RunID: runID, SamplingUnitID: unitID, Cohort: manifest.CohortID, TaskClass: class, Treatment: treatment.ID}
-			key := sha256.Sum256([]byte(manifest.SelectionSeed + "\x00" + runID))
-			runs = append(runs, sortableRun{key: key, run: run})
+			key := sha256.Sum256([]byte(study.Contract.Randomization.Seed + "\x00" + unitID + "\x00" + treatment.ID))
+			block.treatment = append(block.treatment, sortableRun{key: key, run: run})
 		}
+		sort.Slice(block.treatment, func(i, j int) bool { return string(block.treatment[i].key[:]) < string(block.treatment[j].key[:]) })
+		byClass[class] = append(byClass[class], block)
 	}
-	sort.Slice(runs, func(i, j int) bool { return string(runs[i].key[:]) < string(runs[j].key[:]) })
-	planned := make([]PlannedRun, len(runs))
-	for index := range runs {
-		planned[index] = runs[index].run
-		planned[index].Sequence = index + 1
+	for class := range byClass {
+		sort.Slice(byClass[class], func(i, j int) bool { return string(byClass[class][i].key[:]) < string(byClass[class][j].key[:]) })
+	}
+	planned := make([]PlannedRun, 0, manifest.SamplingUnits*len(study.Contract.Treatments))
+	for stratumIndex := 0; len(planned) < manifest.SamplingUnits*len(study.Contract.Treatments); stratumIndex++ {
+		for _, class := range manifest.TaskClassCycle {
+			blocks := byClass[class]
+			if stratumIndex >= len(blocks) {
+				continue
+			}
+			for _, treatment := range blocks[stratumIndex].treatment {
+				planned = append(planned, treatment.run)
+				planned[len(planned)-1].Sequence = len(planned)
+			}
+		}
 	}
 	return planned, nil
 }

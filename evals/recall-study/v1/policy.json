@@ -1,0 +1,22 @@
+{
+  "schema_version": "recall-study-policy-v1",
+  "study_id": "codex-useful-recall",
+  "study_version": "v1",
+  "source_revision": "105778d820029a2326043739fd676647e5c037f6",
+  "treatments": [
+    {"id": "broad-chronological", "context": "broad-chronological-injection", "agent_recall": false},
+    {"id": "targeted-recall", "context": "cue-only", "agent_recall": true},
+    {"id": "no-recall", "context": "cue-only", "agent_recall": false}
+  ],
+  "no_recall_eligibility": "frozen-self-contained-task-classes-only",
+  "execution": "fresh-ephemeral-checkout",
+  "pairing_key": "sampling_unit_id",
+  "operational_failures": "exclude-from-quality-and-report-separately",
+  "calibration_report_only": true,
+  "held_out_execution_owner": "issue-110",
+  "held_out_forbidden_modes": ["verify", "dry-run", "plan-calibration", "report"],
+  "default_recall_enabled": false,
+  "automatic_rollout_enabled": false,
+  "private_state": ["consented_task_inputs", "row_level_runs", "explicit_labels"],
+  "shared_state": ["contract", "cohort_manifests", "aggregate_report"]
+}

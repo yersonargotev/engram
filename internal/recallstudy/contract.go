@@ -1,21 +1,23 @@
 package recallstudy
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
 )
 
 const (
-	ContractSchemaVersion = "recall-study-contract-v1"
-	maxContractBytes      = 1 << 20
+	ContractSchemaVersion  = "recall-study-contract-v1"
+	FrozenV1ContractSHA256 = "409df51f1a57062c20abf559c8ffd021a8c52ca0224725d7ba02d7de81570644"
+	maxContractBytes       = 1 << 20
+	frozenPolicyRevision   = "sha256:c3d563e42c751f8496e52074c35f43fcca275ba9d6e3b56f98dfed206e66df9e"
+	frozenMetricRevision   = "sha256:07464f6d260a1952b5aeebeac0c68a2fbad3b4bf8489252f23fea9e85d699f50"
 )
 
 type Study struct {
@@ -173,6 +175,10 @@ type GateClause struct {
 }
 
 type RunnerContract struct {
+	PlanSchemaVersion       string   `json:"plan_schema_version"`
+	RowSchemaVersion        string   `json:"row_schema_version"`
+	ExecutionStage          string   `json:"execution_stage"`
+	AcceptsTaskInputs       bool     `json:"accepts_task_inputs"`
 	DefaultRecallEnabled    bool     `json:"default_recall_enabled"`
 	AutomaticRolloutEnabled bool     `json:"automatic_rollout_enabled"`
 	HeldOutMode             string   `json:"held_out_mode"`
@@ -180,6 +186,10 @@ type RunnerContract struct {
 }
 
 func Load(contractPath, hashPath string) (*Study, error) {
+	return loadContract(contractPath, hashPath, true)
+}
+
+func loadContract(contractPath, hashPath string, enforceTrustAnchor bool) (*Study, error) {
 	raw, err := readBoundedFile(contractPath, maxContractBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read Recall study contract: %w", err)
@@ -198,23 +208,66 @@ func Load(contractPath, hashPath string) (*Study, error) {
 		return nil, fmt.Errorf("Recall study contract hash mismatch: got %s, want %s", actual, want[0])
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var contract Contract
-	if err := decoder.Decode(&contract); err != nil {
+	if err := decodeStrictJSON(raw, &contract); err != nil {
 		return nil, fmt.Errorf("decode Recall study contract: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return nil, fmt.Errorf("decode Recall study contract: multiple JSON values are not allowed")
+	if enforceTrustAnchor && actual != FrozenV1ContractSHA256 {
+		return nil, fmt.Errorf("Recall study contract does not match the compiled frozen v1 trust anchor")
 	}
 	if err := contract.validate(); err != nil {
 		return nil, err
 	}
+	if enforceTrustAnchor {
+		root := filepath.Dir(contractPath)
+		if err := verifyFrozenArtifact(root, "policy", contract.Revisions.Policy.Revision); err != nil {
+			return nil, err
+		}
+		if err := verifyFrozenArtifact(root, "metrics", contract.Revisions.Metric.Revision); err != nil {
+			return nil, err
+		}
+	}
 	return &Study{Contract: contract, Hash: actual}, nil
 }
 
+func verifyFrozenArtifact(root, name, revision string) error {
+	want := strings.TrimPrefix(revision, "sha256:")
+	if !validHexDigest(want, sha256.Size) {
+		return fmt.Errorf("Recall study %s revision is not content-addressed", name)
+	}
+	raw, err := readBoundedFile(filepath.Join(root, name+".json"), maxContractBytes)
+	if err != nil {
+		return fmt.Errorf("read frozen Recall study %s: %w", name, err)
+	}
+	digest := sha256.Sum256(raw)
+	actual := hex.EncodeToString(digest[:])
+	if actual != want {
+		return fmt.Errorf("frozen Recall study %s hash mismatch: got %s, want %s", name, actual, want)
+	}
+	sidecar, err := readBoundedFile(filepath.Join(root, name+".sha256"), 4096)
+	if err != nil {
+		return fmt.Errorf("read frozen Recall study %s sidecar: %w", name, err)
+	}
+	fields := strings.Fields(string(sidecar))
+	if len(fields) == 0 || fields[0] != want {
+		return fmt.Errorf("frozen Recall study %s sidecar does not match its contract revision", name)
+	}
+	return nil
+}
+
+func (contract Contract) cohort(id string) (CohortContract, bool) {
+	switch id {
+	case contract.Cohorts.Calibration.ID:
+		return contract.Cohorts.Calibration, true
+	case contract.Cohorts.HeldOut.ID:
+		return contract.Cohorts.HeldOut, true
+	default:
+		return CohortContract{}, false
+	}
+}
+
 func (contract Contract) validate() error {
-	if contract.SchemaVersion != ContractSchemaVersion || contract.StudyID == "" || contract.StudyVersion == "" || contract.Status != "frozen" {
+	if contract.SchemaVersion != ContractSchemaVersion || contract.StudyID != "codex-useful-recall" || contract.StudyVersion != "v1" || contract.Status != "frozen" {
 		return fmt.Errorf("Recall study identity must be frozen under %s", ContractSchemaVersion)
 	}
 	if !validHexDigest(contract.SourceRevision, 20) || contract.Repository.Revision != contract.SourceRevision || contract.Repository.URL != "https://github.com/yersonargotev/engram.git" {
@@ -267,14 +320,16 @@ func (contract Contract) validate() error {
 	if !reflect.DeepEqual(contract.Gates, expectedGates()) {
 		return fmt.Errorf("Recall study gates must exactly encode the preregistered general-availability thresholds")
 	}
-	if contract.Runner.DefaultRecallEnabled || contract.Runner.AutomaticRolloutEnabled {
+	if contract.Runner.PlanSchemaVersion != "recall-study-run-plan-v1" || contract.Runner.RowSchemaVersion != RowSetSchemaVersion ||
+		contract.Runner.ExecutionStage != "issue-110" || contract.Runner.AcceptsTaskInputs ||
+		contract.Runner.DefaultRecallEnabled || contract.Runner.AutomaticRolloutEnabled {
 		return fmt.Errorf("Recall study cannot enable default Recall or automatic rollout")
 	}
-	wantNoAccess := []string{"calibrate", "dry-run", "report", "verify"}
+	wantNoAccess := []string{"dry-run", "plan-calibration", "report", "verify"}
 	actualNoAccess := append([]string(nil), contract.Runner.NoHeldOutAccessModes...)
 	sort.Strings(actualNoAccess)
-	if contract.Runner.HeldOutMode != "run-held-out" || !reflect.DeepEqual(actualNoAccess, wantNoAccess) {
-		return fmt.Errorf("Recall study held-out access must be limited to run-held-out")
+	if contract.Runner.HeldOutMode != "issue-110-execution-only" || !reflect.DeepEqual(actualNoAccess, wantNoAccess) {
+		return fmt.Errorf("Recall study held-out execution must remain isolated to issue #110")
 	}
 	return nil
 }
@@ -344,7 +399,14 @@ func validRevisions(revisions RevisionsContract, source string) bool {
 	}
 	for name, version := range want {
 		artifact := actual[name]
-		if artifact.Version != version || artifact.Revision != source {
+		wantRevision := source
+		if name == "policy" {
+			wantRevision = frozenPolicyRevision
+		}
+		if name == "metric" {
+			wantRevision = frozenMetricRevision
+		}
+		if artifact.Version != version || artifact.Revision != wantRevision {
 			return false
 		}
 	}

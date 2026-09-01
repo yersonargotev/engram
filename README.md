@@ -430,7 +430,7 @@ Your production engram is fully untouched throughout.
 | `engram timeline <obs_id>`                 | Chronological context                                           |
 | `engram context [project]`                 | Recent session context                                           |
 | `engram activation-study verify\|run\|analyze` | Verify, execute, or analyze a frozen disposable Codex activation cohort |
-| `engram recall-study verify\|dry-run\|calibrate\|run-held-out\|report` | Verify and operate the frozen paired Recall study without enabling rollout |
+| `engram recall-study verify\|dry-run\|plan-calibration\|report` | Verify, plan, and analyze the frozen paired Recall study without enabling rollout |
 | `engram recall-baseline record\|report\|power\|purge` | Collect and reproduce the opt-in content-free local Recall baseline |
 | `engram checkpoint preflight [flags]`      | Inspect prospective Memories without writing local or replicated state |
 | `engram checkpoint record [flags]`         | Record an idempotent local `saved`, `needs_review`, or `skipped` root-turn checkpoint |
@@ -499,11 +499,12 @@ contract](docs/RECALL-BASELINE.md).
 
 ### Paired Recall study
 
-`engram recall-study` validates the immutable v1 contract, cohort manifests,
-consent proof, and Compatibility tuple before it can create a private run plan
-or aggregate a report. Calibration and held-out metadata are non-overlapping;
-only the explicit `run-held-out` mode can authorize the held-out plan. No
-command changes default Recall, enables rollout, or publishes row-level state.
+`engram recall-study` validates the compiled immutable v1 trust anchor,
+content-addressed policy and metric specifications, cohort manifests, consent
+proof, and Compatibility tuple before it can create a private calibration plan
+or derive an aggregate report from disposable calibration rows. No #109 command
+accepts task-input paths, authorizes held-out execution, changes default Recall,
+enables rollout, or publishes row-level state.
 See the [frozen study contract and operator workflow](docs/RECALL-STUDY.md).
 
 ### Key Environment Variables

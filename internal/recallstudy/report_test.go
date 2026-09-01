@@ -21,7 +21,11 @@ func TestReportPreservesLabelsUnknownsDisagreementsAndOnlySharesAggregates(t *te
 	for index, run := range plan {
 		row := RunRow{
 			RunID: run.RunID, SamplingUnitID: run.SamplingUnitID, TaskClass: run.TaskClass, Treatment: run.Treatment,
-			Outcome: "completed", RecallResultCount: 0, FalseEmptyReview: "unknown",
+			Outcome: "completed", RecallResultCount: 0, FalseEmptyReview: "not_applicable",
+			CheckpointSucceeded: true, AutomaticInjectedUTF8Bytes: 1000, StartupCompactLatencyMillis: 100,
+		}
+		if run.Treatment == "targeted-recall" {
+			row.RecallLatencyMillis = 100
 		}
 		if run.Treatment != "no-recall" {
 			row.RecallResultCount = 1
@@ -38,15 +42,14 @@ func TestReportPreservesLabelsUnknownsDisagreementsAndOnlySharesAggregates(t *te
 		rows.Rows = append(rows.Rows, row)
 	}
 
-	evidence := passingEvidence()
-	report, err := study.Report(rows, evidence)
+	report, err := study.Report(rows)
 	if err != nil {
 		t.Fatalf("Report() error = %v", err)
 	}
 	if report.Labels.RunsObserved != len(plan) || report.Labels.UnknownAssessments == 0 || report.Labels.Disagreements != 1 {
 		t.Fatalf("label aggregates = %+v", report.Labels)
 	}
-	if !report.Gates.AllPassed || report.RolloutEnabled {
+	if len(report.Gates.Evidence) != 12 || report.RolloutEnabled {
 		t.Fatalf("gate report = %+v, rollout_enabled=%v", report.Gates, report.RolloutEnabled)
 	}
 
@@ -71,7 +74,7 @@ func TestReportRejectsMissingRowsUnknownLabelsAndRawFields(t *testing.T) {
 
 	missing := rows
 	missing.Rows = missing.Rows[:len(missing.Rows)-1]
-	if _, err := study.Report(missing, passingEvidence()); err == nil || !strings.Contains(err.Error(), "complete") {
+	if _, err := study.Report(missing); err == nil || !strings.Contains(err.Error(), "complete") {
 		t.Fatalf("missing-row Report() error = %v", err)
 	}
 
@@ -80,7 +83,7 @@ func TestReportRejectsMissingRowsUnknownLabelsAndRawFields(t *testing.T) {
 	unknown.Rows[0].Assessments = []Assessment{{ResultKey: "salted", Utility: "helpful", Quality: "current", Source: "evaluator"}}
 	unknown.Rows[0].RecallResultCount = 1
 	unknown.Rows[0].FalseEmptyReview = "not_applicable"
-	if _, err := study.Report(unknown, passingEvidence()); err == nil || !strings.Contains(err.Error(), "utility") {
+	if _, err := study.Report(unknown); err == nil || !strings.Contains(err.Error(), "utility") {
 		t.Fatalf("unknown-label Report() error = %v", err)
 	}
 
@@ -94,35 +97,67 @@ func TestReportRejectsMissingRowsUnknownLabelsAndRawFields(t *testing.T) {
 	}
 }
 
-func TestGateEvaluatorUsesFrozenPointAndConfidenceIntervalClauses(t *testing.T) {
+func TestReportDerivesFrozenMetricsAndIntervalsFromRows(t *testing.T) {
 	t.Parallel()
 
-	study, _, _ := verifiedStudy(t)
-	passing, err := study.EvaluateGates(passingEvidence())
+	study, calibration, _ := verifiedStudy(t)
+	rows := completeRows(study, calibration, mustPlan(t, study, calibration))
+	report, err := study.Report(rows)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !passing.AllPassed || len(passing.Gates) != 10 {
-		t.Fatalf("passing gates = %+v", passing)
+	if len(report.Gates.Gates) != 10 || report.Gates.AllPassed {
+		t.Fatalf("derived gates = %+v", report.Gates)
+	}
+	bytes := metricByID(t, report.Gates, "automatic_injected_bytes_reduction_percent")
+	if bytes.Point != 50 || bytes.CILower != 50 || bytes.CIUpper != 50 || bytes.Numerator != 30000 || bytes.Denominator != 60000 {
+		t.Fatalf("derived bytes metric = %+v", bytes)
+	}
+	repeated, err := study.Report(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstJSON, _ := json.Marshal(report.Gates.Evidence)
+	secondJSON, _ := json.Marshal(repeated.Gates.Evidence)
+	if string(firstJSON) != string(secondJSON) {
+		t.Fatalf("frozen bootstrap changed: first=%s second=%s", firstJSON, secondJSON)
 	}
 
-	failingEvidence := passingEvidence()
-	for index := range failingEvidence {
-		if failingEvidence[index].Metric == "harm_difference_pp" {
-			failingEvidence[index].CIUpper = .1
+	mutated := rows
+	mutated.Rows = append([]RunRow(nil), rows.Rows...)
+	for index := range mutated.Rows {
+		if mutated.Rows[index].Treatment == "targeted-recall" {
+			mutated.Rows[index].AutomaticInjectedUTF8Bytes = 900
 		}
 	}
-	failing, err := study.EvaluateGates(failingEvidence)
+	changed, err := study.Report(mutated)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failing.AllPassed || gateByID(t, failing, "harm").Passed {
-		t.Fatalf("failing gates = %+v", failing)
+	changedBytes := metricByID(t, changed.Gates, "automatic_injected_bytes_reduction_percent").Point
+	if changedBytes < 9.999 || changedBytes > 10.001 {
+		t.Fatalf("metric was not bound to rows: %+v", changed.Gates.Evidence)
 	}
+}
 
-	incomplete := passingEvidence()[:len(passingEvidence())-1]
-	if _, err := study.EvaluateGates(incomplete); err == nil || !strings.Contains(err.Error(), "missing") {
-		t.Fatalf("incomplete EvaluateGates() error = %v", err)
+func TestReportRejectsNoRecallEvidenceAndHeldOutRows(t *testing.T) {
+	t.Parallel()
+
+	study, calibration, heldOut := verifiedStudy(t)
+	rows := completeRows(study, calibration, mustPlan(t, study, calibration))
+	for index := range rows.Rows {
+		if rows.Rows[index].Treatment == "no-recall" {
+			rows.Rows[index].RecallResultCount = 1
+			rows.Rows[index].FalseEmptyReview = "not_applicable"
+			if _, err := study.Report(rows); err == nil || !strings.Contains(err.Error(), "no-Recall") {
+				t.Fatalf("no-Recall contradiction error = %v", err)
+			}
+			break
+		}
+	}
+	heldOutRows := completeRows(study, heldOut, mustPlan(t, study, heldOut))
+	if _, err := study.Report(heldOutRows); err == nil || !strings.Contains(err.Error(), "calibration rows only") {
+		t.Fatalf("held-out Report() error = %v", err)
 	}
 }
 
@@ -148,26 +183,21 @@ func TestPrivateAndSharedArtifactsUseDifferentPermissions(t *testing.T) {
 func completeRows(study *Study, manifest *Manifest, plan []PlannedRun) RowSet {
 	rows := RowSet{SchemaVersion: RowSetSchemaVersion, StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion, ContractSHA256: study.Hash, CohortID: manifest.CohortID}
 	for _, run := range plan {
-		rows.Rows = append(rows.Rows, RunRow{RunID: run.RunID, SamplingUnitID: run.SamplingUnitID, TaskClass: run.TaskClass, Treatment: run.Treatment, Outcome: "completed", FalseEmptyReview: "unknown"})
+		row := RunRow{RunID: run.RunID, SamplingUnitID: run.SamplingUnitID, TaskClass: run.TaskClass, Treatment: run.Treatment,
+			Outcome: "completed", FalseEmptyReview: "not_applicable", CheckpointSucceeded: true,
+			AutomaticInjectedUTF8Bytes: 1000, StartupCompactLatencyMillis: 100}
+		if run.Treatment == "targeted-recall" {
+			row.AutomaticInjectedUTF8Bytes = 500
+			row.StartupCompactLatencyMillis = 60
+			row.RecallLatencyMillis = 100
+		}
+		if run.Treatment != "no-recall" {
+			row.RecallResultCount = 1
+			row.Assessments = []Assessment{{ResultKey: "salted-" + run.RunID, Utility: "orienting", Quality: "current", Source: "evaluator"}}
+		}
+		rows.Rows = append(rows.Rows, row)
 	}
 	return rows
-}
-
-func passingEvidence() []MetricEvidence {
-	return []MetricEvidence{
-		{Metric: "checkpoint_rate_delta_pp", Point: 0, CILower: -1, CIUpper: 1, Numerator: 510, Denominator: 517},
-		{Metric: "stop_growth_pp", Point: 0, CILower: -.5, CIUpper: .5, Numerator: 0, Denominator: 517},
-		{Metric: "automatic_injected_bytes_reduction_percent", Point: 40, CILower: 35, CIUpper: 45, Numerator: 400, Denominator: 1000},
-		{Metric: "startup_compact_p95_reduction_percent", Point: 30, CILower: 26, CIUpper: 34, Numerator: 30, Denominator: 100},
-		{Metric: "recall_p95_ms", Point: 200, CILower: 190, CIUpper: 210, Numerator: 200, Denominator: 1},
-		{Metric: "utility_relative_improvement_percent", Point: 12, CILower: 1, CIUpper: 23, Numerator: 300, Denominator: 517},
-		{Metric: "noise_rate_percent", Point: 15, CILower: 12, CIUpper: 18, Numerator: 75, Denominator: 500},
-		{Metric: "noise_improvement_pp", Point: 5, CILower: 1, CIUpper: 9, Numerator: 25, Denominator: 500},
-		{Metric: "harm_rate_percent", Point: 1, CILower: .2, CIUpper: 1.8, Numerator: 5, Denominator: 500},
-		{Metric: "harm_difference_pp", Point: -.2, CILower: -.5, CIUpper: 0, Numerator: 1, Denominator: 500},
-		{Metric: "false_empty_rate_percent", Point: 2, CILower: 1, CIUpper: 4, Numerator: 10, Denominator: 500},
-		{Metric: "explicit_label_coverage_percent", Point: 85, CILower: 81, CIUpper: 89, Numerator: 425, Denominator: 500},
-	}
 }
 
 func gateByID(t *testing.T, report GateReport, id string) GateResult {
@@ -179,4 +209,15 @@ func gateByID(t *testing.T, report GateReport, id string) GateResult {
 	}
 	t.Fatalf("gate %q not found", id)
 	return GateResult{}
+}
+
+func metricByID(t *testing.T, report GateReport, id string) MetricEvidence {
+	t.Helper()
+	for _, metric := range report.Evidence {
+		if metric.Metric == id {
+			return metric
+		}
+	}
+	t.Fatalf("metric %q not found", id)
+	return MetricEvidence{}
 }

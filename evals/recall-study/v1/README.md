@@ -6,7 +6,9 @@ Calibration owns sampling units 1–60; held-out owns 61–517. The manifests ca
 only protocol metadata and never task inputs, prompts, session identifiers, or
 row-level outcomes.
 
-Operator Compatibility, consent, run plans, task inputs, rows, and metric work
-files stay local and are ignored by Git. See
+The content-addressed `policy.json` and `metrics.json` define treatment and
+analysis semantics. Operator Compatibility, consent, run plans, task inputs,
+rows, labels, and other work files live only under `private/`, which is ignored
+as a whole by Git. See
 [`docs/RECALL-STUDY.md`](../../../docs/RECALL-STUDY.md) for the contract,
 privacy boundary, and commands.

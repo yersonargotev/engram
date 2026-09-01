@@ -87,8 +87,8 @@
     "protocol_contract": {"version": "1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
     "telemetry_schema": {"version": "recall-baseline-events-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
     "capture_schema": {"version": "diagnostic-capture-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
-    "policy": {"version": "recall-policy-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
-    "metric": {"version": "recall-study-metrics-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+    "policy": {"version": "recall-policy-v1", "revision": "sha256:c3d563e42c751f8496e52074c35f43fcca275ba9d6e3b56f98dfed206e66df9e"},
+    "metric": {"version": "recall-study-metrics-v1", "revision": "sha256:07464f6d260a1952b5aeebeac0c68a2fbad3b4bf8489252f23fea9e85d699f50"},
     "source": {"version": "105778d820029a2326043739fd676647e5c037f6", "revision": "105778d820029a2326043739fd676647e5c037f6"}
   },
   "power": {
@@ -131,9 +131,13 @@
     {"id": "label-coverage", "clauses": [{"metric": "explicit_label_coverage_percent", "statistic": "ci_lower", "comparator": "gte", "threshold": 80}]}
   ],
   "runner": {
+    "plan_schema_version": "recall-study-run-plan-v1",
+    "row_schema_version": "recall-study-rows-v1",
+    "execution_stage": "issue-110",
+    "accepts_task_inputs": false,
     "default_recall_enabled": false,
     "automatic_rollout_enabled": false,
-    "held_out_mode": "run-held-out",
-    "no_held_out_access_modes": ["verify", "dry-run", "calibrate", "report"]
+    "held_out_mode": "issue-110-execution-only",
+    "no_held_out_access_modes": ["verify", "dry-run", "plan-calibration", "report"]
   }
 }

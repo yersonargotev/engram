@@ -85,10 +85,11 @@ automation output. Successful JSON is written to stdout; structured errors use
 `{"code","message","details?"}` on stderr with a non-zero exit code.
 
 The separate `engram recall-study` interface is config-free and operates only
-on explicitly supplied frozen artifacts. Its `verify`, `dry-run`, `calibrate`,
-and `report` modes have no held-out task-input flag; `run-held-out` authorizes a
-private held-out plan only after the same hash, Compatibility, and consent
-verification. See [Paired Recall study](docs/RECALL-STUDY.md).
+on explicitly supplied frozen artifacts. Its `verify`, `dry-run`,
+`plan-calibration`, and `report` modes have no task-input flag and cannot
+authorize held-out execution. Reports derive their points, raw denominators,
+unknowns, and frozen confidence intervals from strict disposable calibration
+rows. See [Paired Recall study](docs/RECALL-STUDY.md).
 
 Core curated-memory operations:
 

@@ -15,9 +15,11 @@ changes those values.
 
 The immutable artifacts live in `evals/recall-study/v1/`:
 
-- `contract.json` and `contract.sha256` freeze the model, repository, task
-  protocol, label rubric, revisions, sample size, confidence intervals, and all
-  general-availability gates;
+- `contract.json` and its compiled SHA-256 trust anchor freeze the model,
+  repository, task protocol, label rubric, revisions, sample size, confidence
+  intervals, and all general-availability gates;
+- `policy.json`, `metrics.json`, and their sidecars provide content-addressed
+  treatment and analysis specifications;
 - `calibration/manifest.json` and its sidecar allocate blocks 1–60;
 - `held-out/manifest.json` and its sidecar allocate blocks 61–517.
 
@@ -29,8 +31,9 @@ overlap.
 The source snapshot is
 `105778d820029a2326043739fd676647e5c037f6`. The contract separately records
 Managed Pack 3.3.0, binary 3.0.0, Codex plugin 0.1.7, Protocol 1,
-`recall-baseline-events-v1`, `diagnostic-capture-v1`, `recall-policy-v1`, and
-`recall-study-metrics-v1`, all at that revision. The frozen runner uses Codex
+`recall-baseline-events-v1`, and `diagnostic-capture-v1` at that revision.
+Policy and metric v1 are separately bound by their exact SHA-256 revisions.
+The future execution stage uses Codex
 0.152.0 with `gpt-5.6-luna` at low reasoning effort against fresh ephemeral
 checkouts.
 
@@ -51,11 +54,23 @@ Git. A Compatibility file has this shape:
     "protocol_contract": {"version": "1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
     "telemetry_schema": {"version": "recall-baseline-events-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
     "capture_schema": {"version": "diagnostic-capture-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
-    "policy": {"version": "recall-policy-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
-    "metric": {"version": "recall-study-metrics-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+    "policy": {"version": "recall-policy-v1", "revision": "sha256:c3d563e42c751f8496e52074c35f43fcca275ba9d6e3b56f98dfed206e66df9e"},
+    "metric": {"version": "recall-study-metrics-v1", "revision": "sha256:07464f6d260a1952b5aeebeac0c68a2fbad3b4bf8489252f23fea9e85d699f50"},
     "source": {"version": "105778d820029a2326043739fd676647e5c037f6", "revision": "105778d820029a2326043739fd676647e5c037f6"}
   },
-  "ready": true
+  "compatibility": {
+    "schema_version": "protocol-compatibility-v1",
+    "status": "ready",
+    "reason_code": "protocol_compatible",
+    "reason": "All four attributable Protocol ranges intersect.",
+    "axes": [
+      {"name":"managed_pack","version":"3.3.0","provenance":"repository:https://github.com/yersonargotev/engram.git#revision:105778d820029a2326043739fd676647e5c037f6","supported_protocol":{"minimum":1,"maximum":1},"status":"ready","reason_code":"managed_pack_ready"},
+      {"name":"engram_binary","version":"3.0.0","provenance":"repository:https://github.com/yersonargotev/engram.git#revision:105778d820029a2326043739fd676647e5c037f6","supported_protocol":{"minimum":1,"maximum":1},"status":"ready","reason_code":"engram_binary_ready"},
+      {"name":"codex_plugin","version":"0.1.7","provenance":"repository:https://github.com/yersonargotev/engram.git#revision:105778d820029a2326043739fd676647e5c037f6","supported_protocol":{"minimum":1,"maximum":1},"status":"ready","reason_code":"codex_plugin_ready"},
+      {"name":"protocol_contract","version":"1","provenance":"engram-core","supported_protocol":{"minimum":1,"maximum":1},"status":"ready","reason_code":"protocol_contract_ready"}
+    ],
+    "protocol_intersection": {"minimum":1,"maximum":1}
+  }
 }
 ```
 
@@ -87,46 +102,45 @@ COMMON=(
   --calibration-hash evals/recall-study/v1/calibration/manifest.sha256
   --held-out-manifest evals/recall-study/v1/held-out/manifest.json
   --held-out-hash evals/recall-study/v1/held-out/manifest.sha256
-  --environment evals/recall-study/v1/environment.json
-  --consent evals/recall-study/v1/consent.json
+  --environment evals/recall-study/v1/private/environment.json
+  --consent evals/recall-study/v1/private/consent.json
 )
 
 engram recall-study verify "${COMMON[@]}" --json
 engram recall-study dry-run "${COMMON[@]}" --json
-engram recall-study calibrate "${COMMON[@]}" \
-  --output evals/recall-study/v1/calibration/run-plan.json --json
+engram recall-study plan-calibration "${COMMON[@]}" \
+  --output evals/recall-study/v1/private/calibration/run-plan.json --json
 ```
 
-`verify` and `dry-run` read only frozen metadata. `calibrate` writes a private
-`0600` plan for the 180 calibration cells. None accepts a held-out task-input
-flag. `run-held-out` is the sole mode that can authorize the private 1371-cell
-held-out plan, and only after the same tuple and consent checks:
+`verify` and `dry-run` read only frozen metadata. `plan-calibration` writes a
+private `0600` plan for the 180 calibration cells. No #109 command accepts a
+task-input path, opens held-out inputs, authorizes a held-out run, or executes
+Codex. Calibration execution, held-out authorization and execution, and the
+immutable disposition belong exclusively to issue #110.
 
-```bash
-engram recall-study run-held-out "${COMMON[@]}" \
-  --output evals/recall-study/v1/held-out/run-plan.json --json
-```
+The contract nevertheless freezes the execution boundary in advance: the
+runner must consume `recall-study-run-plan-v1`, produce private
+`recall-study-rows-v1`, keep task inputs outside this command surface, and leave
+default Recall and automatic rollout disabled. Issue #110 must implement that
+shape rather than revising it after results are visible.
 
-The v1 command writes protocol identities and authorization state; it does not
-open task inputs or execute Codex. Study execution and the immutable disposition
-belong to the next delivery stage.
-
-`report` accepts a private strict `recall-study-rows-v1` file and an aggregate
-metric-evidence file. It rejects unknown JSON fields and incomplete plans, then
-writes only aggregate counts, raw denominators, unknowns, confidence intervals,
-and gate results:
+`report` accepts a private strict calibration `recall-study-rows-v1` file. It
+rejects unknown JSON fields, incomplete plans, held-out rows, and treatment
+contradictions. Points, raw denominators, unknowns, Wilson intervals, and the
+frozen deterministic bootstrap intervals are derived from those validated rows;
+callers cannot provide metric values or confidence intervals.
 
 ```bash
 engram recall-study report "${COMMON[@]}" \
-  --rows evals/recall-study/v1/calibration/rows.json \
-  --metrics evals/recall-study/v1/calibration/metrics.json \
-  --output evals/recall-study/v1/calibration/report.json --json
+  --rows evals/recall-study/v1/private/calibration/rows.json \
+  --output evals/recall-study/v1/private/calibration/report.json --json
 ```
 
-Run plans, task inputs, row-level results, label keys, Compatibility evidence,
-consent evidence, and metric work files remain local. Shared reports contain no
-prompt, query, Memory content, assistant text, transcript path, raw identifier,
-or repository diff.
+Every local artifact is placed under `evals/recall-study/v1/private/`; Git
+ignores that directory as a whole. Run plans, task inputs, row-level results,
+label keys, Compatibility evidence, and consent evidence remain local. Shared
+reports contain no prompt, query, Memory content, assistant text, transcript
+path, raw identifier, or repository diff.
 
 ## Frozen gates
 

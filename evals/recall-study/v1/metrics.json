@@ -1,0 +1,31 @@
+{
+  "schema_version": "recall-study-metrics-v1",
+  "study_id": "codex-useful-recall",
+  "study_version": "v1",
+  "population": "completed-paired-calibration-blocks",
+  "baseline_treatment": "broad-chronological",
+  "candidate_treatment": "targeted-recall",
+  "rate_interval": "wilson-95",
+  "paired_interval": "deterministic-sampling-unit-bootstrap-95",
+  "bootstrap_resamples": 10000,
+  "bootstrap_seed": "codex-useful-recall-v1-bootstrap",
+  "bootstrap_quantiles": [0.025, 0.975],
+  "unknowns": "reported-and-excluded-from-explicit-label-denominators",
+  "operational_failures": "reported-and-excluded-from-paired-quality-metrics",
+  "label_sources": ["agent_explicit", "user_explicit", "evaluator"],
+  "disagreements": "preserved; any harmful-or-noise label is counted conservatively",
+  "metrics": [
+    {"id": "checkpoint_rate_delta_pp", "formula": "100*(targeted checkpoint rate-broad checkpoint rate)", "interval": "paired"},
+    {"id": "stop_growth_pp", "formula": "100*(targeted Stop conflict-or-loop rate-broad rate)", "interval": "paired"},
+    {"id": "automatic_injected_bytes_reduction_percent", "formula": "100*(1-targeted mean bytes/broad mean bytes)", "interval": "paired"},
+    {"id": "startup_compact_p95_reduction_percent", "formula": "100*(1-targeted p95 latency/broad p95 latency)", "interval": "paired"},
+    {"id": "recall_p95_ms", "formula": "targeted successful Recall latency p95", "interval": "bootstrap"},
+    {"id": "utility_relative_improvement_percent", "formula": "100*(targeted useful explicit-label rate/broad rate-1)", "interval": "paired"},
+    {"id": "noise_rate_percent", "formula": "100*(targeted duplicate-or-unused results/targeted explicit utility labels)", "interval": "wilson"},
+    {"id": "noise_improvement_pp", "formula": "100*(broad noise rate-targeted noise rate)", "interval": "paired"},
+    {"id": "harm_rate_percent", "formula": "100*(targeted stale-or-contradictory results/targeted explicit quality labels)", "interval": "wilson"},
+    {"id": "harm_difference_pp", "formula": "100*(targeted harm rate-broad harm rate)", "interval": "paired"},
+    {"id": "false_empty_rate_percent", "formula": "100*(confirmed false-empty targeted runs/explicitly reviewed empty targeted runs)", "interval": "wilson"},
+    {"id": "explicit_label_coverage_percent", "formula": "100*(distinct exposed results with eligible explicit utility-and-quality labels/all exposed broad-and-targeted results)", "interval": "wilson"}
+  ]
+}

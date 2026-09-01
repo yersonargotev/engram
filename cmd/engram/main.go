@@ -3552,7 +3552,7 @@ Commands:
   doctor             Run read-only operational diagnostics [--json] [--project P] [--check CODE]
   context [project]  Show recent context from previous sessions [--scope SCOPE] [--json]
   activation-study   Verify, run, or analyze the frozen Codex activation cohort
-  recall-study       Verify, plan, calibrate, or report the frozen paired Recall study
+  recall-study       Verify, plan, or report the frozen paired Recall study
   recall-baseline    Record and report content-free local operational evidence
                        record|report|power|purge (see recall-baseline --help)
   recall-feedback    Report aggregate-only local Recall utility and quality metrics

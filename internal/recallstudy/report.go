@@ -1,10 +1,7 @@
 package recallstudy
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"sort"
 	"strings"
@@ -27,15 +24,20 @@ type RowSet struct {
 }
 
 type RunRow struct {
-	RunID             string       `json:"run_id"`
-	SamplingUnitID    string       `json:"sampling_unit_id"`
-	TaskClass         string       `json:"task_class"`
-	Treatment         string       `json:"treatment"`
-	Outcome           string       `json:"outcome"`
-	OmissionCode      string       `json:"omission_code,omitempty"`
-	RecallResultCount int          `json:"recall_result_count"`
-	FalseEmptyReview  string       `json:"false_empty_review"`
-	Assessments       []Assessment `json:"assessments,omitempty"`
+	RunID                       string       `json:"run_id"`
+	SamplingUnitID              string       `json:"sampling_unit_id"`
+	TaskClass                   string       `json:"task_class"`
+	Treatment                   string       `json:"treatment"`
+	Outcome                     string       `json:"outcome"`
+	OmissionCode                string       `json:"omission_code,omitempty"`
+	RecallResultCount           int          `json:"recall_result_count"`
+	FalseEmptyReview            string       `json:"false_empty_review"`
+	Assessments                 []Assessment `json:"assessments,omitempty"`
+	CheckpointSucceeded         bool         `json:"checkpoint_succeeded"`
+	StopConflictOrLoop          bool         `json:"stop_conflict_or_loop"`
+	AutomaticInjectedUTF8Bytes  int64        `json:"automatic_injected_utf8_bytes"`
+	StartupCompactLatencyMillis float64      `json:"startup_compact_latency_ms"`
+	RecallLatencyMillis         float64      `json:"recall_latency_ms"`
 }
 
 type Assessment struct {
@@ -116,28 +118,23 @@ type Report struct {
 }
 
 func ReadRowSet(path string) (RowSet, error) {
-	raw, err := readBoundedFile(path, maxRowSetBytes)
-	if err != nil {
-		return RowSet{}, fmt.Errorf("read Recall study rows: %w", err)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var rows RowSet
-	if err := decoder.Decode(&rows); err != nil {
-		return RowSet{}, fmt.Errorf("decode Recall study rows: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return RowSet{}, fmt.Errorf("decode Recall study rows: multiple JSON values are not allowed")
+	if err := readStrictJSON(path, maxRowSetBytes, &rows); err != nil {
+		return RowSet{}, fmt.Errorf("read Recall study rows: %w", err)
 	}
 	return rows, nil
 }
 
-func (study *Study) Report(rows RowSet, evidence []MetricEvidence) (Report, error) {
+func (study *Study) Report(rows RowSet) (Report, error) {
 	labels, err := study.aggregateRows(rows)
 	if err != nil {
 		return Report{}, err
 	}
-	gates, err := study.EvaluateGates(evidence)
+	evidence, err := study.deriveMetrics(rows.Rows)
+	if err != nil {
+		return Report{}, err
+	}
+	gates, err := study.evaluateGates(evidence)
 	if err != nil {
 		return Report{}, err
 	}
@@ -233,7 +230,18 @@ func validateRunRow(row RunRow) error {
 	if row.RecallResultCount < 0 {
 		return fmt.Errorf("Recall study row result count is invalid")
 	}
-	if row.RecallResultCount == 0 {
+	if row.AutomaticInjectedUTF8Bytes < 0 || !finite(row.StartupCompactLatencyMillis) || row.StartupCompactLatencyMillis < 0 ||
+		!finite(row.RecallLatencyMillis) || row.RecallLatencyMillis < 0 {
+		return fmt.Errorf("Recall study row measurements are invalid")
+	}
+	if row.Treatment == "targeted-recall" && row.Outcome == "completed" && row.RecallLatencyMillis <= 0 {
+		return fmt.Errorf("Recall study targeted-Recall row is missing Recall latency")
+	}
+	if row.Treatment == "no-recall" {
+		if row.RecallResultCount != 0 || len(row.Assessments) != 0 || row.FalseEmptyReview != "not_applicable" || row.RecallLatencyMillis != 0 {
+			return fmt.Errorf("Recall study no-Recall row contradicts its treatment")
+		}
+	} else if row.RecallResultCount == 0 && row.Treatment == "targeted-recall" {
 		if row.FalseEmptyReview != "confirmed" && row.FalseEmptyReview != "rejected" && row.FalseEmptyReview != "unknown" {
 			return fmt.Errorf("Recall study false-empty review is invalid")
 		}
@@ -269,14 +277,14 @@ func validateRunRow(row RunRow) error {
 }
 
 func (study *Study) manifestContractForRows(cohortID string) (CohortContract, error) {
-	switch cohortID {
-	case study.Contract.Cohorts.Calibration.ID:
-		return study.Contract.Cohorts.Calibration, nil
-	case study.Contract.Cohorts.HeldOut.ID:
-		return study.Contract.Cohorts.HeldOut, nil
-	default:
+	if cohortID != study.Contract.Cohorts.Calibration.ID {
+		return CohortContract{}, fmt.Errorf("Recall study report accepts calibration rows only; held-out analysis belongs to the execution stage")
+	}
+	cohort, ok := study.Contract.cohort(cohortID)
+	if !ok {
 		return CohortContract{}, fmt.Errorf("Recall study row set names an unknown cohort")
 	}
+	return cohort, nil
 }
 
 func plannedFromContract(study *Study, cohort CohortContract) []PlannedRun {
@@ -293,7 +301,7 @@ func plannedFromContract(study *Study, cohort CohortContract) []PlannedRun {
 	return plan
 }
 
-func (study *Study) EvaluateGates(evidence []MetricEvidence) (GateReport, error) {
+func (study *Study) evaluateGates(evidence []MetricEvidence) (GateReport, error) {
 	if study == nil {
 		return GateReport{}, fmt.Errorf("Recall study gate evaluation requires a contract")
 	}
@@ -308,7 +316,7 @@ func (study *Study) EvaluateGates(evidence []MetricEvidence) (GateReport, error)
 		if !want[metric.Metric] || byMetric[metric.Metric].Metric != "" {
 			return GateReport{}, fmt.Errorf("Recall study gate evidence contains an unknown or duplicate metric %q", metric.Metric)
 		}
-		if !finiteMetric(metric) || metric.Denominator < 1 || metric.Numerator < 0 || metric.Unknown < 0 || metric.CILower > metric.CIUpper {
+		if !finiteMetric(metric) || metric.Denominator < 0 || metric.Numerator < 0 || metric.Unknown < 0 || metric.CILower > metric.CIUpper {
 			return GateReport{}, fmt.Errorf("Recall study gate evidence for %q is invalid", metric.Metric)
 		}
 		byMetric[metric.Metric] = metric

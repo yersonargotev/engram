@@ -16,5 +16,307 @@
   ],
   "selection_seed": "codex-useful-recall-v1-calibration-v1",
   "consent_requirement": "explicit-before-evidence",
-  "input_commitment": "sha256-per-consented-task"
+  "input_commitment": "sha256-per-consented-task",
+  "tasks": [
+    {
+      "sampling_unit_id": "cal-0001",
+      "task_class": "repository-question",
+      "input_sha256": "a7c578835dc0ad2755b724c0f1c4ee083b7c6e5248963cd463b868cf3821c2b3"
+    },
+    {
+      "sampling_unit_id": "cal-0002",
+      "task_class": "implementation",
+      "input_sha256": "e19048ac447ea97b482b471482e226810f19215bfef0777713e703014c806a2a"
+    },
+    {
+      "sampling_unit_id": "cal-0003",
+      "task_class": "diagnosis",
+      "input_sha256": "64360cafa8ee371ef26dd1a2a4e57543a9a36fadaef25a22f9c39be14b44b183"
+    },
+    {
+      "sampling_unit_id": "cal-0004",
+      "task_class": "verification",
+      "input_sha256": "b2c9e21a4dbf385d2d3500f7c2f0337171ebc2a88c7f354cabdc25eccecc9492"
+    },
+    {
+      "sampling_unit_id": "cal-0005",
+      "task_class": "routine-non-durable",
+      "input_sha256": "fc5e0513f58f55bd826bfe7932082532ea54fafa15a526614f8bef3396c5fe47"
+    },
+    {
+      "sampling_unit_id": "cal-0006",
+      "task_class": "repository-question",
+      "input_sha256": "86df3a1dfab069106ab676bea96a0ec8e20300f3b6d13aa3490c55b13c6a64df"
+    },
+    {
+      "sampling_unit_id": "cal-0007",
+      "task_class": "implementation",
+      "input_sha256": "161b763b60b69159b3314c90bb445935bf12b93ca10a9d8e4f908aad75e4a968"
+    },
+    {
+      "sampling_unit_id": "cal-0008",
+      "task_class": "diagnosis",
+      "input_sha256": "26291dd1d6472e60492e6d56c61af36f3d537d072cd7170039aca701faf86f2d"
+    },
+    {
+      "sampling_unit_id": "cal-0009",
+      "task_class": "verification",
+      "input_sha256": "e3ff317bdb81716a662a63111f89a8ae6eea60801a1cbfcd3c020b2fea0bcd35"
+    },
+    {
+      "sampling_unit_id": "cal-0010",
+      "task_class": "routine-non-durable",
+      "input_sha256": "15f852786662b710959e1841b559bdab46674b3f81b968e1a8e1eff615041193"
+    },
+    {
+      "sampling_unit_id": "cal-0011",
+      "task_class": "repository-question",
+      "input_sha256": "61eecc418c4b7e294b1633f988885ff9b89235eb9f837a1cb543aa982f66773f"
+    },
+    {
+      "sampling_unit_id": "cal-0012",
+      "task_class": "implementation",
+      "input_sha256": "35af3c84099cd13f43b51ac18716a35126f2a635b3cb3dba86d823255a69751e"
+    },
+    {
+      "sampling_unit_id": "cal-0013",
+      "task_class": "diagnosis",
+      "input_sha256": "8d3bfa8ab84b4508e2cbe77e0306e07a68362232a6583a0f555f5b014d4d1f95"
+    },
+    {
+      "sampling_unit_id": "cal-0014",
+      "task_class": "verification",
+      "input_sha256": "1084709aeeacf8f74fad961edcef2d8fce4333108535b6bec93539315fb34223"
+    },
+    {
+      "sampling_unit_id": "cal-0015",
+      "task_class": "routine-non-durable",
+      "input_sha256": "9ca1cc3913092a9c0a47b5670a64b56d315cee41797382b4e3d1cb22871655cf"
+    },
+    {
+      "sampling_unit_id": "cal-0016",
+      "task_class": "repository-question",
+      "input_sha256": "e8df3f5621d9d147a1715a117d4ac21bf18d1c2b96647121c6b7023a66d96840"
+    },
+    {
+      "sampling_unit_id": "cal-0017",
+      "task_class": "implementation",
+      "input_sha256": "ac73e7f40a5b46e329399cc1cfe57937245895b0c5a5b6ecf89f3cc4169395ca"
+    },
+    {
+      "sampling_unit_id": "cal-0018",
+      "task_class": "diagnosis",
+      "input_sha256": "63c5f112cced49d87e4b1c6f087087dbb51c31b02719d3ba470268d3c3f20cd7"
+    },
+    {
+      "sampling_unit_id": "cal-0019",
+      "task_class": "verification",
+      "input_sha256": "c352cd281a981a824c9be1bc22e2bf7272148a46a0cb32d2a803686330162125"
+    },
+    {
+      "sampling_unit_id": "cal-0020",
+      "task_class": "routine-non-durable",
+      "input_sha256": "1f67edb3c5c4ce3f67a93bbde013dc270ed75ace1b9026832185f16811f1d9de"
+    },
+    {
+      "sampling_unit_id": "cal-0021",
+      "task_class": "repository-question",
+      "input_sha256": "8a4d7736e44a128d69771955d05fb3f415318571483e0063e0e1d3dcb1a3ce51"
+    },
+    {
+      "sampling_unit_id": "cal-0022",
+      "task_class": "implementation",
+      "input_sha256": "3e40e37a79222bde8d7fe709aee4a342037f7785ab410c9dd21fc7b928d7f395"
+    },
+    {
+      "sampling_unit_id": "cal-0023",
+      "task_class": "diagnosis",
+      "input_sha256": "31b3d48a367460bb920e7eba89c0260a2a2d93bc49aff2508a630eb045d59ef0"
+    },
+    {
+      "sampling_unit_id": "cal-0024",
+      "task_class": "verification",
+      "input_sha256": "c95178475b8e9d8d19b8edde301b1a6f15830c2a1ac4634647f311ed90c82425"
+    },
+    {
+      "sampling_unit_id": "cal-0025",
+      "task_class": "routine-non-durable",
+      "input_sha256": "f20fd3fc85ab804de39a764a076823386e50868fe99be12c23fc7cc725c64e1a"
+    },
+    {
+      "sampling_unit_id": "cal-0026",
+      "task_class": "repository-question",
+      "input_sha256": "762bd2a9dafa6bb7560f64fdf957e0a78e003555d292ff8a600a2945147ef08d"
+    },
+    {
+      "sampling_unit_id": "cal-0027",
+      "task_class": "implementation",
+      "input_sha256": "5e699d61f3827c919ce3ab01295e41da0763cc10c29062efbb36859d80642084"
+    },
+    {
+      "sampling_unit_id": "cal-0028",
+      "task_class": "diagnosis",
+      "input_sha256": "f54b19a365ea694f44de1340225aedeb72c981e186fc0002922ff47ca52d5dcf"
+    },
+    {
+      "sampling_unit_id": "cal-0029",
+      "task_class": "verification",
+      "input_sha256": "b3f9500ed9cdc387a0cb50b75cdebf2a3d31380cf0d72c43a738a27211bd319c"
+    },
+    {
+      "sampling_unit_id": "cal-0030",
+      "task_class": "routine-non-durable",
+      "input_sha256": "bd4c6b44cd46039642ad023b8793bd2ca3abef79a0d6beeae7d3ae457a0fac01"
+    },
+    {
+      "sampling_unit_id": "cal-0031",
+      "task_class": "repository-question",
+      "input_sha256": "c43518de3f999fca711af522f8f9714fb3961fd74ef7ac5075a84c486514ddb6"
+    },
+    {
+      "sampling_unit_id": "cal-0032",
+      "task_class": "implementation",
+      "input_sha256": "708ef9b3e1e72eb447355603bb9c63fecb17c1074e8ff76688c9480bd2f0ca73"
+    },
+    {
+      "sampling_unit_id": "cal-0033",
+      "task_class": "diagnosis",
+      "input_sha256": "cfa7b8231f8560e1a399b4ecea6d816a0dd790d84c4400d58527601cdb6a2a8f"
+    },
+    {
+      "sampling_unit_id": "cal-0034",
+      "task_class": "verification",
+      "input_sha256": "1fa256e79a8a87fd54dbe0331276cfd8e897e09b7961a9bec8135e99dea3c941"
+    },
+    {
+      "sampling_unit_id": "cal-0035",
+      "task_class": "routine-non-durable",
+      "input_sha256": "ac2bc55ec5798c22c3a3af6aa082cf136d96cf41dfde0a87839fed4477080800"
+    },
+    {
+      "sampling_unit_id": "cal-0036",
+      "task_class": "repository-question",
+      "input_sha256": "9bf3587ce693dcaa6c43c0955516befa7f6bb6dac3c2afe49e6017b1fb5b4d9f"
+    },
+    {
+      "sampling_unit_id": "cal-0037",
+      "task_class": "implementation",
+      "input_sha256": "7ce4c3756aa8bb3882a252c6dc7efde23f3bab71dc097602757278a411076e40"
+    },
+    {
+      "sampling_unit_id": "cal-0038",
+      "task_class": "diagnosis",
+      "input_sha256": "8809d9c5f948804d259aaf70935cfa96d8c92fdd8133188fdd5ece98713747aa"
+    },
+    {
+      "sampling_unit_id": "cal-0039",
+      "task_class": "verification",
+      "input_sha256": "d1f26655ca656daf92fb956c093bb01f5beae3d74b1cc6771c672220145a17c2"
+    },
+    {
+      "sampling_unit_id": "cal-0040",
+      "task_class": "routine-non-durable",
+      "input_sha256": "39eb9223c5409244d1cee85e07cec80d5c2b0d8873275e9e0e942f219f802349"
+    },
+    {
+      "sampling_unit_id": "cal-0041",
+      "task_class": "repository-question",
+      "input_sha256": "6e2a96ea9b70d43a99caa598275915259163262db463a7bae3699df4dea5019d"
+    },
+    {
+      "sampling_unit_id": "cal-0042",
+      "task_class": "implementation",
+      "input_sha256": "96fb4e7a9c7a852a0cca4e928deab8f50bd6f1eca77876eb44a6a2215a4b5e38"
+    },
+    {
+      "sampling_unit_id": "cal-0043",
+      "task_class": "diagnosis",
+      "input_sha256": "502b8f7e78717db4a7d3af7fe95936c98b72a942a3e7712561c7c6e4d912a079"
+    },
+    {
+      "sampling_unit_id": "cal-0044",
+      "task_class": "verification",
+      "input_sha256": "b12df250e6315cce1bccd0fd857e9bbe7ee0722bb199a8f235f0c0afdd67d29a"
+    },
+    {
+      "sampling_unit_id": "cal-0045",
+      "task_class": "routine-non-durable",
+      "input_sha256": "25f79c9083303a5f84f2d064389aa90cd60f7758f409456ca726b35fee9d1877"
+    },
+    {
+      "sampling_unit_id": "cal-0046",
+      "task_class": "repository-question",
+      "input_sha256": "25b059b91f706eb68b0d696efb6ce70ab9096f4b33236e17380ea4ab41024184"
+    },
+    {
+      "sampling_unit_id": "cal-0047",
+      "task_class": "implementation",
+      "input_sha256": "edf753f6b36d551fee5f1c2708c13f964c92c79bde8f99fa575c8e1c59879c22"
+    },
+    {
+      "sampling_unit_id": "cal-0048",
+      "task_class": "diagnosis",
+      "input_sha256": "387a8240ba8aaf5156f8370b9e3bd55b20f32e599120832278d2c520ba452cd8"
+    },
+    {
+      "sampling_unit_id": "cal-0049",
+      "task_class": "verification",
+      "input_sha256": "efdb02916ed3b0a71ec8d356024d27a73df2f114dfec830016279f29c92264aa"
+    },
+    {
+      "sampling_unit_id": "cal-0050",
+      "task_class": "routine-non-durable",
+      "input_sha256": "3ed3339dca9ea24dc6fe09d6472393097e45d114822b596199165d242714c360"
+    },
+    {
+      "sampling_unit_id": "cal-0051",
+      "task_class": "repository-question",
+      "input_sha256": "c349bd22712a6e71701eac19ac1d91906b781fa699c724aa974246675f7d257e"
+    },
+    {
+      "sampling_unit_id": "cal-0052",
+      "task_class": "implementation",
+      "input_sha256": "a921543220bde1c1aba64bcebd187b438fb42d2b159f4a1806d530eeda68ec90"
+    },
+    {
+      "sampling_unit_id": "cal-0053",
+      "task_class": "diagnosis",
+      "input_sha256": "504b45d8d0b3654afaaf5b20ed3e5d191e72e07bb88feaef6a0bd8feae1434e0"
+    },
+    {
+      "sampling_unit_id": "cal-0054",
+      "task_class": "verification",
+      "input_sha256": "17c4a6a4049b888c54ea4ded5731de8d57067443fb4ef0c6f666be4ab027825c"
+    },
+    {
+      "sampling_unit_id": "cal-0055",
+      "task_class": "routine-non-durable",
+      "input_sha256": "d823df882ffcbd04475aea4a20bfb4cc40de142fa4e4d5f70f2ca0edd1dbeb8a"
+    },
+    {
+      "sampling_unit_id": "cal-0056",
+      "task_class": "repository-question",
+      "input_sha256": "ca55e6d092bc786d199a6bd130a6396da8869dcaef14740a0985128cdcfc0a7b"
+    },
+    {
+      "sampling_unit_id": "cal-0057",
+      "task_class": "implementation",
+      "input_sha256": "43ff9aa6c2311b46098145e74f9077c512c7b8bd1d79c4fa7df4b50e84b6beab"
+    },
+    {
+      "sampling_unit_id": "cal-0058",
+      "task_class": "diagnosis",
+      "input_sha256": "0eaf58c297e3cf1c3db9b1fc50851af668701ab953f54c966b2947988110a52c"
+    },
+    {
+      "sampling_unit_id": "cal-0059",
+      "task_class": "verification",
+      "input_sha256": "44074627f9c4000a08d8f8b0fe7dee79e492821be8c15190d53e5158bafc583c"
+    },
+    {
+      "sampling_unit_id": "cal-0060",
+      "task_class": "routine-non-durable",
+      "input_sha256": "57452b28bd00058a032da25789a62f02ea5b9a45ae66fe132d9f8f07e604f43a"
+    }
+  ]
 }

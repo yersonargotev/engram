@@ -10,6 +10,8 @@
   ],
   "no_recall_eligibility": "frozen-self-contained-task-classes-only",
   "execution": "fresh-ephemeral-checkout",
+  "task_protocol": "sha256:669c2261f43f946dac302605401694c827d255693b0ee3688bac7871c12f148c",
+  "task_membership": "per-unit recall-task-input-v1 SHA-256 commitments in each immutable cohort manifest",
   "pairing_key": "sampling_unit_id",
   "operational_failures": "exclude-from-quality-and-report-separately",
   "calibration_report_only": true,

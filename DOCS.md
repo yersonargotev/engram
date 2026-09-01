@@ -89,7 +89,9 @@ on explicitly supplied frozen artifacts. Its `verify`, `dry-run`,
 `plan-calibration`, and `report` modes have no task-input flag and cannot
 authorize held-out execution. Reports derive their points, raw denominators,
 unknowns, and frozen confidence intervals from strict disposable calibration
-rows. See [Paired Recall study](docs/RECALL-STUDY.md).
+rows; the same frozen domain shape supports held-out and combined analysis in
+#110, with per-arm duplicate and time-to-useful outcomes. See [Paired Recall
+study](docs/RECALL-STUDY.md).
 
 Core curated-memory operations:
 

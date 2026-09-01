@@ -37,11 +37,11 @@ func (study *Study) deriveMetrics(rows []RunRow) ([]MetricEvidence, error) {
 
 	evidence = append(evidence, pairedBooleanMetric(
 		"checkpoint_rate_delta_pp", pairs, omitted, seed, resamples,
-		func(row RunRow) bool { return row.CheckpointSucceeded }, false,
+		func(row RunRow) bool { return row.CheckpointSucceeded },
 	))
 	evidence = append(evidence, pairedBooleanMetric(
 		"stop_growth_pp", pairs, omitted, seed, resamples,
-		func(row RunRow) bool { return row.StopConflictOrLoop }, false,
+		func(row RunRow) bool { return row.StopConflictOrLoop },
 	))
 
 	bytesMetric, err := pairedReductionMetric(
@@ -86,7 +86,7 @@ func (study *Study) deriveMetrics(rows []RunRow) ([]MetricEvidence, error) {
 	}
 	evidence = append(evidence, utilityMetric)
 
-	targetNoise, targetUtilityDenominator, targetUtilityUnknown := aggregateLabelRate(pairs, false, func(stats labelStats) (int, int, int) {
+	targetNoise, targetUtilityDenominator, targetUtilityUnknown := aggregateTargetLabelRate(pairs, func(stats labelStats) (int, int, int) {
 		return stats.noise, stats.explicitUtility, stats.exposed - stats.explicitUtility
 	})
 	noiseLower, noiseUpper := wilsonPercent(targetNoise, targetUtilityDenominator)
@@ -99,7 +99,7 @@ func (study *Study) deriveMetrics(rows []RunRow) ([]MetricEvidence, error) {
 	}
 	evidence = append(evidence, noiseImprovement)
 
-	targetHarm, targetQualityDenominator, targetQualityUnknown := aggregateLabelRate(pairs, false, func(stats labelStats) (int, int, int) {
+	targetHarm, targetQualityDenominator, targetQualityUnknown := aggregateTargetLabelRate(pairs, func(stats labelStats) (int, int, int) {
 		return stats.harm, stats.explicitQuality, stats.exposed - stats.explicitQuality
 	})
 	harmLower, harmUpper := wilsonPercent(targetHarm, targetQualityDenominator)
@@ -147,6 +147,112 @@ func (study *Study) deriveMetrics(rows []RunRow) ([]MetricEvidence, error) {
 	return evidence, nil
 }
 
+func (study *Study) deriveTreatmentMetrics(rows []RunRow) ([]TreatmentMetric, error) {
+	byTreatment := make(map[string][]RunRow, len(study.Contract.Treatments))
+	for _, row := range rows {
+		if row.Outcome == "completed" {
+			byTreatment[row.Treatment] = append(byTreatment[row.Treatment], row)
+		}
+	}
+	result := make([]TreatmentMetric, 0, len(study.Contract.Treatments)*10)
+	for _, treatment := range study.Contract.Treatments {
+		completed := byTreatment[treatment.ID]
+		unknownRuns := countTreatmentRows(rows, treatment.ID) - len(completed)
+		if len(completed) == 0 {
+			return nil, fmt.Errorf("Recall study treatment %s has no completed rows", treatment.ID)
+		}
+		result = append(result,
+			treatmentRateMetric(treatment.ID, "checkpoint_success_rate_percent", completed, unknownRuns, func(row RunRow) bool { return row.CheckpointSucceeded }),
+			treatmentRateMetric(treatment.ID, "stop_conflict_or_loop_rate_percent", completed, unknownRuns, func(row RunRow) bool { return row.StopConflictOrLoop }),
+			treatmentValueMetric(study, treatment.ID, "automatic_injected_bytes_mean", completed, unknownRuns, func(row RunRow) float64 { return float64(row.AutomaticInjectedUTF8Bytes) }, mean),
+			treatmentValueMetric(study, treatment.ID, "startup_compact_p95_ms", completed, unknownRuns, func(row RunRow) float64 { return row.StartupCompactLatencyMillis }, func(values []float64) float64 { return percentile(values, .95) }),
+			treatmentValueMetric(study, treatment.ID, "time_to_useful_p95_ms", completed, unknownRuns, func(row RunRow) float64 { return row.TimeToUsefulMillis }, func(values []float64) float64 { return percentile(values, .95) }),
+		)
+		if treatment.ID == "targeted-recall" {
+			result = append(result, treatmentValueMetric(study, treatment.ID, "recall_p95_ms", completed, unknownRuns,
+				func(row RunRow) float64 { return row.RecallLatencyMillis }, func(values []float64) float64 { return percentile(values, .95) }))
+		}
+		result = append(result, treatmentLabelMetrics(treatment.ID, completed, unknownRuns)...)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Treatment == result[j].Treatment {
+			return result[i].Metric < result[j].Metric
+		}
+		return result[i].Treatment < result[j].Treatment
+	})
+	return result, nil
+}
+
+func treatmentRateMetric(treatment, metric string, rows []RunRow, unknown int, predicate func(RunRow) bool) TreatmentMetric {
+	count := 0
+	for _, row := range rows {
+		count += boolInt(predicate(row))
+	}
+	lower, upper := wilsonPercent(count, len(rows))
+	return TreatmentMetric{Treatment: treatment, Metric: metric, Point: percent(count, len(rows)), CILower: lower, CIUpper: upper,
+		Numerator: count, Denominator: len(rows), Unknown: unknown}
+}
+
+func treatmentValueMetric(study *Study, treatment, metric string, rows []RunRow, unknown int, value func(RunRow) float64, statistic func([]float64) float64) TreatmentMetric {
+	values := make([]float64, len(rows))
+	for index, row := range rows {
+		values[index] = value(row)
+	}
+	point := statistic(values)
+	lower, upper := bootstrapValues(study.Contract.Intervals.BootstrapSeed+"\x00"+treatment+"\x00"+metric, values,
+		study.Contract.Intervals.BootstrapResamples, statistic)
+	return TreatmentMetric{Treatment: treatment, Metric: metric, Point: point, CILower: lower, CIUpper: upper,
+		Numerator: int(math.Round(sum(values))), Denominator: len(values), Unknown: unknown}
+}
+
+func treatmentLabelMetrics(treatment string, rows []RunRow, unknownRuns int) []TreatmentMetric {
+	aggregate := labelStats{}
+	duplicate := 0
+	for _, row := range rows {
+		stats := rowLabelStats(row)
+		aggregate.exposed += stats.exposed
+		aggregate.explicitUtility += stats.explicitUtility
+		aggregate.useful += stats.useful
+		aggregate.noise += stats.noise
+		aggregate.explicitQuality += stats.explicitQuality
+		aggregate.harm += stats.harm
+		aggregate.explicitLabels += stats.explicitLabels
+		duplicate += duplicateResults(row)
+	}
+	metric := func(id string, numerator, denominator, unknown int) TreatmentMetric {
+		lower, upper := wilsonPercent(numerator, denominator)
+		return TreatmentMetric{Treatment: treatment, Metric: id, Point: percent(numerator, denominator), CILower: lower, CIUpper: upper,
+			Numerator: numerator, Denominator: denominator, Unknown: unknown + unknownRuns}
+	}
+	return []TreatmentMetric{
+		metric("utility_rate_percent", aggregate.useful, aggregate.explicitUtility, aggregate.exposed-aggregate.explicitUtility),
+		metric("noise_rate_percent", aggregate.noise, aggregate.explicitUtility, aggregate.exposed-aggregate.explicitUtility),
+		metric("duplicate_rate_percent", duplicate, aggregate.explicitUtility, aggregate.exposed-aggregate.explicitUtility),
+		metric("harm_rate_percent", aggregate.harm, aggregate.explicitQuality, aggregate.exposed-aggregate.explicitQuality),
+		metric("explicit_label_coverage_percent", aggregate.explicitLabels, aggregate.exposed, aggregate.exposed-aggregate.explicitLabels),
+	}
+}
+
+func duplicateResults(row RunRow) int {
+	seen := make(map[string]bool)
+	for _, assessment := range row.Assessments {
+		if assessment.Source != "unknown" && assessment.Utility == "duplicate" {
+			seen[assessment.ResultKey] = true
+		}
+	}
+	return len(seen)
+}
+
+func countTreatmentRows(rows []RunRow, treatment string) int {
+	count := 0
+	for _, row := range rows {
+		if row.Treatment == treatment {
+			count++
+		}
+	}
+	return count
+}
+
 func pairedRows(rows []RunRow) ([]treatmentPair, int, error) {
 	byUnit := make(map[string]map[string]RunRow)
 	for _, row := range rows {
@@ -177,15 +283,12 @@ func pairedRows(rows []RunRow) ([]treatmentPair, int, error) {
 	return pairs, omitted, nil
 }
 
-func pairedBooleanMetric(metric string, pairs []treatmentPair, omitted int, seed string, resamples int, value func(RunRow) bool, invert bool) MetricEvidence {
+func pairedBooleanMetric(metric string, pairs []treatmentPair, omitted int, seed string, resamples int, value func(RunRow) bool) MetricEvidence {
 	differences := make([]float64, len(pairs))
 	targetCount := 0
 	for index, pair := range pairs {
 		broad, targeted := boolFloat(value(pair.broad)), boolFloat(value(pair.targeted))
 		differences[index] = (targeted - broad) * 100
-		if invert {
-			differences[index] = -differences[index]
-		}
 		targetCount += int(targeted)
 	}
 	point := mean(differences)
@@ -269,14 +372,10 @@ func pairedLabelRatioMetric(metric string, pairs []treatmentPair, omitted int, s
 		Numerator: targetNumerator, Denominator: targetDenominator, Unknown: unknown + omitted}, nil
 }
 
-func aggregateLabelRate(pairs []treatmentPair, broad bool, selectCounts func(labelStats) (int, int, int)) (int, int, int) {
+func aggregateTargetLabelRate(pairs []treatmentPair, selectCounts func(labelStats) (int, int, int)) (int, int, int) {
 	numerator, denominator, unknown := 0, 0, 0
 	for _, pair := range pairs {
-		row := pair.targeted
-		if broad {
-			row = pair.broad
-		}
-		n, d, u := selectCounts(rowLabelStats(row))
+		n, d, u := selectCounts(rowLabelStats(pair.targeted))
 		numerator += n
 		denominator += d
 		unknown += u
@@ -408,6 +507,14 @@ func mean(values []float64) float64 {
 		total += value
 	}
 	return total / float64(len(values))
+}
+
+func sum(values []float64) float64 {
+	total := 0.0
+	for _, value := range values {
+		total += value
+	}
+	return total
 }
 
 func percent(numerator, denominator int) float64 {

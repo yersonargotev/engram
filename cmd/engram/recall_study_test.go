@@ -51,13 +51,21 @@ func TestRecallStudyCLIValidatesAndPlansCommittedStudyWithoutHeldOutAccess(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
+	calibration, err := recallstudy.LoadManifest(filepath.Join(root, "calibration", "manifest.json"), filepath.Join(root, "calibration", "manifest.sha256"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	heldOut, err := recallstudy.LoadManifest(filepath.Join(root, "held-out", "manifest.json"), filepath.Join(root, "held-out", "manifest.sha256"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
 	environmentPath := filepath.Join(dir, "environment.json")
 	consentPath := filepath.Join(dir, "consent.json")
 	writeRecallStudyTestJSON(t, environmentPath, recallStudyCompatibilityEvidence(study))
 	writeRecallStudyTestJSON(t, consentPath, recallstudy.ConsentEvidence{
 		StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
-		CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: strings.Repeat("c", 64),
+		CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: study.ConsentCommitment(&calibration.Manifest, &heldOut.Manifest),
 	})
 	common := []string{
 		"--contract", filepath.Join(root, "contract.json"), "--contract-hash", filepath.Join(root, "contract.sha256"),
@@ -103,6 +111,10 @@ func TestRecallStudyCLIReportDerivesAndWritesAggregateEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	heldOut, err := recallstudy.LoadManifest(filepath.Join(root, "held-out", "manifest.json"), filepath.Join(root, "held-out", "manifest.sha256"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	plan, err := study.Plan(&calibration.Manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -112,11 +124,12 @@ func TestRecallStudyCLIReportDerivesAndWritesAggregateEvidence(t *testing.T) {
 	for _, run := range plan {
 		row := recallstudy.RunRow{RunID: run.RunID, SamplingUnitID: run.SamplingUnitID, TaskClass: run.TaskClass,
 			Treatment: run.Treatment, Outcome: "completed", FalseEmptyReview: "not_applicable",
-			CheckpointSucceeded: true, AutomaticInjectedUTF8Bytes: 1000, StartupCompactLatencyMillis: 100}
+			CheckpointSucceeded: true, AutomaticInjectedUTF8Bytes: 1000, StartupCompactLatencyMillis: 100, TimeToUsefulMillis: 200}
 		if run.Treatment == "targeted-recall" {
 			row.AutomaticInjectedUTF8Bytes = 500
 			row.StartupCompactLatencyMillis = 60
 			row.RecallLatencyMillis = 100
+			row.TimeToUsefulMillis = 120
 		}
 		if run.Treatment != "no-recall" {
 			row.RecallResultCount = 1
@@ -131,7 +144,7 @@ func TestRecallStudyCLIReportDerivesAndWritesAggregateEvidence(t *testing.T) {
 	reportPath := filepath.Join(dir, "shared", "report.json")
 	writeRecallStudyTestJSON(t, environmentPath, recallStudyCompatibilityEvidence(study))
 	writeRecallStudyTestJSON(t, consentPath, recallstudy.ConsentEvidence{StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
-		CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: strings.Repeat("c", 64)})
+		CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: study.ConsentCommitment(&calibration.Manifest, &heldOut.Manifest)})
 	writeRecallStudyTestJSON(t, rowsPath, rows)
 	common := []string{
 		"--contract", filepath.Join(root, "contract.json"), "--contract-hash", filepath.Join(root, "contract.sha256"),
@@ -156,6 +169,17 @@ func TestRecallStudyCLIReportDerivesAndWritesAggregateEvidence(t *testing.T) {
 	}
 	if strings.Contains(string(reportRaw), plan[0].RunID) || strings.Contains(string(reportRaw), "salted-") {
 		t.Fatalf("shared report leaked private identifiers: %s", reportRaw)
+	}
+	heldOutRowsPath := filepath.Join(dir, "held-out-rows.json")
+	heldOutRows := rows
+	heldOutRows.CohortID = heldOut.Manifest.CohortID
+	writeRecallStudyTestJSON(t, heldOutRowsPath, heldOutRows)
+	args = append([]string{"engram", "recall-study", "report"}, common...)
+	args = append(args, "--rows", heldOutRowsPath)
+	withArgs(t, args...)
+	_, heldOutStderr, recovered := captureOutputAndRecover(t, cmdRecallStudy)
+	if recovered == nil || !strings.Contains(heldOutStderr, "issue #110") {
+		t.Fatalf("held-out report recovered=%v stderr=%q", recovered, heldOutStderr)
 	}
 
 	rawRows, err := json.Marshal(rows)

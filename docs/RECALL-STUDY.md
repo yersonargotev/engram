@@ -20,19 +20,25 @@ The immutable artifacts live in `evals/recall-study/v1/`:
   intervals, and all general-availability gates;
 - `policy.json`, `metrics.json`, and their sidecars provide content-addressed
   treatment and analysis specifications;
+- `task-protocol.json` and its sidecar freeze task-input canonicalization,
+  fixture selection, launch environment, timeout, success observation, failure
+  mapping, and cleanup;
 - `calibration/manifest.json` and its sidecar allocate blocks 1–60;
 - `held-out/manifest.json` and its sidecar allocate blocks 61–517.
 
 Every block is paired across all three treatments. The power analysis freezes
 517 blocks per treatment and 1551 total cells. Calibration and held-out
 metadata use separate namespaces and seeds, and their numeric ranges cannot
-overlap.
+overlap. Every unit also carries a unique SHA-256 commitment to its canonical
+`recall-task-input-v1`; verification recomputes all 517 commitments and rejects
+cross-cohort reuse.
 
 The source snapshot is
 `105778d820029a2326043739fd676647e5c037f6`. The contract separately records
 Managed Pack 3.3.0, binary 3.0.0, Codex plugin 0.1.7, Protocol 1,
 `recall-baseline-events-v1`, and `diagnostic-capture-v1` at that revision.
-Policy and metric v1 are separately bound by their exact SHA-256 revisions.
+Policy, metric, and task-protocol v1 are separately bound by their exact
+SHA-256 revisions.
 The future execution stage uses Codex
 0.152.0 with `gpt-5.6-luna` at low reasoning effort against fresh ephemeral
 checkouts.
@@ -54,8 +60,8 @@ Git. A Compatibility file has this shape:
     "protocol_contract": {"version": "1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
     "telemetry_schema": {"version": "recall-baseline-events-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
     "capture_schema": {"version": "diagnostic-capture-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
-    "policy": {"version": "recall-policy-v1", "revision": "sha256:c3d563e42c751f8496e52074c35f43fcca275ba9d6e3b56f98dfed206e66df9e"},
-    "metric": {"version": "recall-study-metrics-v1", "revision": "sha256:07464f6d260a1952b5aeebeac0c68a2fbad3b4bf8489252f23fea9e85d699f50"},
+    "policy": {"version": "recall-policy-v1", "revision": "sha256:4756324cf6c42839d2fb25de3db01f301c21141926fe7d15c05a7515fabe8510"},
+    "metric": {"version": "recall-study-metrics-v1", "revision": "sha256:2730b78c4616b54df30c3108356de72441a3aaabc10e8624593fd76c7b5aef9b"},
     "source": {"version": "105778d820029a2326043739fd676647e5c037f6", "revision": "105778d820029a2326043739fd676647e5c037f6"}
   },
   "compatibility": {
@@ -83,10 +89,12 @@ causes verification to fail before any task evidence is collected:
   "study_version": "v1",
   "calibration_granted": true,
   "held_out_granted": true,
-  "proof_sha256": "<64 lowercase hexadecimal characters>"
+  "proof_sha256": "<ConsentCommitment(contract, calibration manifest, held-out manifest)>"
 }
 ```
 
+The proof is not an arbitrary well-formed digest: it is the deterministic
+domain-separated commitment to the exact contract and both manifest hashes.
 These files prove authorization and provenance; they are not committed study
 results.
 
@@ -129,6 +137,12 @@ rejects unknown JSON fields, incomplete plans, held-out rows, and treatment
 contradictions. Points, raw denominators, unknowns, Wilson intervals, and the
 frozen deterministic bootstrap intervals are derived from those validated rows;
 callers cannot provide metric values or confidence intervals.
+
+The same frozen domain analyzer accepts held-out and `combined-v1` row sets for
+issue #110, but this #109 CLI rejects them before analysis so it cannot become a
+held-out access path. Its aggregate output includes per-treatment intervals for
+all three arms, including distinct duplicate and time-to-useful results; the GA
+clauses remain the preregistered paired broad-versus-targeted comparisons.
 
 ```bash
 engram recall-study report "${COMMON[@]}" \

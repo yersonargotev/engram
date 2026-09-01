@@ -47,11 +47,11 @@ func (study *Study) Plan(manifest *Manifest) ([]PlannedRun, error) {
 		unitID := fmt.Sprintf("%s-%04d", manifest.Namespace, number)
 		class := manifest.TaskClassCycle[offset%len(manifest.TaskClassCycle)]
 		block := plannedBlock{class: class, unitID: unitID}
-		block.key = sha256.Sum256([]byte(study.Contract.Randomization.Seed + "\x00" + manifest.SelectionSeed + "\x00" + class + "\x00" + unitID))
+		block.key = sha256.Sum256([]byte(study.Contract.Randomization.Seed + "\x00" + manifest.CohortID + "\x00" + class + "\x00" + unitID + "\x00block"))
 		for _, treatment := range study.Contract.Treatments {
 			runID := fmt.Sprintf("%s-%s", unitID, treatment.ID)
 			run := PlannedRun{RunID: runID, SamplingUnitID: unitID, Cohort: manifest.CohortID, TaskClass: class, Treatment: treatment.ID}
-			key := sha256.Sum256([]byte(study.Contract.Randomization.Seed + "\x00" + unitID + "\x00" + treatment.ID))
+			key := sha256.Sum256([]byte(study.Contract.Randomization.Seed + "\x00" + manifest.CohortID + "\x00" + unitID + "\x00" + treatment.ID + "\x00treatment"))
 			block.treatment = append(block.treatment, sortableRun{key: key, run: run})
 		}
 		sort.Slice(block.treatment, func(i, j int) bool { return string(block.treatment[i].key[:]) < string(block.treatment[j].key[:]) })

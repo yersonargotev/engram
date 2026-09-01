@@ -11,7 +11,7 @@
       "id": "calibration-v1",
       "first_sampling_unit": 1,
       "sampling_units": 60,
-      "manifest_sha256": "862b905cb64770a74d25c1aefc653171bf4e2984ebe360631d2abd971ad85a2d",
+      "manifest_sha256": "b5d2b93afc265b2d6159c43c198ece3eb896cebb4704ab7cebc3b7005591b267",
       "namespace": "cal",
       "selection_seed": "codex-useful-recall-v1-calibration-v1"
     },
@@ -19,7 +19,7 @@
       "id": "held-out-v1",
       "first_sampling_unit": 61,
       "sampling_units": 457,
-      "manifest_sha256": "123ea88cc2cd8c2c95ea6b9370971b5a7fd82c655f46bebf8b32373e2e551b8b",
+      "manifest_sha256": "6ce81344410e90616a9da82735b230b5801b5b12bb0df414cb8cecf82740c109",
       "namespace": "hold",
       "selection_seed": "codex-useful-recall-v1-held-out-v1"
     }
@@ -55,6 +55,7 @@
   },
   "task_protocol": {
     "version": "recall-task-protocol-v1",
+    "artifact_sha256": "669c2261f43f946dac302605401694c827d255693b0ee3688bac7871c12f148c",
     "execution": "fresh-ephemeral-checkout",
     "fixed_environment": true,
     "operational_failures": "separate-from-recall-quality"
@@ -87,8 +88,8 @@
     "protocol_contract": {"version": "1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
     "telemetry_schema": {"version": "recall-baseline-events-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
     "capture_schema": {"version": "diagnostic-capture-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
-    "policy": {"version": "recall-policy-v1", "revision": "sha256:c3d563e42c751f8496e52074c35f43fcca275ba9d6e3b56f98dfed206e66df9e"},
-    "metric": {"version": "recall-study-metrics-v1", "revision": "sha256:07464f6d260a1952b5aeebeac0c68a2fbad3b4bf8489252f23fea9e85d699f50"},
+    "policy": {"version": "recall-policy-v1", "revision": "sha256:4756324cf6c42839d2fb25de3db01f301c21141926fe7d15c05a7515fabe8510"},
+    "metric": {"version": "recall-study-metrics-v1", "revision": "sha256:2730b78c4616b54df30c3108356de72441a3aaabc10e8624593fd76c7b5aef9b"},
     "source": {"version": "105778d820029a2326043739fd676647e5c037f6", "revision": "105778d820029a2326043739fd676647e5c037f6"}
   },
   "power": {

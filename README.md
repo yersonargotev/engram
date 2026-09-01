@@ -501,8 +501,11 @@ contract](docs/RECALL-BASELINE.md).
 
 `engram recall-study` validates the compiled immutable v1 trust anchor,
 content-addressed policy and metric specifications, cohort manifests, consent
-proof, and Compatibility tuple before it can create a private calibration plan
-or derive an aggregate report from disposable calibration rows. No #109 command
+proof, task-protocol specification, and Compatibility tuple before it can
+create a private calibration plan or derive an aggregate report from disposable
+calibration rows. Cohort manifests bind every canonical task input, while the
+frozen analyzer covers all three arms, duplicate rate, and time-to-useful. No
+#109 command
 accepts task-input paths, authorizes held-out execution, changes default Recall,
 enables rollout, or publishes row-level state.
 See the [frozen study contract and operator workflow](docs/RECALL-STUDY.md).

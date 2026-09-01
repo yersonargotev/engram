@@ -1,0 +1,41 @@
+{
+  "schema_version": "recall-task-protocol-v1",
+  "study_id": "codex-useful-recall",
+  "study_version": "v1",
+  "source_revision": "105778d820029a2326043739fd676647e5c037f6",
+  "input_schema": "recall-task-input-v1",
+  "input_canonicalization": "utf8-nul-delimited-required-fields-v1",
+  "input_commitment_domain": "recall-task-input-v1",
+  "required_input_fields": ["study_id", "study_version", "cohort_id", "sampling_unit_id", "task_class", "source_revision", "fixture_seed"],
+  "fixture_selection": {
+    "method": "sha256-ranked-source-inventory-v1",
+    "inventory": "sorted-regular-files-from-frozen-git-tree",
+    "seed": "fixture_seed = SHA256(cohort selection seed || sampling_unit_id || task_class)",
+    "path_exclusions": [".git", "evals/recall-study", "vendor"],
+    "mutation": "none"
+  },
+  "task_templates": [
+    {"task_class": "repository-question", "objective": "Answer the selected bounded repository question using maintained source and runtime evidence."},
+    {"task_class": "implementation", "objective": "Implement the selected bounded behavior change and preserve public compatibility."},
+    {"task_class": "diagnosis", "objective": "Diagnose the selected disposable failing scenario and identify its root cause."},
+    {"task_class": "verification", "objective": "Verify the selected behavior and report evidence for the observable contract."},
+    {"task_class": "routine-non-durable", "objective": "Complete the selected self-contained maintenance task without creating durable project knowledge."}
+  ],
+  "launch": {
+    "working_tree": "fresh-ephemeral-checkout",
+    "network": "disabled-unless-task-fixture-declares-required",
+    "timeout_seconds": 900,
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "low",
+    "codex_version": "0.152.0",
+    "environment_allowlist": ["HOME", "PATH", "TMPDIR", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"]
+  },
+  "task_success_observation": "executor-exit-zero-and-frozen-verifier-pass",
+  "failure_mapping": [
+    {"condition": "timeout", "outcome": "operational_failure", "omission_code": "runner_timeout"},
+    {"condition": "process_exit_nonzero", "outcome": "operational_failure", "omission_code": "runner_process_failed"},
+    {"condition": "fixture_verification_failed", "outcome": "operational_failure", "omission_code": "fixture_verification_failed"},
+    {"condition": "task_not_attempted", "outcome": "omitted", "omission_code": "task_not_attempted"}
+  ],
+  "cleanup": "remove-each-ephemeral-checkout-and-local-agent-state-after-row-persistence"
+}

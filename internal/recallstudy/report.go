@@ -11,6 +11,7 @@ const (
 	RowSetSchemaVersion     = "recall-study-rows-v1"
 	ReportSchemaVersion     = "recall-study-report-v1"
 	GateReportSchemaVersion = "recall-study-gates-v1"
+	CombinedCohortID        = "combined-v1"
 	maxRowSetBytes          = 64 << 20
 )
 
@@ -38,6 +39,7 @@ type RunRow struct {
 	AutomaticInjectedUTF8Bytes  int64        `json:"automatic_injected_utf8_bytes"`
 	StartupCompactLatencyMillis float64      `json:"startup_compact_latency_ms"`
 	RecallLatencyMillis         float64      `json:"recall_latency_ms"`
+	TimeToUsefulMillis          float64      `json:"time_to_useful_ms"`
 }
 
 type Assessment struct {
@@ -48,6 +50,17 @@ type Assessment struct {
 }
 
 type MetricEvidence struct {
+	Metric      string  `json:"metric"`
+	Point       float64 `json:"point"`
+	CILower     float64 `json:"ci_lower"`
+	CIUpper     float64 `json:"ci_upper"`
+	Numerator   int     `json:"numerator"`
+	Denominator int     `json:"denominator"`
+	Unknown     int     `json:"unknown"`
+}
+
+type TreatmentMetric struct {
+	Treatment   string  `json:"treatment"`
 	Metric      string  `json:"metric"`
 	Point       float64 `json:"point"`
 	CILower     float64 `json:"ci_lower"`
@@ -106,15 +119,16 @@ type LabelAggregate struct {
 }
 
 type Report struct {
-	SchemaVersion  string         `json:"schema_version"`
-	StudyID        string         `json:"study_id"`
-	StudyVersion   string         `json:"study_version"`
-	ContractSHA256 string         `json:"contract_sha256"`
-	CohortID       string         `json:"cohort_id"`
-	Labels         LabelAggregate `json:"labels"`
-	Gates          GateReport     `json:"gates"`
-	SharedOutput   string         `json:"shared_output"`
-	RolloutEnabled bool           `json:"rollout_enabled"`
+	SchemaVersion  string            `json:"schema_version"`
+	StudyID        string            `json:"study_id"`
+	StudyVersion   string            `json:"study_version"`
+	ContractSHA256 string            `json:"contract_sha256"`
+	CohortID       string            `json:"cohort_id"`
+	Labels         LabelAggregate    `json:"labels"`
+	Treatments     []TreatmentMetric `json:"treatment_metrics"`
+	Gates          GateReport        `json:"gates"`
+	SharedOutput   string            `json:"shared_output"`
+	RolloutEnabled bool              `json:"rollout_enabled"`
 }
 
 func ReadRowSet(path string) (RowSet, error) {
@@ -138,9 +152,13 @@ func (study *Study) Report(rows RowSet) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
+	treatments, err := study.deriveTreatmentMetrics(rows.Rows)
+	if err != nil {
+		return Report{}, err
+	}
 	return Report{
 		SchemaVersion: ReportSchemaVersion, StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
-		ContractSHA256: study.Hash, CohortID: rows.CohortID, Labels: labels, Gates: gates,
+		ContractSHA256: study.Hash, CohortID: rows.CohortID, Labels: labels, Treatments: treatments, Gates: gates,
 		SharedOutput: "aggregate-only", RolloutEnabled: false,
 	}, nil
 }
@@ -150,11 +168,10 @@ func (study *Study) aggregateRows(rows RowSet) (LabelAggregate, error) {
 		rows.StudyVersion != study.Contract.StudyVersion || rows.ContractSHA256 != study.Hash {
 		return LabelAggregate{}, fmt.Errorf("Recall study row-set identity does not match the frozen contract")
 	}
-	manifest, err := study.manifestContractForRows(rows.CohortID)
+	plan, err := study.planForRows(rows.CohortID)
 	if err != nil {
 		return LabelAggregate{}, err
 	}
-	plan := plannedFromContract(study, manifest)
 	if len(rows.Rows) != len(plan) {
 		return LabelAggregate{}, fmt.Errorf("Recall study row set must be complete: got %d rows, want %d", len(rows.Rows), len(plan))
 	}
@@ -231,11 +248,17 @@ func validateRunRow(row RunRow) error {
 		return fmt.Errorf("Recall study row result count is invalid")
 	}
 	if row.AutomaticInjectedUTF8Bytes < 0 || !finite(row.StartupCompactLatencyMillis) || row.StartupCompactLatencyMillis < 0 ||
-		!finite(row.RecallLatencyMillis) || row.RecallLatencyMillis < 0 {
+		!finite(row.RecallLatencyMillis) || row.RecallLatencyMillis < 0 || !finite(row.TimeToUsefulMillis) || row.TimeToUsefulMillis < 0 {
 		return fmt.Errorf("Recall study row measurements are invalid")
+	}
+	if row.Outcome == "completed" && row.TimeToUsefulMillis <= 0 {
+		return fmt.Errorf("Recall study completed row is missing time-to-useful evidence")
 	}
 	if row.Treatment == "targeted-recall" && row.Outcome == "completed" && row.RecallLatencyMillis <= 0 {
 		return fmt.Errorf("Recall study targeted-Recall row is missing Recall latency")
+	}
+	if row.Treatment != "targeted-recall" && row.RecallLatencyMillis != 0 {
+		return fmt.Errorf("Recall study non-targeted row contradicts the frozen Recall policy")
 	}
 	if row.Treatment == "no-recall" {
 		if row.RecallResultCount != 0 || len(row.Assessments) != 0 || row.FalseEmptyReview != "not_applicable" || row.RecallLatencyMillis != 0 {
@@ -276,15 +299,19 @@ func validateRunRow(row RunRow) error {
 	return nil
 }
 
-func (study *Study) manifestContractForRows(cohortID string) (CohortContract, error) {
-	if cohortID != study.Contract.Cohorts.Calibration.ID {
-		return CohortContract{}, fmt.Errorf("Recall study report accepts calibration rows only; held-out analysis belongs to the execution stage")
+func (study *Study) planForRows(cohortID string) ([]PlannedRun, error) {
+	switch cohortID {
+	case study.Contract.Cohorts.Calibration.ID:
+		return plannedFromContract(study, study.Contract.Cohorts.Calibration), nil
+	case study.Contract.Cohorts.HeldOut.ID:
+		return plannedFromContract(study, study.Contract.Cohorts.HeldOut), nil
+	case CombinedCohortID:
+		calibration := plannedFromContract(study, study.Contract.Cohorts.Calibration)
+		heldOut := plannedFromContract(study, study.Contract.Cohorts.HeldOut)
+		return append(calibration, heldOut...), nil
+	default:
+		return nil, fmt.Errorf("Recall study row set names an unknown cohort")
 	}
-	cohort, ok := study.Contract.cohort(cohortID)
-	if !ok {
-		return CohortContract{}, fmt.Errorf("Recall study row set names an unknown cohort")
-	}
-	return cohort, nil
 }
 
 func plannedFromContract(study *Study, cohort CohortContract) []PlannedRun {

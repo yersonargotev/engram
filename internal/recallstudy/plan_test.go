@@ -18,14 +18,25 @@ func TestVerifyAndPlanFreezeNonOverlappingPairedCohorts(t *testing.T) {
 		Calibration:   calibration,
 		HeldOut:       heldOut,
 		Compatibility: compatibleEvidence(study),
-		Consent: ConsentEvidence{StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
-			CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: strings.Repeat("c", 64)},
+		Consent:       consentEvidence(study, calibration, heldOut),
 	})
 	if err != nil {
 		t.Fatalf("Verify() error = %v", err)
 	}
 	if !report.Ready || report.HeldOutInputsAccessed || report.PlannedRuns != 1551 {
 		t.Fatalf("verification report = %+v", report)
+	}
+	commitments := make(map[string]bool, 517)
+	for _, manifest := range []*Manifest{calibration, heldOut} {
+		for _, task := range manifest.Tasks {
+			if commitments[task.InputSHA256] {
+				t.Fatalf("cross-cohort task commitment reused: %s", task.InputSHA256)
+			}
+			commitments[task.InputSHA256] = true
+		}
+	}
+	if len(commitments) != 517 {
+		t.Fatalf("frozen task commitments = %d, want 517", len(commitments))
 	}
 
 	calibrationPlan, err := study.Plan(calibration)
@@ -95,6 +106,9 @@ func TestVerifyRejectsOverlapMissingConsentCompatibilityAndSampleDrift(t *testin
 		{"missing consent", func(_ *Study, _ *Manifest, _ *Manifest, input *VerificationInput) {
 			input.Consent.HeldOutGranted = false
 		}, "consent"},
+		{"unbound consent", func(_ *Study, _ *Manifest, _ *Manifest, input *VerificationInput) {
+			input.Consent.ProofSHA256 = strings.Repeat("c", 64)
+		}, "consent"},
 		{"unsupported tuple", func(_ *Study, _ *Manifest, _ *Manifest, input *VerificationInput) {
 			input.Compatibility.Revisions.CodexPlugin.Version = "0.1.6"
 		}, "compatibility"},
@@ -114,8 +128,7 @@ func TestVerifyRejectsOverlapMissingConsentCompatibilityAndSampleDrift(t *testin
 			input := VerificationInput{
 				Calibration: calibration, HeldOut: heldOut,
 				Compatibility: compatibleEvidence(study),
-				Consent: ConsentEvidence{StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
-					CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: strings.Repeat("c", 64)},
+				Consent:       consentEvidence(study, calibration, heldOut),
 			}
 			test.mutate(study, calibration, heldOut, &input)
 			if _, err := study.Verify(input); err == nil || !strings.Contains(strings.ToLower(err.Error()), test.want) {
@@ -156,15 +169,37 @@ func TestVerifyRejectsManifestDriftWithRecomputedSidecar(t *testing.T) {
 
 	study, calibration, heldOut := verifiedStudy(t)
 	drifted := *heldOut
-	drifted.Namespace = "recomputed-held-out"
+	drifted.SelectionSeed = "recomputed-held-out-seed"
 	loaded := loadManifestValue(t, drifted)
 	_, err := study.Verify(VerificationInput{
 		Calibration: calibration, HeldOut: &loaded.Manifest, Compatibility: compatibleEvidence(study),
-		Consent: ConsentEvidence{StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
-			CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: strings.Repeat("c", 64)},
+		Consent: consentEvidence(study, calibration, &loaded.Manifest),
 	})
 	if err == nil || !strings.Contains(err.Error(), "manifest identity") {
 		t.Fatalf("Verify() error = %v, want frozen manifest rejection", err)
+	}
+}
+
+func TestVerifyTaskInputBindsFrozenMembershipAndFixtureSelection(t *testing.T) {
+	t.Parallel()
+
+	study, calibration, _ := verifiedStudy(t)
+	member := calibration.Tasks[0]
+	input := TaskInput{StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion, CohortID: calibration.CohortID,
+		SamplingUnitID: member.SamplingUnitID, TaskClass: member.TaskClass, SourceRevision: study.Contract.SourceRevision,
+		FixtureSeed: taskFixtureSeed(calibration, member.SamplingUnitID, member.TaskClass)}
+	if err := study.VerifyTaskInput(calibration, input); err != nil {
+		t.Fatalf("VerifyTaskInput() error = %v", err)
+	}
+	input.SourceRevision = strings.Repeat("0", 40)
+	if err := study.VerifyTaskInput(calibration, input); err == nil || !strings.Contains(err.Error(), "identity changed") {
+		t.Fatalf("changed source VerifyTaskInput() error = %v", err)
+	}
+	input.SourceRevision = study.Contract.SourceRevision
+	input.SamplingUnitID = "hold-0061"
+	input.FixtureSeed = taskFixtureSeed(calibration, input.SamplingUnitID, input.TaskClass)
+	if err := study.VerifyTaskInput(calibration, input); err == nil || !strings.Contains(err.Error(), "not a frozen cohort member") {
+		t.Fatalf("cross-cohort VerifyTaskInput() error = %v", err)
 	}
 }
 
@@ -200,12 +235,18 @@ func validManifest(contract Contract, cohortID, namespace string, first, count i
 	for _, class := range contract.TaskClasses {
 		classes = append(classes, class.ID)
 	}
-	return Manifest{
+	manifest := Manifest{
 		SchemaVersion: "recall-study-manifest-v1", StudyID: contract.StudyID, StudyVersion: contract.StudyVersion,
 		CohortID: cohortID, Status: "frozen", Namespace: namespace, FirstSamplingUnit: first,
 		SamplingUnits: count, TaskClassCycle: classes, SelectionSeed: fmt.Sprintf("%s-%s", contract.Randomization.Seed, cohortID),
 		ConsentRequirement: "explicit-before-evidence", InputCommitment: "sha256-per-consented-task",
 	}
+	for offset := 0; offset < count; offset++ {
+		unitID := fmt.Sprintf("%s-%04d", namespace, first+offset)
+		class := classes[offset%len(classes)]
+		manifest.Tasks = append(manifest.Tasks, TaskCommitment{SamplingUnitID: unitID, TaskClass: class, InputSHA256: taskInputCommitment(contract, &manifest, unitID, class)})
+	}
+	return manifest
 }
 
 func mustPlan(t *testing.T, study *Study, manifest *Manifest) []PlannedRun {
@@ -228,4 +269,9 @@ func compatibleEvidence(study *Study) CompatibilityEvidence {
 			protocolcontract.Declaration{Version: study.Contract.Revisions.CodexPlugin.Version, Provenance: provenance, Supported: rangeV1},
 		),
 	}
+}
+
+func consentEvidence(study *Study, calibration, heldOut *Manifest) ConsentEvidence {
+	return ConsentEvidence{StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
+		CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: study.ConsentCommitment(calibration, heldOut)}
 }

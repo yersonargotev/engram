@@ -90,6 +90,10 @@ func cmdRecallStudy() {
 			failCLI(flags.JSONMode, "invalid_recall_study_rows", err.Error(), nil)
 			return
 		}
+		if rows.CohortID != inputs.calibration.CohortID {
+			failCLI(flags.JSONMode, "recall_study_report_failed", "recall-study report accepts disposable calibration rows only; held-out analysis belongs to issue #110", nil)
+			return
+		}
 		report, err := inputs.study.Report(rows)
 		if err != nil {
 			failCLI(flags.JSONMode, "recall_study_report_failed", err.Error(), nil)

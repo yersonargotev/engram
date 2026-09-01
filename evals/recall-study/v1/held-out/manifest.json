@@ -16,5 +16,2292 @@
   ],
   "selection_seed": "codex-useful-recall-v1-held-out-v1",
   "consent_requirement": "explicit-before-evidence",
-  "input_commitment": "sha256-per-consented-task"
+  "input_commitment": "sha256-per-consented-task",
+  "tasks": [
+    {
+      "sampling_unit_id": "hold-0061",
+      "task_class": "repository-question",
+      "input_sha256": "df3e805993ee001ce1ed6e8bda62dfff85b29c99d05a2a85b3c3394fc0d23c9f"
+    },
+    {
+      "sampling_unit_id": "hold-0062",
+      "task_class": "implementation",
+      "input_sha256": "c06aa4218a12d1fb6167dc708554c5997433e8e923b6269f56d78fd555bef47c"
+    },
+    {
+      "sampling_unit_id": "hold-0063",
+      "task_class": "diagnosis",
+      "input_sha256": "106696ead825acaa6a64908a9d654f37d3491f492e6a6c8e3cae2589c7b87181"
+    },
+    {
+      "sampling_unit_id": "hold-0064",
+      "task_class": "verification",
+      "input_sha256": "34dbce79ae9f9ca1725ef3e9f1413741b42a0271e2137b833dfbc8553bdd3232"
+    },
+    {
+      "sampling_unit_id": "hold-0065",
+      "task_class": "routine-non-durable",
+      "input_sha256": "d0767a92c71c38e6ebf971d70973caba202a1356da94667c311705331281b684"
+    },
+    {
+      "sampling_unit_id": "hold-0066",
+      "task_class": "repository-question",
+      "input_sha256": "66197a39ef04dc97129e53c0e8030ea970f09950b9cdfcbc49d710f839c07d4b"
+    },
+    {
+      "sampling_unit_id": "hold-0067",
+      "task_class": "implementation",
+      "input_sha256": "511f80cd7d5a5f3312fd17685f1a51187f031f24923f898ff83d9d4eb023077d"
+    },
+    {
+      "sampling_unit_id": "hold-0068",
+      "task_class": "diagnosis",
+      "input_sha256": "5094f8928f7eded14e5c7e54d36dd7ef7cd17db7fc51d98b6621d5e3a6c65a44"
+    },
+    {
+      "sampling_unit_id": "hold-0069",
+      "task_class": "verification",
+      "input_sha256": "1252927d8fc0bd2b60ada4a085d1d34756d1ff74c01c201c85a4204b87ae8b5b"
+    },
+    {
+      "sampling_unit_id": "hold-0070",
+      "task_class": "routine-non-durable",
+      "input_sha256": "5d77b344b6d4bca374ae60c779de3bbc2c6b7d5b030a592a8df5cb9bae3fd4b9"
+    },
+    {
+      "sampling_unit_id": "hold-0071",
+      "task_class": "repository-question",
+      "input_sha256": "79d1a3dbe175dfa07c3c1c6124352cb3aa9b85055813266204a7ac2974455c58"
+    },
+    {
+      "sampling_unit_id": "hold-0072",
+      "task_class": "implementation",
+      "input_sha256": "cef05633e89583d9d313f2469d1961618c8d4712e12ade9bf25e5386d9f6072b"
+    },
+    {
+      "sampling_unit_id": "hold-0073",
+      "task_class": "diagnosis",
+      "input_sha256": "04f3e44e17c81aae4853a3c07a7a71e3d95e89a994e2280bfc0c04d6702923f1"
+    },
+    {
+      "sampling_unit_id": "hold-0074",
+      "task_class": "verification",
+      "input_sha256": "70ce106b7b9955e01bf79e30960de770a3c466b99b067b9cc72b97473b2a3d43"
+    },
+    {
+      "sampling_unit_id": "hold-0075",
+      "task_class": "routine-non-durable",
+      "input_sha256": "27034458c3c15dd02d69145b0d846d459a981d1e0ad8da629c58f5e036cfc7a0"
+    },
+    {
+      "sampling_unit_id": "hold-0076",
+      "task_class": "repository-question",
+      "input_sha256": "aa13102f94f4d973f554464787cfce91b086f591006d28388845e8f7560f5750"
+    },
+    {
+      "sampling_unit_id": "hold-0077",
+      "task_class": "implementation",
+      "input_sha256": "d26e52a2b11bb3509db49e149ac6a2ad0e5ad853e144d10544676690354364e7"
+    },
+    {
+      "sampling_unit_id": "hold-0078",
+      "task_class": "diagnosis",
+      "input_sha256": "a63c0d4ae3e905dd871fa4fc4aed57dd32b7066a845cd34cec6fee5101f80b91"
+    },
+    {
+      "sampling_unit_id": "hold-0079",
+      "task_class": "verification",
+      "input_sha256": "e34db62d21fa6faf41d69d9d5e8bd699634970399a1ee094b4d9ad201009781c"
+    },
+    {
+      "sampling_unit_id": "hold-0080",
+      "task_class": "routine-non-durable",
+      "input_sha256": "230ce3ea4d75fe7415d300192b00c80fd49eb7eeacd0eccdb41bc3b8c18ae884"
+    },
+    {
+      "sampling_unit_id": "hold-0081",
+      "task_class": "repository-question",
+      "input_sha256": "cc019f781fccaf70667f1d8a34bb0a6674dbb1696825cb1f46028ba21d76fa1a"
+    },
+    {
+      "sampling_unit_id": "hold-0082",
+      "task_class": "implementation",
+      "input_sha256": "a97ad29391d5768e12c6c40bfe7085f6f609500f9d3fc4988fb2a0faad705509"
+    },
+    {
+      "sampling_unit_id": "hold-0083",
+      "task_class": "diagnosis",
+      "input_sha256": "915e241c95f3ea573b8158bff333022c1178e2ec987c05857736ef1002f4f6d7"
+    },
+    {
+      "sampling_unit_id": "hold-0084",
+      "task_class": "verification",
+      "input_sha256": "8e77ce3e8afa5957ec872d0d0d096c8c80c4747ce685f05f6ae7535731002a69"
+    },
+    {
+      "sampling_unit_id": "hold-0085",
+      "task_class": "routine-non-durable",
+      "input_sha256": "249c2f355d106eae39fea4dfe55f1f09366b92ba805a3b2957281498f2796115"
+    },
+    {
+      "sampling_unit_id": "hold-0086",
+      "task_class": "repository-question",
+      "input_sha256": "47e7d2999df65e327eb6e59b56cd8ee87be52d45308e1678026ec2f8ee058458"
+    },
+    {
+      "sampling_unit_id": "hold-0087",
+      "task_class": "implementation",
+      "input_sha256": "085277e3379a1ab0312b501542d429e502c42229b0afde9c965d5484474f1cea"
+    },
+    {
+      "sampling_unit_id": "hold-0088",
+      "task_class": "diagnosis",
+      "input_sha256": "cd836e6c0d1bd3cc2d838099de3d62abf3b79c25df0f88f20be8649dbd627ed8"
+    },
+    {
+      "sampling_unit_id": "hold-0089",
+      "task_class": "verification",
+      "input_sha256": "7acb8c51e260ed13a4724d1df7f993535ff6eab0f82bb9c815e5564c53c24205"
+    },
+    {
+      "sampling_unit_id": "hold-0090",
+      "task_class": "routine-non-durable",
+      "input_sha256": "8da193a338ef593f0392acc6104f74955df369e3767bb7d91cea6208c1641cdc"
+    },
+    {
+      "sampling_unit_id": "hold-0091",
+      "task_class": "repository-question",
+      "input_sha256": "9d3a71ff2eee35a6ad70652824eb3038cba954324324ffa175d868914e436c33"
+    },
+    {
+      "sampling_unit_id": "hold-0092",
+      "task_class": "implementation",
+      "input_sha256": "5a755689432b6ec26ce7611f376966089a0bc3477c784ab82e2c1364b69432f9"
+    },
+    {
+      "sampling_unit_id": "hold-0093",
+      "task_class": "diagnosis",
+      "input_sha256": "0382bd744df74c8b1196e750671163cec3d24e147930eab7ff1e6c94ee5d0e36"
+    },
+    {
+      "sampling_unit_id": "hold-0094",
+      "task_class": "verification",
+      "input_sha256": "0ba726c78b814ae688cdb59a4cfe63a028b59a8eefad0be6037e4794dffb2ac3"
+    },
+    {
+      "sampling_unit_id": "hold-0095",
+      "task_class": "routine-non-durable",
+      "input_sha256": "1b9959fa84374fce4d63acb4c4ea8d66826cd5f930869d15759897d6cd08ceb0"
+    },
+    {
+      "sampling_unit_id": "hold-0096",
+      "task_class": "repository-question",
+      "input_sha256": "7dfad6cbfa5bf82e65dd189d95b1c52419343dd0f92a7b7043c11d1fbdbced48"
+    },
+    {
+      "sampling_unit_id": "hold-0097",
+      "task_class": "implementation",
+      "input_sha256": "a07bdb1826114d70a64f393f81a8a587d24e9ed7aaefb58065ddb0afb30c4910"
+    },
+    {
+      "sampling_unit_id": "hold-0098",
+      "task_class": "diagnosis",
+      "input_sha256": "08b8bb46af7bdaac3a1c32897b22935a60421058ce328934f712c4c0a98e2288"
+    },
+    {
+      "sampling_unit_id": "hold-0099",
+      "task_class": "verification",
+      "input_sha256": "913ce9333e6cfa981a6c38767ec3faef67ef1d12a6126e07534c7cebf9a233f7"
+    },
+    {
+      "sampling_unit_id": "hold-0100",
+      "task_class": "routine-non-durable",
+      "input_sha256": "194e4797e37d18c924eae309125977bf238da678c898d963756fb114bffbc2a3"
+    },
+    {
+      "sampling_unit_id": "hold-0101",
+      "task_class": "repository-question",
+      "input_sha256": "1ff8f30a6d27ea61c582e9d054b9a41ada213a2e90c40de4d3bf1fc18f4338e6"
+    },
+    {
+      "sampling_unit_id": "hold-0102",
+      "task_class": "implementation",
+      "input_sha256": "cb47c8624f303e5ee4c8735535c497930da49a64186ed7205ffd8824ccdc7073"
+    },
+    {
+      "sampling_unit_id": "hold-0103",
+      "task_class": "diagnosis",
+      "input_sha256": "5f65e665a0c2d1f83f5f9b2adaa84335b4c4f82140e917825fb4fd3a05432cd7"
+    },
+    {
+      "sampling_unit_id": "hold-0104",
+      "task_class": "verification",
+      "input_sha256": "5fe891ccd6cf6a40c967a0c21da447235d92a7f271e254e1b896b75ab3a2b266"
+    },
+    {
+      "sampling_unit_id": "hold-0105",
+      "task_class": "routine-non-durable",
+      "input_sha256": "eff87b500598db85f0bed4df84fa80ec0c5572ccc4c61390712ea9f330c2ebf6"
+    },
+    {
+      "sampling_unit_id": "hold-0106",
+      "task_class": "repository-question",
+      "input_sha256": "6ff6e6cea9d7655a5fc5b7df5830f9921eb6d7a98919aa4aeb610374882dfc62"
+    },
+    {
+      "sampling_unit_id": "hold-0107",
+      "task_class": "implementation",
+      "input_sha256": "1bbd64d7da328e66b9131590b0b84026d3c0d0a366ff8e973bcc06ae0c2e4ead"
+    },
+    {
+      "sampling_unit_id": "hold-0108",
+      "task_class": "diagnosis",
+      "input_sha256": "f6a901429c4f6c7dafa8d09e8985b3d1a62927a1760fa0714baffaecd39039fc"
+    },
+    {
+      "sampling_unit_id": "hold-0109",
+      "task_class": "verification",
+      "input_sha256": "98777ad818427c9dab06d1ca9bface04545434c157d28a3084afe796b2397943"
+    },
+    {
+      "sampling_unit_id": "hold-0110",
+      "task_class": "routine-non-durable",
+      "input_sha256": "7acf4660aabf4565baf3cdf92d5a65734811022699bba18d605ce60cf86dfa37"
+    },
+    {
+      "sampling_unit_id": "hold-0111",
+      "task_class": "repository-question",
+      "input_sha256": "47967d15576d4e82665b4fc3e70b1c5e6506d0a2b4be516366e50b5d1335d7ee"
+    },
+    {
+      "sampling_unit_id": "hold-0112",
+      "task_class": "implementation",
+      "input_sha256": "449ce4857fa99e1a468be1c28a88782d90d31d02ea15bdda4350549832cfeb52"
+    },
+    {
+      "sampling_unit_id": "hold-0113",
+      "task_class": "diagnosis",
+      "input_sha256": "7992b7d16ec941a93f569686bccf66a5641fffb6b46ef37e45875aec390d91c5"
+    },
+    {
+      "sampling_unit_id": "hold-0114",
+      "task_class": "verification",
+      "input_sha256": "1f9acf5e63c806c921bc78dad33926b011d7e58788b7263950b1021ae59f4f24"
+    },
+    {
+      "sampling_unit_id": "hold-0115",
+      "task_class": "routine-non-durable",
+      "input_sha256": "d58df66c80a5da4f5ddde54486658d4ee65dc584fd62328399e5c7787502a6ec"
+    },
+    {
+      "sampling_unit_id": "hold-0116",
+      "task_class": "repository-question",
+      "input_sha256": "9f66540e88c5cbc08b9120a6e4b571102e15160b14bd6026982f9971cdb8c0d2"
+    },
+    {
+      "sampling_unit_id": "hold-0117",
+      "task_class": "implementation",
+      "input_sha256": "205254fedd28e884e616f7ea76e18be87c6fcf9794e1f1f0265e88c7cef235c5"
+    },
+    {
+      "sampling_unit_id": "hold-0118",
+      "task_class": "diagnosis",
+      "input_sha256": "c0701846ce1f2b4de262d50d17ceab70d5f9ced509cbd8fca5ef30259f98261e"
+    },
+    {
+      "sampling_unit_id": "hold-0119",
+      "task_class": "verification",
+      "input_sha256": "e20338d3c7350f7e462967840e20a3ae30feb88044c143df01c5b4e156fe0f76"
+    },
+    {
+      "sampling_unit_id": "hold-0120",
+      "task_class": "routine-non-durable",
+      "input_sha256": "110eada70e551f5188802626be8c9907cef9e79f36645943380aaf0d7261a8f6"
+    },
+    {
+      "sampling_unit_id": "hold-0121",
+      "task_class": "repository-question",
+      "input_sha256": "af9012a7a2f7b93a1cc2a6a6fd0532ad9fa4f66e1712f1de8e716ea3f1514940"
+    },
+    {
+      "sampling_unit_id": "hold-0122",
+      "task_class": "implementation",
+      "input_sha256": "7df3e763f81148daa27a6fdf81b3ff17918a3c99ad24af29a4b7f1cb3234d9fa"
+    },
+    {
+      "sampling_unit_id": "hold-0123",
+      "task_class": "diagnosis",
+      "input_sha256": "71adf0acf6b4459b687c67f91f47847cf9f48e438a084bef18ad6d5f7683e744"
+    },
+    {
+      "sampling_unit_id": "hold-0124",
+      "task_class": "verification",
+      "input_sha256": "bbd960ce28a4de805b1ed71c7bc58071317a2df328422891c9cd124826e2f67c"
+    },
+    {
+      "sampling_unit_id": "hold-0125",
+      "task_class": "routine-non-durable",
+      "input_sha256": "7f7340b630833b291eef0d9e74ee6998ba8bf7c1531eee7d69deca82014400cd"
+    },
+    {
+      "sampling_unit_id": "hold-0126",
+      "task_class": "repository-question",
+      "input_sha256": "9feb928c76f6281e7ae24eaf7b8196d1931517f7333b134d2c16292ea0fef128"
+    },
+    {
+      "sampling_unit_id": "hold-0127",
+      "task_class": "implementation",
+      "input_sha256": "877ca69ad8fd9df4d09dfe7eef741a7584a385764130f909613f4198ec0bb5d0"
+    },
+    {
+      "sampling_unit_id": "hold-0128",
+      "task_class": "diagnosis",
+      "input_sha256": "0dbece9fdc8049541085eef02bd14f66bef70a6218b46baeda225af732c41cf3"
+    },
+    {
+      "sampling_unit_id": "hold-0129",
+      "task_class": "verification",
+      "input_sha256": "be8edebc28937e36a99f4b387484b9f6c3a84465750864aa0ed5d23bcbf12105"
+    },
+    {
+      "sampling_unit_id": "hold-0130",
+      "task_class": "routine-non-durable",
+      "input_sha256": "a8788aa79906ce87b9637c0f70b7c95757f5e9a178615a09c7ab8575d5a74d9b"
+    },
+    {
+      "sampling_unit_id": "hold-0131",
+      "task_class": "repository-question",
+      "input_sha256": "e73144fb3da35ae7b548ae74dae138589a3a50616fa53984d491877c0d3872cb"
+    },
+    {
+      "sampling_unit_id": "hold-0132",
+      "task_class": "implementation",
+      "input_sha256": "a3c276310c7e6efa021ea1e57888cb09b37adc3d30388de9f3a5288cdf6217b5"
+    },
+    {
+      "sampling_unit_id": "hold-0133",
+      "task_class": "diagnosis",
+      "input_sha256": "acb631246f8b715002a27767b4f14020bfa960cd5b1edb721c4a40d32a87b409"
+    },
+    {
+      "sampling_unit_id": "hold-0134",
+      "task_class": "verification",
+      "input_sha256": "c75795a8e2b843072ad29a34024e074ceaab260c1c32db3d32b00b731337d707"
+    },
+    {
+      "sampling_unit_id": "hold-0135",
+      "task_class": "routine-non-durable",
+      "input_sha256": "b0cc08c2611e2736ae209fb07fdcad23e34f5894b5f9824c98f5ced829ddbbe6"
+    },
+    {
+      "sampling_unit_id": "hold-0136",
+      "task_class": "repository-question",
+      "input_sha256": "8d6e56f6090426459c6c87fc95a728e287ad9eaced113a91ba5eae9466c9a5ec"
+    },
+    {
+      "sampling_unit_id": "hold-0137",
+      "task_class": "implementation",
+      "input_sha256": "626e613302df2f1c4271f790baa613efd84d8e1b3d5c6abee251368074c8e582"
+    },
+    {
+      "sampling_unit_id": "hold-0138",
+      "task_class": "diagnosis",
+      "input_sha256": "f44e7c30595af77ab59b3f282a496dccb1f31d573787723465f54a56590cbae0"
+    },
+    {
+      "sampling_unit_id": "hold-0139",
+      "task_class": "verification",
+      "input_sha256": "50968a49ddfa11e136f990248d5cc68de85cb827cc8d055e3a4d36aa274e975f"
+    },
+    {
+      "sampling_unit_id": "hold-0140",
+      "task_class": "routine-non-durable",
+      "input_sha256": "0686ed9f3a7e8a9523df18370a5d656668c020e2a5bb9737098abd657f1d1d92"
+    },
+    {
+      "sampling_unit_id": "hold-0141",
+      "task_class": "repository-question",
+      "input_sha256": "d1c83e20a89cc913d427f728be663138e5a788924cbe6493ebb332d244e42644"
+    },
+    {
+      "sampling_unit_id": "hold-0142",
+      "task_class": "implementation",
+      "input_sha256": "b29c3c5b53fefd94b25e3840b6a8b1f5fb84a7b779f55d3364c9db50d6bfb4b7"
+    },
+    {
+      "sampling_unit_id": "hold-0143",
+      "task_class": "diagnosis",
+      "input_sha256": "73f50c4fc32ead4c3ee597afb6bdb184313713b9a417ac02d9cb270ea2fee12c"
+    },
+    {
+      "sampling_unit_id": "hold-0144",
+      "task_class": "verification",
+      "input_sha256": "bf604721374bfa9a354a1560bd1e21ae07cc94d5f4d76ca76c9d24da2dbbf58c"
+    },
+    {
+      "sampling_unit_id": "hold-0145",
+      "task_class": "routine-non-durable",
+      "input_sha256": "8bf8723df19446bbc10eb8ac50d6a5faa77b1340849dcb9b1b0e572407397b95"
+    },
+    {
+      "sampling_unit_id": "hold-0146",
+      "task_class": "repository-question",
+      "input_sha256": "8211931d0f65d800b9525b117e756b9bd90f33353eb1ae44572be3ba54ace07c"
+    },
+    {
+      "sampling_unit_id": "hold-0147",
+      "task_class": "implementation",
+      "input_sha256": "d8990ad411bfc11859e75312b5440ab950489ec0817263ec8d35c60770661591"
+    },
+    {
+      "sampling_unit_id": "hold-0148",
+      "task_class": "diagnosis",
+      "input_sha256": "1bc2744d295fd2a9970aeab45f51a7c3d52781fa2a9bc259227884e7d647efde"
+    },
+    {
+      "sampling_unit_id": "hold-0149",
+      "task_class": "verification",
+      "input_sha256": "d37aa7b17d20d770a13de24d927898f30dd34b8d99793d891baa859c73d1e80b"
+    },
+    {
+      "sampling_unit_id": "hold-0150",
+      "task_class": "routine-non-durable",
+      "input_sha256": "c6572a8d836eaa5de2f8e4a87b8141ece9b68fe9ad91ea75c6294edf2a52ed81"
+    },
+    {
+      "sampling_unit_id": "hold-0151",
+      "task_class": "repository-question",
+      "input_sha256": "3444825aa4e11113935609faee70c234e832440463208be6385e1926497fb391"
+    },
+    {
+      "sampling_unit_id": "hold-0152",
+      "task_class": "implementation",
+      "input_sha256": "a7f87432130c52d4f4a2b7fd8a69ae708acb880be5b35baa3be1f301a552f536"
+    },
+    {
+      "sampling_unit_id": "hold-0153",
+      "task_class": "diagnosis",
+      "input_sha256": "d1276ac109274702a01637bed5be7bbf81660f673f07813beae1a0e68915590d"
+    },
+    {
+      "sampling_unit_id": "hold-0154",
+      "task_class": "verification",
+      "input_sha256": "29a7e495f4610faab691ec19f4febf7bfe0a0114633e89354ad4d2fa032023e3"
+    },
+    {
+      "sampling_unit_id": "hold-0155",
+      "task_class": "routine-non-durable",
+      "input_sha256": "4f3983a61efcee4793f228c21b1bcf1050818976b9b7a434162ecbbab34c39f2"
+    },
+    {
+      "sampling_unit_id": "hold-0156",
+      "task_class": "repository-question",
+      "input_sha256": "eb4f47d0387684a4dc062b8137fee8552f53d1869057e089b4cb3ff68a61346a"
+    },
+    {
+      "sampling_unit_id": "hold-0157",
+      "task_class": "implementation",
+      "input_sha256": "c197fa68bea355b31d84d5d3f01552f6151a82cd6ae54f16797cae92e21bf467"
+    },
+    {
+      "sampling_unit_id": "hold-0158",
+      "task_class": "diagnosis",
+      "input_sha256": "175ca420fdc29b3a4a1ccf785d166d2d481ae581d9929f8c6a405929b88084b6"
+    },
+    {
+      "sampling_unit_id": "hold-0159",
+      "task_class": "verification",
+      "input_sha256": "9d9f3cfca1f36437ca18d0231b5a5c0eae2ff4d1b18fa009a0f1e881b5065a07"
+    },
+    {
+      "sampling_unit_id": "hold-0160",
+      "task_class": "routine-non-durable",
+      "input_sha256": "d3b629c01f2abfd08bc400666c880482cc4bb90b49a3a342481d53fa2db71fb4"
+    },
+    {
+      "sampling_unit_id": "hold-0161",
+      "task_class": "repository-question",
+      "input_sha256": "9d65433687b3e92acd4fbc2dc392c1419b8c67f75090e1d32060fbed07f51e6b"
+    },
+    {
+      "sampling_unit_id": "hold-0162",
+      "task_class": "implementation",
+      "input_sha256": "33f2d9915f28154a15c161f5965ebc90869fffd59d441aab38bc7e2469cc28ac"
+    },
+    {
+      "sampling_unit_id": "hold-0163",
+      "task_class": "diagnosis",
+      "input_sha256": "e745f12a996404355015ef72955d80e839ad789e80f8e55f763486ade9148b8a"
+    },
+    {
+      "sampling_unit_id": "hold-0164",
+      "task_class": "verification",
+      "input_sha256": "f09a2595d4dbc4f99326da2aae30284dd8ad022b7cb356e2c7a65c0435f57443"
+    },
+    {
+      "sampling_unit_id": "hold-0165",
+      "task_class": "routine-non-durable",
+      "input_sha256": "4d727da3d2689c23528e7ea29febf20ef736cfdf0845cf7fd6bb913a0db8c916"
+    },
+    {
+      "sampling_unit_id": "hold-0166",
+      "task_class": "repository-question",
+      "input_sha256": "884d30d82b44aece3dedbc954f6dc22fb24e871565fd6fff08cf777bafac0586"
+    },
+    {
+      "sampling_unit_id": "hold-0167",
+      "task_class": "implementation",
+      "input_sha256": "b9041422dd216f9de95def176ef3f772d17c66a8165fcf510a2c837af3493997"
+    },
+    {
+      "sampling_unit_id": "hold-0168",
+      "task_class": "diagnosis",
+      "input_sha256": "a27f877909c0ea732199925c9a1d769f3f970de624ab973db97772a6d205028b"
+    },
+    {
+      "sampling_unit_id": "hold-0169",
+      "task_class": "verification",
+      "input_sha256": "e208bf19c9e360b2eb331527fdbcd70f1f343723c06b24813a9276bb02c610cc"
+    },
+    {
+      "sampling_unit_id": "hold-0170",
+      "task_class": "routine-non-durable",
+      "input_sha256": "bbeea8bafc46d3b860c0c5c8b8eb7df4ae801ae6499226c3eb3f7b2b5968b37a"
+    },
+    {
+      "sampling_unit_id": "hold-0171",
+      "task_class": "repository-question",
+      "input_sha256": "78dd810b5ae70a5a2b9a861b14caef9aa21edd87929cbf9da8c83e7bc4236a96"
+    },
+    {
+      "sampling_unit_id": "hold-0172",
+      "task_class": "implementation",
+      "input_sha256": "5ecbdcfd5cff6c93f7c3858d96d1c09a5ce20bcec15b88cd098dc90efed21ffc"
+    },
+    {
+      "sampling_unit_id": "hold-0173",
+      "task_class": "diagnosis",
+      "input_sha256": "5e557a206c3b88d9b66fc81f5bce6c0ae9a84cb01164d1f158df88578e9d4f6d"
+    },
+    {
+      "sampling_unit_id": "hold-0174",
+      "task_class": "verification",
+      "input_sha256": "770b2e665d227a98ab54b663a27a89734b18232b4c4cb9de98b7a979d331c0f3"
+    },
+    {
+      "sampling_unit_id": "hold-0175",
+      "task_class": "routine-non-durable",
+      "input_sha256": "9e61106c4ec8c9229cec20a3c131c97180986114eaaf50b6c331cbc7f436f93d"
+    },
+    {
+      "sampling_unit_id": "hold-0176",
+      "task_class": "repository-question",
+      "input_sha256": "3acec222a8bec7edd62dc1b88653c1b8d7aba6c2332a2be59709734412688f04"
+    },
+    {
+      "sampling_unit_id": "hold-0177",
+      "task_class": "implementation",
+      "input_sha256": "525782393aa9332a0031e5fd42b865614573d2ad88778a23968ed7384614616b"
+    },
+    {
+      "sampling_unit_id": "hold-0178",
+      "task_class": "diagnosis",
+      "input_sha256": "6dee7b45166d2897fe492f2dee63fa919d04bc5513d1230b3015c60024ac3115"
+    },
+    {
+      "sampling_unit_id": "hold-0179",
+      "task_class": "verification",
+      "input_sha256": "1a3e4a31926d074c87f0b50645ac7cc1ac62496cf937a9a3e14cdc8047341ec8"
+    },
+    {
+      "sampling_unit_id": "hold-0180",
+      "task_class": "routine-non-durable",
+      "input_sha256": "b61a2be2898cce6c22b2217883933265b62e1e874b737009123461a97970b594"
+    },
+    {
+      "sampling_unit_id": "hold-0181",
+      "task_class": "repository-question",
+      "input_sha256": "5591f7c82d3ed02128a39d7c18cea0487a60214c02bbab97f13346cc9ff7b2e4"
+    },
+    {
+      "sampling_unit_id": "hold-0182",
+      "task_class": "implementation",
+      "input_sha256": "c8f33686e1a7de4cb3505a209324ab4d14c1d322ed5356987198571a5f3512b0"
+    },
+    {
+      "sampling_unit_id": "hold-0183",
+      "task_class": "diagnosis",
+      "input_sha256": "7d69b31eeb6517673361aaa95b7796fc6de96f88e496c587fba2eb6ce70f39f0"
+    },
+    {
+      "sampling_unit_id": "hold-0184",
+      "task_class": "verification",
+      "input_sha256": "8d49679ac054228069e3416994465f45c23bb8e89d752728af2dcf0c602aea60"
+    },
+    {
+      "sampling_unit_id": "hold-0185",
+      "task_class": "routine-non-durable",
+      "input_sha256": "3e8d0e2bf4dbec4d4622624f9550c752b9afab9a5d52c05b8118f2e9921664fd"
+    },
+    {
+      "sampling_unit_id": "hold-0186",
+      "task_class": "repository-question",
+      "input_sha256": "0e7e112e35d0d297bbca136f1d17384ef64d86a18d549a9654ddac9dc48bf1d7"
+    },
+    {
+      "sampling_unit_id": "hold-0187",
+      "task_class": "implementation",
+      "input_sha256": "160a4bbfe65ce409e99ad9b74cce23a2174239c2895adab681d89caae8bc33d9"
+    },
+    {
+      "sampling_unit_id": "hold-0188",
+      "task_class": "diagnosis",
+      "input_sha256": "2e17f89b0f5cf4d439186306cff1b74dcbbb5af49208240a502ecf235672e609"
+    },
+    {
+      "sampling_unit_id": "hold-0189",
+      "task_class": "verification",
+      "input_sha256": "7060fa45cec36ec1d221214c316ef8174d836456ceb3e6a0b484d641b777c897"
+    },
+    {
+      "sampling_unit_id": "hold-0190",
+      "task_class": "routine-non-durable",
+      "input_sha256": "410c22b706fe4e870e07a6b1e8000b47f7d76f03845208adcbb0fab4afe8052f"
+    },
+    {
+      "sampling_unit_id": "hold-0191",
+      "task_class": "repository-question",
+      "input_sha256": "34295ee1aa1d1adbad7576625a64c684052cde6935b7dc6f31afdb857f68059b"
+    },
+    {
+      "sampling_unit_id": "hold-0192",
+      "task_class": "implementation",
+      "input_sha256": "931e754dc248cbb0088231e51bf02986a1345894ad8605c1193080019ae9dee8"
+    },
+    {
+      "sampling_unit_id": "hold-0193",
+      "task_class": "diagnosis",
+      "input_sha256": "7b15bcb63f0fa2683c702973e4b4cbe2451b45e3a9b9c780b82a0ee9174e2c5f"
+    },
+    {
+      "sampling_unit_id": "hold-0194",
+      "task_class": "verification",
+      "input_sha256": "a85e52b760c4cc3b3cbc2d3a0336424c635998771fc62baa8ed52a34c378bb73"
+    },
+    {
+      "sampling_unit_id": "hold-0195",
+      "task_class": "routine-non-durable",
+      "input_sha256": "f00296ff2c7834c99788f2bb1d0732f14c98fa3c9595f1942712cfc58a9b9341"
+    },
+    {
+      "sampling_unit_id": "hold-0196",
+      "task_class": "repository-question",
+      "input_sha256": "f7a605253cd3c6cb9d804a7d58c01dbfe696b337f8ba06e9979205cf1f6ab7ab"
+    },
+    {
+      "sampling_unit_id": "hold-0197",
+      "task_class": "implementation",
+      "input_sha256": "342bed8452da8e7e42662a59aaeaec13244b2beb65e546be219cadd60fa9cb6f"
+    },
+    {
+      "sampling_unit_id": "hold-0198",
+      "task_class": "diagnosis",
+      "input_sha256": "eced50183927599db91ce9f167b36ebefd84b7d5d7a1320277e347399aa34594"
+    },
+    {
+      "sampling_unit_id": "hold-0199",
+      "task_class": "verification",
+      "input_sha256": "8da61fe1f0fd44045a33ef3e259aa2a5c4a811654282db3c24099abdde372ebc"
+    },
+    {
+      "sampling_unit_id": "hold-0200",
+      "task_class": "routine-non-durable",
+      "input_sha256": "c29f15b3574dd249a7f4c24ea9754728f0364130557fa4165ca74b033f32bf67"
+    },
+    {
+      "sampling_unit_id": "hold-0201",
+      "task_class": "repository-question",
+      "input_sha256": "cb15914dba0765092f2d96cdcbb8e8f884cfbe78fd5eec6fec4d029c107c6ad6"
+    },
+    {
+      "sampling_unit_id": "hold-0202",
+      "task_class": "implementation",
+      "input_sha256": "ec7067e2b468b6dc1b7659f4a2328f1c67df7591bb87668f2c9907f4a6819d92"
+    },
+    {
+      "sampling_unit_id": "hold-0203",
+      "task_class": "diagnosis",
+      "input_sha256": "0dd50e0add2fcfa9e6df3155d6438fdebf354aa6fab455a34becbd2c994a04a2"
+    },
+    {
+      "sampling_unit_id": "hold-0204",
+      "task_class": "verification",
+      "input_sha256": "579779f3fdb3cc774126ffda4bf331b0777b8c979ceefd11dec8c0ef9e09713d"
+    },
+    {
+      "sampling_unit_id": "hold-0205",
+      "task_class": "routine-non-durable",
+      "input_sha256": "a1b41922753ee11901a8b0fa9382aecc7816d8371d602dcad32b3a05439e6982"
+    },
+    {
+      "sampling_unit_id": "hold-0206",
+      "task_class": "repository-question",
+      "input_sha256": "7a04b2d666ddcca9debad7a38417645c08077f19b5a20544a6559dfaa43fe905"
+    },
+    {
+      "sampling_unit_id": "hold-0207",
+      "task_class": "implementation",
+      "input_sha256": "c40e6fd136fab7a43acbf2be88940be769076dd91c6e816adcf783c2a9c33c04"
+    },
+    {
+      "sampling_unit_id": "hold-0208",
+      "task_class": "diagnosis",
+      "input_sha256": "f96c1a33012dc4e35b5956b37b968b2f7063f4650e769d05a3cfb1a1d5a339d9"
+    },
+    {
+      "sampling_unit_id": "hold-0209",
+      "task_class": "verification",
+      "input_sha256": "4024899e8720f6143d22629c057c59d4161ac370d6ffdce19f877a602a8e6689"
+    },
+    {
+      "sampling_unit_id": "hold-0210",
+      "task_class": "routine-non-durable",
+      "input_sha256": "8a402c012706bf70e7ae65674efdfee95f557b2c83568b8ccfe08e1b2c3aacf6"
+    },
+    {
+      "sampling_unit_id": "hold-0211",
+      "task_class": "repository-question",
+      "input_sha256": "a914a0503107ce997ca12d66f43102094490299dd61558924d2eff43294e02cb"
+    },
+    {
+      "sampling_unit_id": "hold-0212",
+      "task_class": "implementation",
+      "input_sha256": "acefb1ad6730f0f45956210601ad468083609012157e0d3a04d92c9211a422fe"
+    },
+    {
+      "sampling_unit_id": "hold-0213",
+      "task_class": "diagnosis",
+      "input_sha256": "aad3884b599fb79f8cb0c33afc8ca2906180fb8ad7f29647b4120ce293832068"
+    },
+    {
+      "sampling_unit_id": "hold-0214",
+      "task_class": "verification",
+      "input_sha256": "a37c0e1b39a8a89ad4d0c9ca56532c2b26e5d369657fe65ed654f01986c21974"
+    },
+    {
+      "sampling_unit_id": "hold-0215",
+      "task_class": "routine-non-durable",
+      "input_sha256": "4ad83ca134ad9e28c7e36f756a57819902b1ad22c994fe66f1ab4281f32517fc"
+    },
+    {
+      "sampling_unit_id": "hold-0216",
+      "task_class": "repository-question",
+      "input_sha256": "df5cc3f2b2abf27f704f18fd611522afe5c374d333d8eed77f6746cdfc9e593a"
+    },
+    {
+      "sampling_unit_id": "hold-0217",
+      "task_class": "implementation",
+      "input_sha256": "93640095b9c558342765262ba688a5ecb8304f32695c71115afa1ebf14011bea"
+    },
+    {
+      "sampling_unit_id": "hold-0218",
+      "task_class": "diagnosis",
+      "input_sha256": "97ed0e0ba02284442cb9cfa72375a40fa50c0bc825183b867396d445397199d5"
+    },
+    {
+      "sampling_unit_id": "hold-0219",
+      "task_class": "verification",
+      "input_sha256": "0729897dafbe77314fdf72f693e8b87964e70003344b2e88564d523b1227b545"
+    },
+    {
+      "sampling_unit_id": "hold-0220",
+      "task_class": "routine-non-durable",
+      "input_sha256": "3c30684da346773225d3bc86b95584fdac719aeb8f1f59c52b1ca73af4eaa039"
+    },
+    {
+      "sampling_unit_id": "hold-0221",
+      "task_class": "repository-question",
+      "input_sha256": "0167bd6da77d0954dda79c51bafd040b48e88d92f1e7d2211f4cf7e61414e499"
+    },
+    {
+      "sampling_unit_id": "hold-0222",
+      "task_class": "implementation",
+      "input_sha256": "4bdb090ac7d26b8062f9e567dc1bf4eefaab1f92f1c6bb74195aeea9687579f3"
+    },
+    {
+      "sampling_unit_id": "hold-0223",
+      "task_class": "diagnosis",
+      "input_sha256": "239ae44956673c3b80ad623784874af1e49342677c19671e2b09adfbf33ee49f"
+    },
+    {
+      "sampling_unit_id": "hold-0224",
+      "task_class": "verification",
+      "input_sha256": "c5cf094e50a18cc238f6cc4b1287cbb22f1e508518fceedb0e8bab2a2fb4592b"
+    },
+    {
+      "sampling_unit_id": "hold-0225",
+      "task_class": "routine-non-durable",
+      "input_sha256": "fe772bce2ccd7edb3cfe597c60a7453ba468cd67cd0ff2633edd11fd30d84cd5"
+    },
+    {
+      "sampling_unit_id": "hold-0226",
+      "task_class": "repository-question",
+      "input_sha256": "6d2690bcd5ebf34deb019edc1d91e1754ef6073b42528ff343211bcce57befda"
+    },
+    {
+      "sampling_unit_id": "hold-0227",
+      "task_class": "implementation",
+      "input_sha256": "261a161780ac6a43892526c6310b93b2903f9f911faa85ce8dc4097c6c00a08c"
+    },
+    {
+      "sampling_unit_id": "hold-0228",
+      "task_class": "diagnosis",
+      "input_sha256": "eecef1deceb8ffc6fe90b020d5457b967bc0ad9cf74ac3a212fbca7cb8a2c358"
+    },
+    {
+      "sampling_unit_id": "hold-0229",
+      "task_class": "verification",
+      "input_sha256": "39bc7feede12c22d8852e674fd3832be669ea06f231053b29364c62cb5ba8384"
+    },
+    {
+      "sampling_unit_id": "hold-0230",
+      "task_class": "routine-non-durable",
+      "input_sha256": "b6f2d0ca62181787f28cec43731b4c32cacca81068442d630c7a5401d9ac8662"
+    },
+    {
+      "sampling_unit_id": "hold-0231",
+      "task_class": "repository-question",
+      "input_sha256": "1390146060c86675f20ba5f4b46b2cc3a5296a3e9ba44082e1fb2cd24c044c2e"
+    },
+    {
+      "sampling_unit_id": "hold-0232",
+      "task_class": "implementation",
+      "input_sha256": "99e618d127bfe4e0f1478539cc2b7fde8a3a7e0e3b46077bccf0e201282d7ee2"
+    },
+    {
+      "sampling_unit_id": "hold-0233",
+      "task_class": "diagnosis",
+      "input_sha256": "b611675bf663e67aee3be5516641f12bff2ed4708aafd56fe706c7d2f00d35ac"
+    },
+    {
+      "sampling_unit_id": "hold-0234",
+      "task_class": "verification",
+      "input_sha256": "da171f5733d20cb70696e94ab0c3a4cf1b7e9d160daf8e7acf24577f1d62e63f"
+    },
+    {
+      "sampling_unit_id": "hold-0235",
+      "task_class": "routine-non-durable",
+      "input_sha256": "be720e5487827d96dceda1ddd483c29612ebff8c7190b43c9a1f337497c22e34"
+    },
+    {
+      "sampling_unit_id": "hold-0236",
+      "task_class": "repository-question",
+      "input_sha256": "e0e8b54df1b624ee5d05666e4f97ef834faa5dd477c5888d45982c4b541957ff"
+    },
+    {
+      "sampling_unit_id": "hold-0237",
+      "task_class": "implementation",
+      "input_sha256": "ed750a9ace2956bb8e67caa568418826a3d644cc0ab763540f3eb6e921098917"
+    },
+    {
+      "sampling_unit_id": "hold-0238",
+      "task_class": "diagnosis",
+      "input_sha256": "339efedb8632710d4c6de4c767894d7fa20056c50d1cbc19bd6fce000fd72169"
+    },
+    {
+      "sampling_unit_id": "hold-0239",
+      "task_class": "verification",
+      "input_sha256": "c18eebb90cbb5083d33d1d9b3dd94b0ddf39d2b2662f341efd3fe923027940ad"
+    },
+    {
+      "sampling_unit_id": "hold-0240",
+      "task_class": "routine-non-durable",
+      "input_sha256": "acae4dd524bf7cccef46d90c89a85d64f2f8a04ae24b023a864131a64f62a2a0"
+    },
+    {
+      "sampling_unit_id": "hold-0241",
+      "task_class": "repository-question",
+      "input_sha256": "f044f384408030c72ab79dc5bda8caad810ade51910efa2ff95924dc1e8bc201"
+    },
+    {
+      "sampling_unit_id": "hold-0242",
+      "task_class": "implementation",
+      "input_sha256": "df3c27d34316d75164585d97a3b60cfa7c6d8e0a819a175d15b385c40da67a5f"
+    },
+    {
+      "sampling_unit_id": "hold-0243",
+      "task_class": "diagnosis",
+      "input_sha256": "a3f41e243bbfdc4c5bcb62fcfeb64def18b9ed5042d17de8098a48a8f9cdd34b"
+    },
+    {
+      "sampling_unit_id": "hold-0244",
+      "task_class": "verification",
+      "input_sha256": "472ec57d91f8c0d821277096a6ee36058a8b1af57c1c2ff93965c578fa6427f2"
+    },
+    {
+      "sampling_unit_id": "hold-0245",
+      "task_class": "routine-non-durable",
+      "input_sha256": "dda2370b141f002f8c4d154709073ccfd833d2c4d4d5841d997840fa77169961"
+    },
+    {
+      "sampling_unit_id": "hold-0246",
+      "task_class": "repository-question",
+      "input_sha256": "1e73501e372a74e45dd644bdd525191f1b810166302137b11ef904535eb3108b"
+    },
+    {
+      "sampling_unit_id": "hold-0247",
+      "task_class": "implementation",
+      "input_sha256": "9da1109e89bf8b31519e13fac7187ffb728ee2b6fd0c9e1d31c54bfc3c7455f7"
+    },
+    {
+      "sampling_unit_id": "hold-0248",
+      "task_class": "diagnosis",
+      "input_sha256": "f531de79ab5d3bb7f2099a006a54478b44c52ce0f1ae2ce3159057204d038520"
+    },
+    {
+      "sampling_unit_id": "hold-0249",
+      "task_class": "verification",
+      "input_sha256": "a413b9dbd8be37ddd1c82d25d810ddd0e5026507902c74e2f45941b44adf4d6f"
+    },
+    {
+      "sampling_unit_id": "hold-0250",
+      "task_class": "routine-non-durable",
+      "input_sha256": "553f2e22f8729e1ef5d2f297fe7e39f322108205bdc9cc395cfc0b4fe5719c36"
+    },
+    {
+      "sampling_unit_id": "hold-0251",
+      "task_class": "repository-question",
+      "input_sha256": "afb4fcc5c1c67236a08a4ea23e17136215fb40da7ab3c4a050f6806fd94d944d"
+    },
+    {
+      "sampling_unit_id": "hold-0252",
+      "task_class": "implementation",
+      "input_sha256": "b41edd622152b3fde8ceeb02ce256216d47fd8e57e40e40756bd1add8c096c06"
+    },
+    {
+      "sampling_unit_id": "hold-0253",
+      "task_class": "diagnosis",
+      "input_sha256": "6bd3acc67afe89749b880c6619f71851e22cef3f4885cf410f73eb85086305b5"
+    },
+    {
+      "sampling_unit_id": "hold-0254",
+      "task_class": "verification",
+      "input_sha256": "e2f455eb6cf6273cdf35633ef6d8e55ed2393d3c90ac5df6e6576fc4220c9c1d"
+    },
+    {
+      "sampling_unit_id": "hold-0255",
+      "task_class": "routine-non-durable",
+      "input_sha256": "6ce76b0ab11589488835335df19069cfc27b3d1d01fc69ffc8997c257b24238d"
+    },
+    {
+      "sampling_unit_id": "hold-0256",
+      "task_class": "repository-question",
+      "input_sha256": "29e9d6bb09316fc659feec37ba7635f57d2623c9d625d32700ca3a649b02d13c"
+    },
+    {
+      "sampling_unit_id": "hold-0257",
+      "task_class": "implementation",
+      "input_sha256": "b7ef90b1ca022272b8453cc3d83201a7e37a95f7b541b097e284a073a6148bcc"
+    },
+    {
+      "sampling_unit_id": "hold-0258",
+      "task_class": "diagnosis",
+      "input_sha256": "479cca463fc951847c1994f11b3a02ee804156fd7a1fab8d8afa394cff56b1e7"
+    },
+    {
+      "sampling_unit_id": "hold-0259",
+      "task_class": "verification",
+      "input_sha256": "0f347094ac4465da0e89bf1a4c3bcbf1dbd31a6954209f38074182383282a190"
+    },
+    {
+      "sampling_unit_id": "hold-0260",
+      "task_class": "routine-non-durable",
+      "input_sha256": "00b8cf1f7da71d89b484730948a01207e076bdb0a277fcbd08a9900dca1659c0"
+    },
+    {
+      "sampling_unit_id": "hold-0261",
+      "task_class": "repository-question",
+      "input_sha256": "97bf2a36502ab9caf541e0c54c6b39906793f61428411777d8da88fcc8688971"
+    },
+    {
+      "sampling_unit_id": "hold-0262",
+      "task_class": "implementation",
+      "input_sha256": "ba692872f9486f1ddbd34b6c288dfd247ca5f48e3c13e84559148a5a8c4490a6"
+    },
+    {
+      "sampling_unit_id": "hold-0263",
+      "task_class": "diagnosis",
+      "input_sha256": "dddc10fb83d3ee1b85664f1bf9f3c25bc429a40966734857ec4c6264cb5a029f"
+    },
+    {
+      "sampling_unit_id": "hold-0264",
+      "task_class": "verification",
+      "input_sha256": "8ea3ccdcb64cef3ebc876f139271fcb062fb9d0567741e8ed5ef6ef939f75f12"
+    },
+    {
+      "sampling_unit_id": "hold-0265",
+      "task_class": "routine-non-durable",
+      "input_sha256": "b03428064f08542217858369f68c6267333d1973ae275eb50192741e01b97531"
+    },
+    {
+      "sampling_unit_id": "hold-0266",
+      "task_class": "repository-question",
+      "input_sha256": "7f127a25da9ffd59e62f98d5bb2f1b8321b5743e2527c7ebce3c1ebfbe3282df"
+    },
+    {
+      "sampling_unit_id": "hold-0267",
+      "task_class": "implementation",
+      "input_sha256": "42c6326574ada8f9b423360613a0ebba2078e84d28ef5c73511dc6fb97f091d9"
+    },
+    {
+      "sampling_unit_id": "hold-0268",
+      "task_class": "diagnosis",
+      "input_sha256": "dc1fbd2042398df26f11d3569613e852715791f84975deaa194e363d7b54443f"
+    },
+    {
+      "sampling_unit_id": "hold-0269",
+      "task_class": "verification",
+      "input_sha256": "8100e43070c22155f1e302a1d4b6844f4df1918e8a4e66157a70bf143e449100"
+    },
+    {
+      "sampling_unit_id": "hold-0270",
+      "task_class": "routine-non-durable",
+      "input_sha256": "756e04060ae6a3ab9a5c635c9683ab36d07db43e9bd4eab168e577c71f99eb0c"
+    },
+    {
+      "sampling_unit_id": "hold-0271",
+      "task_class": "repository-question",
+      "input_sha256": "9f1974467ff554009761b02d1bfd8061ee7519bad84036628725319a7edfc1ef"
+    },
+    {
+      "sampling_unit_id": "hold-0272",
+      "task_class": "implementation",
+      "input_sha256": "fc10d697b251c35d01c84a05075b09afe5519a5538a0d606043e7ee526fd0e21"
+    },
+    {
+      "sampling_unit_id": "hold-0273",
+      "task_class": "diagnosis",
+      "input_sha256": "f39a37ac04e903c486ef36c410bbc1c96abc0ed38f5e2aeb1f0ad250a363a5ef"
+    },
+    {
+      "sampling_unit_id": "hold-0274",
+      "task_class": "verification",
+      "input_sha256": "093099016948f1a31c8f396dd8da696d1d8b25aaca7a9efee4a7739c7069694e"
+    },
+    {
+      "sampling_unit_id": "hold-0275",
+      "task_class": "routine-non-durable",
+      "input_sha256": "ee3c3ab174482aec07b856b33f9367dc3fe0b4984e4c7237f82e9ecc7691cfa4"
+    },
+    {
+      "sampling_unit_id": "hold-0276",
+      "task_class": "repository-question",
+      "input_sha256": "68cfea69cba2ffb2f9774feb097d4f95b488003f598881ac15eb1d6b0a845cef"
+    },
+    {
+      "sampling_unit_id": "hold-0277",
+      "task_class": "implementation",
+      "input_sha256": "47e294901fa359aba28c577ecbc8fcda123d5b24784fb9c5cb95ee54a3242a3b"
+    },
+    {
+      "sampling_unit_id": "hold-0278",
+      "task_class": "diagnosis",
+      "input_sha256": "f3578372953191615f32d6e5e1899e1e7d880a4e5e26a94355d1a0b43ecd4f36"
+    },
+    {
+      "sampling_unit_id": "hold-0279",
+      "task_class": "verification",
+      "input_sha256": "500b833572e8a517c76d5c029cbcb4a55c6afd3a78f61e0ad95f0f4c9be97d79"
+    },
+    {
+      "sampling_unit_id": "hold-0280",
+      "task_class": "routine-non-durable",
+      "input_sha256": "421c598fe54cbdb206a9877f8e6a959412b88647312b5dab2afa4bdbda2a9d7f"
+    },
+    {
+      "sampling_unit_id": "hold-0281",
+      "task_class": "repository-question",
+      "input_sha256": "3c50f8c5e3585626a5ec52b6f5229eea4e22978e1f8a603fd4231e61c4fd5803"
+    },
+    {
+      "sampling_unit_id": "hold-0282",
+      "task_class": "implementation",
+      "input_sha256": "a2cc66659f736371decb42bf06ef10521f495d7dc948dccdfe70b85ddca9ab5d"
+    },
+    {
+      "sampling_unit_id": "hold-0283",
+      "task_class": "diagnosis",
+      "input_sha256": "4ef66f2b6fc48734f28e9a2e9fc36353f68d872ef74eef67c4e01df56c6aa6f1"
+    },
+    {
+      "sampling_unit_id": "hold-0284",
+      "task_class": "verification",
+      "input_sha256": "45e46a5c100b308e5cb3a39c11d591dbf99ab69cba013938cc71ee386df8aea6"
+    },
+    {
+      "sampling_unit_id": "hold-0285",
+      "task_class": "routine-non-durable",
+      "input_sha256": "b0aa32030550ebb822d20592a251732402b3dbfd2133e6d2fd945b5b725e17a7"
+    },
+    {
+      "sampling_unit_id": "hold-0286",
+      "task_class": "repository-question",
+      "input_sha256": "99e552b013e28ed0edfe3460987309a40287844ff483bb4318694e12675a45e6"
+    },
+    {
+      "sampling_unit_id": "hold-0287",
+      "task_class": "implementation",
+      "input_sha256": "4ba1a83598593a839a1d63f3c40b1a5917ff9c1365214f90b0603994734f3276"
+    },
+    {
+      "sampling_unit_id": "hold-0288",
+      "task_class": "diagnosis",
+      "input_sha256": "b6afd79adffb43a21e1f446b1470f1fd77a775c5d9517a7e01897762b921f79c"
+    },
+    {
+      "sampling_unit_id": "hold-0289",
+      "task_class": "verification",
+      "input_sha256": "7d62cb441dbe3c7bad14a5b2bd3589515a0bc83f9468cbe5a5fdd79142a8178f"
+    },
+    {
+      "sampling_unit_id": "hold-0290",
+      "task_class": "routine-non-durable",
+      "input_sha256": "f1a9e65b2d3cf9cc263a5c599b76698eca922e1181a967f4f5fa547895782c72"
+    },
+    {
+      "sampling_unit_id": "hold-0291",
+      "task_class": "repository-question",
+      "input_sha256": "4f49e94b028cf46cf6c32768ba1a977a6757a928e33885e6ef2fb045e58f5568"
+    },
+    {
+      "sampling_unit_id": "hold-0292",
+      "task_class": "implementation",
+      "input_sha256": "83d72c1ab57c3e00c287c6ea5033ec249ccfd219c15c1ed4eb11243fca781da4"
+    },
+    {
+      "sampling_unit_id": "hold-0293",
+      "task_class": "diagnosis",
+      "input_sha256": "c7db5ab4eed1c21514f316d736b1d56ed13fad78411df8abf493dd09044e40ef"
+    },
+    {
+      "sampling_unit_id": "hold-0294",
+      "task_class": "verification",
+      "input_sha256": "09ec77ffb10e3326255dc3cdfd13d157a70a3f4e12b5c4db292580733e0529ff"
+    },
+    {
+      "sampling_unit_id": "hold-0295",
+      "task_class": "routine-non-durable",
+      "input_sha256": "9cad6c7620a297ce5c501cde99500e264e650ec2fb0a6db975b41c712759266d"
+    },
+    {
+      "sampling_unit_id": "hold-0296",
+      "task_class": "repository-question",
+      "input_sha256": "52019c16c2f2b7fb4d96d250e9e5cbd0a6e2e1bd2e75de2ca9e77db86b97062a"
+    },
+    {
+      "sampling_unit_id": "hold-0297",
+      "task_class": "implementation",
+      "input_sha256": "1e705ce5d81b6b160e3c31fc8d86d2d743ec6750eaa0812de3c0c6cd183afc22"
+    },
+    {
+      "sampling_unit_id": "hold-0298",
+      "task_class": "diagnosis",
+      "input_sha256": "996332bf05e3559bc89bf626f2f81ed0c5539700a339b8f111bbdf78df1945d6"
+    },
+    {
+      "sampling_unit_id": "hold-0299",
+      "task_class": "verification",
+      "input_sha256": "671d89a1bf33bcce168fbcaf7e435323ffaec890c395e72848c017dd6fecaf70"
+    },
+    {
+      "sampling_unit_id": "hold-0300",
+      "task_class": "routine-non-durable",
+      "input_sha256": "b872569d1460d46a3f66c4a8fad90db332238e4a54b29d3dc19e58cf5c7da8d2"
+    },
+    {
+      "sampling_unit_id": "hold-0301",
+      "task_class": "repository-question",
+      "input_sha256": "53aa8f7466f12808912fce5f3af2c2bce6dc8ac244c4db587d08c18e79fc6034"
+    },
+    {
+      "sampling_unit_id": "hold-0302",
+      "task_class": "implementation",
+      "input_sha256": "83b8dd000e6ffd7c5b308988d96d21595b129e93e685c2ce6574e5bb2c7f6de7"
+    },
+    {
+      "sampling_unit_id": "hold-0303",
+      "task_class": "diagnosis",
+      "input_sha256": "724aefea97a6ff54c8ce5e7d55a3fd2ecd027390ec9810f3c0b3b8947d75d93d"
+    },
+    {
+      "sampling_unit_id": "hold-0304",
+      "task_class": "verification",
+      "input_sha256": "b12de7db6c36da88aff770b73df476d02983f6ad723233a022143dd2a38d5056"
+    },
+    {
+      "sampling_unit_id": "hold-0305",
+      "task_class": "routine-non-durable",
+      "input_sha256": "0c18424a0249f24d293eb653a42a330be4c14715c5b0ffe32a9f9973a47100e5"
+    },
+    {
+      "sampling_unit_id": "hold-0306",
+      "task_class": "repository-question",
+      "input_sha256": "cf027beffaf62b986eab8d5a1d4eb93ab898a2dea1676ad2a2674b26dbc667c3"
+    },
+    {
+      "sampling_unit_id": "hold-0307",
+      "task_class": "implementation",
+      "input_sha256": "0ac00337700f1b43f14cfc172581e012b0e47b3f7f1f92946d3349e615505696"
+    },
+    {
+      "sampling_unit_id": "hold-0308",
+      "task_class": "diagnosis",
+      "input_sha256": "02f44d5fe1e5990ea84b242c0bf1943f0a8d5c66d6fb1ff4cbb11b53d84dfbba"
+    },
+    {
+      "sampling_unit_id": "hold-0309",
+      "task_class": "verification",
+      "input_sha256": "b1cdcfb369745c1af3c794e0da60e584252e86ae25946930f85a9cc803962c1e"
+    },
+    {
+      "sampling_unit_id": "hold-0310",
+      "task_class": "routine-non-durable",
+      "input_sha256": "d1c4bbba92a925394986b719dd2b4f78e567fe837d3833a6e11bb3b239284f09"
+    },
+    {
+      "sampling_unit_id": "hold-0311",
+      "task_class": "repository-question",
+      "input_sha256": "aa1281ecc56710c40a55cb02109700b36851514391570d7c29bececd3ba96123"
+    },
+    {
+      "sampling_unit_id": "hold-0312",
+      "task_class": "implementation",
+      "input_sha256": "e6f2c73fe381901ae215f2568d65cb0545967c0cc9135a0f21c088e6ee6200ef"
+    },
+    {
+      "sampling_unit_id": "hold-0313",
+      "task_class": "diagnosis",
+      "input_sha256": "bd1e705330ed9c6f4e9a043d111c90f924f72a92eee7f99fe9bc50d69c1e983f"
+    },
+    {
+      "sampling_unit_id": "hold-0314",
+      "task_class": "verification",
+      "input_sha256": "d964b42b90502c98e8da94c742cb9627bab412df4f6b892005ac1e56d42ed8c6"
+    },
+    {
+      "sampling_unit_id": "hold-0315",
+      "task_class": "routine-non-durable",
+      "input_sha256": "86c58437581ce63760651473f345633807a30735668214001a41ecc5d2e99362"
+    },
+    {
+      "sampling_unit_id": "hold-0316",
+      "task_class": "repository-question",
+      "input_sha256": "57260cb135e0c6841b4b0519d61c9675616a79e03f62f9611f864e5415fbd283"
+    },
+    {
+      "sampling_unit_id": "hold-0317",
+      "task_class": "implementation",
+      "input_sha256": "68147a16e876c57896f60d21d2b709dbd1605c3e47c10851dacbf32fd908cff2"
+    },
+    {
+      "sampling_unit_id": "hold-0318",
+      "task_class": "diagnosis",
+      "input_sha256": "b4470633b1c2bdf703c6371c93eb09800855aeb50366dcaae006ef1cc4e1423f"
+    },
+    {
+      "sampling_unit_id": "hold-0319",
+      "task_class": "verification",
+      "input_sha256": "92b92389994fb2211557353d096ed36939dffb5f58a3120b3a2a0ee12019e759"
+    },
+    {
+      "sampling_unit_id": "hold-0320",
+      "task_class": "routine-non-durable",
+      "input_sha256": "3227f58e0529a336d8edc4ed27b148a97ead5d66cb3a7e6d6c49d078ef212858"
+    },
+    {
+      "sampling_unit_id": "hold-0321",
+      "task_class": "repository-question",
+      "input_sha256": "66816230366a84593e60b7b64582c69f597ae0443b877f5545cce7289b9858f8"
+    },
+    {
+      "sampling_unit_id": "hold-0322",
+      "task_class": "implementation",
+      "input_sha256": "fab6ae79b49ccfbcdd2aa72ff38bc62f1d54122b01da9a5138fed3d541a005fa"
+    },
+    {
+      "sampling_unit_id": "hold-0323",
+      "task_class": "diagnosis",
+      "input_sha256": "4462b0a5989e7c6832a3f90f114da9d0a0100a127a64a5e4bacc70853e2216ea"
+    },
+    {
+      "sampling_unit_id": "hold-0324",
+      "task_class": "verification",
+      "input_sha256": "dcf497defc7842b9fd8f4659c7690f78495d2c21833317cc80adedfa490e63ac"
+    },
+    {
+      "sampling_unit_id": "hold-0325",
+      "task_class": "routine-non-durable",
+      "input_sha256": "a6685e7ab06b3ed42f9a0469b12422b7f6b975323c498f80b55bf5e0048d4bfe"
+    },
+    {
+      "sampling_unit_id": "hold-0326",
+      "task_class": "repository-question",
+      "input_sha256": "a2756b57ecaddeecd2c0565c11945e6cb7997cb6e52b9bd1159646b4a179ae58"
+    },
+    {
+      "sampling_unit_id": "hold-0327",
+      "task_class": "implementation",
+      "input_sha256": "ef6f2dfcf790cc3d978db81e63de083b8fa2b1cca709ecbe77a78bec416e6d10"
+    },
+    {
+      "sampling_unit_id": "hold-0328",
+      "task_class": "diagnosis",
+      "input_sha256": "421a6b6f6fa798ae3b9f90dbee79f2519ab277017e8894f7cca97608b1899514"
+    },
+    {
+      "sampling_unit_id": "hold-0329",
+      "task_class": "verification",
+      "input_sha256": "ab2286a192511f5e038ead88b702e82dd0209fce85c435912aedec1900617b6a"
+    },
+    {
+      "sampling_unit_id": "hold-0330",
+      "task_class": "routine-non-durable",
+      "input_sha256": "ccdb09e87e5c439554fb88dc59d701fc2911fea68eb26aafc127b9fc3fd40bd1"
+    },
+    {
+      "sampling_unit_id": "hold-0331",
+      "task_class": "repository-question",
+      "input_sha256": "7b3692c5189d5c897be89396affdce4ca6923109b4a227b71f3880ba4e3f495a"
+    },
+    {
+      "sampling_unit_id": "hold-0332",
+      "task_class": "implementation",
+      "input_sha256": "2afb443dee61df7807e796d1a04e6e8c1a672de407da27dbdfd637f96a0f830d"
+    },
+    {
+      "sampling_unit_id": "hold-0333",
+      "task_class": "diagnosis",
+      "input_sha256": "3dd051055167a131303955870454419c7d81aafc4b1d1326e52f1c93ae79bfed"
+    },
+    {
+      "sampling_unit_id": "hold-0334",
+      "task_class": "verification",
+      "input_sha256": "980d73b4d0cd28a80bd32fb99f5a1dde85532ff2e1992c52c01bacd774064f86"
+    },
+    {
+      "sampling_unit_id": "hold-0335",
+      "task_class": "routine-non-durable",
+      "input_sha256": "8426a19e27f9f945a2cacaa63f0f94eaad08e108ed15954dbf4ba86ee081c7d0"
+    },
+    {
+      "sampling_unit_id": "hold-0336",
+      "task_class": "repository-question",
+      "input_sha256": "ed7902c45fb179028eddec40fc362458d4c7a6011c5a2c35475279362f60f806"
+    },
+    {
+      "sampling_unit_id": "hold-0337",
+      "task_class": "implementation",
+      "input_sha256": "3e0541b0fc05ff9037733ce8825636fb4427d23a9e47f6b400d6ce74c16eefd1"
+    },
+    {
+      "sampling_unit_id": "hold-0338",
+      "task_class": "diagnosis",
+      "input_sha256": "c324da64116b9fab582263a9ca8573727d5d6b6510f007dc82dd5a8336008dd9"
+    },
+    {
+      "sampling_unit_id": "hold-0339",
+      "task_class": "verification",
+      "input_sha256": "1618b3b84fcb52c190194825312d66a9a7c0b89c870c13f32d9e0ab1557bdc2b"
+    },
+    {
+      "sampling_unit_id": "hold-0340",
+      "task_class": "routine-non-durable",
+      "input_sha256": "165cb447ffb44476fbcba83fc8a73fa140924f6d6d223de331b41459eabab33a"
+    },
+    {
+      "sampling_unit_id": "hold-0341",
+      "task_class": "repository-question",
+      "input_sha256": "8b68fe3648e44b12bc7e4b12ab0c768e70a8bd507a517456c44b700c991a4159"
+    },
+    {
+      "sampling_unit_id": "hold-0342",
+      "task_class": "implementation",
+      "input_sha256": "b63e23ab16bf339472fecd9b0d0e011d30cbdb0ca28845f248a244415d0eb45a"
+    },
+    {
+      "sampling_unit_id": "hold-0343",
+      "task_class": "diagnosis",
+      "input_sha256": "ad1fe23fc2bb6c783bec3573ee934b31cfd4ea088c52727cd4656f4ce7014147"
+    },
+    {
+      "sampling_unit_id": "hold-0344",
+      "task_class": "verification",
+      "input_sha256": "919f67e9c67bd5ada96dd5fcf077aa1b93a8b8a35e4207c2521561b9bac03b48"
+    },
+    {
+      "sampling_unit_id": "hold-0345",
+      "task_class": "routine-non-durable",
+      "input_sha256": "4710c59b47f0eb0ba83b9744caee2084e05da067b81eeb92d519d9cd84d37837"
+    },
+    {
+      "sampling_unit_id": "hold-0346",
+      "task_class": "repository-question",
+      "input_sha256": "a40d6ff0e0caf266cfaa637782628ebf0d6e5889476f5436d8109164a16b3982"
+    },
+    {
+      "sampling_unit_id": "hold-0347",
+      "task_class": "implementation",
+      "input_sha256": "d6e648d576b1911663ae999a1bfe0b033f6d97127e379d85ed3679ba656945c6"
+    },
+    {
+      "sampling_unit_id": "hold-0348",
+      "task_class": "diagnosis",
+      "input_sha256": "e91d7d9fccc5f1c7de9b57d774c8af03c22a4971e85d1682c08d10cba11e870d"
+    },
+    {
+      "sampling_unit_id": "hold-0349",
+      "task_class": "verification",
+      "input_sha256": "0ab03331650852bc9bfd116def2249cdb85580ab7a20a6a7f27d733a443c1f1a"
+    },
+    {
+      "sampling_unit_id": "hold-0350",
+      "task_class": "routine-non-durable",
+      "input_sha256": "e06abbd9a85c6f6dc1b2c2a92900af159117ca7557ecc66e8460e3d2f0bb9720"
+    },
+    {
+      "sampling_unit_id": "hold-0351",
+      "task_class": "repository-question",
+      "input_sha256": "6ca3fa00fed2c68f5a15e148d466c5b5d031f74a19c177821c7b62a5331f4691"
+    },
+    {
+      "sampling_unit_id": "hold-0352",
+      "task_class": "implementation",
+      "input_sha256": "d4b8a6468c40221ff175f993ae82e910d7d855dabf7138935bcca7470807be67"
+    },
+    {
+      "sampling_unit_id": "hold-0353",
+      "task_class": "diagnosis",
+      "input_sha256": "be7ac3a12672562c9dbff8d8bb803e97cffb94881e0d72f0607cd1b731062ca1"
+    },
+    {
+      "sampling_unit_id": "hold-0354",
+      "task_class": "verification",
+      "input_sha256": "7af265ba4ff81764b6598425cf835529c9c6db1d3fcff63efe4030769cbbe0c5"
+    },
+    {
+      "sampling_unit_id": "hold-0355",
+      "task_class": "routine-non-durable",
+      "input_sha256": "bec8c377ce217f20aa45e43b90912de4460b905a84e5a127b6cd4a89760b3c1f"
+    },
+    {
+      "sampling_unit_id": "hold-0356",
+      "task_class": "repository-question",
+      "input_sha256": "120a6df2b5d76c1b8438b54c881bfb0a664baa0464a1d7844ba01fbc82d97b05"
+    },
+    {
+      "sampling_unit_id": "hold-0357",
+      "task_class": "implementation",
+      "input_sha256": "0e478819cab9c4c890b9f1c8083baae906af9b4a46dc317ad3c2fa382ac85bfe"
+    },
+    {
+      "sampling_unit_id": "hold-0358",
+      "task_class": "diagnosis",
+      "input_sha256": "4f70af46a78332959a6531e3f82213e353660b69b4c2e430de7b629b6ab7a500"
+    },
+    {
+      "sampling_unit_id": "hold-0359",
+      "task_class": "verification",
+      "input_sha256": "37f7f21340f97f1068ac687431aa4d88e29ff8432bcfc4c4981a8d5e1d2c02dc"
+    },
+    {
+      "sampling_unit_id": "hold-0360",
+      "task_class": "routine-non-durable",
+      "input_sha256": "342ae4366940a6b6a3bea8c1e59ba256bc10ff2434de7e55db7f803b5931596e"
+    },
+    {
+      "sampling_unit_id": "hold-0361",
+      "task_class": "repository-question",
+      "input_sha256": "a6863e16ce66b1a20b5c759f88e730b94ae638c9aade52de9652261544d28fea"
+    },
+    {
+      "sampling_unit_id": "hold-0362",
+      "task_class": "implementation",
+      "input_sha256": "4c4623834f4a0a05f96fbdfc0425418c7b9f485f79188fdf6d5819690c358de9"
+    },
+    {
+      "sampling_unit_id": "hold-0363",
+      "task_class": "diagnosis",
+      "input_sha256": "61d298d2a5e048f15b560e22d1029e0f94a066edfe46415569a748aa37eef54f"
+    },
+    {
+      "sampling_unit_id": "hold-0364",
+      "task_class": "verification",
+      "input_sha256": "4607973fc48ec20edebea27de651ab037b3b851906e582af81753b58e0bacca3"
+    },
+    {
+      "sampling_unit_id": "hold-0365",
+      "task_class": "routine-non-durable",
+      "input_sha256": "f52b94f04c379621e9ac7a802d4fc5734364eef8b28dea30b47bdb09579a3f03"
+    },
+    {
+      "sampling_unit_id": "hold-0366",
+      "task_class": "repository-question",
+      "input_sha256": "dc3a527bc7f552dc023413dc97057a9c40792f068ff9069b92089a001e9510d3"
+    },
+    {
+      "sampling_unit_id": "hold-0367",
+      "task_class": "implementation",
+      "input_sha256": "b9dba46cff2c8f0446f92f406fa2cab9646892bc9f19794d60690e50278e57b4"
+    },
+    {
+      "sampling_unit_id": "hold-0368",
+      "task_class": "diagnosis",
+      "input_sha256": "1bfd69233de0022fbedff885333d1485e39fe68fbe272505340606d00fe29127"
+    },
+    {
+      "sampling_unit_id": "hold-0369",
+      "task_class": "verification",
+      "input_sha256": "c188c6698ed0732f2b423573b0573202383ca35f67ab931e77f1bca8bab11760"
+    },
+    {
+      "sampling_unit_id": "hold-0370",
+      "task_class": "routine-non-durable",
+      "input_sha256": "ae8896f2cb0be1d994cf76f1b5c99df00b9ed2bda284dae1831fd98f1ac6abea"
+    },
+    {
+      "sampling_unit_id": "hold-0371",
+      "task_class": "repository-question",
+      "input_sha256": "5d70a76f7b7f2b703712eb0d52a6cb2a2f9bb77ef7ccd6d211c2b908c450445a"
+    },
+    {
+      "sampling_unit_id": "hold-0372",
+      "task_class": "implementation",
+      "input_sha256": "c0c6791f2fc3c805f74cd15baeb78a007c8ba7043ec265128d90ddafc6680f44"
+    },
+    {
+      "sampling_unit_id": "hold-0373",
+      "task_class": "diagnosis",
+      "input_sha256": "3226c544802eb6541768c0956b6e03c77413deb777c84d877dbd0b719abcec9b"
+    },
+    {
+      "sampling_unit_id": "hold-0374",
+      "task_class": "verification",
+      "input_sha256": "f0e4c88776a936aa104b01cc232c949e43d544068ae66df844b3fdf1a6d3b3f0"
+    },
+    {
+      "sampling_unit_id": "hold-0375",
+      "task_class": "routine-non-durable",
+      "input_sha256": "d332cd12d985869e02bade88a9fe2cbe5677f8d2575505e4e78e0714f1ccfbb4"
+    },
+    {
+      "sampling_unit_id": "hold-0376",
+      "task_class": "repository-question",
+      "input_sha256": "9eed6c9b76c6061304903bb6343c0cc8cb6db11caa72964c3e02e8728a566224"
+    },
+    {
+      "sampling_unit_id": "hold-0377",
+      "task_class": "implementation",
+      "input_sha256": "8b221d0f5c251a6f3f0d0e671f6c38147961f8fe090d5875f4c70fbd5bb5780a"
+    },
+    {
+      "sampling_unit_id": "hold-0378",
+      "task_class": "diagnosis",
+      "input_sha256": "2fc606d7c9f94a0f65aaf4a834ba2dedd4886df53beb22b8d16d3ab2382a154b"
+    },
+    {
+      "sampling_unit_id": "hold-0379",
+      "task_class": "verification",
+      "input_sha256": "9a726ec6489c6f54fa7d8815e70ef3dad9745cd3798c2dcad0b5ef463ad676a3"
+    },
+    {
+      "sampling_unit_id": "hold-0380",
+      "task_class": "routine-non-durable",
+      "input_sha256": "e5911983f23961d856db0bd9decb3a47309620b1899e7a74e57f182c4d546489"
+    },
+    {
+      "sampling_unit_id": "hold-0381",
+      "task_class": "repository-question",
+      "input_sha256": "199de94cf7ba11b21dd27be37f97ba112d94be14bcc306d040ab6a80bc2aa901"
+    },
+    {
+      "sampling_unit_id": "hold-0382",
+      "task_class": "implementation",
+      "input_sha256": "e1aebeb9d5e09a6d9a15e139255958cf94359f6bed307efb619fc79cbc6a5db0"
+    },
+    {
+      "sampling_unit_id": "hold-0383",
+      "task_class": "diagnosis",
+      "input_sha256": "e981877a6f27f9f2114e6e0a8816d5687569767a75c61ff2c6948fb411cf72f7"
+    },
+    {
+      "sampling_unit_id": "hold-0384",
+      "task_class": "verification",
+      "input_sha256": "5d811c8e41e7b777c42fb2eed8f69ef25e65caaa28bec86223768a11250d3c5b"
+    },
+    {
+      "sampling_unit_id": "hold-0385",
+      "task_class": "routine-non-durable",
+      "input_sha256": "b85176deefed962f3a43eafe353d5cea9ee55e3becc8b64421576953b8c826fb"
+    },
+    {
+      "sampling_unit_id": "hold-0386",
+      "task_class": "repository-question",
+      "input_sha256": "43cab39084ba54bc67a83a7308fa95be974b6f1d1de3f8bab3a182078471b1f3"
+    },
+    {
+      "sampling_unit_id": "hold-0387",
+      "task_class": "implementation",
+      "input_sha256": "4ae77ae74d69216c515596c2606a5870b3f5d133f497649f27c8343348aa2943"
+    },
+    {
+      "sampling_unit_id": "hold-0388",
+      "task_class": "diagnosis",
+      "input_sha256": "918742b8a6d2caa9641f02485d0ebf04ddc33946fead51a0ced63d172b2228fd"
+    },
+    {
+      "sampling_unit_id": "hold-0389",
+      "task_class": "verification",
+      "input_sha256": "71247ba54065195b93acff510b209bb5f892d4186192dc39e6013f953124784d"
+    },
+    {
+      "sampling_unit_id": "hold-0390",
+      "task_class": "routine-non-durable",
+      "input_sha256": "677c7d5060ddf1b413738b3962d9ed6fc2490a5091e6b525d6e76614ca940ff3"
+    },
+    {
+      "sampling_unit_id": "hold-0391",
+      "task_class": "repository-question",
+      "input_sha256": "c3c4d8ba240b5d2a320f31abda3f22249090ac742137185293b72671489a3a14"
+    },
+    {
+      "sampling_unit_id": "hold-0392",
+      "task_class": "implementation",
+      "input_sha256": "171a675928abb7f848b6e5ef3ed82df1fd4943cb38422f6a500fb170bd050607"
+    },
+    {
+      "sampling_unit_id": "hold-0393",
+      "task_class": "diagnosis",
+      "input_sha256": "68bf99897402c7485deafa775a1afdd3eb1386a97a4a02276655e81a47847f01"
+    },
+    {
+      "sampling_unit_id": "hold-0394",
+      "task_class": "verification",
+      "input_sha256": "1a1178b05e8cef7d0926566a6a36c461ca26e6813f9f5b3bee0119d09764a09f"
+    },
+    {
+      "sampling_unit_id": "hold-0395",
+      "task_class": "routine-non-durable",
+      "input_sha256": "12e67443dbf1a6e4ac1e10e7d916cefcc82f27390dd4361b905a52c5fd2e0b7d"
+    },
+    {
+      "sampling_unit_id": "hold-0396",
+      "task_class": "repository-question",
+      "input_sha256": "391af8916058455d1e3b7eb8ae5f017f00c87dfef220617b0558a285dd018d2e"
+    },
+    {
+      "sampling_unit_id": "hold-0397",
+      "task_class": "implementation",
+      "input_sha256": "e347d22709814e085ee84ddd41a79d7eafb0afd6ac0fd32955b5d37932fa9356"
+    },
+    {
+      "sampling_unit_id": "hold-0398",
+      "task_class": "diagnosis",
+      "input_sha256": "bdbb591fba11537bc95aa9a572947e0f1ebacf7aec3715c4171ea3394bbfed4c"
+    },
+    {
+      "sampling_unit_id": "hold-0399",
+      "task_class": "verification",
+      "input_sha256": "41a92b1f461057c2c735c68c214ce4e42e32a2bfcf5fb41de8f0c1e89ea259a1"
+    },
+    {
+      "sampling_unit_id": "hold-0400",
+      "task_class": "routine-non-durable",
+      "input_sha256": "5f77a15802e7f53f751a142126675d798d2ca194cf701606c72db4ef523c9248"
+    },
+    {
+      "sampling_unit_id": "hold-0401",
+      "task_class": "repository-question",
+      "input_sha256": "4610b04651fa848d3f0607754213cf6ad389cf39d71bea4e4ca9c59e6b37e7e8"
+    },
+    {
+      "sampling_unit_id": "hold-0402",
+      "task_class": "implementation",
+      "input_sha256": "1be40e456c64d6984bb5fa514f72c7b6dcf04a8ef41b0ae3e2a3c5b26596d47e"
+    },
+    {
+      "sampling_unit_id": "hold-0403",
+      "task_class": "diagnosis",
+      "input_sha256": "803bdece1fc6bb68e66548ad49a85bf78722e5724e22016f5e43ee5dd44d36af"
+    },
+    {
+      "sampling_unit_id": "hold-0404",
+      "task_class": "verification",
+      "input_sha256": "6edd65f5ea873c47ab3dcbdfb2519ffe753a13b6bcc6bfa86a5b3e379c880263"
+    },
+    {
+      "sampling_unit_id": "hold-0405",
+      "task_class": "routine-non-durable",
+      "input_sha256": "f870fcbacf364e6e129f32da2f3faf4e731e30a606d8bff420787a0953e7d201"
+    },
+    {
+      "sampling_unit_id": "hold-0406",
+      "task_class": "repository-question",
+      "input_sha256": "2c12b3a49e3a42e299285e85c0cbda7d4723fd7cc619cf837671277df7a6a83c"
+    },
+    {
+      "sampling_unit_id": "hold-0407",
+      "task_class": "implementation",
+      "input_sha256": "b1ccd0ea5705b6b965b440161f040b88620f46350f864f1912b387ceadf4ba8f"
+    },
+    {
+      "sampling_unit_id": "hold-0408",
+      "task_class": "diagnosis",
+      "input_sha256": "0627c57c5244ff610f471a4c1555e58e04926e2da055b590a21695eaee58faff"
+    },
+    {
+      "sampling_unit_id": "hold-0409",
+      "task_class": "verification",
+      "input_sha256": "bb8aac680c8ce719361dd9c50dc57dcc0a9a9f3c1e5daa7bb05b40671cad792a"
+    },
+    {
+      "sampling_unit_id": "hold-0410",
+      "task_class": "routine-non-durable",
+      "input_sha256": "63c8b073a4074b5aaac4669ef0c6c9ccf54361834028aec57cfbaea7a7118d61"
+    },
+    {
+      "sampling_unit_id": "hold-0411",
+      "task_class": "repository-question",
+      "input_sha256": "345b01784a95c164c10b19fe0893575c4509a0fda6b5a92850bc84f9ec5b2faa"
+    },
+    {
+      "sampling_unit_id": "hold-0412",
+      "task_class": "implementation",
+      "input_sha256": "b424fe0f0429a4c70508a66d50c248ebffbbcab6815c85074486c61ce3ce221a"
+    },
+    {
+      "sampling_unit_id": "hold-0413",
+      "task_class": "diagnosis",
+      "input_sha256": "47325cd29de769a9e70cd9fea9053b63805a6580a033c079965eaebd82e439f2"
+    },
+    {
+      "sampling_unit_id": "hold-0414",
+      "task_class": "verification",
+      "input_sha256": "5f5c5a76382edb6ea0831a4285a862bc583df22be1501038cb615271f1f7e406"
+    },
+    {
+      "sampling_unit_id": "hold-0415",
+      "task_class": "routine-non-durable",
+      "input_sha256": "eaa7b7a1a7bc7d954a631c7f120308dc8cb69c4a03e2b4a66ec9c7872df8bc2c"
+    },
+    {
+      "sampling_unit_id": "hold-0416",
+      "task_class": "repository-question",
+      "input_sha256": "df1e79a195c4f63d96aa83b4033919357a277bd039e68e161bb7c5df87a18c2c"
+    },
+    {
+      "sampling_unit_id": "hold-0417",
+      "task_class": "implementation",
+      "input_sha256": "f0ce3551cc559ae8258dac51da7914d157979206bf525df7a05b481f93197170"
+    },
+    {
+      "sampling_unit_id": "hold-0418",
+      "task_class": "diagnosis",
+      "input_sha256": "405b19ba1494d573532b07c4f18ab2727bc9f17220a5cd9eae09d97e39bbf365"
+    },
+    {
+      "sampling_unit_id": "hold-0419",
+      "task_class": "verification",
+      "input_sha256": "188fb0986e01006d5ca4aeea255de8fee2d31b48b53820d6341d28de68bfc831"
+    },
+    {
+      "sampling_unit_id": "hold-0420",
+      "task_class": "routine-non-durable",
+      "input_sha256": "9608090332e6d758f6cca006613f249e6ef36149a15767207f5fb869533b3370"
+    },
+    {
+      "sampling_unit_id": "hold-0421",
+      "task_class": "repository-question",
+      "input_sha256": "81210e41c136cecde4dd03d6699e6e2a3cb741c84e0e70311c993445f26c4f51"
+    },
+    {
+      "sampling_unit_id": "hold-0422",
+      "task_class": "implementation",
+      "input_sha256": "76f552b3e18fbb638d80c1ee22296075ebd6072589488e7e7dcf2c96e6c6416f"
+    },
+    {
+      "sampling_unit_id": "hold-0423",
+      "task_class": "diagnosis",
+      "input_sha256": "38335e4a92792f798fc5535f64ceadf6bfe0fa0f7bcca42d1c80ea0411e252cc"
+    },
+    {
+      "sampling_unit_id": "hold-0424",
+      "task_class": "verification",
+      "input_sha256": "a0101e83db615e39bd257fcd285e6ffc42e9afce20b5477769b98b2010fcc77c"
+    },
+    {
+      "sampling_unit_id": "hold-0425",
+      "task_class": "routine-non-durable",
+      "input_sha256": "c56c543e5d2f92ed5ddb940c53d0737ef474f1711028a0961799aa768a34eaed"
+    },
+    {
+      "sampling_unit_id": "hold-0426",
+      "task_class": "repository-question",
+      "input_sha256": "0771b8fc1cbd2aa89f08bc7f539eab4efacee4e5204d9636ded867afabc8cea6"
+    },
+    {
+      "sampling_unit_id": "hold-0427",
+      "task_class": "implementation",
+      "input_sha256": "313ff199e50ead9395193147f27e0bdb5c4d1ced6ae8499276ba9a963962abe7"
+    },
+    {
+      "sampling_unit_id": "hold-0428",
+      "task_class": "diagnosis",
+      "input_sha256": "fcff648c934778cf73ed1134a60252c1143c630d86a1d93aab655377f89ffa3f"
+    },
+    {
+      "sampling_unit_id": "hold-0429",
+      "task_class": "verification",
+      "input_sha256": "1169c4ad74f70c017d4e5190138b9e66b549b2667e51006f44f0cb4e04252396"
+    },
+    {
+      "sampling_unit_id": "hold-0430",
+      "task_class": "routine-non-durable",
+      "input_sha256": "0c46bb2bf4714639ddabcffdc1b6c6c1c3f1a690fe3f7c7f784c9b69e281e135"
+    },
+    {
+      "sampling_unit_id": "hold-0431",
+      "task_class": "repository-question",
+      "input_sha256": "d47fe36fc97f280eac370fc61109dc7dfe0edda6945598bdb547aaf8dda8ce24"
+    },
+    {
+      "sampling_unit_id": "hold-0432",
+      "task_class": "implementation",
+      "input_sha256": "7b0816a989feb7b0809e79d2acfe91c31f485523b1ffa5da0295add791f9829a"
+    },
+    {
+      "sampling_unit_id": "hold-0433",
+      "task_class": "diagnosis",
+      "input_sha256": "8763840150944f0f233b0be389e7bc4f30dbc9748e93efd220a10cbd431df773"
+    },
+    {
+      "sampling_unit_id": "hold-0434",
+      "task_class": "verification",
+      "input_sha256": "2efcc6f0ef1e0c748414b45bbe04836714b6ae6f7d1aaf04e86ae22b8f04c812"
+    },
+    {
+      "sampling_unit_id": "hold-0435",
+      "task_class": "routine-non-durable",
+      "input_sha256": "ba83c198cc78dcd9a0c18ddc0a310d61d82b4345bb1e0ec9df0b2251172bee9c"
+    },
+    {
+      "sampling_unit_id": "hold-0436",
+      "task_class": "repository-question",
+      "input_sha256": "10629b729a607e1a57a5f6348a72a5c9e44233c5a132b3bf59418d35408922a0"
+    },
+    {
+      "sampling_unit_id": "hold-0437",
+      "task_class": "implementation",
+      "input_sha256": "1aad94c65280d8bf2d674cb2ddfb25c9ab6fe663925cfeb9c7d230224fb30f85"
+    },
+    {
+      "sampling_unit_id": "hold-0438",
+      "task_class": "diagnosis",
+      "input_sha256": "d3d75b1346df0cd973a13a94fb6f3dab8ebbf9f17c279db17851710200518947"
+    },
+    {
+      "sampling_unit_id": "hold-0439",
+      "task_class": "verification",
+      "input_sha256": "c6339c757d4d02704d0ca846a3157457034793ae0b08d582f772a08d5e063c38"
+    },
+    {
+      "sampling_unit_id": "hold-0440",
+      "task_class": "routine-non-durable",
+      "input_sha256": "6ccc0625f5feb78b909e9fcb38f11e4b2e93c45bd5b827ce3765dc5f2c0499e5"
+    },
+    {
+      "sampling_unit_id": "hold-0441",
+      "task_class": "repository-question",
+      "input_sha256": "056fc9ba973643be4a421d528efea50f7804890385a3283f573360522b279166"
+    },
+    {
+      "sampling_unit_id": "hold-0442",
+      "task_class": "implementation",
+      "input_sha256": "49f0ca67d4739cd73bc87ef5badd73dc3d3007a708826562c9bd38fcde1cc9a6"
+    },
+    {
+      "sampling_unit_id": "hold-0443",
+      "task_class": "diagnosis",
+      "input_sha256": "dd69672b1e7df0bc25ca8d2dd47447df0dcec4bd44d86f76eefa90dc039ad0f2"
+    },
+    {
+      "sampling_unit_id": "hold-0444",
+      "task_class": "verification",
+      "input_sha256": "2f3c18cc7da9a4ab988e9ee1ef4805ef91f112597acc5a7708ea1f2692595e60"
+    },
+    {
+      "sampling_unit_id": "hold-0445",
+      "task_class": "routine-non-durable",
+      "input_sha256": "eb48e9919a0e31fd74ce6103215c868afa47cee4add9aa52a4523226ba08840a"
+    },
+    {
+      "sampling_unit_id": "hold-0446",
+      "task_class": "repository-question",
+      "input_sha256": "3737e086d823be39e850ef77935d40a6d3967b4c002f2b817d954af31ae0af19"
+    },
+    {
+      "sampling_unit_id": "hold-0447",
+      "task_class": "implementation",
+      "input_sha256": "bd4769dac03bc88371900afb16af079bba3651e4172a1900a15c0bb3d9858cf2"
+    },
+    {
+      "sampling_unit_id": "hold-0448",
+      "task_class": "diagnosis",
+      "input_sha256": "eebd2aabf82ef192ce70b7dccbbfdfba7f53c4cea88aade059d815542a3feff8"
+    },
+    {
+      "sampling_unit_id": "hold-0449",
+      "task_class": "verification",
+      "input_sha256": "670e7f1c04c6ff0f8d3d558bce344b7c2a404ffb35677ee39bf0ee3e8ae99eb8"
+    },
+    {
+      "sampling_unit_id": "hold-0450",
+      "task_class": "routine-non-durable",
+      "input_sha256": "e5f078d3fe2db4230601a0658a826b0e69dd1c9df3bd99e8848d4ccbabd4822f"
+    },
+    {
+      "sampling_unit_id": "hold-0451",
+      "task_class": "repository-question",
+      "input_sha256": "9662f70e92857f32d70b63e2c1818a089cdf010ae50f9c8f57a5524908f103c2"
+    },
+    {
+      "sampling_unit_id": "hold-0452",
+      "task_class": "implementation",
+      "input_sha256": "cea174853dbf4356b414292efad0d16834b316947d3934d026e69b6767b76d49"
+    },
+    {
+      "sampling_unit_id": "hold-0453",
+      "task_class": "diagnosis",
+      "input_sha256": "8dcc4068ffb929b060cdea2de2a25f9d28b3e03a0b311e5d87f8ce1db950fe93"
+    },
+    {
+      "sampling_unit_id": "hold-0454",
+      "task_class": "verification",
+      "input_sha256": "73b64fc504bdc2ab7cb8a59868465c483492d6520a9902c21e202159cadfd155"
+    },
+    {
+      "sampling_unit_id": "hold-0455",
+      "task_class": "routine-non-durable",
+      "input_sha256": "ea5a3c52d2e901f495f4d31488bec56a525ba612b9d9c51ce1c81c39d45e0cf0"
+    },
+    {
+      "sampling_unit_id": "hold-0456",
+      "task_class": "repository-question",
+      "input_sha256": "4fcea866a514c8b4bb9f3ede9eab33945a7ea7f9f991d7047bc684df39afc429"
+    },
+    {
+      "sampling_unit_id": "hold-0457",
+      "task_class": "implementation",
+      "input_sha256": "56e2f0a009c7e73e0785f302c7cd3ebd197a96bafde4ee156e457c4eb5dc2c0b"
+    },
+    {
+      "sampling_unit_id": "hold-0458",
+      "task_class": "diagnosis",
+      "input_sha256": "7b6bb433c290ff448106185cf1d7a1f1af40e1fd66e91013089e8e753443e0eb"
+    },
+    {
+      "sampling_unit_id": "hold-0459",
+      "task_class": "verification",
+      "input_sha256": "8b8fa1eb35fe4024b11827a9f77c72b383df7e6951bc58897ed1a20d108322d4"
+    },
+    {
+      "sampling_unit_id": "hold-0460",
+      "task_class": "routine-non-durable",
+      "input_sha256": "aca2d16643abebc53880051a78f888ffefb83e24d83d48b9b4b6141b61e6a2a0"
+    },
+    {
+      "sampling_unit_id": "hold-0461",
+      "task_class": "repository-question",
+      "input_sha256": "04abecba4dcff9eed171fc3e127585ae0b27e8aa8a61d28bdb661ecd5783d4d2"
+    },
+    {
+      "sampling_unit_id": "hold-0462",
+      "task_class": "implementation",
+      "input_sha256": "1ab9b1bb1bfe89a5f126722b1586f29fbddee24c27f0fe2c1cca1451bcbe784b"
+    },
+    {
+      "sampling_unit_id": "hold-0463",
+      "task_class": "diagnosis",
+      "input_sha256": "58ddd281b3c78d42f6981fb73ddbf50079a3c59095608b9c2678323fcc52fd48"
+    },
+    {
+      "sampling_unit_id": "hold-0464",
+      "task_class": "verification",
+      "input_sha256": "2170fe38a0f7acb24764f5904417320de9be79b03058a40d540fd356edd09d09"
+    },
+    {
+      "sampling_unit_id": "hold-0465",
+      "task_class": "routine-non-durable",
+      "input_sha256": "07efe02b59c5e9e0d9498e031f04d72d62fce4f96c7ececdb98e04fa5bdcc094"
+    },
+    {
+      "sampling_unit_id": "hold-0466",
+      "task_class": "repository-question",
+      "input_sha256": "80d64352f8487e382d7408b91c4070c05bbf9abf02b355d8cc30cf695c060170"
+    },
+    {
+      "sampling_unit_id": "hold-0467",
+      "task_class": "implementation",
+      "input_sha256": "05a552abab698121eaefb7c62450a4e33130e94a17f4a05a12894f38b8cb5cbc"
+    },
+    {
+      "sampling_unit_id": "hold-0468",
+      "task_class": "diagnosis",
+      "input_sha256": "4f2c73a2bddfabc94e81dca2077f68cf778c6ddfe86a7066ab22db1ed233989f"
+    },
+    {
+      "sampling_unit_id": "hold-0469",
+      "task_class": "verification",
+      "input_sha256": "7aea57977b275d634184ba2960f4a3cf2e9bc45b4dbfbf504ebb6c8119ddc918"
+    },
+    {
+      "sampling_unit_id": "hold-0470",
+      "task_class": "routine-non-durable",
+      "input_sha256": "c9ffaa55bdbac9457d8ff28b22cad6b07e51247ace0a48ba5e3bdffa2a31835a"
+    },
+    {
+      "sampling_unit_id": "hold-0471",
+      "task_class": "repository-question",
+      "input_sha256": "3d06cab4011954e7ba92419d088fcfb90855b51c9659c3c3e56b8291a5a9b43a"
+    },
+    {
+      "sampling_unit_id": "hold-0472",
+      "task_class": "implementation",
+      "input_sha256": "d566d3bec8e7e4474da2f4bfac1257284f847f68956d131a0b44aa6f15357d24"
+    },
+    {
+      "sampling_unit_id": "hold-0473",
+      "task_class": "diagnosis",
+      "input_sha256": "323aebc4af62458ed3c80277a9922f15066565b288184751b280ddb2f848dbeb"
+    },
+    {
+      "sampling_unit_id": "hold-0474",
+      "task_class": "verification",
+      "input_sha256": "8347189f2378b3ae81dd5a2252aed7203dde775c516aef9539b95acb3d5c85e5"
+    },
+    {
+      "sampling_unit_id": "hold-0475",
+      "task_class": "routine-non-durable",
+      "input_sha256": "1633454e3b6f998f5e1868a7903227890aaf390df5858d2333f0d135c3e5f124"
+    },
+    {
+      "sampling_unit_id": "hold-0476",
+      "task_class": "repository-question",
+      "input_sha256": "b11abe5701b06a4fc4d1c365fcc65a13f8e40a011c1ff1fd24940281ba88f2ac"
+    },
+    {
+      "sampling_unit_id": "hold-0477",
+      "task_class": "implementation",
+      "input_sha256": "8a14465f107b19b24a63bc9706291026c7a3e9465ad18cd7c87a0ac39019b68e"
+    },
+    {
+      "sampling_unit_id": "hold-0478",
+      "task_class": "diagnosis",
+      "input_sha256": "6b0561a21e8a302c30744d0c8b5e678af05a92a8ae5dc4b5409c84ec4d9dd43c"
+    },
+    {
+      "sampling_unit_id": "hold-0479",
+      "task_class": "verification",
+      "input_sha256": "266c33dfa1b1270eb7eb9a4c4486b9a92a4477a2d3bc546e2e3261c89c2ab953"
+    },
+    {
+      "sampling_unit_id": "hold-0480",
+      "task_class": "routine-non-durable",
+      "input_sha256": "ffb3b5517c24fce07384cbacc1ddfe582eb4cfaa9fd82ece56736b986e7ef9aa"
+    },
+    {
+      "sampling_unit_id": "hold-0481",
+      "task_class": "repository-question",
+      "input_sha256": "5ca27ad394b7983a138fb9db76fffa50e9a30d97baf703427823db6eea772344"
+    },
+    {
+      "sampling_unit_id": "hold-0482",
+      "task_class": "implementation",
+      "input_sha256": "7882964422f56c493318eb3c5f962ac2feb9bf139503542a41a879bb84ba7e66"
+    },
+    {
+      "sampling_unit_id": "hold-0483",
+      "task_class": "diagnosis",
+      "input_sha256": "e9fa104c8dbf9ccf307f333cc773cbef5ccf8a703c8a6926a351e96400265b0d"
+    },
+    {
+      "sampling_unit_id": "hold-0484",
+      "task_class": "verification",
+      "input_sha256": "0433aad2898be5f3ec2cf4ba30594d3b142134a9b2398d76ac3514b787d47a38"
+    },
+    {
+      "sampling_unit_id": "hold-0485",
+      "task_class": "routine-non-durable",
+      "input_sha256": "8a62caea5d4b6204261db13df26500ea142b29b25d48b6126984897d65592da6"
+    },
+    {
+      "sampling_unit_id": "hold-0486",
+      "task_class": "repository-question",
+      "input_sha256": "a9e2e020bca9aca224ed57450e281004c49d74eb6b77b8d17a615052dfe99bc0"
+    },
+    {
+      "sampling_unit_id": "hold-0487",
+      "task_class": "implementation",
+      "input_sha256": "b11c578f4b4c7d1c65b728b5099356e28637c290be2d082cab63625c7082276f"
+    },
+    {
+      "sampling_unit_id": "hold-0488",
+      "task_class": "diagnosis",
+      "input_sha256": "7a3c416f2911b82ad39e02307221586a0ae6ff0b34184da3f6abb90d09134cd7"
+    },
+    {
+      "sampling_unit_id": "hold-0489",
+      "task_class": "verification",
+      "input_sha256": "8af9ad7623bb190eb06be4965b20efc527ba7605244e44d975deed64bcba5e00"
+    },
+    {
+      "sampling_unit_id": "hold-0490",
+      "task_class": "routine-non-durable",
+      "input_sha256": "21cf5a8626b7c2e7276f303a530d6a895a311e87751ad389e5a3ff46aaaea84f"
+    },
+    {
+      "sampling_unit_id": "hold-0491",
+      "task_class": "repository-question",
+      "input_sha256": "9698adc7790acf28ed039017c4d1daf897e69d79b9c3febb50904eaea5c700c8"
+    },
+    {
+      "sampling_unit_id": "hold-0492",
+      "task_class": "implementation",
+      "input_sha256": "b43d49a4789110347c74035aa68f95d05f1b49edb76b46662d56442d9075572f"
+    },
+    {
+      "sampling_unit_id": "hold-0493",
+      "task_class": "diagnosis",
+      "input_sha256": "5cfb149b403e63c133eabdc93d9c02cff2a8706f71871d8169657d4511404008"
+    },
+    {
+      "sampling_unit_id": "hold-0494",
+      "task_class": "verification",
+      "input_sha256": "7400c0b5fe7a59efdfc264a3b60397a0522d7bfe78eff744a926d3e073ed6443"
+    },
+    {
+      "sampling_unit_id": "hold-0495",
+      "task_class": "routine-non-durable",
+      "input_sha256": "c06c0a3acd3f978a15a36c08d56a824a58562089be6291d3947675e08c188d32"
+    },
+    {
+      "sampling_unit_id": "hold-0496",
+      "task_class": "repository-question",
+      "input_sha256": "f9114f26750ef4f2491a14403f3cc2fd96ac624ddec9d5e669641be3ba86a65a"
+    },
+    {
+      "sampling_unit_id": "hold-0497",
+      "task_class": "implementation",
+      "input_sha256": "6dd419b1f9fe9b20a2ecb42261fae4067dfcd13f34399e5e6a91a85fb188bed7"
+    },
+    {
+      "sampling_unit_id": "hold-0498",
+      "task_class": "diagnosis",
+      "input_sha256": "76c9da978ae2275def13d2b61b832339037fa67f74e1e66aba59d322ec427b95"
+    },
+    {
+      "sampling_unit_id": "hold-0499",
+      "task_class": "verification",
+      "input_sha256": "ea742f7a762cf29594a81ea3952166d39376b9298ca2af44094261d2c9bec852"
+    },
+    {
+      "sampling_unit_id": "hold-0500",
+      "task_class": "routine-non-durable",
+      "input_sha256": "8d91f60e36b64e22c1f3d72325bd91007f40d6e3b64bcab55d009399235f1bb5"
+    },
+    {
+      "sampling_unit_id": "hold-0501",
+      "task_class": "repository-question",
+      "input_sha256": "648add242a98000c7731feba6fab011e47021a52a4f0cbbfe4a2bbafa84543eb"
+    },
+    {
+      "sampling_unit_id": "hold-0502",
+      "task_class": "implementation",
+      "input_sha256": "978ec8f8304d365db25681d6fda17d7ebc1e9fa53cc0e175c0c6fa1631f5f820"
+    },
+    {
+      "sampling_unit_id": "hold-0503",
+      "task_class": "diagnosis",
+      "input_sha256": "131219947e34b191dfcde86b35c50e67514c8e25a42528eb9b5fd0cc91c59c37"
+    },
+    {
+      "sampling_unit_id": "hold-0504",
+      "task_class": "verification",
+      "input_sha256": "4054f6f61344d5c8948b235443930bfb07b1bdee89afb0ab049cf46bd3907fea"
+    },
+    {
+      "sampling_unit_id": "hold-0505",
+      "task_class": "routine-non-durable",
+      "input_sha256": "19b6c5798d96d137bff893b4292e36196d22761c4bdf3e917245cdf6e539222b"
+    },
+    {
+      "sampling_unit_id": "hold-0506",
+      "task_class": "repository-question",
+      "input_sha256": "ec8b99eecb66b2d45fd19d9287db7be0064eac6c51ec8ab2c158f7a12ebb20a4"
+    },
+    {
+      "sampling_unit_id": "hold-0507",
+      "task_class": "implementation",
+      "input_sha256": "7b5e541d2883a5a424348de576ca06e540bfa674db6b978b044703944067561f"
+    },
+    {
+      "sampling_unit_id": "hold-0508",
+      "task_class": "diagnosis",
+      "input_sha256": "c1811baffd4619a34456ed68e87bb07b8d9e97aabee716b1b13292ee3e757152"
+    },
+    {
+      "sampling_unit_id": "hold-0509",
+      "task_class": "verification",
+      "input_sha256": "6efbee64947fe66b2793e0010d0dd121acc1a3f26bed26583b8a1a0dcf024a9b"
+    },
+    {
+      "sampling_unit_id": "hold-0510",
+      "task_class": "routine-non-durable",
+      "input_sha256": "625341d7bf27245891bd4a96f73a5d947a3de21f984b05d36deca064644c8892"
+    },
+    {
+      "sampling_unit_id": "hold-0511",
+      "task_class": "repository-question",
+      "input_sha256": "0c61a94c7c569dfc8d774ea5cbfe55f411babe3d678f5dd859e28b5bc75918f7"
+    },
+    {
+      "sampling_unit_id": "hold-0512",
+      "task_class": "implementation",
+      "input_sha256": "d7dfa497b67cf6aa0afeb2f325c0f1aec77af59b09ee30880615858831fdf299"
+    },
+    {
+      "sampling_unit_id": "hold-0513",
+      "task_class": "diagnosis",
+      "input_sha256": "ffa740f3ca5b47111d1a3bbd7d4dce1b62ff8249a8d8d5234e95eed10ff61c99"
+    },
+    {
+      "sampling_unit_id": "hold-0514",
+      "task_class": "verification",
+      "input_sha256": "de7df113ffbc8a3480f09ad31a99cfe822eb633a4f56f88b5995bf62a5910757"
+    },
+    {
+      "sampling_unit_id": "hold-0515",
+      "task_class": "routine-non-durable",
+      "input_sha256": "9d97aa42ddf3d979a8bd5f3f00ceca6b6219096777280e1133603ab81aa3d34e"
+    },
+    {
+      "sampling_unit_id": "hold-0516",
+      "task_class": "repository-question",
+      "input_sha256": "f5aa44b929955b9864632e14dd60977dd345522f227be3afbde2512347323a2c"
+    },
+    {
+      "sampling_unit_id": "hold-0517",
+      "task_class": "implementation",
+      "input_sha256": "1a617255f34b96427663540a356c6f0e050ad2e4282455644d0803a8c78daac9"
+    }
+  ]
 }

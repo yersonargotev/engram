@@ -14,10 +14,10 @@ import (
 
 const (
 	ContractSchemaVersion  = "recall-study-contract-v1"
-	FrozenV1ContractSHA256 = "409df51f1a57062c20abf559c8ffd021a8c52ca0224725d7ba02d7de81570644"
+	FrozenV1ContractSHA256 = "f312b9dcaedc859f6512771d5dc19d52bc7d5c84b2c519a10170541ccbf6e466"
 	maxContractBytes       = 1 << 20
-	frozenPolicyRevision   = "sha256:c3d563e42c751f8496e52074c35f43fcca275ba9d6e3b56f98dfed206e66df9e"
-	frozenMetricRevision   = "sha256:07464f6d260a1952b5aeebeac0c68a2fbad3b4bf8489252f23fea9e85d699f50"
+	frozenPolicyRevision   = "sha256:4756324cf6c42839d2fb25de3db01f301c21141926fe7d15c05a7515fabe8510"
+	frozenMetricRevision   = "sha256:2730b78c4616b54df30c3108356de72441a3aaabc10e8624593fd76c7b5aef9b"
 )
 
 type Study struct {
@@ -96,6 +96,7 @@ type RepositoryContract struct {
 
 type TaskProtocolContract struct {
 	Version             string `json:"version"`
+	ArtifactSHA256      string `json:"artifact_sha256"`
 	Execution           string `json:"execution"`
 	FixedEnvironment    bool   `json:"fixed_environment"`
 	OperationalFailures string `json:"operational_failures"`
@@ -226,6 +227,9 @@ func loadContract(contractPath, hashPath string, enforceTrustAnchor bool) (*Stud
 		if err := verifyFrozenArtifact(root, "metrics", contract.Revisions.Metric.Revision); err != nil {
 			return nil, err
 		}
+		if err := verifyFrozenArtifact(root, "task-protocol", "sha256:"+contract.TaskProtocol.ArtifactSHA256); err != nil {
+			return nil, err
+		}
 	}
 	return &Study{Contract: contract, Hash: actual}, nil
 }
@@ -294,7 +298,8 @@ func (contract Contract) validate() error {
 	if contract.Model.Provider == "" || contract.Model.Name == "" || contract.Model.ReasoningEffort == "" || contract.Model.CodexVersion == "" {
 		return fmt.Errorf("Recall study model contract is incomplete")
 	}
-	if contract.TaskProtocol.Version != "recall-task-protocol-v1" || contract.TaskProtocol.Execution != "fresh-ephemeral-checkout" ||
+	if contract.TaskProtocol.Version != "recall-task-protocol-v1" || contract.TaskProtocol.ArtifactSHA256 != "669c2261f43f946dac302605401694c827d255693b0ee3688bac7871c12f148c" ||
+		contract.TaskProtocol.Execution != "fresh-ephemeral-checkout" ||
 		!contract.TaskProtocol.FixedEnvironment || contract.TaskProtocol.OperationalFailures != "separate-from-recall-quality" {
 		return fmt.Errorf("Recall study task protocol is incomplete")
 	}

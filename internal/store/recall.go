@@ -14,11 +14,20 @@ const recallObservationSelectColumns = `o.id, ifnull(o.sync_id, '') as sync_id, 
 
 // RecallRunRecord is the content-free local boundary for one candidate Recall.
 type RecallRunRecord struct {
-	RecallID    string
-	Project     string
-	Scope       string
-	AllProjects bool
-	Results     []RecallResultRecord
+	RecallID            string
+	Project             string
+	Scope               string
+	AllProjects         bool
+	DeliveredUTF8Bytes  int
+	ElapsedMonotonicMS  int64
+	ProtocolVersion     int
+	BinaryVersion       string
+	BinaryRevision      string
+	TurnIdentity        *CheckpointIdentity
+	StartedAtUnixNano   int64
+	CompletedAtUnixNano int64
+	MetricsPending      bool
+	Results             []RecallResultRecord
 }
 
 // RecallObservationSnapshot is the transient selected Memory representation
@@ -66,6 +75,11 @@ type RecallSegmentRecord struct {
 	LimitBytes           int
 	Truncated            bool
 	ContinuationPosition *int
+	ElapsedMonotonicMS   int64
+	ProtocolVersion      int
+	BinaryVersion        string
+	BinaryRevision       string
+	MetricsPending       bool
 }
 
 func (s *Store) migrateRecallOperations() error {
@@ -75,6 +89,15 @@ func (s *Store) migrateRecallOperations() error {
 			project      TEXT NOT NULL DEFAULT '',
 			scope        TEXT NOT NULL,
 			all_projects BOOLEAN NOT NULL DEFAULT 0,
+			result_count INTEGER,
+			delivered_utf8_bytes INTEGER,
+			elapsed_monotonic_ms INTEGER,
+			protocol_version INTEGER,
+			binary_version TEXT,
+			binary_revision TEXT,
+			turn_key     TEXT CHECK (turn_key IS NULL OR length(turn_key) = 64),
+			started_at_unix_nano INTEGER,
+			completed_at_unix_nano INTEGER,
 			created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 		);
 		CREATE TABLE IF NOT EXISTS recall_results (
@@ -99,30 +122,101 @@ func (s *Store) migrateRecallOperations() error {
 			limit_bytes           INTEGER NOT NULL,
 			truncated             BOOLEAN NOT NULL,
 			continuation_position INTEGER,
+			elapsed_monotonic_ms   INTEGER,
+			protocol_version      INTEGER,
+			binary_version        TEXT,
+			binary_revision       TEXT,
 			created_at             TEXT    NOT NULL DEFAULT (datetime('now')),
 			PRIMARY KEY (recall_id, result_id, position),
 			FOREIGN KEY (recall_id, result_id) REFERENCES recall_results(recall_id, result_id) ON DELETE CASCADE
 		);
 		CREATE INDEX IF NOT EXISTS idx_recall_results_observation ON recall_results(observation_id);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	for _, column := range []struct {
+		table, name, definition string
+	}{
+		{table: "recall_runs", name: "delivered_utf8_bytes", definition: "INTEGER"},
+		{table: "recall_runs", name: "result_count", definition: "INTEGER"},
+		{table: "recall_runs", name: "elapsed_monotonic_ms", definition: "INTEGER"},
+		{table: "recall_runs", name: "protocol_version", definition: "INTEGER"},
+		{table: "recall_runs", name: "binary_version", definition: "TEXT"},
+		{table: "recall_runs", name: "binary_revision", definition: "TEXT"},
+		{table: "recall_runs", name: "turn_key", definition: "TEXT CHECK (turn_key IS NULL OR length(turn_key) = 64)"},
+		{table: "recall_runs", name: "started_at_unix_nano", definition: "INTEGER"},
+		{table: "recall_runs", name: "completed_at_unix_nano", definition: "INTEGER"},
+		{table: "recall_segments", name: "elapsed_monotonic_ms", definition: "INTEGER"},
+		{table: "recall_segments", name: "protocol_version", definition: "INTEGER"},
+		{table: "recall_segments", name: "binary_version", definition: "TEXT"},
+		{table: "recall_segments", name: "binary_revision", definition: "TEXT"},
+	} {
+		if err := s.addColumnIfNotExists(column.table, column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RecordRecallRunContext atomically records one candidate response and every
-// opaque result identity it actually exposed.
+// opaque result identity it actually exposed. Root-bound runs also snapshot
+// only salted attribution keys so unknown exposure cohorts survive Memory
+// lifecycle changes.
 func (s *Store) RecordRecallRunContext(ctx context.Context, record RecallRunRecord) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	record.Project, _ = NormalizeProject(record.Project)
 	record.Scope = NormalizeObservationScope(record.Scope)
+	elapsedMonotonicMS := any(record.ElapsedMonotonicMS)
+	completedAtUnixNano := nullableNonZeroInt64(record.CompletedAtUnixNano)
+	if record.MetricsPending {
+		elapsedMonotonicMS = nil
+		completedAtUnixNano = nil
+	}
+	var turnKey any
+	var feedbackSalt []byte
+	var feedbackRunKey, feedbackTurnKey string
+	if record.TurnIdentity != nil {
+		if err := validateCheckpointIdentity(*record.TurnIdentity); err != nil {
+			return err
+		}
+		salt, err := loadOrCreateRecallFeedbackSalt(s.cfg.DataDir)
+		if err != nil {
+			return fmt.Errorf("load Recall attribution salt: %w", err)
+		}
+		feedbackSalt = salt
+		feedbackRunKey = recallFeedbackDigest(salt, "run", record.RecallID)
+		feedbackTurnKey = recallFeedbackDigest(salt, "turn", record.TurnIdentity.Host, record.TurnIdentity.SessionID, record.TurnIdentity.RootTurnID)
+		turnKey = feedbackTurnKey
+	}
 	return s.withTx(func(tx *sql.Tx) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if _, err := s.execHook(tx, `INSERT INTO recall_runs (recall_id, project, scope, all_projects) VALUES (?, ?, ?, ?)`,
-			record.RecallID, record.Project, record.Scope, record.AllProjects); err != nil {
+		if _, err := s.execHook(tx, `
+			INSERT INTO recall_runs (
+				recall_id, project, scope, all_projects, result_count, delivered_utf8_bytes,
+				elapsed_monotonic_ms, protocol_version, binary_version, binary_revision,
+				turn_key, started_at_unix_nano, completed_at_unix_nano
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			record.RecallID, record.Project, record.Scope, record.AllProjects,
+			len(record.Results), record.DeliveredUTF8Bytes, elapsedMonotonicMS, record.ProtocolVersion,
+			record.BinaryVersion, record.BinaryRevision, turnKey,
+			nullableNonZeroInt64(record.StartedAtUnixNano), completedAtUnixNano); err != nil {
 			return fmt.Errorf("record recall run: %w", err)
+		}
+		if feedbackRunKey != "" {
+			if _, err := s.execHook(tx, `
+				INSERT INTO recall_feedback_runs (
+					run_key, turn_key, result_count, delivered_utf8_bytes,
+					elapsed_monotonic_ms, protocol_version, binary_version, binary_revision
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				feedbackRunKey, feedbackTurnKey, len(record.Results), record.DeliveredUTF8Bytes,
+				elapsedMonotonicMS, record.ProtocolVersion, record.BinaryVersion, record.BinaryRevision); err != nil {
+				return fmt.Errorf("snapshot root-turn Recall run: %w", err)
+			}
 		}
 		for _, result := range record.Results {
 			if err := ctx.Err(); err != nil {
@@ -153,9 +247,71 @@ func (s *Store) RecordRecallRunContext(ctx context.Context, record RecallRunReco
 			if affected, _ := res.RowsAffected(); affected != 1 {
 				return fmt.Errorf("record recall result: %w", ErrRecallSelectionUnavailable)
 			}
+			if feedbackRunKey != "" {
+				memoryKey := recallFeedbackDigest(feedbackSalt, "memory", snapshot.SyncID)
+				if _, err := s.execHook(tx, `
+					INSERT INTO recall_feedback_exposures (run_key, memory_key, result_rank)
+					VALUES (?, ?, ?)`, feedbackRunKey, memoryKey, result.Rank); err != nil {
+					return fmt.Errorf("snapshot root-turn Recall exposure: %w", err)
+				}
+			}
 		}
 		return ctx.Err()
 	})
+}
+
+// CompleteRecallRunContext persists measurements captured only after the
+// primary Recall response and exposure snapshot have committed.
+func (s *Store) CompleteRecallRunContext(ctx context.Context, recallID string, elapsedMonotonicMS, completedAtUnixNano int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var turnKey sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT turn_key FROM recall_runs WHERE recall_id = ?`, recallID).Scan(&turnKey); errors.Is(err, sql.ErrNoRows) {
+		return ErrRecallSelectionUnavailable
+	} else if err != nil {
+		return fmt.Errorf("load Recall run completion target: %w", err)
+	}
+	var feedbackRunKey string
+	if turnKey.Valid {
+		salt, err := readRecallFeedbackSalt(s.cfg.DataDir)
+		if err != nil {
+			return fmt.Errorf("load Recall attribution salt: %w", err)
+		}
+		feedbackRunKey = recallFeedbackDigest(salt, "run", recallID)
+	}
+	return s.withTx(func(tx *sql.Tx) error {
+		res, err := s.execHook(tx, `
+			UPDATE recall_runs
+			SET elapsed_monotonic_ms = ?, completed_at_unix_nano = ?
+			WHERE recall_id = ?`, elapsedMonotonicMS, completedAtUnixNano, recallID)
+		if err != nil {
+			return fmt.Errorf("complete Recall run metrics: %w", err)
+		}
+		if affected, _ := res.RowsAffected(); affected != 1 {
+			return ErrRecallSelectionUnavailable
+		}
+		if feedbackRunKey == "" {
+			return ctx.Err()
+		}
+		res, err = s.execHook(tx, `
+			UPDATE recall_feedback_runs SET elapsed_monotonic_ms = ? WHERE run_key = ?`,
+			elapsedMonotonicMS, feedbackRunKey)
+		if err != nil {
+			return fmt.Errorf("complete attributed Recall run metrics: %w", err)
+		}
+		if affected, _ := res.RowsAffected(); affected != 1 {
+			return ErrRecallSelectionUnavailable
+		}
+		return ctx.Err()
+	})
+}
+
+func nullableNonZeroInt64(value int64) any {
+	if value == 0 {
+		return nil
+	}
+	return value
 }
 
 // RecallSelectionContext resolves only the result selected from the exact
@@ -237,6 +393,10 @@ func (s *Store) RecordRecallSegmentContext(ctx context.Context, record RecallSeg
 	if record.ContinuationPosition != nil {
 		continuation = *record.ContinuationPosition
 	}
+	elapsedMonotonicMS := any(record.ElapsedMonotonicMS)
+	if record.MetricsPending {
+		elapsedMonotonicMS = nil
+	}
 	replayed := false
 	err := s.withTx(func(tx *sql.Tx) error {
 		if err := ctx.Err(); err != nil {
@@ -245,9 +405,10 @@ func (s *Store) RecordRecallSegmentContext(ctx context.Context, record RecallSeg
 		res, err := s.execHook(tx, `
 			INSERT OR IGNORE INTO recall_segments (
 				recall_id, result_id, position, original_bytes, delivered_bytes,
-				limit_bytes, truncated, continuation_position
+				limit_bytes, truncated, continuation_position, elapsed_monotonic_ms,
+				protocol_version, binary_version, binary_revision
 			)
-			SELECT rr.recall_id, rr.result_id, ?, ?, ?, ?, ?, ?
+			SELECT rr.recall_id, rr.result_id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 			FROM recall_results rr
 			JOIN recall_runs run ON run.recall_id = rr.recall_id
 			JOIN observations o ON o.id = rr.observation_id
@@ -257,7 +418,9 @@ func (s *Store) RecordRecallSegmentContext(ctx context.Context, record RecallSeg
 			  AND o.deleted_at IS NULL AND o.scope = run.scope
 			  AND (run.all_projects = 1 OR LOWER(o.project) = run.project)`+searchEligibilitySQL("o", searchPolicy{activeOnly: true, excludeSuperseded: true}),
 			record.Position, record.OriginalBytes, record.DeliveredBytes, record.LimitBytes,
-			record.Truncated, continuation, record.RecallID, record.ResultID, record.ObservationID,
+			record.Truncated, continuation, elapsedMonotonicMS, record.ProtocolVersion,
+			record.BinaryVersion, record.BinaryRevision,
+			record.RecallID, record.ResultID, record.ObservationID,
 			record.RevisionCount, record.LocalRevisionCount)
 		if err != nil {
 			return fmt.Errorf("record recall segment: %w", err)
@@ -304,4 +467,23 @@ func (s *Store) RecordRecallSegmentContext(ctx context.Context, record RecallSeg
 		return ctx.Err()
 	})
 	return replayed, err
+}
+
+// CompleteRecallSegmentContext persists first-delivery latency only after the
+// segment and its continuation authority have committed.
+func (s *Store) CompleteRecallSegmentContext(ctx context.Context, recallID, resultID string, position int, elapsedMonotonicMS int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	res, err := s.execHook(s.db, `
+		UPDATE recall_segments SET elapsed_monotonic_ms = ?
+		WHERE recall_id = ? AND result_id = ? AND position = ?`,
+		elapsedMonotonicMS, recallID, resultID, position)
+	if err != nil {
+		return fmt.Errorf("complete Recall segment metrics: %w", err)
+	}
+	if affected, _ := res.RowsAffected(); affected != 1 {
+		return ErrRecallSelectionUnavailable
+	}
+	return ctx.Err()
 }

@@ -1294,6 +1294,9 @@ func (s *Store) migrate() error {
 	if err := s.migrateRecallOperations(); err != nil {
 		return err
 	}
+	if err := s.migrateRecallFeedback(); err != nil {
+		return err
+	}
 
 	return nil
 }

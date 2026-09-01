@@ -54,6 +54,14 @@ func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointOb
 				Disposition: checkpointStringArg(req, "disposition"),
 			})
 			if replayErr == nil {
+				feedback, feedbackErr := checkpointRecallFeedbackArg(req, "recall_feedback")
+				if feedbackErr != nil {
+					replayed.RecallFeedback = memoryops.InvalidRecallFeedbackResult(feedbackErr)
+				} else {
+					replayed.RecallFeedback = service.RecordRecallFeedback(store.CheckpointIdentity{
+						Host: observation.Host, SessionID: observation.SessionID, RootTurnID: observation.RootTurnID,
+					}, feedback)
+				}
 				finish(nil)
 				return checkpointToolJSON(replayed), nil
 			}
@@ -80,7 +88,8 @@ func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointOb
 		if operation == "preflight" {
 			if checkpointStringArg(req, "host") != "" || checkpointStringArg(req, "session_id") != "" ||
 				checkpointStringArg(req, "root_turn_id") != "" || checkpointStringArg(req, "disposition") != "" ||
-				checkpointStringArg(req, "reason") != "" || len(memoryIDs) > 0 || req.GetArguments()["proposal"] != nil {
+				checkpointStringArg(req, "reason") != "" || len(memoryIDs) > 0 || req.GetArguments()["proposal"] != nil ||
+				req.GetArguments()["recall_feedback"] != nil {
 				err := fmt.Errorf("%w: preflight accepts only project and memories", store.ErrCheckpointInvalidReferences)
 				return checkpointToolError(err), nil
 			}
@@ -102,21 +111,26 @@ func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointOb
 			finish(err)
 			return checkpointToolError(err), nil
 		}
+		feedback, feedbackErr := checkpointRecallFeedbackArg(req, "recall_feedback")
 		result, err := service.RecordCheckpoint(memoryops.CheckpointRecordInput{
-			Host:        observation.Host,
-			SessionID:   observation.SessionID,
-			RootTurnID:  observation.RootTurnID,
-			Disposition: checkpointStringArg(req, "disposition"),
-			ReasonCode:  checkpointStringArg(req, "reason"),
-			Project:     checkpointStringArg(req, "project"),
-			MemoryIDs:   memoryIDs,
-			Memories:    memories,
-			Proposal:    proposal,
-			CWD:         currentWorkingDirectory(),
+			Host:           observation.Host,
+			SessionID:      observation.SessionID,
+			RootTurnID:     observation.RootTurnID,
+			Disposition:    checkpointStringArg(req, "disposition"),
+			ReasonCode:     checkpointStringArg(req, "reason"),
+			Project:        checkpointStringArg(req, "project"),
+			MemoryIDs:      memoryIDs,
+			Memories:       memories,
+			Proposal:       proposal,
+			RecallFeedback: feedback,
+			CWD:            currentWorkingDirectory(),
 		})
 		if err != nil {
 			finish(err)
 			return checkpointToolError(err), nil
+		}
+		if feedbackErr != nil {
+			result.RecallFeedback = memoryops.InvalidRecallFeedbackResult(feedbackErr)
 		}
 		finish(nil)
 		return checkpointToolJSON(result), nil
@@ -242,4 +256,20 @@ func checkpointProposalArg(req mcppkg.CallToolRequest, key string) (*memoryops.C
 		return nil, fmt.Errorf("%w: proposal must be a Memory proposal object", store.ErrCheckpointInvalidReferences)
 	}
 	return &proposal, nil
+}
+
+func checkpointRecallFeedbackArg(req mcppkg.CallToolRequest, key string) (*memoryops.RecallFeedbackInput, error) {
+	value, exists := req.GetArguments()[key]
+	if !exists || value == nil {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode Recall feedback: %w", err)
+	}
+	var feedback memoryops.RecallFeedbackInput
+	if err := json.Unmarshal(encoded, &feedback); err != nil {
+		return nil, fmt.Errorf("Recall feedback must be a closed feedback object: %w", err)
+	}
+	return &feedback, nil
 }

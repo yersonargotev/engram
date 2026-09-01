@@ -16,18 +16,20 @@ import (
 )
 
 type checkpointCLIOptions struct {
-	Action      string
-	Host        string
-	SessionID   string
-	RootTurnID  string
-	Disposition string
-	ReasonCode  string
-	Project     string
-	MemoryIDs   []int64
-	Memories    []memoryops.CheckpointMemoryInput
-	Proposal    *memoryops.CheckpointProposalInput
-	JSONMode    bool
-	Help        bool
+	Action              string
+	Host                string
+	SessionID           string
+	RootTurnID          string
+	Disposition         string
+	ReasonCode          string
+	Project             string
+	MemoryIDs           []int64
+	Memories            []memoryops.CheckpointMemoryInput
+	Proposal            *memoryops.CheckpointProposalInput
+	RecallFeedback      *memoryops.RecallFeedbackInput
+	RecallFeedbackError error
+	JSONMode            bool
+	Help                bool
 }
 
 type checkpointArgumentError struct {
@@ -92,16 +94,17 @@ func cmdCheckpoint(cfg store.Config) {
 		}
 	case "record":
 		result, recordErr := service.RecordCheckpoint(memoryops.CheckpointRecordInput{
-			Host:        opts.Host,
-			SessionID:   opts.SessionID,
-			RootTurnID:  opts.RootTurnID,
-			Disposition: opts.Disposition,
-			ReasonCode:  opts.ReasonCode,
-			Project:     opts.Project,
-			MemoryIDs:   opts.MemoryIDs,
-			Memories:    opts.Memories,
-			Proposal:    opts.Proposal,
-			CWD:         currentCWD(),
+			Host:           opts.Host,
+			SessionID:      opts.SessionID,
+			RootTurnID:     opts.RootTurnID,
+			Disposition:    opts.Disposition,
+			ReasonCode:     opts.ReasonCode,
+			Project:        opts.Project,
+			MemoryIDs:      opts.MemoryIDs,
+			Memories:       opts.Memories,
+			Proposal:       opts.Proposal,
+			RecallFeedback: opts.RecallFeedback,
+			CWD:            currentCWD(),
 		})
 		if recordErr != nil {
 			outcome := recallbaseline.OutcomeUnknown
@@ -111,6 +114,9 @@ func cmdCheckpoint(cfg store.Config) {
 			recordRecallBaselineCheckpoint(cfg, opts.Host, opts.SessionID, opts.RootTurnID, outcome)
 			failCLI(opts.JSONMode, memoryops.CheckpointErrorCode(recordErr), recordErr.Error(), nil)
 			return
+		}
+		if opts.RecallFeedbackError != nil {
+			result.RecallFeedback = memoryops.InvalidRecallFeedbackResult(opts.RecallFeedbackError)
 		}
 		defer recordRecallBaselineCheckpoint(cfg, opts.Host, opts.SessionID, opts.RootTurnID, recallbaseline.OutcomeCompleted)
 		printCheckpointRecordResult(result, opts.JSONMode)
@@ -154,7 +160,8 @@ func replayedCheckpointCLI(cfg store.Config, args []string) bool {
 		return false
 	}
 	defer s.Close()
-	result, err := memoryops.New(s).ReplayCheckpoint(input)
+	service := memoryops.New(s)
+	result, err := service.ReplayCheckpoint(input)
 	if errors.Is(err, store.ErrCheckpointNotFound) || errors.Is(err, store.ErrCheckpointInvalidIdentity) {
 		return false
 	}
@@ -167,9 +174,39 @@ func replayedCheckpointCLI(cfg store.Config, args []string) bool {
 		failCLI(jsonMode, memoryops.CheckpointErrorCode(err), err.Error(), nil)
 		return true
 	}
+	feedback, feedbackErr := checkpointReplayFeedback(args)
+	if feedbackErr != nil {
+		result.RecallFeedback = memoryops.InvalidRecallFeedbackResult(feedbackErr)
+	} else {
+		result.RecallFeedback = service.RecordRecallFeedback(store.CheckpointIdentity{
+			Host: input.Host, SessionID: input.SessionID, RootTurnID: input.RootTurnID,
+		}, feedback)
+	}
 	recordRecallBaselineCheckpoint(cfg, input.Host, input.SessionID, input.RootTurnID, recallbaseline.OutcomeCompleted)
 	printCheckpointRecordResult(result, jsonMode)
 	return true
+}
+
+func checkpointReplayFeedback(args []string) (*memoryops.RecallFeedbackInput, error) {
+	_, tokens := tokenizeCheckpointCLIArgs(args)
+	var feedback *memoryops.RecallFeedbackInput
+	for _, token := range tokens {
+		if token.Name != "--recall-feedback-json" {
+			continue
+		}
+		if !token.HasValue {
+			return nil, fmt.Errorf("--recall-feedback-json requires a value")
+		}
+		if feedback != nil {
+			return nil, fmt.Errorf("Recall feedback may be provided once")
+		}
+		var decoded memoryops.RecallFeedbackInput
+		if err := json.Unmarshal([]byte(token.Value), &decoded); err != nil {
+			return nil, fmt.Errorf("invalid Recall feedback: %w", err)
+		}
+		feedback = &decoded
+	}
+	return feedback, nil
 }
 
 type checkpointCLIArg struct {
@@ -254,6 +291,20 @@ func printCheckpointRecordResult(result *memoryops.CheckpointRecordResult, jsonM
 	default:
 		fmt.Printf("Memory checkpoint %s: %s (%s)\n", result.Idempotency, result.Checkpoint.Disposition, result.Checkpoint.ReasonCode)
 	}
+	printRecallFeedbackResult(result.RecallFeedback)
+}
+
+func printRecallFeedbackResult(result *memoryops.RecallFeedbackResult) {
+	if result == nil {
+		return
+	}
+	if result.Status == memoryops.RecallFeedbackStatusFailed {
+		fmt.Printf("Recall feedback failed (%s): %s\n", result.Error.Code, result.Error.Message)
+		return
+	}
+	fmt.Printf("Recall feedback %s: %d labels recorded, %d labels replayed, %d empty reviews recorded, %d empty reviews replayed\n",
+		result.Status, result.LabelsRecorded, result.LabelsAlreadyRecorded,
+		result.EmptyReviewsRecorded, result.EmptyReviewsAlreadyRecorded)
 }
 
 func printCheckpointReferences(references []store.CheckpointReference) {
@@ -487,18 +538,29 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 				}
 			}
 			opts.Proposal = &proposal
+		case "--recall-feedback-json":
+			if opts.RecallFeedback != nil || opts.RecallFeedbackError != nil {
+				opts.RecallFeedbackError = fmt.Errorf("Recall feedback may be provided once")
+				continue
+			}
+			var feedback memoryops.RecallFeedbackInput
+			if err := json.Unmarshal([]byte(token.Value), &feedback); err != nil {
+				opts.RecallFeedbackError = fmt.Errorf("invalid Recall feedback: %w", err)
+				continue
+			}
+			opts.RecallFeedback = &feedback
 		default:
 			return opts, &checkpointArgumentError{Message: fmt.Sprintf("unknown checkpoint flag %s", token.Name)}
 		}
 	}
-	if opts.Action == "status" && (opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.Proposal != nil) {
+	if opts.Action == "status" && (opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.Proposal != nil || opts.RecallFeedback != nil || opts.RecallFeedbackError != nil) {
 		return opts, &checkpointArgumentError{Message: "checkpoint status accepts only identity flags"}
 	}
 	if opts.Action == "preflight" && (opts.Host != "" || opts.SessionID != "" || opts.RootTurnID != "" ||
-		opts.Disposition != "" || opts.ReasonCode != "" || len(opts.MemoryIDs) > 0 || opts.Proposal != nil) {
+		opts.Disposition != "" || opts.ReasonCode != "" || len(opts.MemoryIDs) > 0 || opts.Proposal != nil || opts.RecallFeedback != nil || opts.RecallFeedbackError != nil) {
 		return opts, &checkpointArgumentError{Message: "checkpoint preflight accepts only --project, --memory-json, and --json"}
 	}
-	if opts.Action == "verify-stop" && (opts.SessionID != "" || opts.RootTurnID != "" || opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.Proposal != nil || opts.JSONMode) {
+	if opts.Action == "verify-stop" && (opts.SessionID != "" || opts.RootTurnID != "" || opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.Proposal != nil || opts.RecallFeedback != nil || opts.RecallFeedbackError != nil || opts.JSONMode) {
 		return opts, &checkpointArgumentError{Message: "checkpoint verify-stop accepts only --host"}
 	}
 	return opts, nil
@@ -508,14 +570,17 @@ func printCheckpointUsage() {
 	fmt.Println(`Usage:
 	engram checkpoint preflight --project PROJECT --memory-json JSON [--memory-json JSON ...] [--json]
 	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
-	  --disposition skipped --reason no_durable_knowledge [--json]
+	  --disposition skipped --reason no_durable_knowledge \
+	  [--recall-feedback-json JSON] [--json]
 	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
 	  --disposition saved --project PROJECT \
-	  [--memory-id ID ...] [--memory-json JSON ...] [--json]
+	  [--memory-id ID ...] [--memory-json JSON ...] \
+	  [--recall-feedback-json JSON] [--json]
 	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
 	  --disposition needs_review --project PROJECT \
 	  [--memory-id ID ...] [--memory-json JSON ...] \
-	  --proposal-json '{"title":"...","content":"..."}' [--json]
+	  --proposal-json '{"title":"...","content":"..."}' \
+	  [--recall-feedback-json JSON] [--json]
 	engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
 	engram checkpoint verify-stop --host HOST`)
 }

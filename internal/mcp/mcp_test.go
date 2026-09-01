@@ -1364,6 +1364,11 @@ func TestMemSearchSchemaPublishesScopeAndIntegerLimitBounds(t *testing.T) {
 	if !ok || !reflect.DeepEqual(scope["enum"], []string{"project", "personal", "global"}) {
 		t.Fatalf("scope schema=%#v", tool.Tool.InputSchema.Properties["scope"])
 	}
+	for _, name := range []string{"host", "session_id", "root_turn_id"} {
+		if _, ok := tool.Tool.InputSchema.Properties[name]; !ok {
+			t.Fatalf("mem_search schema missing %q identity field", name)
+		}
+	}
 }
 
 func TestHandleSearch_PropagatesCancellationPastHandlerBoundary(t *testing.T) {

@@ -78,6 +78,97 @@ func TestRecallCandidatesDefaultsToFiveProjectResultsWithinFourKiB(t *testing.T)
 	}
 }
 
+func TestRecallPersistsLatencyOnlyAfterPrimaryRunPersistence(t *testing.T) {
+	service := newTestService(t)
+	service.newRecallID = func() (string, error) { return "recall-persisted-latency", nil }
+	started := time.Unix(100, 0)
+	service.recallStartedAt = func() time.Time { return started }
+	saveObservation(t, service, "engram", "Persisted Recall latency", "primary Recall persistence precedes completion measurement")
+	service.recallElapsed = func(time.Time) time.Duration {
+		var persisted int
+		if err := service.store.DB().QueryRow(`SELECT COUNT(*) FROM recall_runs WHERE recall_id = ?`, "recall-persisted-latency").Scan(&persisted); err != nil {
+			t.Fatalf("inspect persisted Recall run: %v", err)
+		}
+		if persisted == 0 {
+			return 5 * time.Millisecond
+		}
+		return 41 * time.Millisecond
+	}
+	turnIdentity := &store.CheckpointIdentity{
+		Host: "codex", SessionID: "session-persisted-latency", RootTurnID: "turn-persisted-latency",
+	}
+	result, err := service.Recall(RecallInput{
+		Query: "primary Recall persistence precedes completion measurement", Project: "engram",
+		ProjectStrength: project.IdentityStrengthExplicit, TurnIdentity: turnIdentity,
+	})
+	if err != nil || result.Warning != nil || result.ElapsedMonotonicMS != 41 {
+		t.Fatalf("Recall result = %#v, err=%v", result, err)
+	}
+	var elapsed, completed int64
+	if err := service.store.DB().QueryRow(`
+		SELECT elapsed_monotonic_ms, completed_at_unix_nano
+		FROM recall_runs WHERE recall_id = ?`, result.RecallID).Scan(&elapsed, &completed); err != nil {
+		t.Fatalf("load completed Recall metrics: %v", err)
+	}
+	if elapsed != result.ElapsedMonotonicMS || completed != started.Add(41*time.Millisecond).UnixNano() {
+		t.Fatalf("persisted Recall metrics = %d/%d, result=%d", elapsed, completed, result.ElapsedMonotonicMS)
+	}
+	var attributedElapsed int64
+	if err := service.store.DB().QueryRow(`SELECT elapsed_monotonic_ms FROM recall_feedback_runs`).Scan(&attributedElapsed); err != nil {
+		t.Fatalf("load attributed Recall latency: %v", err)
+	}
+	if attributedElapsed != result.ElapsedMonotonicMS {
+		t.Fatalf("attributed Recall latency = %d, want %d", attributedElapsed, result.ElapsedMonotonicMS)
+	}
+}
+
+func TestRecallPreservesDeliveredCandidatesWhenMetricCompletionFails(t *testing.T) {
+	service := newTestService(t)
+	service.newRecallID = func() (string, error) { return "recall-metric-completion-failure", nil }
+	saveObservation(t, service, "engram", "Delivered despite metric failure", "a committed Recall result remains delivered")
+	if _, err := service.store.DB().Exec(`
+		CREATE TRIGGER fail_recall_metric_completion
+		BEFORE UPDATE OF elapsed_monotonic_ms ON recall_runs
+		BEGIN
+			SELECT RAISE(ABORT, 'forced Recall metric completion failure');
+		END`); err != nil {
+		t.Fatalf("create Recall metric failure trigger: %v", err)
+	}
+	turnIdentity := &store.CheckpointIdentity{
+		Host: "codex", SessionID: "session-metric-completion-failure", RootTurnID: "turn-metric-completion-failure",
+	}
+	result, err := service.Recall(RecallInput{
+		Query: "a committed Recall result remains delivered", Project: "engram",
+		ProjectStrength: project.IdentityStrengthExplicit, TurnIdentity: turnIdentity,
+	})
+	if err != nil || result.Warning != nil || result.ResultCount != 1 || len(result.Candidates) != 1 {
+		t.Fatalf("Recall delivery = %#v, err=%v", result, err)
+	}
+	if len(result.Diagnostics) != 1 || result.Diagnostics[0].Code != "recall_metrics_unavailable" ||
+		result.Diagnostics[0].Operation != "recall_metrics" {
+		t.Fatalf("Recall metric diagnostic = %#v", result.Diagnostics)
+	}
+	var runElapsed, feedbackElapsed any
+	if err := service.store.DB().QueryRow(`SELECT elapsed_monotonic_ms FROM recall_runs WHERE recall_id = ?`, result.RecallID).Scan(&runElapsed); err != nil {
+		t.Fatalf("load pending Recall latency: %v", err)
+	}
+	if err := service.store.DB().QueryRow(`SELECT elapsed_monotonic_ms FROM recall_feedback_runs`).Scan(&feedbackElapsed); err != nil {
+		t.Fatalf("load pending attributed Recall latency: %v", err)
+	}
+	if runElapsed != nil || feedbackElapsed != nil {
+		t.Fatalf("failed completion persisted latency: run=%v feedback=%v", runElapsed, feedbackElapsed)
+	}
+	report, err := service.RecallFeedbackReport()
+	if err != nil {
+		t.Fatalf("report pending Recall metrics: %v", err)
+	}
+	search := findRecallOperationReport(t, report.Operations, RecallFeedbackOperationSearch)
+	if report.ExposedResults != 1 || search.Events != 1 || search.TotalExposedResults != 1 ||
+		search.LatencySamples != 0 || search.UnknownLatency != 1 {
+		t.Fatalf("pending Recall metric report = %#v; report=%#v", search, report)
+	}
+}
+
 func TestRecallCandidatesRejectsInvalidAuthorityDimensionsBeforeStoreAccess(t *testing.T) {
 	service := newTestService(t)
 	if err := service.store.Close(); err != nil {

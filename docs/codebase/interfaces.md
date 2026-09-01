@@ -34,7 +34,11 @@ Important points:
 - `mem_checkpoint` preflight is a bounded read-only operation over one explicit
   project. Record mode uses the same explicit project for `saved` and
   `needs_review` so the core can enforce Memory and proposal ownership
-  atomically.
+  atomically. Its optional `recall_feedback` sidecar records explicit labels
+  for one Recall run bound at search time to that exact root turn without
+  changing checkpoint completion.
+- `engram recall-feedback report` is a separate aggregate-only CLI read. It
+  exposes denominators and unknowns but no raw or salted identity.
 - `ambiguous_project` recovery requires the user to choose an exact project.
 - If `mem_save` returns conflict candidates, the agent must judge with `mem_judge` or ask when the relationship is sensitive.
 

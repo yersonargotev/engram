@@ -1,6 +1,7 @@
 package obsidian
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -61,6 +62,26 @@ func TestObsidianExportExcludesMemoryCheckpointsFromRealStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record needs-review checkpoint: %v", err)
 	}
+	feedbackIdentity := store.CheckpointIdentity{
+		Host: "feedback-obsidian-host", SessionID: "feedback-obsidian-session", RootTurnID: "feedback-obsidian-turn",
+	}
+	if err := s.RecordRecallRunContext(context.Background(), store.RecallRunRecord{
+		RecallID:     "recall-feedback-obsidian-canary",
+		Project:      "engram",
+		Scope:        "project",
+		TurnIdentity: &feedbackIdentity,
+	}); err != nil {
+		t.Fatalf("record empty Recall run: %v", err)
+	}
+	falseEmpty := false
+	if _, err := s.RecordRecallFeedback(store.RecordRecallFeedbackParams{
+		Identity:         feedbackIdentity,
+		RecallID:         "recall-feedback-obsidian-canary",
+		FalseEmpty:       &falseEmpty,
+		FalseEmptySource: store.RecallFeedbackSourceEvaluator,
+	}); err != nil {
+		t.Fatalf("record Recall feedback: %v", err)
+	}
 
 	vault := t.TempDir()
 	result, err := NewExporter(checkpointStoreReader{store: s}, ExportConfig{
@@ -93,6 +114,8 @@ func TestObsidianExportExcludesMemoryCheckpointsFromRealStore(t *testing.T) {
 		}
 		if strings.Contains(text, "checkpoint-canary") ||
 			strings.Contains(text, "proposal-obsidian-canary") ||
+			strings.Contains(text, "feedback-obsidian") ||
+			strings.Contains(text, "recall-feedback-obsidian-canary") ||
 			strings.Contains(text, store.CheckpointSkipReasonNoDurableKnowledge) {
 			t.Fatalf("Obsidian file %s included checkpoint data: %s", path, text)
 		}

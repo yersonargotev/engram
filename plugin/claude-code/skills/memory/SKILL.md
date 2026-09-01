@@ -38,6 +38,9 @@ deliberate follow-up; personal or cross-project scope requires explicit task
 relevance or user direction. Empty Recall is successful, conflicts stay
 explicit, and unavailable Recall fails open with one warning plus diagnostics
 without blocking work.
+For a checkpoint-capable root turn, pass its exact `host`, `session_id`, and
+`root_turn_id` together on every search so later explicit feedback can prove
+same-turn exposure. Omit all three if exact root identity is unavailable.
 Retrieve complete content only for a selected candidate by passing the
 `recall_id` and its opaque `result_id` to `mem_get_observation`. Each response
 contains at most 16 KiB of valid UTF-8 content and reports its byte limit and
@@ -47,6 +50,17 @@ truncation. A truncated segment requires a new request with exactly the returned
 Treat the supplied `host`, `session_id`, and `root_turn_id` as opaque; reuse
 them unchanged across compaction or verifier continuations and never invent
 replacements.
+
+Attach optional `recall_feedback` at the checkpoint only for an actually known
+assessment of one exact Recall run bound to this exact root turn and its
+exposed opaque results. A different or unbound turn is ineligible. Utility is
+`decisive`, `orienting`, `duplicate`, or `unused`; quality is `current`,
+`stale`, `contradictory`, or `unknown`. Sources are `agent_explicit` for the
+agent's stated assessment, `user_explicit` for a direct user assessment, and
+`evaluator` for a separately invoked evaluator. An explicitly reviewed empty
+run may carry `false_empty`. Omitted feedback remains unknown; Recall delivery,
+citation, ordering, and checkpoint outcome imply no label. Feedback failure is
+reported separately and never changes terminal checkpoint completion.
 
 Before finalizing prospective Memories, call `mem_checkpoint` with
 `operation: "preflight"`, the exact project, and those inline `memories`. This

@@ -118,7 +118,9 @@ Full environment variable reference → [DOCS.md#environment-variables](DOCS.md#
    duplicates plus at most three same-project semantic candidates
 3. Agent commits one terminal saved, needs_review, or skipped checkpoint
 4. Engram atomically persists any attached Memory and indexes it with FTS5
-5. A later turn recalls Memory only when it can change the work
+5. The checkpoint may attach explicit local Recall feedback for a Recall bound
+   to that exact root turn without changing terminal completion
+6. A later turn recalls Memory only when it can change the work
 ```
 
 Full details on session lifecycle, topic keys, and memory hygiene → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -432,6 +434,7 @@ Your production engram is fully untouched throughout.
 | `engram checkpoint preflight [flags]`      | Inspect prospective Memories without writing local or replicated state |
 | `engram checkpoint record [flags]`         | Record an idempotent local `saved`, `needs_review`, or `skipped` root-turn checkpoint |
 | `engram checkpoint status [flags]`         | Inspect one exact local root-turn checkpoint                 |
+| `engram recall-feedback report [--json]`   | Report aggregate-only local Recall utility, quality, latency, and volume |
 | `engram stats`                             | Memory statistics                                               |
 | `engram export [file]`                     | Export to JSON                                                  |
 | `engram import <file>`                     | Import from JSON                                                |

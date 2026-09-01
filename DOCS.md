@@ -37,6 +37,7 @@ For other docs:
 | [Comparison](docs/COMPARISON.md)            | Why Engram vs claude-mem                                                                      |
 | [Binary self-testing](docs/SELF-TESTING.md) | Isolated reliability and performance checks for released binaries                             |
 | [Beta Testing](docs/BETA_TESTING.md)        | Isolated beta testing flows and cleanup guidance                                              |
+| [Recall Feedback](docs/RECALL-FEEDBACK.md)  | Explicit local Recall labels, privacy boundary, and aggregate metric formulas                  |
 
 ---
 
@@ -57,7 +58,8 @@ For other docs:
 - **memory_checkpoint_references** — ordered, typed local-only references from a checkpoint to the immutable ID, sync ID, and project identity of every attached Memory. The table has no sync triggers and is excluded from normal Memory and replication surfaces.
 - **memory_proposals** — immutable local checkpoint audit evidence for `needs_review`. Stores only an Engram-derived ID, normalized project, redacted `title` and `content`, and creation time. It is separate from `observations`, has no FTS or sync triggers, and never enters Memory search, context, counts, export/import, sync, cloud, or Obsidian. No workflow converts a proposal into a Memory. Project rename, merge, and delete operations update or remove it together with its checkpoint reference.
 - **memory_checkpoint_proposal_references** — one local proposal reference per `needs_review` checkpoint. Stores only checkpoint ID, proposal ID, and normalized project; it is excluded from all Memory and replication surfaces.
-- **recall_runs / recall_results / recall_segments** — local-only, content-free operational identity for bounded Recall. Runs retain normalized project/scope authority; results bind opaque result IDs to a selected Memory revision through its semantic revision counter and local apply generation; segments retain only byte positions/limits/truncation. They store neither the query nor Memory content or content-derived hashes and have no FTS, export, sync, cloud, Obsidian, or Content-capture path.
+- **recall_runs / recall_results / recall_segments** — local-only, content-free operational identity and measurement for bounded Recall. Runs retain normalized project/scope authority plus result count, delivered UTF-8 bytes, monotonic latency, Protocol/binary provenance, optional per-install salted root-turn attribution, and a content-free start/completion timeline; results bind opaque result IDs to a selected Memory revision through its semantic revision counter and local apply generation; segments retain byte positions/limits/truncation plus delivered bytes, monotonic latency, and provenance. Latency/completion is finalized after the primary run or segment persistence succeeds, while interrupted pending measurements remain unknown. The tables store neither the query nor Memory content or content-derived hashes and have no FTS, export, sync, cloud, Obsidian, or Content-capture path.
+- **recall_feedback_runs / recall_feedback_exposures / recall_feedback_labels / recall_false_empty_reviews** — local root-bound Recall attribution plus optional checkpoint-sidecar labels. Bound Recall snapshots per-install salted run, turn, and Memory keys so unknown cohorts survive Memory deletion without creating a label. Raw checkpoint, Recall, result, and Memory identities are validated transiently; only salted keys, explicit closed-vocabulary labels, run measurements, and timestamps are stored. The tables have no FTS or sync triggers and are excluded from Memory, Recall, context, statistics, ordinary export/import, cloud, Obsidian, Diagnostic capture, and retired candidate-evaluation or publishing pipelines. Only an aggregate, identity-free report is exposed.
 
 The opt-in Recall baseline does not add a table to this Memory database. Its
 versioned, local-only SQLite ledger is
@@ -85,7 +87,8 @@ automation output. Successful JSON is written to stdout; structured errors use
 Core curated-memory operations:
 
 ```text
-engram search <query> [--project P|--all-projects] [--match-mode all|any] [--json]
+engram search <query> [--project P|--all-projects] [--match-mode all|any]
+                      [--host HOST --session-id ID --root-turn-id ID] [--json]
 engram save <title> <content> [--project P] [--topic-key K] [--json]
 engram save --title TITLE --content CONTENT [--project P] [--topic-key K] [--json]
 engram get <id> [--json]  # explicit curation; complete Memory and relations
@@ -113,6 +116,7 @@ engram checkpoint record --host HOST --session-id ID --root-turn-id ID
                          [--memory-id ID ...] [--memory-json JSON ...]
                          --proposal-json '{"title":"...","content":"..."}' [--json]
 engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
+engram recall-feedback report [--json]
 engram recall-baseline record|report|power|purge [options]
 ```
 
@@ -162,6 +166,19 @@ with `id`, `project`, `title`, `content`, and `created_at`. `--proposal-id` and
 removed proposal fields are rejected. Proposal fields are also rejected for
 `saved` and `skipped`. The proposal creates no Memory, sync mutation, review
 workflow, or retired candidate-evaluation state.
+
+Any checkpoint record may include one `--recall-feedback-json` object for an
+exact Recall run and only its exposed opaque results. Utility values are
+`decisive|orienting|duplicate|unused`; quality values are
+`current|stale|contradictory|unknown`; sources are
+`agent_explicit|user_explicit|evaluator`. A zero-result run may instead carry
+an explicit `false_empty` review. Absence remains unknown and is never inferred
+as unused, current, false-empty, or failed. The checkpoint commits independently
+and returns feedback status `recorded`, `already_recorded`, or `failed`; exact
+replay can retry feedback or append a distinct evaluator source without
+revalidating first-write payload fields. See [Explicit Recall
+Feedback](docs/RECALL-FEEDBACK.md) for the JSON shape, privacy boundary, and
+metric denominators.
 
 `save` exits successfully after the memory is persisted even when its response
 contains `judgment_required: true`; callers can resolve each returned candidate
@@ -1034,6 +1051,17 @@ no review or retired candidate-evaluation workflow runs implicitly.
 
 The first call returns `idempotency: "created"`; replaying the same root-turn identity and disposition returns `idempotency: "already_recorded"` with the original checkpoint, references, proposal snapshot, and timestamps without creating Memories, proposals, or mutations again. Once the identity and disposition match, replay payload fields are ignored rather than revalidated, so retries cannot replace the original references or depend on payload availability. Invalid or empty sets on first finalization fail without changing state. Stable reference-validation codes are `invalid_checkpoint_references`, `checkpoint_memory_not_found`, and `checkpoint_project_mismatch`; terminal changes return `checkpoint_conflict`. Unknown skip reasons, including integration and processing failure labels, return `invalid_checkpoint_reason`.
 
+Record mode also accepts optional `recall_feedback` for one exact Recall run.
+Each result names an exposed opaque `result_id`, at least one explicit
+`utility` or `quality`, and a source; empty runs may use `false_empty`. The
+run must have been bound at search time to the same all-or-none `host`,
+`session_id`, and `root_turn_id`; another turn cannot claim it. The
+closed object stores no prompt, query, Memory content, assistant response,
+transcript, diff, or raw identity. Feedback is a separately reported sidecar:
+its validation or persistence failure does not roll back or reclassify the
+terminal checkpoint. Missing feedback remains unknown. See [Explicit Recall
+Feedback](docs/RECALL-FEEDBACK.md).
+
 ### mem_checkpoint_status
 
 Inspect one exact checkpoint by `host`, `session_id`, and `root_turn_id`. Missing identity returns `invalid_checkpoint_identity`; an unknown but valid identity returns `checkpoint_not_found`. This operation reads the local checkpoint ledger directly and never queries Memory search or context.
@@ -1055,6 +1083,11 @@ or bypasses the byte budget.
 deliberate broad request and requires explicit task relevance or user direction.
 `project` and `all_projects` are mutually exclusive. An explicit project with no
 stored Memory returns an empty success.
+
+For a checkpoint-capable turn, provide the exact `host`, `session_id`, and
+`root_turn_id` together on each `mem_search`. This binds only a per-install
+salted turn key and makes later explicit Recall feedback eligible; omit all
+three when the caller cannot provide an exact root identity.
 
 Candidates contain bounded summaries rather than full Memory content. Core
 returns only active, in-scope, non-deleted, non-superseded Memories. Semantic

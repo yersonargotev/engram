@@ -9,8 +9,50 @@ import (
 
 	mcppkg "github.com/mark3labs/mcp-go/mcp"
 	engrammcp "github.com/yersonargotev/engram/internal/mcp"
+	"github.com/yersonargotev/engram/internal/memoryops"
 	"github.com/yersonargotev/engram/internal/store"
 )
+
+func TestCheckpointCLIAndMCPParityForOptionalRecallFeedback(t *testing.T) {
+	cfg := testConfig(t)
+	s := openCheckpointParityStore(t, cfg)
+	cliIdentity := checkpointParityIdentity{"codex", "session-cli-feedback-parity", "turn-cli-feedback-parity"}
+	mcpIdentity := checkpointParityIdentity{"codex", "session-mcp-feedback-parity", "turn-mcp-feedback-parity"}
+	boundRuns := map[string]checkpointParityIdentity{
+		"recall-cli-feedback-parity": cliIdentity,
+		"recall-mcp-feedback-parity": mcpIdentity,
+	}
+	for recallID, identity := range boundRuns {
+		turnIdentity := store.CheckpointIdentity{
+			Host: identity.host, SessionID: identity.sessionID, RootTurnID: identity.rootTurnID,
+		}
+		if err := s.RecordRecallRunContext(context.Background(), store.RecallRunRecord{
+			RecallID: recallID, Project: "engram", Scope: "project",
+			DeliveredUTF8Bytes: 2, ElapsedMonotonicMS: 6, ProtocolVersion: 1, BinaryVersion: "test",
+			TurnIdentity: &turnIdentity,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", recallID, err)
+		}
+	}
+	cliFeedback := memoryops.RecallFeedbackInput{
+		RecallID:   "recall-cli-feedback-parity",
+		FalseEmpty: &memoryops.RecallFalseEmptyInput{Value: true, Source: memoryops.RecallFeedbackSourceEvaluator},
+	}
+	mcpFeedback := map[string]any{
+		"recall_id":   "recall-mcp-feedback-parity",
+		"false_empty": map[string]any{"value": true, "source": memoryops.RecallFeedbackSourceEvaluator},
+	}
+	cli := runCheckpointCLIRecordFeedback(t, cfg, cliIdentity, cliFeedback)
+	arguments := checkpointParityRecordArguments(mcpIdentity, store.CheckpointSkipReasonNoDurableKnowledge)
+	arguments["recall_feedback"] = mcpFeedback
+	mcp := callCheckpointMCP(t, engrammcp.CheckpointToolHandler(s), arguments, false)
+	if got, want := normalizedCheckpointEnvelope(cli), normalizedCheckpointEnvelope(mcp); !reflect.DeepEqual(got, want) {
+		t.Fatalf("checkpoint envelopes differ\nCLI=%#v\nMCP=%#v", got, want)
+	}
+	if !reflect.DeepEqual(cli["recall_feedback"], mcp["recall_feedback"]) {
+		t.Fatalf("Recall feedback envelopes differ\nCLI=%#v\nMCP=%#v", cli["recall_feedback"], mcp["recall_feedback"])
+	}
+}
 
 func TestCheckpointCLIAndMCPParity(t *testing.T) {
 	cfg := testConfig(t)
@@ -374,6 +416,29 @@ func runCheckpointCLIRecord(t *testing.T, cfg store.Config, identity checkpointP
 	stdout, stderr := captureOutput(t, func() { cmdCheckpoint(cfg) })
 	if stderr != "" {
 		t.Fatalf("CLI record stderr = %q", stderr)
+	}
+	return decodeCLIJSON(t, stdout)
+}
+
+func runCheckpointCLIRecordFeedback(t *testing.T, cfg store.Config, identity checkpointParityIdentity, feedback memoryops.RecallFeedbackInput) map[string]any {
+	t.Helper()
+	encoded, err := json.Marshal(feedback)
+	if err != nil {
+		t.Fatalf("encode CLI Recall feedback: %v", err)
+	}
+	withArgs(t,
+		"engram", "checkpoint", "record",
+		"--host="+identity.host,
+		"--session-id="+identity.sessionID,
+		"--root-turn-id="+identity.rootTurnID,
+		"--disposition="+store.CheckpointDispositionSkipped,
+		"--reason="+store.CheckpointSkipReasonNoDurableKnowledge,
+		"--recall-feedback-json="+string(encoded),
+		"--json",
+	)
+	stdout, stderr := captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("CLI Recall feedback stderr = %q", stderr)
 	}
 	return decodeCLIJSON(t, stdout)
 }

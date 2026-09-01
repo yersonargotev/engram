@@ -30,6 +30,9 @@ The memory flow does not start in the database. It starts with the agent decidin
 7. Later work
    memoryops.Recall → at most five active/current candidate summaries and 4 KiB
    → mem_get_observation only when selected full detail can change the task
+
+8. The terminal checkpoint may attach explicit Recall feedback as a local
+   sidecar; checkpoint completion remains independent
 ```
 
 ## Store mental entities
@@ -47,6 +50,7 @@ The memory flow does not start in the database. It starts with the agent decidin
 | `memory_checkpoints` / checkpoint reference tables | Local-only root-turn dispositions and typed Memory or Memory-proposal references, excluded from every durable-Memory and replication surface. | `internal/store/checkpoint.go`, `internal/memoryops/checkpoint.go` |
 | `memory_proposals` | Immutable local `needs_review` checkpoint audit snapshots that remain outside Memory retrieval and every replication surface; no workflow converts them into Memories. | `internal/store/memory_proposal.go` |
 | `recall_runs` / `recall_results` / `recall_segments` | Content-free local Recall identity, selected semantic revision/local apply generation, and explicit segment positions. These tables retain no query or Memory content and never replicate. | `internal/store/recall.go`, `internal/memoryops/recall_content.go` |
+| `recall_feedback_runs` / exposure, label, and false-empty tables | Per-install salted root-bound exposure snapshots and explicit Recall assessments. Unknown cohorts survive Memory deletion; the tables remain outside every Memory, export, and replication surface, and only aggregate reports leave Store. | `internal/store/recall_feedback.go`, `internal/memoryops/recall_feedback.go` |
 
 For schema details, use [DOCS.md — Database Schema](../../DOCS.md#database-schema).
 
@@ -68,6 +72,10 @@ For schema details, use [DOCS.md — Database Schema](../../DOCS.md#database-sch
 - Search is progressive: compact candidate summaries first, then at most 16 KiB
   for one opaque selected result. `mem_get_observation` continues only through a
   new request at the returned UTF-8 byte position with unchanged authority.
+- Recall feedback is an optional checkpoint sidecar. A Recall run is eligible
+  only when search bound it to the same exact root turn; missing labels remain
+  unknown, raw identities are used only for transient validation, and feedback
+  failure never changes terminal checkpoint completion.
 - Diagnostic Content is not Memory. It is excluded from Memory/FTS/Recall/context, ordinary export/import, sync/cloud, Obsidian, and retired candidate/promotion flows.
 - Legacy prompts are preserved byte-for-byte during migration and remain outside those same ordinary surfaces. Migration neither reclassifies nor uploads them and creates no deletion tombstone.
 

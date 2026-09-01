@@ -227,6 +227,60 @@ func TestCheckpointCLIAndMCPParityForNeedsReviewProposals(t *testing.T) {
 	}
 }
 
+func TestCheckpointCLIAndMCPParityForPreflightAndMixedMemory(t *testing.T) {
+	cfg := testConfig(t)
+	memoryIDs := seedCheckpointParityMemories(t, cfg, "engram", 1)
+	memory := map[string]any{
+		"type": "decision", "title": "Parity Memory 1", "content": "Durable parity content 1",
+	}
+	encodedMemory, err := json.Marshal(memory)
+	if err != nil {
+		t.Fatalf("encode preflight Memory: %v", err)
+	}
+	withArgs(t, "engram", "checkpoint", "preflight", "--project=engram", "--memory-json="+string(encodedMemory), "--json")
+	stdout, stderr := captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("CLI preflight stderr = %q", stderr)
+	}
+	cliPreflight := decodeCLIJSON(t, stdout)
+
+	s := openCheckpointParityStore(t, cfg)
+	mcpPreflight := callCheckpointMCP(t, engrammcp.CheckpointToolHandler(s), map[string]any{
+		"operation": "preflight", "project": "engram", "memories": []any{memory},
+	}, false)
+	if !reflect.DeepEqual(cliPreflight, mcpPreflight) {
+		t.Fatalf("preflight envelopes differ\nCLI=%#v\nMCP=%#v", cliPreflight, mcpPreflight)
+	}
+	if duplicates, _ := cliPreflight["exact_duplicates"].([]any); len(duplicates) != 1 {
+		t.Fatalf("preflight exact duplicates = %#v", cliPreflight)
+	}
+
+	proposal := map[string]any{"title": "Mixed parity proposal", "content": "Keep this unresolved result local."}
+	cliIdentity := checkpointParityIdentity{"codex", "session-cli-mixed", "turn-cli-mixed"}
+	cliArgs := checkpointCLIProposalArgs(t, cliIdentity, "engram", "", proposal)
+	cliArgs = append(cliArgs, fmt.Sprintf("--memory-id=%d", memoryIDs[0]), "--json")
+	withArgs(t, cliArgs...)
+	stdout, stderr = captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("CLI Mixed Memory stderr = %q", stderr)
+	}
+	cliMixed := decodeCLIJSON(t, stdout)
+
+	mcpIdentity := checkpointParityIdentity{"codex", "session-mcp-mixed", "turn-mcp-mixed"}
+	mcpArgs := checkpointParityProposalArguments(mcpIdentity, "engram", "", proposal)
+	mcpArgs["memory_ids"] = []any{float64(memoryIDs[0])}
+	mcpMixed := callCheckpointMCP(t, engrammcp.CheckpointToolHandler(s), mcpArgs, false)
+	if got, want := normalizedCreatedCheckpointEnvelope(cliMixed), normalizedCreatedCheckpointEnvelope(mcpMixed); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Mixed Memory envelopes differ\nCLI=%#v\nMCP=%#v", got, want)
+	}
+	for surface, envelope := range map[string]map[string]any{"CLI": cliMixed, "MCP": mcpMixed} {
+		checkpoint := envelope["checkpoint"].(map[string]any)
+		if references, _ := checkpoint["references"].([]any); len(references) != 1 || checkpoint["proposal"] == nil {
+			t.Fatalf("%s Mixed Memory checkpoint = %#v", surface, checkpoint)
+		}
+	}
+}
+
 func TestCheckpointCLIAndMCPParityRejectsMissingAndStaleNeedsReviewInputs(t *testing.T) {
 	cfg := testConfig(t)
 	s := openCheckpointParityStore(t, cfg)

@@ -1100,6 +1100,9 @@ func materializedMutationBatchChunk(batch []MutationEntry) ([]byte, chunkSummary
 			return nil, chunkSummary{}, fmt.Errorf("cloudstore: materialize mutation batch: mixed projects %q and %q", project, entryProject)
 		}
 		entity := strings.TrimSpace(entry.Entity)
+		if chunkcodec.IsCheckpointAuditEntity(entity) {
+			continue
+		}
 		if chunkcodec.IsLocalOnlyEntity(entity) {
 			return nil, chunkSummary{}, fmt.Errorf("%w: entries[%d].entity %q", chunkcodec.ErrLocalOnlyContent, i, entity)
 		}

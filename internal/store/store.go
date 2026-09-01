@@ -2532,23 +2532,15 @@ func (s *Store) AddObservation(p AddObservationParams) (int64, error) {
 
 func (s *Store) addObservationTx(tx *sql.Tx, p AddObservationParams) (*Observation, error) {
 	p.Project, _ = NormalizeProject(p.Project)
-	title := stripPrivateTags(p.Title)
-	content, _ := s.prepareStoredContent(p.Content)
-
-	// The title guard runs on the post-strip title so redaction cannot turn a
-	// valid title into an empty one behind our back. Persisting a titleless
-	// observation also enqueues a cloud upsert that the sync validators reject,
-	// which blocks every later mutation for the project (#459).
-	if err := ValidateObservationTitle(title); err != nil {
+	prepared, err := s.prepareObservationFields(p)
+	if err != nil {
 		return nil, err
 	}
-	if content == "" {
-		return nil, ErrObservationContentRequired
-	}
-
-	scope := normalizeScope(p.Scope)
-	normHash := hashNormalized(content)
-	topicKey := normalizeTopicKey(p.TopicKey)
+	title := prepared.Title
+	content := prepared.Content
+	scope := prepared.Scope
+	normHash := prepared.NormalizedHash
+	topicKey := prepared.TopicKey
 
 	{
 		// Settle ownership first: an unowned legacy session adopts this
@@ -2599,7 +2591,7 @@ func (s *Store) addObservationTx(tx *sql.Tx, p AddObservationParams) (*Observati
 
 	window := dedupeWindowExpression(s.cfg.DedupeWindow)
 	var existingID int64
-	err := tx.QueryRow(
+	err = tx.QueryRow(
 		`SELECT id FROM observations
 		 WHERE normalized_hash = ?
 		   AND ifnull(project, '') = ifnull(?, '')
@@ -2662,6 +2654,43 @@ func (s *Store) addObservationTx(tx *sql.Tx, p AddObservationParams) (*Observati
 		return nil, err
 	}
 	return observation, nil
+}
+
+type preparedObservationFields struct {
+	Title          string
+	Content        string
+	Scope          string
+	TopicKey       string
+	NormalizedHash string
+}
+
+// prepareObservationFields is the single normalization boundary shared by
+// observation writes and read-only Terminal Memory preflight. Keeping the
+// redaction, truncation, scope, topic-key, and exact-content hash rules here
+// prevents preflight from claiming a duplicate that the final write would
+// interpret differently.
+func (s *Store) prepareObservationFields(p AddObservationParams) (preparedObservationFields, error) {
+	title := stripPrivateTags(p.Title)
+	content, _ := s.prepareStoredContent(p.Content)
+
+	// The title guard runs on the post-strip title so redaction cannot turn a
+	// valid title into an empty one behind our back. Persisting a titleless
+	// observation also enqueues a cloud upsert that the sync validators reject,
+	// which blocks every later mutation for the project (#459).
+	if err := ValidateObservationTitle(title); err != nil {
+		return preparedObservationFields{}, err
+	}
+	if content == "" {
+		return preparedObservationFields{}, ErrObservationContentRequired
+	}
+
+	return preparedObservationFields{
+		Title:          title,
+		Content:        content,
+		Scope:          normalizeScope(p.Scope),
+		TopicKey:       normalizeTopicKey(p.TopicKey),
+		NormalizedHash: hashNormalized(content),
+	}, nil
 }
 
 func (s *Store) RecentObservations(project, scope string, limit int) ([]Observation, error) {

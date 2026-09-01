@@ -11,6 +11,30 @@ import (
 
 const checkpointHTTPErrorCodeInvalidRequest = "invalid_checkpoint_request"
 
+func (s *Server) handlePreflightCheckpoint(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var input memoryops.CheckpointPreflightInput
+	if err := decoder.Decode(&input); err != nil {
+		writeCheckpointHTTPRequestError(w, err)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("multiple JSON values")
+		}
+		writeCheckpointHTTPRequestError(w, err)
+		return
+	}
+
+	result, err := memoryops.New(s.store).PreflightCheckpoint(input)
+	if err != nil {
+		writeCheckpointHTTPError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, result)
+}
+
 func (s *Server) handleRecordCheckpoint(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()

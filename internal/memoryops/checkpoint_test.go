@@ -168,6 +168,228 @@ func TestSavedCheckpointAttachesAnExistingMemory(t *testing.T) {
 	}
 }
 
+func TestCheckpointPreflightReusesExactDuplicatesBoundsCandidatesAndDoesNotPersist(t *testing.T) {
+	service := newTestService(t)
+	exact := saveObservation(t, service, "engram", "Terminal Memory checkpoint", "Reuse this exact durable decision.")
+	for index, content := range []string{
+		"Terminal Memory checkpoint architecture keeps Core authoritative.",
+		"Terminal Memory checkpoint policy keeps proposals local.",
+		"Terminal Memory checkpoint decision preserves exact replay.",
+		"Terminal Memory checkpoint design keeps adapters thin.",
+	} {
+		result, err := service.Save(SaveInput{
+			SessionID:        "session-preflight-candidate-" + string(rune('a'+index)),
+			CWD:              "/work/engram",
+			Project:          "engram",
+			Type:             "architecture",
+			Title:            "Terminal Memory checkpoint candidate " + string(rune('a'+index)),
+			Content:          content,
+			CandidateOptions: store.CandidateOptions{SkipInsert: true},
+		})
+		if err != nil || result.Observation == nil {
+			t.Fatalf("seed semantic candidate %d: result=%#v err=%v", index, result, err)
+		}
+	}
+	otherProject := saveObservation(t, service, "other", exact.Title, exact.Content)
+
+	tables := []string{
+		"sessions", "observations", "observations_fts", "memory_relations", "sync_mutations",
+		"memory_proposals", "memory_checkpoints", "memory_checkpoint_references",
+		"memory_checkpoint_proposal_references",
+	}
+	before := checkpointTableCounts(t, service, tables)
+	exactBefore, err := service.Get(exact.ID)
+	if err != nil {
+		t.Fatalf("get exact duplicate before preflight: %v", err)
+	}
+
+	result, err := service.PreflightCheckpoint(CheckpointPreflightInput{
+		Project: "ENGRAM",
+		Memories: []CheckpointMemoryInput{
+			{Type: exact.Type, Title: exact.Title, Content: exact.Content, Scope: exact.Scope},
+			{Type: "architecture", Title: "Terminal Memory checkpoint architecture", Content: "Assess semantic candidates without writes."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("preflight checkpoint: %v", err)
+	}
+	if result.Project != "engram" || result.CandidateLimit != 3 {
+		t.Fatalf("preflight bounds = %#v", result)
+	}
+	if len(result.ExactDuplicates) != 1 || result.ExactDuplicates[0].InputIndex != 0 ||
+		result.ExactDuplicates[0].Reference.MemoryID != exact.ID ||
+		result.ExactDuplicates[0].Reference.MemoryID == otherProject.ID ||
+		result.ExactDuplicates[0].Reference.Project != "engram" {
+		t.Fatalf("exact duplicates = %#v, want Memory %d in engram", result.ExactDuplicates, exact.ID)
+	}
+	if len(result.Candidates) != 3 {
+		t.Fatalf("semantic candidates = %#v, want exactly three", result.Candidates)
+	}
+	seen := map[int64]bool{}
+	for _, candidate := range result.Candidates {
+		if candidate.InputIndex != 1 || candidate.Reference.Project != "engram" ||
+			candidate.Reference.MemoryID == exact.ID || candidate.Reference.MemoryID == otherProject.ID ||
+			candidate.Title == "" || candidate.Content == "" || seen[candidate.Reference.MemoryID] {
+			t.Fatalf("invalid semantic candidate = %#v", candidate)
+		}
+		seen[candidate.Reference.MemoryID] = true
+	}
+
+	after := checkpointTableCounts(t, service, tables)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("preflight changed persistent state: before=%v after=%v", before, after)
+	}
+	exactAfter, err := service.Get(exact.ID)
+	if err != nil {
+		t.Fatalf("get exact duplicate after preflight: %v", err)
+	}
+	if !reflect.DeepEqual(exactAfter, exactBefore) {
+		t.Fatalf("preflight mutated exact duplicate: before=%#v after=%#v", exactBefore, exactAfter)
+	}
+}
+
+func TestNeedsReviewCheckpointAtomicallyPreservesSettledMemoriesAndOneProposal(t *testing.T) {
+	service := newTestService(t)
+	existing := saveObservation(t, service, "engram", "Settled Memory", "This result is settled and durable.")
+	input := CheckpointRecordInput{
+		Host:        "codex",
+		SessionID:   "session-mixed-memory",
+		RootTurnID:  "turn-mixed-memory",
+		Disposition: store.CheckpointDispositionNeedsReview,
+		Project:     "engram",
+		MemoryIDs:   []int64{existing.ID},
+		Memories: []CheckpointMemoryInput{{
+			Type: "discovery", Title: "Settled discovery", Content: "This additional result is also settled.",
+		}},
+		Proposal: &CheckpointProposalInput{
+			Title: "Unresolved architecture choice", Content: "This material conflict still needs review.",
+		},
+	}
+
+	created, err := service.RecordCheckpoint(input)
+	if err != nil {
+		t.Fatalf("record Mixed Memory checkpoint: %v", err)
+	}
+	if created.Idempotency != CheckpointIdempotencyCreated || created.Checkpoint == nil ||
+		created.Checkpoint.Disposition != store.CheckpointDispositionNeedsReview ||
+		len(created.Checkpoint.References) != 2 || created.Checkpoint.Proposal == nil {
+		t.Fatalf("Mixed Memory checkpoint = %#v", created)
+	}
+	if created.Checkpoint.References[0].MemoryID != existing.ID ||
+		created.Checkpoint.References[1].MemoryID == 0 ||
+		created.Checkpoint.Proposal.Project != "engram" {
+		t.Fatalf("Mixed Memory references = %#v proposal=%#v", created.Checkpoint.References, created.Checkpoint.Proposal)
+	}
+
+	var proposals, checkpoints, references, mutations int
+	for table, target := range map[string]*int{
+		"memory_proposals": &proposals, "memory_checkpoints": &checkpoints,
+		"memory_checkpoint_references": &references, "sync_mutations": &mutations,
+	} {
+		if err := service.store.DB().QueryRow("SELECT COUNT(*) FROM " + table).Scan(target); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+	}
+	if proposals != 1 || checkpoints != 1 || references != 2 || mutations == 0 {
+		t.Fatalf("Mixed Memory state proposals=%d checkpoints=%d references=%d mutations=%d", proposals, checkpoints, references, mutations)
+	}
+
+	replayed, err := service.RecordCheckpoint(CheckpointRecordInput{
+		Host: input.Host, SessionID: input.SessionID, RootTurnID: input.RootTurnID,
+		Disposition: store.CheckpointDispositionNeedsReview,
+		ReasonCode:  "invalid-retry-reason",
+		Project:     "other",
+		MemoryIDs:   []int64{-1, -1},
+		Proposal:    &CheckpointProposalInput{},
+	})
+	if err != nil {
+		t.Fatalf("replay Mixed Memory checkpoint before payload validation: %v", err)
+	}
+	if replayed.Idempotency != CheckpointIdempotencyAlreadyRecorded ||
+		!reflect.DeepEqual(replayed.Checkpoint, created.Checkpoint) {
+		t.Fatalf("replayed Mixed Memory checkpoint = %#v, want %#v", replayed, created)
+	}
+}
+
+func TestMixedMemoryCheckpointRollsBackEveryWriteOnProposalReferenceFailure(t *testing.T) {
+	service := newTestService(t)
+	if _, err := service.store.DB().Exec(`
+		CREATE TRIGGER fail_mixed_proposal_reference
+		BEFORE INSERT ON memory_checkpoint_proposal_references
+		BEGIN
+			SELECT RAISE(ABORT, 'injected Mixed Memory proposal reference failure');
+		END;`); err != nil {
+		t.Fatalf("install Mixed Memory failure trigger: %v", err)
+	}
+
+	_, err := service.RecordCheckpoint(CheckpointRecordInput{
+		Host: "codex", SessionID: "session-mixed-rollback", RootTurnID: "turn-mixed-rollback",
+		Disposition: store.CheckpointDispositionNeedsReview, Project: "engram", CWD: "/work/engram",
+		Memories: []CheckpointMemoryInput{{
+			Type: "decision", Title: "Settled rollback canary", Content: "This Memory must roll back with the proposal.",
+		}},
+		Proposal: &CheckpointProposalInput{
+			Title: "Unresolved rollback canary", Content: "This proposal must roll back with the Memory.",
+		},
+	})
+	if err == nil {
+		t.Fatal("record Mixed Memory checkpoint succeeded despite injected proposal-reference failure")
+	}
+	for table, want := range map[string]int{
+		"sessions": 0, "observations": 0, "observations_fts": 0, "sync_mutations": 0,
+		"memory_proposals": 0, "memory_checkpoints": 0, "memory_checkpoint_references": 0,
+		"memory_checkpoint_proposal_references": 0,
+	} {
+		var got int
+		if queryErr := service.store.DB().QueryRow("SELECT COUNT(*) FROM " + table).Scan(&got); queryErr != nil {
+			t.Fatalf("count %s: %v", table, queryErr)
+		}
+		if got != want {
+			t.Fatalf("%s rows = %d, want %d after Mixed Memory rollback", table, got, want)
+		}
+	}
+}
+
+func TestCheckpointExactReplayPrecedesRetryPayloadValidation(t *testing.T) {
+	service := newTestService(t)
+	input := CheckpointRecordInput{
+		Host: "codex", SessionID: "session-replay-first", RootTurnID: "turn-replay-first",
+		Disposition: store.CheckpointDispositionSkipped, ReasonCode: store.CheckpointSkipReasonNoDurableKnowledge,
+	}
+	created, err := service.RecordCheckpoint(input)
+	if err != nil {
+		t.Fatalf("record original checkpoint: %v", err)
+	}
+	replayed, err := service.RecordCheckpoint(CheckpointRecordInput{
+		Host: input.Host, SessionID: input.SessionID, RootTurnID: input.RootTurnID,
+		Disposition: store.CheckpointDispositionSkipped,
+		ReasonCode:  "invalid-on-retry",
+		Project:     "other",
+		MemoryIDs:   []int64{-1},
+		Proposal:    &CheckpointProposalInput{},
+	})
+	if err != nil {
+		t.Fatalf("exact replay validated retry payload: %v", err)
+	}
+	if replayed.Idempotency != CheckpointIdempotencyAlreadyRecorded ||
+		!reflect.DeepEqual(replayed.Checkpoint, created.Checkpoint) {
+		t.Fatalf("exact replay = %#v, want original %#v", replayed, created)
+	}
+}
+
+func checkpointTableCounts(t *testing.T, service *Service, tables []string) map[string]int {
+	t.Helper()
+	counts := make(map[string]int, len(tables))
+	for _, table := range tables {
+		var count int
+		if err := service.store.DB().QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		counts[table] = count
+	}
+	return counts
+}
+
 func TestCheckpointErrorsHaveStableTransportCodes(t *testing.T) {
 	service := newTestService(t)
 	tests := []struct {

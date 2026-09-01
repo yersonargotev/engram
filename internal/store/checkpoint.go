@@ -20,13 +20,13 @@ const (
 )
 
 var (
-	ErrCheckpointInvalidIdentity         = errors.New("invalid checkpoint identity")
-	ErrCheckpointInvalidReason           = errors.New("invalid checkpoint reason")
-	ErrCheckpointInvalidReferences       = errors.New("invalid checkpoint references")
-	ErrCheckpointMemoryNotFound          = errors.New("checkpoint Memory not found")
-	ErrCheckpointProjectMismatch         = errors.New("checkpoint Memory belongs to a different project")
-	ErrCheckpointConflict                = errors.New("checkpoint already recorded with a different terminal result")
-	ErrCheckpointNotFound                = errors.New("checkpoint not found")
+	ErrCheckpointInvalidIdentity   = errors.New("invalid checkpoint identity")
+	ErrCheckpointInvalidReason     = errors.New("invalid checkpoint reason")
+	ErrCheckpointInvalidReferences = errors.New("invalid checkpoint references")
+	ErrCheckpointMemoryNotFound    = errors.New("checkpoint Memory not found")
+	ErrCheckpointProjectMismatch   = errors.New("checkpoint Memory belongs to a different project")
+	ErrCheckpointConflict          = errors.New("checkpoint already recorded with a different terminal result")
+	ErrCheckpointNotFound          = errors.New("checkpoint not found")
 )
 
 // CheckpointIdentity is the opaque, host-provided idempotency key for one
@@ -76,9 +76,53 @@ type RecordSavedCheckpointParams struct {
 }
 
 type RecordNeedsReviewCheckpointParams struct {
-	Identity CheckpointIdentity
-	Project  string
-	Proposal *MemoryProposalInput
+	Identity  CheckpointIdentity
+	Project   string
+	Directory string
+	MemoryIDs []int64
+	Memories  []AddObservationParams
+	Proposal  *MemoryProposalInput
+}
+
+// FindExactCheckpointMemory resolves an active same-project Memory whose
+// durable fields are exactly equivalent to a proposed inline Memory. It is a
+// read-only preflight primitive: unlike AddObservation it never increments
+// duplicate counters, revises topic-key Memories, or enqueues sync mutations.
+func (s *Store) FindExactCheckpointMemory(p AddObservationParams) (*Observation, error) {
+	p.Project, _ = NormalizeProject(p.Project)
+	if p.Project == "" {
+		return nil, ErrCheckpointInvalidReferences
+	}
+	prepared, err := s.prepareObservationFields(p)
+	if err != nil {
+		return nil, err
+	}
+
+	var id int64
+	err = s.db.QueryRow(`
+		SELECT id
+		FROM observations
+		WHERE normalized_hash = ?
+		  AND ifnull(project, '') = ?
+		  AND scope = ?
+		  AND type = ?
+		  AND title = ?
+		  AND deleted_at IS NULL
+		ORDER BY datetime(updated_at) DESC, id DESC
+		LIMIT 1`,
+		prepared.NormalizedHash, p.Project, prepared.Scope, p.Type, prepared.Title,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find exact checkpoint Memory: %w", err)
+	}
+	memory, err := s.GetObservation(id)
+	if err != nil {
+		return nil, fmt.Errorf("load exact checkpoint Memory: %w", err)
+	}
+	return memory, nil
 }
 
 // migrateMemoryCheckpoints creates the local-only checkpoint ledger. The table
@@ -243,6 +287,13 @@ func (s *Store) RecordNeedsReviewCheckpoint(p RecordNeedsReviewCheckpointParams)
 		if project == "" || p.Proposal == nil {
 			return ErrCheckpointInvalidReferences
 		}
+		memorySet := checkpointMemorySet{
+			Identity: p.Identity, Project: project, Directory: p.Directory,
+			MemoryIDs: p.MemoryIDs, Memories: p.Memories,
+		}
+		if err := validateCheckpointMemorySet(memorySet, false); err != nil {
+			return err
+		}
 
 		result, err := s.execHook(tx, `
 			INSERT INTO memory_checkpoints (host, session_id, root_turn_id, disposition)
@@ -281,6 +332,9 @@ func (s *Store) RecordNeedsReviewCheckpoint(p RecordNeedsReviewCheckpointParams)
 			WHERE host = ? AND session_id = ? AND root_turn_id = ?`,
 			p.Identity.Host, p.Identity.SessionID, p.Identity.RootTurnID,
 		).Scan(&checkpointID); err != nil {
+			return err
+		}
+		if err := s.attachCheckpointMemoriesTx(tx, checkpointID, memorySet); err != nil {
 			return err
 		}
 		if _, err := s.execHook(tx, `
@@ -374,23 +428,12 @@ func (s *Store) RecordSavedCheckpoint(p RecordSavedCheckpointParams) (*MemoryChe
 		}
 
 		project, _ := NormalizeProject(p.Project)
-		if project == "" || len(p.MemoryIDs)+len(p.Memories) == 0 {
-			return ErrCheckpointInvalidReferences
+		memorySet := checkpointMemorySet{
+			Identity: p.Identity, Project: project, Directory: p.Directory,
+			MemoryIDs: p.MemoryIDs, Memories: p.Memories,
 		}
-		seenMemoryIDs := make(map[int64]struct{}, len(p.MemoryIDs)+len(p.Memories))
-		for _, memoryID := range p.MemoryIDs {
-			if memoryID <= 0 {
-				return ErrCheckpointInvalidReferences
-			}
-			if _, exists := seenMemoryIDs[memoryID]; exists {
-				return ErrCheckpointInvalidReferences
-			}
-			seenMemoryIDs[memoryID] = struct{}{}
-		}
-		for _, memory := range p.Memories {
-			if strings.TrimSpace(memory.Title) == "" || strings.TrimSpace(memory.Content) == "" {
-				return ErrCheckpointInvalidReferences
-			}
+		if err := validateCheckpointMemorySet(memorySet, true); err != nil {
+			return err
 		}
 
 		result, err := s.execHook(tx, `
@@ -419,67 +462,6 @@ func (s *Store) RecordSavedCheckpoint(p RecordSavedCheckpointParams) (*MemoryChe
 			return nil
 		}
 
-		references := make([]CheckpointReference, 0, len(p.MemoryIDs)+len(p.Memories))
-		for _, memoryID := range p.MemoryIDs {
-			memory, err := s.getObservationTx(tx, memoryID)
-			if errors.Is(err, sql.ErrNoRows) {
-				return ErrCheckpointMemoryNotFound
-			}
-			if err != nil {
-				return err
-			}
-			memoryProject := ""
-			if memory.Project != nil {
-				memoryProject, _ = NormalizeProject(*memory.Project)
-			}
-			if memoryProject != project {
-				return ErrCheckpointProjectMismatch
-			}
-			references = append(references, CheckpointReference{
-				Kind: CheckpointReferenceKindMemory, MemoryID: memory.ID,
-				MemorySyncID: memory.SyncID, Project: memoryProject,
-			})
-		}
-
-		if len(p.Memories) > 0 {
-			if err := s.createSessionTx(tx, p.Identity.SessionID, project, p.Directory); err != nil {
-				return err
-			}
-			var storedProject, storedDirectory, startedAt string
-			if err := tx.QueryRow(`SELECT project, directory, started_at FROM sessions WHERE id = ?`, p.Identity.SessionID).
-				Scan(&storedProject, &storedDirectory, &startedAt); err != nil {
-				return err
-			}
-			if storedProject != project {
-				return ErrCheckpointProjectMismatch
-			}
-			if err := s.enqueueSyncMutationTx(tx, SyncEntitySession, p.Identity.SessionID, SyncOpUpsert, syncSessionPayload{
-				ID: p.Identity.SessionID, Project: storedProject, Directory: storedDirectory, StartedAt: startedAt,
-			}); err != nil {
-				return err
-			}
-		}
-
-		for _, memoryInput := range p.Memories {
-			memoryInput.SessionID = p.Identity.SessionID
-			memoryInput.Project = project
-			if strings.TrimSpace(memoryInput.Type) == "" {
-				memoryInput.Type = "manual"
-			}
-			memory, err := s.addObservationTx(tx, memoryInput)
-			if err != nil {
-				return err
-			}
-			if _, exists := seenMemoryIDs[memory.ID]; exists {
-				return ErrCheckpointInvalidReferences
-			}
-			seenMemoryIDs[memory.ID] = struct{}{}
-			references = append(references, CheckpointReference{
-				Kind: CheckpointReferenceKindMemory, MemoryID: memory.ID,
-				MemorySyncID: memory.SyncID, Project: project,
-			})
-		}
-
 		var checkpointID int64
 		if err := tx.QueryRow(`
 			SELECT id FROM memory_checkpoints
@@ -488,15 +470,8 @@ func (s *Store) RecordSavedCheckpoint(p RecordSavedCheckpointParams) (*MemoryChe
 		).Scan(&checkpointID); err != nil {
 			return err
 		}
-		for index, reference := range references {
-			if _, err := s.execHook(tx, `
-				INSERT INTO memory_checkpoint_references (
-					checkpoint_id, reference_order, reference_kind, memory_id, memory_sync_id, project
-				) VALUES (?, ?, ?, ?, ?, ?)`,
-				checkpointID, index, reference.Kind, reference.MemoryID, reference.MemorySyncID, reference.Project,
-			); err != nil {
-				return err
-			}
+		if err := s.attachCheckpointMemoriesTx(tx, checkpointID, memorySet); err != nil {
+			return err
 		}
 		checkpoint, err = loadMemoryCheckpoint(tx, p.Identity)
 		return err
@@ -505,6 +480,113 @@ func (s *Store) RecordSavedCheckpoint(p RecordSavedCheckpointParams) (*MemoryChe
 		return nil, false, err
 	}
 	return checkpoint, alreadyRecorded, nil
+}
+
+type checkpointMemorySet struct {
+	Identity  CheckpointIdentity
+	Project   string
+	Directory string
+	MemoryIDs []int64
+	Memories  []AddObservationParams
+}
+
+func validateCheckpointMemorySet(p checkpointMemorySet, requireMemory bool) error {
+	if p.Project == "" || (requireMemory && len(p.MemoryIDs)+len(p.Memories) == 0) {
+		return ErrCheckpointInvalidReferences
+	}
+	seenMemoryIDs := make(map[int64]struct{}, len(p.MemoryIDs))
+	for _, memoryID := range p.MemoryIDs {
+		if memoryID <= 0 {
+			return ErrCheckpointInvalidReferences
+		}
+		if _, exists := seenMemoryIDs[memoryID]; exists {
+			return ErrCheckpointInvalidReferences
+		}
+		seenMemoryIDs[memoryID] = struct{}{}
+	}
+	for _, memory := range p.Memories {
+		if strings.TrimSpace(memory.Title) == "" || strings.TrimSpace(memory.Content) == "" {
+			return ErrCheckpointInvalidReferences
+		}
+	}
+	return nil
+}
+
+func (s *Store) attachCheckpointMemoriesTx(tx *sql.Tx, checkpointID int64, p checkpointMemorySet) error {
+	references := make([]CheckpointReference, 0, len(p.MemoryIDs)+len(p.Memories))
+	seenMemoryIDs := make(map[int64]struct{}, len(p.MemoryIDs)+len(p.Memories))
+	for _, memoryID := range p.MemoryIDs {
+		seenMemoryIDs[memoryID] = struct{}{}
+		memory, err := s.getObservationTx(tx, memoryID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrCheckpointMemoryNotFound
+		}
+		if err != nil {
+			return err
+		}
+		memoryProject := ""
+		if memory.Project != nil {
+			memoryProject, _ = NormalizeProject(*memory.Project)
+		}
+		if memoryProject != p.Project {
+			return ErrCheckpointProjectMismatch
+		}
+		references = append(references, CheckpointReference{
+			Kind: CheckpointReferenceKindMemory, MemoryID: memory.ID,
+			MemorySyncID: memory.SyncID, Project: memoryProject,
+		})
+	}
+
+	if len(p.Memories) > 0 {
+		if err := s.createSessionTx(tx, p.Identity.SessionID, p.Project, p.Directory); err != nil {
+			return err
+		}
+		var storedProject, storedDirectory, startedAt string
+		if err := tx.QueryRow(`SELECT project, directory, started_at FROM sessions WHERE id = ?`, p.Identity.SessionID).
+			Scan(&storedProject, &storedDirectory, &startedAt); err != nil {
+			return err
+		}
+		if storedProject != p.Project {
+			return ErrCheckpointProjectMismatch
+		}
+		if err := s.enqueueSyncMutationTx(tx, SyncEntitySession, p.Identity.SessionID, SyncOpUpsert, syncSessionPayload{
+			ID: p.Identity.SessionID, Project: storedProject, Directory: storedDirectory, StartedAt: startedAt,
+		}); err != nil {
+			return err
+		}
+	}
+
+	for _, memoryInput := range p.Memories {
+		memoryInput.SessionID = p.Identity.SessionID
+		memoryInput.Project = p.Project
+		if strings.TrimSpace(memoryInput.Type) == "" {
+			memoryInput.Type = "manual"
+		}
+		memory, err := s.addObservationTx(tx, memoryInput)
+		if err != nil {
+			return err
+		}
+		if _, exists := seenMemoryIDs[memory.ID]; exists {
+			return ErrCheckpointInvalidReferences
+		}
+		seenMemoryIDs[memory.ID] = struct{}{}
+		references = append(references, CheckpointReference{
+			Kind: CheckpointReferenceKindMemory, MemoryID: memory.ID,
+			MemorySyncID: memory.SyncID, Project: p.Project,
+		})
+	}
+
+	for index, reference := range references {
+		if _, err := s.execHook(tx, `
+			INSERT INTO memory_checkpoint_references (
+				checkpoint_id, reference_order, reference_kind, memory_id, memory_sync_id, project
+			) VALUES (?, ?, ?, ?, ?, ?)`,
+			checkpointID, index, reference.Kind, reference.MemoryID, reference.MemorySyncID, reference.Project,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetMemoryCheckpoint returns the terminal checkpoint for an exact root-turn

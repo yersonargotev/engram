@@ -12,17 +12,33 @@ import (
 )
 
 // ErrLocalOnlyContent marks payloads that attempt to cross the cloud boundary
-// with Legacy prompts or Diagnostic capture data. Existing remote blobs may
-// still contain Legacy prompts, but current sync must never accept or expose
-// them through ordinary cloud behavior.
+// with Legacy prompts, Diagnostic capture, or checkpoint audit state. Existing
+// remote blobs may still contain Legacy prompts, but current sync must never
+// accept or expose local-only content through ordinary cloud behavior.
 var ErrLocalOnlyContent = errors.New("cloud payload contains local-only content")
 
 // IsLocalOnlyEntity reports whether an entity is structurally excluded from
 // cloud sync. Prompt is the frozen Legacy archive; diagnostic_capture is the
-// consent-gated, local-only diagnostic store.
+// consent-gated diagnostic store; checkpoints and proposals are local audit
+// evidence rather than replicated Memory.
 func IsLocalOnlyEntity(entity string) bool {
 	switch strings.ToLower(strings.TrimSpace(entity)) {
-	case store.SyncEntityPrompt, "diagnostic_capture", "capture_consent":
+	case store.SyncEntityPrompt, "diagnostic_capture", "capture_consent",
+		"memory_checkpoint", "memory_checkpoint_reference",
+		"memory_checkpoint_proposal_reference", "memory_proposal":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsCheckpointAuditEntity reports whether an entity belongs to the local
+// Terminal Memory audit ledger. Unlike capture data, historical audit rows are
+// harmlessly omitted when cloud materialization encounters them.
+func IsCheckpointAuditEntity(entity string) bool {
+	switch strings.ToLower(strings.TrimSpace(entity)) {
+	case "memory_checkpoint", "memory_checkpoint_reference",
+		"memory_checkpoint_proposal_reference", "memory_proposal":
 		return true
 	default:
 		return false
@@ -37,6 +53,14 @@ func localOnlyCollectionKey(key string) string {
 		return "diagnostic_captures"
 	case "capture_consents":
 		return "capture_consents"
+	case "memory_checkpoints":
+		return "memory_checkpoints"
+	case "memory_checkpoint_references":
+		return "memory_checkpoint_references"
+	case "memory_checkpoint_proposal_references":
+		return "memory_checkpoint_proposal_references"
+	case "memory_proposals":
+		return "memory_proposals"
 	default:
 		return ""
 	}
@@ -108,7 +132,8 @@ func RedactLocalOnlyContent(payload []byte) ([]byte, error) {
 		switch localOnlyCollectionKey(key) {
 		case "prompts":
 			doc[key] = []any{}
-		case "diagnostic_captures", "capture_consents":
+		case "diagnostic_captures", "capture_consents", "memory_checkpoints",
+			"memory_checkpoint_references", "memory_checkpoint_proposal_references", "memory_proposals":
 			delete(doc, key)
 		}
 	}

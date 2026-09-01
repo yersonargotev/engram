@@ -27,9 +27,12 @@ Engram trusts the **agent** to decide what's worth remembering — not a firehos
 
 ```
 1. Agent completes one settled root user turn.
-2. Agent chooses `saved`, `needs_review`, or `skipped(no_durable_knowledge)`.
-3. `mem_checkpoint` commits the disposition and any inline Memory atomically.
-4. Later work uses selective Recall when prior Memory can change the task.
+2. Agent preflights prospective Memories without persistence, reuses exact
+   duplicates, and accounts for at most three same-project candidates.
+3. Agent chooses `saved`, `needs_review`, or `skipped(no_durable_knowledge)`.
+4. `mem_checkpoint` commits the disposition, settled Memories, and any proposal
+   atomically. A `needs_review` result with at least one Memory is Mixed.
+5. Later work uses selective Recall when prior Memory can change the task.
 ```
 
 ---
@@ -101,7 +104,7 @@ inventory, access, export, and separately confirmed purge may touch it.
 | `mem_merge_projects` | Merge project name variants into canonical name (admin) |
 | `mem_current_project` | Detect project from cwd — never errors, recommended first call |
 | `mem_doctor` | Run read-only operational diagnostics for project detection and store health |
-| `mem_checkpoint` | Record an idempotent terminal disposition for one root user turn |
+| `mem_checkpoint` | Preflight prospective Memories or record an idempotent terminal disposition for one root user turn |
 | `mem_checkpoint_status` | Inspect the local checkpoint for one exact root user turn |
 | `mem_review` | List observations whose `review_after` lifecycle is stale; `mark_reviewed` resets the local review cycle |
 | `mem_pin` | Pin a memory locally so it appears before recent observations in context; pins are not synced |
@@ -298,6 +301,8 @@ engram review list|mark   List due memories or mark one reviewed (local-only) [-
 engram pin|unpin <obs_id> Change local-only context priority [--json]
 engram current-project    Inspect project resolution and ambiguity [--json]
 engram suggest-topic-key  Suggest a stable topic key without writing [--json]
+engram checkpoint preflight
+                          Inspect prospective Memories without writes [--json]
 engram checkpoint record Record a saved, needs_review, or skipped root-turn checkpoint [--json]
 engram checkpoint status Inspect one exact root-turn checkpoint [--json]
 engram delete <obs_id>    Delete an observation [--hard] (soft-delete by default; --hard removes permanently)

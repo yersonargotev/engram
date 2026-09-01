@@ -64,6 +64,28 @@ func cmdCheckpoint(cfg store.Config) {
 	service := memoryops.New(s)
 
 	switch opts.Action {
+	case "preflight":
+		result, preflightErr := service.PreflightCheckpoint(memoryops.CheckpointPreflightInput{
+			Project: opts.Project, Memories: opts.Memories,
+		})
+		if preflightErr != nil {
+			failCLI(opts.JSONMode, memoryops.CheckpointErrorCode(preflightErr), preflightErr.Error(), nil)
+			return
+		}
+		if opts.JSONMode {
+			_ = writeCLIJSON(result)
+			return
+		}
+		fmt.Printf("Terminal Memory preflight: %d exact duplicate(s), %d semantic candidate(s) (limit %d)\n",
+			len(result.ExactDuplicates), len(result.Candidates), result.CandidateLimit)
+		for _, duplicate := range result.ExactDuplicates {
+			fmt.Printf("  Input %d reuses Memory #%d (%s, project %s)\n", duplicate.InputIndex+1,
+				duplicate.Reference.MemoryID, duplicate.Reference.MemorySyncID, duplicate.Reference.Project)
+		}
+		for _, candidate := range result.Candidates {
+			fmt.Printf("  Input %d candidate Memory #%d (%s, project %s): %s\n", candidate.InputIndex+1,
+				candidate.Reference.MemoryID, candidate.Reference.MemorySyncID, candidate.Reference.Project, candidate.Title)
+		}
 	case "record":
 		result, recordErr := service.RecordCheckpoint(memoryops.CheckpointRecordInput{
 			Host:        opts.Host,
@@ -95,7 +117,9 @@ func cmdCheckpoint(cfg store.Config) {
 		case store.CheckpointDispositionSaved:
 			fmt.Printf("Memory checkpoint %s: saved (%d Memories)\n", result.Idempotency, len(result.Checkpoint.References))
 		case store.CheckpointDispositionNeedsReview:
-			fmt.Printf("Memory checkpoint %s: needs_review (proposal %s)\n", result.Idempotency, result.Checkpoint.Proposal.ID)
+			fmt.Printf("Memory checkpoint %s: needs_review (%d Memories; proposal %s)\n",
+				result.Idempotency, len(result.Checkpoint.References), result.Checkpoint.Proposal.ID)
+			printCheckpointReferences(result.Checkpoint.References)
 		default:
 			fmt.Printf("Memory checkpoint %s: %s (%s)\n", result.Idempotency, result.Checkpoint.Disposition, result.Checkpoint.ReasonCode)
 		}
@@ -120,11 +144,18 @@ func cmdCheckpoint(cfg store.Config) {
 				fmt.Printf("  Memory #%d (%s, project %s)\n", reference.MemoryID, reference.MemorySyncID, reference.Project)
 			}
 		case store.CheckpointDispositionNeedsReview:
-			fmt.Printf("Memory checkpoint: needs_review (proposal %s, project %s)\n",
-				result.Checkpoint.Proposal.ID, result.Checkpoint.Proposal.Project)
+			fmt.Printf("Memory checkpoint: needs_review (%d Memories; proposal %s, project %s)\n",
+				len(result.Checkpoint.References), result.Checkpoint.Proposal.ID, result.Checkpoint.Proposal.Project)
+			printCheckpointReferences(result.Checkpoint.References)
 		default:
 			fmt.Printf("Memory checkpoint: %s (%s)\n", result.Checkpoint.Disposition, result.Checkpoint.ReasonCode)
 		}
+	}
+}
+
+func printCheckpointReferences(references []store.CheckpointReference) {
+	for _, reference := range references {
+		fmt.Printf("  Memory #%d (%s, project %s)\n", reference.MemoryID, reference.MemorySyncID, reference.Project)
 	}
 }
 
@@ -280,8 +311,8 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 		opts.Help = true
 		return opts, nil
 	}
-	if opts.Action != "record" && opts.Action != "status" && opts.Action != "verify-stop" {
-		return opts, &checkpointArgumentError{Message: "checkpoint action must be record, status, or verify-stop"}
+	if opts.Action != "preflight" && opts.Action != "record" && opts.Action != "status" && opts.Action != "verify-stop" {
+		return opts, &checkpointArgumentError{Message: "checkpoint action must be preflight, record, status, or verify-stop"}
 	}
 
 	for i := 1; i < len(args); i++ {
@@ -366,6 +397,10 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 	if opts.Action == "status" && (opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.Proposal != nil) {
 		return opts, &checkpointArgumentError{Message: "checkpoint status accepts only identity flags"}
 	}
+	if opts.Action == "preflight" && (opts.Host != "" || opts.SessionID != "" || opts.RootTurnID != "" ||
+		opts.Disposition != "" || opts.ReasonCode != "" || len(opts.MemoryIDs) > 0 || opts.Proposal != nil) {
+		return opts, &checkpointArgumentError{Message: "checkpoint preflight accepts only --project, --memory-json, and --json"}
+	}
 	if opts.Action == "verify-stop" && (opts.SessionID != "" || opts.RootTurnID != "" || opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.Proposal != nil || opts.JSONMode) {
 		return opts, &checkpointArgumentError{Message: "checkpoint verify-stop accepts only --host"}
 	}
@@ -374,6 +409,7 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 
 func printCheckpointUsage() {
 	fmt.Println(`Usage:
+	engram checkpoint preflight --project PROJECT --memory-json JSON [--memory-json JSON ...] [--json]
 	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
 	  --disposition skipped --reason no_durable_knowledge [--json]
 	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
@@ -381,6 +417,7 @@ func printCheckpointUsage() {
 	  [--memory-id ID ...] [--memory-json JSON ...] [--json]
 	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
 	  --disposition needs_review --project PROJECT \
+	  [--memory-id ID ...] [--memory-json JSON ...] \
 	  --proposal-json '{"title":"...","content":"..."}' [--json]
 	engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]
 	engram checkpoint verify-stop --host HOST`)

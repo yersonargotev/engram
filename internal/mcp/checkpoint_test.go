@@ -204,6 +204,110 @@ func TestCheckpointToolCreatesNeedsReviewProposalAndExposesReference(t *testing.
 	}
 }
 
+func TestCheckpointToolPreflightIsReadOnlyAndDoesNotReportTerminalCoverage(t *testing.T) {
+	s := newMCPTestStore(t)
+	service := memoryops.New(s)
+	seed, err := service.Save(memoryops.SaveInput{
+		SessionID: "session-mcp-preflight-seed", CWD: "/work/engram", Project: "engram",
+		Type: "decision", Title: "MCP preflight duplicate", Content: "Reuse this exact Memory.",
+		CandidateOptions: store.CandidateOptions{SkipInsert: true},
+	})
+	if err != nil || seed.Observation == nil {
+		t.Fatalf("seed preflight Memory: result=%#v err=%v", seed, err)
+	}
+	var observationsBefore, checkpointsBefore, proposalsBefore, mutationsBefore int
+	for table, target := range map[string]*int{
+		"observations": &observationsBefore, "memory_checkpoints": &checkpointsBefore,
+		"memory_proposals": &proposalsBefore, "sync_mutations": &mutationsBefore,
+	} {
+		if err := s.DB().QueryRow("SELECT COUNT(*) FROM " + table).Scan(target); err != nil {
+			t.Fatalf("count %s before preflight: %v", table, err)
+		}
+	}
+
+	var observations []CheckpointObservation
+	response, err := CheckpointToolHandlerWithObserver(s, func(value CheckpointObservation) {
+		observations = append(observations, value)
+	})(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+		"operation": "preflight",
+		"project":   "engram",
+		"memories": []any{map[string]any{
+			"type": "decision", "title": "MCP preflight duplicate", "content": "Reuse this exact Memory.",
+		}},
+	}}})
+	if err != nil || response.IsError {
+		t.Fatalf("preflight response = %#v, err = %v", response, err)
+	}
+	var result memoryops.CheckpointPreflightResult
+	if err := json.Unmarshal([]byte(callResultText(t, response)), &result); err != nil {
+		t.Fatalf("decode preflight response: %v", err)
+	}
+	if len(result.ExactDuplicates) != 1 || result.ExactDuplicates[0].Reference.MemoryID != seed.Observation.ID ||
+		len(result.Candidates) != 0 || result.CandidateLimit != 3 {
+		t.Fatalf("preflight result = %#v", result)
+	}
+	if len(observations) != 0 {
+		t.Fatalf("preflight reported terminal checkpoint coverage: %+v", observations)
+	}
+	invalidResponse, err := CheckpointToolHandlerWithObserver(s, func(value CheckpointObservation) {
+		observations = append(observations, value)
+	})(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+		"operation": "preflight", "project": "engram", "memories": "not-an-array",
+	}}})
+	if err != nil || !invalidResponse.IsError || len(observations) != 0 {
+		t.Fatalf("invalid preflight response=%#v err=%v terminal observations=%+v", invalidResponse, err, observations)
+	}
+
+	for table, want := range map[string]int{
+		"observations": observationsBefore, "memory_checkpoints": checkpointsBefore,
+		"memory_proposals": proposalsBefore, "sync_mutations": mutationsBefore,
+	} {
+		var got int
+		if err := s.DB().QueryRow("SELECT COUNT(*) FROM " + table).Scan(&got); err != nil {
+			t.Fatalf("count %s after preflight: %v", table, err)
+		}
+		if got != want {
+			t.Fatalf("preflight changed %s: %d -> %d", table, want, got)
+		}
+	}
+}
+
+func TestCheckpointToolCreatesMixedMemoryCheckpoint(t *testing.T) {
+	s := newMCPTestStore(t)
+	service := memoryops.New(s)
+	seed, err := service.Save(memoryops.SaveInput{
+		SessionID: "session-mcp-mixed-seed", CWD: "/work/engram", Project: "engram",
+		Type: "decision", Title: "MCP settled Memory", Content: "This result is settled.",
+		CandidateOptions: store.CandidateOptions{SkipInsert: true},
+	})
+	if err != nil || seed.Observation == nil {
+		t.Fatalf("seed Mixed Memory: result=%#v err=%v", seed, err)
+	}
+
+	response, err := CheckpointToolHandler(s)(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
+		"host": "codex", "session_id": "session-mcp-mixed", "root_turn_id": "turn-mcp-mixed",
+		"disposition": store.CheckpointDispositionNeedsReview, "project": "engram",
+		"memory_ids": []any{float64(seed.Observation.ID)},
+		"memories": []any{map[string]any{
+			"type": "discovery", "title": "MCP settled discovery", "content": "This result is also settled.",
+		}},
+		"proposal": map[string]any{
+			"title": "MCP unresolved conflict", "content": "This result still needs review.",
+		},
+	}}})
+	if err != nil || response.IsError {
+		t.Fatalf("Mixed Memory response = %#v, err = %v", response, err)
+	}
+	var result memoryops.CheckpointRecordResult
+	if err := json.Unmarshal([]byte(callResultText(t, response)), &result); err != nil {
+		t.Fatalf("decode Mixed Memory response: %v", err)
+	}
+	if result.Checkpoint == nil || result.Checkpoint.Proposal == nil || len(result.Checkpoint.References) != 2 ||
+		result.Checkpoint.References[0].MemoryID != seed.Observation.ID {
+		t.Fatalf("Mixed Memory result = %#v", result)
+	}
+}
+
 func TestCheckpointToolSchemaExposesOnlyMinimalInlineNeedsReviewProposal(t *testing.T) {
 	s := newMCPTestStore(t)
 	tool := NewServerWithTools(s, map[string]bool{"mem_checkpoint": true}).GetTool("mem_checkpoint")
@@ -226,5 +330,8 @@ func TestCheckpointToolSchemaExposesOnlyMinimalInlineNeedsReviewProposal(t *test
 	}
 	if !strings.Contains(tool.Tool.Description, store.CheckpointDispositionNeedsReview) {
 		t.Fatalf("mem_checkpoint description = %q", tool.Tool.Description)
+	}
+	if _, ok := tool.Tool.InputSchema.Properties["operation"]; !ok {
+		t.Fatalf("mem_checkpoint schema does not expose read-only preflight operation")
 	}
 }

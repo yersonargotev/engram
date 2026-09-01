@@ -33,6 +33,14 @@ Recall is selective, and an empty result is successful. Treat the supplied
 `host`, `session_id`, and `root_turn_id` as opaque; reuse them unchanged across
 compaction or verifier continuations and never invent replacements.
 
+Before finalizing prospective Memories, call `mem_checkpoint` with
+`operation: "preflight"`, the exact project, and those inline `memories`. This
+bounded read creates nothing and returns exact duplicates plus at most three
+full same-project semantic candidates. Reuse exact duplicates and account for
+every candidate. Clear low-risk duplicate, relation, or distinct outcomes may
+settle; ambiguity or a material architecture, policy, or decision conflict
+selects `needs_review`.
+
 ## Choose a disposition
 
 - Choose `saved` for durable knowledge worth recalling later, such as a
@@ -40,8 +48,10 @@ compaction or verifier continuations and never invent replacements.
   invariant, configuration constraint, preference, or significant artifact.
   Prefer inline `memories` so creation and the checkpoint are atomic.
 - Choose `needs_review` for potentially durable knowledge that is ambiguous,
-  incomplete, conflicting, or sensitive. Attach exactly one bounded, redacted
-  inline `proposal`; this disposition is not a fallback for tool failure.
+  incomplete, conflicting, or sensitive. Preserve any independently settled
+  Memories and attach exactly one bounded, redacted inline `proposal`. A result
+  with at least one Memory is Mixed; this disposition is not a fallback for
+  tool failure and never automatically promotes its proposal.
 - Choose `skipped` only when there is no durable knowledge. Its only reason is
   `no_durable_knowledge`. Missing tools, invalid identity, timeouts, and
   persistence failures are not skip dispositions.
@@ -67,8 +77,9 @@ record a second identity.
 ```
 
 For `saved`, include the exact project plus one or more `memory_ids` or inline
-`memories`. For `needs_review`, include the exact project and one inline
-`proposal` with `title` and `content`.
+`memories`. For `needs_review`, include the exact project, zero or more settled
+`memory_ids` or inline `memories`, and one inline `proposal` with `title` and
+`content`.
 
 After compaction, recover only what is needed to continue and finalize the same
 root turn after its remaining work settles. Compaction does not require a

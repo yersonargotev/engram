@@ -14,6 +14,7 @@ import (
 const (
 	CheckpointIdempotencyCreated         = "created"
 	CheckpointIdempotencyAlreadyRecorded = "already_recorded"
+	CheckpointPreflightCandidateLimit    = 3
 
 	CheckpointErrorCodeInvalidDisposition = "invalid_checkpoint_disposition"
 	CheckpointErrorCodeInvalidIdentity    = "invalid_checkpoint_identity"
@@ -86,6 +87,38 @@ type CheckpointRecordResult struct {
 	Idempotency string                  `json:"idempotency"`
 }
 
+// CheckpointPreflightInput describes prospective settled Memories without a
+// root-turn identity because preflight is read-only and cannot create a
+// checkpoint. Project is explicit so candidates never cross Memory ownership
+// boundaries.
+type CheckpointPreflightInput struct {
+	Project  string                  `json:"project"`
+	Memories []CheckpointMemoryInput `json:"memories"`
+}
+
+type CheckpointPreflightDuplicate struct {
+	InputIndex int                       `json:"input_index"`
+	Reference  store.CheckpointReference `json:"reference"`
+}
+
+type CheckpointPreflightCandidate struct {
+	InputIndex int                       `json:"input_index"`
+	Reference  store.CheckpointReference `json:"reference"`
+	Type       string                    `json:"type"`
+	Title      string                    `json:"title"`
+	Content    string                    `json:"content"`
+	Scope      string                    `json:"scope"`
+	TopicKey   *string                   `json:"topic_key,omitempty"`
+	Score      float64                   `json:"score"`
+}
+
+type CheckpointPreflightResult struct {
+	Project         string                         `json:"project"`
+	CandidateLimit  int                            `json:"candidate_limit"`
+	ExactDuplicates []CheckpointPreflightDuplicate `json:"exact_duplicates,omitempty"`
+	Candidates      []CheckpointPreflightCandidate `json:"candidates,omitempty"`
+}
+
 type CheckpointStatusInput struct {
 	Host       string `json:"host"`
 	SessionID  string `json:"session_id"`
@@ -124,6 +157,22 @@ func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointReco
 		SessionID:  input.SessionID,
 		RootTurnID: input.RootTurnID,
 	}
+	// Exact replay is identity-first. Once the same terminal disposition exists,
+	// return its immutable snapshot before inspecting retry references, reasons,
+	// inline Memories, or proposal payload. A different disposition remains an
+	// illegal terminal transition and cannot overwrite the checkpoint.
+	stored, lookupErr := s.store.GetMemoryCheckpoint(identity)
+	if lookupErr == nil {
+		if stored.Disposition != input.Disposition {
+			return nil, store.ErrCheckpointConflict
+		}
+		return &CheckpointRecordResult{
+			Checkpoint: stored, Idempotency: CheckpointIdempotencyAlreadyRecorded,
+		}, nil
+	}
+	if !errors.Is(lookupErr, store.ErrCheckpointNotFound) {
+		return nil, lookupErr
+	}
 	var checkpoint *store.MemoryCheckpoint
 	var alreadyRecorded bool
 	var err error
@@ -143,27 +192,12 @@ func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointReco
 		if input.Proposal != nil {
 			return nil, store.ErrCheckpointInvalidReferences
 		}
-		memories := make([]store.AddObservationParams, 0, len(input.Memories))
-		for _, memory := range input.Memories {
-			typ := memory.Type
-			if strings.TrimSpace(typ) == "" {
-				typ = "manual"
-			}
-			memories = append(memories, store.AddObservationParams{
-				Type:     typ,
-				Title:    memory.Title,
-				Content:  memory.Content,
-				ToolName: memory.ToolName,
-				Scope:    memory.Scope,
-				TopicKey: memory.TopicKey,
-			})
-		}
 		checkpoint, alreadyRecorded, err = s.store.RecordSavedCheckpoint(store.RecordSavedCheckpointParams{
 			Identity: identity, Project: input.Project, Directory: input.CWD,
-			MemoryIDs: input.MemoryIDs, Memories: memories,
+			MemoryIDs: input.MemoryIDs, Memories: checkpointStoreMemories(input.Memories),
 		})
 	case store.CheckpointDispositionNeedsReview:
-		if input.ReasonCode != "" || len(input.MemoryIDs) > 0 || len(input.Memories) > 0 {
+		if input.ReasonCode != "" {
 			return nil, store.ErrCheckpointInvalidReferences
 		}
 		var proposal *store.MemoryProposalInput
@@ -173,7 +207,8 @@ func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointReco
 			}
 		}
 		checkpoint, alreadyRecorded, err = s.store.RecordNeedsReviewCheckpoint(store.RecordNeedsReviewCheckpointParams{
-			Identity: identity, Project: input.Project, Proposal: proposal,
+			Identity: identity, Project: input.Project, Directory: input.CWD,
+			MemoryIDs: input.MemoryIDs, Memories: checkpointStoreMemories(input.Memories), Proposal: proposal,
 		})
 	default:
 		return nil, ErrCheckpointInvalidDisposition
@@ -186,6 +221,91 @@ func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointReco
 		idempotency = CheckpointIdempotencyAlreadyRecorded
 	}
 	return &CheckpointRecordResult{Checkpoint: checkpoint, Idempotency: idempotency}, nil
+}
+
+// PreflightCheckpoint assesses proposed settled Memories without persisting
+// provisional Memory, relation, proposal, checkpoint, review, or sync state.
+// Exact duplicates are returned as reusable references. Semantic candidates
+// are full same-project Memory snapshots, de-duplicated and globally bounded.
+func (s *Service) PreflightCheckpoint(input CheckpointPreflightInput) (*CheckpointPreflightResult, error) {
+	if err := s.requireStore(); err != nil {
+		return nil, err
+	}
+	project, _ := store.NormalizeProject(input.Project)
+	if project == "" || len(input.Memories) == 0 {
+		return nil, store.ErrCheckpointInvalidReferences
+	}
+
+	result := &CheckpointPreflightResult{Project: project, CandidateLimit: CheckpointPreflightCandidateLimit}
+	seenCandidates := make(map[int64]struct{}, CheckpointPreflightCandidateLimit)
+	for inputIndex, memory := range checkpointStoreMemories(input.Memories) {
+		memory.Project = project
+		exact, err := s.store.FindExactCheckpointMemory(memory)
+		if err != nil {
+			return nil, err
+		}
+		if exact != nil {
+			seenCandidates[exact.ID] = struct{}{}
+			result.ExactDuplicates = append(result.ExactDuplicates, CheckpointPreflightDuplicate{
+				InputIndex: inputIndex,
+				Reference:  checkpointReference(exact, project),
+			})
+			continue
+		}
+		if len(result.Candidates) == CheckpointPreflightCandidateLimit {
+			continue
+		}
+		candidateQuery := strings.TrimSpace(memory.Title + " " + memory.Content)
+		candidates, err := s.store.Search(candidateQuery, store.SearchOptions{
+			Project: project, Scope: memory.Scope,
+			Limit: CheckpointPreflightCandidateLimit + len(seenCandidates), MatchMode: "any",
+		})
+		if err != nil {
+			return nil, fmt.Errorf("preflight checkpoint candidates: %w", err)
+		}
+		for _, candidate := range candidates {
+			if _, duplicate := seenCandidates[candidate.ID]; duplicate {
+				continue
+			}
+			seenCandidates[candidate.ID] = struct{}{}
+			result.Candidates = append(result.Candidates, CheckpointPreflightCandidate{
+				InputIndex: inputIndex,
+				Reference:  checkpointReference(&candidate.Observation, project),
+				Type:       candidate.Type,
+				Title:      candidate.Title,
+				Content:    candidate.Content,
+				Scope:      candidate.Scope,
+				TopicKey:   candidate.TopicKey,
+				Score:      candidate.Rank,
+			})
+			if len(result.Candidates) == CheckpointPreflightCandidateLimit {
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+func checkpointStoreMemories(memories []CheckpointMemoryInput) []store.AddObservationParams {
+	result := make([]store.AddObservationParams, 0, len(memories))
+	for _, memory := range memories {
+		typ := memory.Type
+		if strings.TrimSpace(typ) == "" {
+			typ = "manual"
+		}
+		result = append(result, store.AddObservationParams{
+			Type: typ, Title: memory.Title, Content: memory.Content, ToolName: memory.ToolName,
+			Scope: memory.Scope, TopicKey: memory.TopicKey,
+		})
+	}
+	return result
+}
+
+func checkpointReference(memory *store.Observation, project string) store.CheckpointReference {
+	return store.CheckpointReference{
+		Kind: store.CheckpointReferenceKindMemory, MemoryID: memory.ID,
+		MemorySyncID: memory.SyncID, Project: project,
+	}
 }
 
 // CheckpointStatus inspects one exact root-turn checkpoint without consulting

@@ -15,7 +15,15 @@ func TestCloudPayloadRejectsLocalOnlyCaptureEntities(t *testing.T) {
 		`{"sessions":[],"observations":[],"mutations":[{"entity":"prompt","entity_key":"legacy-1","op":"upsert","payload":"{}"}]}`,
 		`{"sessions":[],"observations":[],"mutations":[{"entity":"diagnostic_capture","entity_key":"capture-1","op":"upsert","payload":"{}"}]}`,
 		`{"sessions":[],"observations":[],"mutations":[{"entity":"capture_consent","entity_key":"grant-1","op":"upsert","payload":"{}"}]}`,
+		`{"sessions":[],"observations":[],"mutations":[{"entity":"memory_checkpoint","entity_key":"turn-1","op":"upsert","payload":"{}"}]}`,
+		`{"sessions":[],"observations":[],"mutations":[{"entity":"memory_checkpoint_reference","entity_key":"ref-1","op":"upsert","payload":"{}"}]}`,
+		`{"sessions":[],"observations":[],"mutations":[{"entity":"memory_checkpoint_proposal_reference","entity_key":"proposal-ref-1","op":"upsert","payload":"{}"}]}`,
+		`{"sessions":[],"observations":[],"mutations":[{"entity":"memory_proposal","entity_key":"proposal-1","op":"upsert","payload":"{}"}]}`,
 		`{"sessions":[],"observations":[],"diagnostic_captures":[{"id":"capture-1"}]}`,
+		`{"sessions":[],"observations":[],"memory_checkpoints":[{"id":1}]}`,
+		`{"sessions":[],"observations":[],"memory_checkpoint_references":[{"id":1}]}`,
+		`{"sessions":[],"observations":[],"memory_checkpoint_proposal_references":[{"id":1}]}`,
+		`{"sessions":[],"observations":[],"memory_proposals":[{"id":"proposal-1"}]}`,
 	}
 
 	for _, payload := range tests {
@@ -30,6 +38,8 @@ func TestCloudPayloadRejectsLocalOnlyCollectionKeysCaseInsensitive(t *testing.T)
 		`{"Prompts":[{"content":"legacy"}]}`,
 		`{"DIAGNOSTIC_CAPTURES":[{"content":"diagnostic"}]}`,
 		`{"Capture_Consents":[{"project":"proj-a"}]}`,
+		`{"Memory_Checkpoints":[{"root_turn_id":"turn-secret"}]}`,
+		`{"Memory_Proposals":[{"content":"proposal secret"}]}`,
 	}
 	for _, payload := range tests {
 		if err := ValidateCloudPayload([]byte(payload)); !errors.Is(err, ErrLocalOnlyContent) {
@@ -43,6 +53,8 @@ func TestCloudPayloadRejectsLocalOnlyEntitiesInMixedCaseMutationKeys(t *testing.
 		`{"Mutations":[{"entity":"prompt","payload":"{\"content\":\"legacy secret\"}"}]}`,
 		`{"MUTATIONS":[{"entity":"diagnostic_capture","payload":"{\"content\":\"diagnostic secret\"}"}]}`,
 		`{"mUtAtIoNs":[{"entity":"capture_consent","payload":"{\"project\":\"secret\"}"}]}`,
+		`{"mUtAtIoNs":[{"entity":"MeMoRy_ChEcKpOiNt","payload":"{\"root_turn_id\":\"secret\"}"}]}`,
+		`{"mUtAtIoNs":[{"entity":"MeMoRy_PrOpOsAl","payload":"{\"content\":\"secret\"}"}]}`,
 	}
 	for _, payload := range tests {
 		if err := ValidateCloudPayload([]byte(payload)); !errors.Is(err, ErrLocalOnlyContent) {
@@ -124,6 +136,8 @@ func TestRedactLocalOnlyCollectionKeysCaseInsensitive(t *testing.T) {
 		"Prompts":[{"content":"legacy secret"}],
 		"DIAGNOSTIC_CAPTURES":[{"content":"diagnostic secret"}],
 		"Capture_Consents":[{"project":"secret project"}],
+		"Memory_Checkpoints":[{"root_turn_id":"secret turn"}],
+		"Memory_Proposals":[{"content":"secret proposal"}],
 		"observations":[{"content":"ordinary content"}]
 	}`)
 	redacted, err := RedactLocalOnlyContent(payload)
@@ -144,7 +158,7 @@ func TestRedactLocalOnlyCollectionKeysCaseInsensitive(t *testing.T) {
 			if err := json.Unmarshal(raw, &rows); err != nil || len(rows) != 0 {
 				t.Fatalf("mixed-case prompts key was not emptied: key=%q raw=%s err=%v", key, raw, err)
 			}
-		case "diagnostic_captures", "capture_consents":
+		case "diagnostic_captures", "capture_consents", "memory_checkpoints", "memory_proposals":
 			t.Fatalf("mixed-case local-only key survived redaction: %q", key)
 		}
 	}

@@ -2433,6 +2433,36 @@ func TestPassiveCaptureStoresLearnings(t *testing.T) {
 	}
 }
 
+func TestPassiveCaptureRejectsSubagentLifecycleSources(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.CreateSession("s-subagent-upgrade", "engram", "/tmp/engram"); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	for _, source := range []string{"subagent-stop", "subagent_stop", "SubagentStop", "codex-subagent-stop", "subagent"} {
+		_, err := s.PassiveCapture(PassiveCaptureParams{
+			SessionID: "s-subagent-upgrade",
+			Project:   "engram",
+			Source:    source,
+			Content:   "## Key Learnings:\n- old plugin output must not become durable Memory",
+		})
+		if !errors.Is(err, ErrSubagentPassiveCapture) {
+			t.Fatalf("PassiveCapture source %q error = %v, want %v", source, err, ErrSubagentPassiveCapture)
+		}
+	}
+
+	var observations, mutations int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM observations`).Scan(&observations); err != nil {
+		t.Fatalf("count observations: %v", err)
+	}
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM sync_mutations WHERE entity = 'observation'`).Scan(&mutations); err != nil {
+		t.Fatalf("count observation mutations: %v", err)
+	}
+	if observations != 0 || mutations != 0 {
+		t.Fatalf("rejected subagent passive capture created observations=%d mutations=%d", observations, mutations)
+	}
+}
+
 func TestPassiveCaptureEmptyContent(t *testing.T) {
 	s := newTestStore(t)
 

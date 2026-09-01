@@ -60,13 +60,22 @@ A **Memory operation** reads or changes durable Memory or checkpoint state. An
 does not select a disposition. This is why Session start/end belong to
 `lifecycle`, while optional `mem_session_summary` belongs to `curation`.
 
-Diagnostic Content is a separate local-only privacy domain. Prompt capture is
-off by default on fresh installs, upgrades, and setup reruns. A grant is scoped
-to project and content type; it may be narrowed to an expiring session. Its
-retention defaults to 7 days and cannot exceed 30 days. Status, enable,
-disable, and separately confirmed purge are distinct operations. Diagnostic
-Content is excluded from Memory, FTS, Recall, context, sync/cloud, ordinary
-export/import, Obsidian, and retired candidate/promotion flows.
+Diagnostic Content is a separate local-only privacy domain. Prompt and
+subagent-output capture are independently off by default on fresh installs,
+upgrades, and setup reruns. A grant is scoped to project and content type; it
+may be narrowed to an expiring session. Its retention defaults to 7 days and
+cannot exceed 30 days. Status, enable, disable, and separately confirmed purge
+are distinct operations. Diagnostic Content is excluded from Memory, FTS,
+Recall, context, sync/cloud, ordinary export/import, Obsidian, and retired
+candidate/promotion flows.
+
+`SubagentStop` delegates directly to the Core-owned typed capture boundary.
+Without independent `subagent_output` consent it persists nothing. With
+consent it accepts only a bounded `engram_diagnostic` object containing
+`kind`, `title`, `learning`, and optional `evidence_ref`; raw output and
+fallback fields are rejected. This path cannot create Memory, proposals,
+checkpoints, Session summaries, or retired evaluation/promotion state. Only the
+root agent may preserve knowledge through its terminal checkpoint.
 
 Existing `user_prompts` data is a frozen Legacy archive. Engram does not add
 default writes, index it, include it in ordinary surfaces, reclassify it, or
@@ -88,7 +97,7 @@ inventory, access, export, and separately confirmed purge may touch it.
 | `mem_stats` | Memory system statistics |
 | `mem_session_start` | Register a session start |
 | `mem_session_end` | Mark a session as completed |
-| `mem_capture_passive` | Extract learnings from text output |
+| `mem_capture_passive` | Explicitly extract learnings from non-subagent text; Core rejects subagent lifecycle sources |
 | `mem_merge_projects` | Merge project name variants into canonical name (admin) |
 | `mem_current_project` | Detect project from cwd — never errors, recommended first call |
 | `mem_doctor` | Run read-only operational diagnostics for project detection and store health |
@@ -259,7 +268,7 @@ engram/
 │       ├── .claude-plugin/plugin.json
 │       ├── .mcp.json
 │       ├── hooks/hooks.json
-│       ├── scripts/                # session-start, post-compaction, subagent-stop, session-stop
+│       ├── scripts/                # session-start, post-compaction, and session/Stop adapters
 │       └── skills/memory/SKILL.md
 ├── skills/                         # Contributor AI skills (repo-wide standards + Engram-specific guardrails)
 ├── setup.sh                        # Links repo skills into .claude/.codex/.gemini (project-local)
@@ -294,14 +303,14 @@ engram checkpoint status Inspect one exact root-turn checkpoint [--json]
 engram delete <obs_id>    Delete an observation [--hard] (soft-delete by default; --hard removes permanently)
 engram delete session <id>
                           Delete a session by ID (session must have no observations)
-engram capture status --project <name> --type prompt [--session-id <id>]
+engram capture status --project <name> --type <prompt|subagent_output> [--session-id <id>]
                           Inspect capability and consent without reading captured content
-engram capture enable --project <name> --type prompt [--retention-days <1..30>]
+engram capture enable --project <name> --type <prompt|subagent_output> [--retention-days <1..30>]
                           Enable local Diagnostic capture (7-day retention by default)
-engram capture disable --project <name> --type prompt [--session-id <id>]
+engram capture disable --project <name> --type <prompt|subagent_output> [--session-id <id>]
                           Disable future capture without deleting stored content
-engram capture purge --project <name> --type prompt
-                          Separately confirm deletion of Diagnostic prompt content
+engram capture purge --project <name> --type <prompt|subagent_output>
+                          Separately confirm deletion of one Diagnostic content type
 engram legacy-prompts inventory|access|export|purge
                           Explicitly administer the frozen Legacy prompt archive
 engram delete project <name> [--hard]

@@ -110,6 +110,66 @@ func TestInspectCaptureConsentReadOnlyReadsCommittedGrantFromActiveWAL(t *testin
 	}
 }
 
+func TestInspectCaptureConsentAggregateReadOnlyDistinguishesLifecycleStates(t *testing.T) {
+	cfg := mustDefaultConfig(t)
+	cfg.DataDir = t.TempDir()
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	now := time.Date(2026, time.August, 31, 18, 0, 0, 0, time.UTC)
+	if err := s.UpsertCaptureConsent(CaptureConsent{
+		Project: "engram", ContentType: CaptureContentTypeSubagentOutput,
+		SessionID: "expired-secret", RetentionDays: DefaultDiagnosticRetentionDays,
+		ExpiresAt: pointerCaptureInspectionTime(now.Add(-time.Minute)), UpdatedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("seed expired consent: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	expired, err := InspectCaptureConsentAggregateReadOnly(cfg.DataDir, "engram", CaptureContentTypeSubagentOutput, now)
+	if err != nil {
+		t.Fatalf("inspect expired consent: %v", err)
+	}
+	if !expired.SchemaPresent || !expired.Expired || expired.Consent != nil || expired.SessionScoped {
+		t.Fatalf("expired aggregate status = %#v", expired)
+	}
+
+	s, err = New(cfg)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	if err := s.UpsertCaptureConsent(CaptureConsent{
+		Project: "engram", ContentType: CaptureContentTypeSubagentOutput,
+		SessionID: "active-secret", RetentionDays: 3,
+		ExpiresAt: pointerCaptureInspectionTime(now.Add(time.Hour)), UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed active session consent: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	before := snapshotCaptureInspectionDir(t, cfg.DataDir)
+	active, err := InspectCaptureConsentAggregateReadOnly(cfg.DataDir, "engram", CaptureContentTypeSubagentOutput, now)
+	if err != nil {
+		t.Fatalf("inspect active session consent: %v", err)
+	}
+	if active.Consent == nil || !active.SessionScoped || active.Expired || active.Consent.RetentionDays != 3 {
+		t.Fatalf("active aggregate status = %#v", active)
+	}
+	if active.Consent.SessionID != "" {
+		t.Fatalf("aggregate inspection exposed opaque session identity %q", active.Consent.SessionID)
+	}
+	after := snapshotCaptureInspectionDir(t, cfg.DataDir)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("aggregate read-only inspection mutated store files")
+	}
+}
+
+func pointerCaptureInspectionTime(value time.Time) *time.Time { return &value }
+
 func snapshotCaptureInspectionDir(t *testing.T, dir string) map[string][sha256.Size]byte {
 	t.Helper()
 	entries, err := os.ReadDir(dir)

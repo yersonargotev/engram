@@ -14,6 +14,11 @@ const (
 	CaptureConsentScopeProject = "project"
 	CaptureConsentScopeSession = "session"
 
+	CaptureStateDefaultDisabled = "default_disabled"
+	CaptureStateConsented       = "consented"
+	CaptureStateExpired         = "expired"
+	CaptureStateUnavailable     = "unavailable"
+
 	CaptureReasonCaptured        = "captured"
 	CaptureReasonConsentDisabled = "consent_disabled"
 )
@@ -34,6 +39,7 @@ type CaptureStatusResult struct {
 	Project         string     `json:"project"`
 	ContentType     string     `json:"content_type"`
 	SessionID       string     `json:"session_id,omitempty"`
+	State           string     `json:"state"`
 	Enabled         bool       `json:"enabled"`
 	Scope           string     `json:"scope"`
 	RetentionDays   int        `json:"retention_days"`
@@ -91,12 +97,17 @@ func (s *Service) CaptureStatus(input CaptureStatusInput) (*CaptureStatusResult,
 	}
 	result := &CaptureStatusResult{
 		Project: project, ContentType: contentType, SessionID: strings.TrimSpace(input.SessionID),
+		State: CaptureStateDefaultDisabled,
 		Scope: CaptureConsentScopeNone, RetentionDays: store.DefaultDiagnosticRetentionDays,
 		StoredCount: status.StoredCount, LegacyFTSStatus: status.LegacyFTSStatus,
 	}
 	if status.Consent == nil {
+		if status.Expired {
+			result.State = CaptureStateExpired
+		}
 		return result, nil
 	}
+	result.State = CaptureStateConsented
 	result.Enabled = true
 	result.RetentionDays = status.Consent.RetentionDays
 	result.ExpiresAt = status.Consent.ExpiresAt

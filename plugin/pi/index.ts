@@ -875,7 +875,7 @@ const MEMORY_TOOL_SCHEMAS: Record<string, ReturnType<typeof Type.Object>> = {
   }),
   mem_capture_passive: Type.Object({
     content: Type.String({ description: "Text output containing a ## Key Learnings section" }),
-    source: optionalString("Source identifier, e.g. subagent-stop or session-end"),
+    source: optionalString("Source identifier for explicit non-subagent capture, e.g. session-end"),
   }),
   mem_review: Type.Object({
     action: Type.String({ description: "Action: list | mark_reviewed" }),

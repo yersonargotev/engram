@@ -274,7 +274,7 @@ Engram is local-first: local SQLite is authoritative; cloud features are optiona
 
 ### Passive Capture
 
-- `POST /observations/passive` — Extract structured learnings from text. Body: `{content, session_id, project?}`
+- `POST /observations/passive` — Explicitly extract structured learnings from non-subagent text. Body: `{content, session_id, project?, source?}`. Core rejects every `source` identified as subagent lifecycle output so legacy hooks cannot bypass the typed Diagnostic boundary.
 
 ### Export / Import
 
@@ -1300,11 +1300,17 @@ Example: `Set up API with <private>sk-abc123</private>` becomes `Set up API with
 
 ### Diagnostic Capture and Legacy Prompts
 
-Prompt capture is a separate local-only Diagnostic facility, disabled by
-default and gated by explicit project/content-type consent. It has no FTS and
-never feeds Recall, context, Memory statistics, ordinary export/import, sync,
-cloud, or Obsidian. Historical `user_prompts` rows remain a frozen Legacy
-archive available only through explicit `engram legacy-prompts` operations.
+Prompt and subagent-output capture are separate local-only Diagnostic
+facilities, independently disabled by default and gated by explicit
+project/content-type consent. Subagent capture accepts only a bounded JSON
+object with `kind="engram_diagnostic"`, non-empty `title` and `learning`, and
+an optional `evidence_ref`; it rejects raw transcript/last-message fallback,
+unknown fields, invalid UTF-8, and oversized values. Diagnostic capture has no
+FTS and never feeds Recall, context, Memory statistics, ordinary export/import,
+sync, cloud, or Obsidian. It cannot create Memory, proposals, checkpoints,
+Session summaries, or retired evaluation/promotion state. Historical
+`user_prompts` rows remain a frozen Legacy archive available only through
+explicit `engram legacy-prompts` operations.
 
 ### Export / Import
 
@@ -1356,6 +1362,12 @@ Instead of a separate LLM service, the agent itself compresses observations. The
 Engram does not record a firehose of raw tool calls. Raw tool calls (`edit: {file: "foo.go"}`, `bash: {command: "go build"}`) are noisy and pollute FTS5 search. The agent's curated summaries are higher signal, more searchable, and don't bloat the database. Shell history and git provide the raw audit trail.
 
 `mem_save` never captures the current prompt by default. With `capture_prompt=true`, it may offer same-process prompt context to Core, but persistence still requires explicit local consent for that project and content type. Diagnostic capture remains separate from the curated Memory save, and the save still succeeds if context is missing or capture is denied.
+
+Subagent drafts and evidence are likewise transient by default. Independent
+`subagent_output` consent permits only the bounded Diagnostic envelope; it does
+not grant the subagent Memory authority. The root agent remains the sole actor
+that may attach settled Memory or one unresolved proposal to the terminal
+checkpoint.
 
 ---
 

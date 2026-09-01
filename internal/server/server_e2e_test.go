@@ -198,7 +198,7 @@ func TestPassiveCaptureEndpointE2E(t *testing.T) {
 	captureResp := postJSON(t, client, ts.URL+"/observations/passive", map[string]any{
 		"session_id": "s-passive",
 		"project":    "engram",
-		"source":     "subagent-stop",
+		"source":     "mcp-passive",
 		"content":    "## Key Learnings:\n\n1. bcrypt cost=12 is the right balance for our server performance\n2. JWT refresh tokens need atomic rotation to prevent race conditions\n",
 	})
 	if captureResp.StatusCode != http.StatusOK {
@@ -223,6 +223,40 @@ func TestPassiveCaptureEndpointE2E(t *testing.T) {
 	results := decodeJSON[[]map[string]any](t, searchResp)
 	if len(results) != 1 {
 		t.Fatalf("expected 1 search result, got %d", len(results))
+	}
+}
+
+func TestPassiveCaptureEndpointRejectsSubagentLifecycleSourceE2E(t *testing.T) {
+	s, ts := newE2EServer(t)
+	client := ts.Client()
+
+	sessionResp := postJSON(t, client, ts.URL+"/sessions", map[string]any{
+		"id":        "s-subagent-upgrade",
+		"project":   "engram",
+		"directory": "/tmp/engram",
+	})
+	if sessionResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 creating session, got %d", sessionResp.StatusCode)
+	}
+	sessionResp.Body.Close()
+
+	captureResp := postJSON(t, client, ts.URL+"/observations/passive", map[string]any{
+		"session_id": "s-subagent-upgrade",
+		"project":    "engram",
+		"source":     "subagent-stop",
+		"content":    "## Key Learnings:\n- legacy hook output must not become durable Memory",
+	})
+	defer captureResp.Body.Close()
+	if captureResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for subagent lifecycle source, got %d", captureResp.StatusCode)
+	}
+
+	var observations int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM observations`).Scan(&observations); err != nil {
+		t.Fatalf("count observations: %v", err)
+	}
+	if observations != 0 {
+		t.Fatalf("rejected subagent passive capture created %d observations", observations)
 	}
 }
 

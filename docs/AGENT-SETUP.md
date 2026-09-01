@@ -49,10 +49,10 @@ selects the root turn's disposition.
 
 ## Diagnostic capture consent
 
-Prompt capture is disabled by default on fresh setup, upgrade, and setup
-reruns. Setup and read-only status report capability and current consent
-without enabling capture or reading captured content. Manage the local consent
-and content lifecycle explicitly:
+Prompt and subagent-output capture are independently disabled by default on
+fresh setup, upgrade, and setup reruns. Setup and read-only status report
+capability and current consent without enabling capture or reading captured
+content. Manage each local consent and content lifecycle explicitly:
 
 ```bash
 engram capture status --project <name> --type prompt
@@ -60,12 +60,24 @@ engram capture enable --project <name> --type prompt          # 7 days by defaul
 engram capture enable --project <name> --type prompt --retention-days 30
 engram capture disable --project <name> --type prompt         # does not purge
 engram capture purge --project <name> --type prompt           # separate confirmation
+engram capture status --project <name> --type subagent_output
+engram capture enable --project <name> --type subagent_output # independent grant
+engram capture purge --project <name> --type subagent_output  # separate confirmation
 ```
 
 Consent is scoped to project and content type. A narrower session grant is
 optional and must expire. Retention cannot exceed 30 days. Diagnostic Content
 is local-only and never appears in Memory/FTS/Recall/context, sync/cloud,
 ordinary export/import, Obsidian, or retired candidate/promotion flows.
+
+Subagent capture never inherits prompt consent. When explicitly enabled, the
+host lifecycle accepts only a bounded `engram_diagnostic` JSON envelope with
+`kind`, `title`, `learning`, and optional `evidence_ref`. It rejects raw
+transcripts, ordinary last-message output, `stdout` fallback, and extra or
+oversized fields. A subagent event never creates Memory, a proposal, a
+checkpoint, a Session summary, or a retired evaluation/promotion record. The
+root agent alone decides whether settled knowledge or an unresolved proposal
+belongs in the terminal Memory checkpoint.
 
 Prompts stored before this boundary remain a frozen Legacy archive. They are
 not rewritten, reclassified, indexed, synced, or automatically deleted during
@@ -484,7 +496,7 @@ The command does not install, upgrade, repair, start an MCP server, rewrite conf
 - `skill`: every relevant repository, user, administrator, or plugin-provided Engram memory skill, including scope, resolved path, SHA-256 identity, optional version, and disabled state when configured.
 - `marketplace` and `plugin`: registration is kept separate from installed/enabled plugin state; attributable source, requested ref, installed version, and resolved revision are included when known.
 - `mcp_configuration` and `mcp_readiness`: a present registration is kept separate from an executable that passes the non-starting checkpoint CLI preflight. Missing, invalid, customized, and unavailable states remain distinct; status does not claim that a live stdio transport was contacted.
-- `prompt_hook`, `session_hook`, `activation_cue`, and `stop_verifier`: each canonical plugin contract is verified separately.
+- `prompt_hook`, `session_hook`, `subagent_hook`, `activation_cue`, and `stop_verifier`: each canonical plugin contract is verified separately. The separate content-free `subagent_capture` object reports `default_disabled`, `consented`, `expired`, or `unavailable` without reading captured content or exposing session identifiers.
 
 The stable `mode` field is conservative:
 
@@ -493,7 +505,7 @@ The stable `mode` field is conservative:
 | `manual_skill_cli` | Engram and Codex CLIs plus at least one enabled standalone skill are available, without an attributable plugin or MCP registration. |
 | `mcp_only` | The supported MCP registration and non-starting executable preflight are ready, but the complete plugin contract is not. |
 | `partial_plugin` | Attributable plugin state exists, but one or more required capabilities are missing, unavailable, or unverified. |
-| `checkpoint_ready` | The attributable Managed Pack, binary, plugin, and Protocol ranges intersect, and the plugin, MCP configuration/readiness, prompt/session hooks, activation cue, and Stop verifier are all ready. |
+| `checkpoint_ready` | The attributable Managed Pack, binary, plugin, and Protocol ranges intersect, and the plugin, MCP configuration/readiness, prompt/session/subagent hooks, activation cue, and Stop verifier are all ready. |
 | `unknown` | The observed combination does not safely match another mode, including marketplace-only and customized states. |
 
 JSON output uses the additive schema `codex-integration-status-v1`. Its `compatibility` object uses `protocol-compatibility-v1`, contains all four axes and their provenance, and returns either `protocol_compatible`, `legacy_compatible`, or a stable incompatible reason such as `managed_pack_missing`, `managed_pack_unprovenanced`, `managed_pack_protocol_range_malformed`, or `no_protocol_intersection`. Every capability check contains `capability`, `status`, `reason_code`, a bounded human reason, and bounded named evidence. Output is deterministic for unchanged local state.
@@ -514,11 +526,15 @@ appearing only as a UI warning.
 On every actual user prompt, `UserPromptSubmit` forwards Codex's opaque
 `session_id` and `turn_id` as the checkpoint identity
 `(host=codex, session_id, root_turn_id)`. This identity path always runs for a
-valid event and never depends on prompt persistence. The hook may offer content
-to Core, but Diagnostic capture is disabled by default and requires explicit
-local project/content-type consent. It never selects a disposition or creates a checkpoint. Tool calls,
-subagents, compaction events, and continuations remain within the original root
-user turn; the root agent applies the canonical skill and finalizes once.
+valid event and never depends on prompt persistence. The prompt hook may offer
+content to Core, but Diagnostic capture is disabled by default and requires
+explicit local project/content-type consent. The `SubagentStop` hook delegates
+directly to Core and defaults to no persistence; even with independent
+`subagent_output` consent it accepts only the bounded Diagnostic envelope
+described above. Neither hook selects a disposition or creates a checkpoint.
+Tool calls, subagents, compaction events, and continuations remain within the
+original root user turn; the root agent applies the canonical skill and
+finalizes once.
 
 `Stop` delegates the complete event to
 `engram checkpoint verify-stop --host=codex`. The Go core queries the exact identity in the local checkpoint

@@ -56,7 +56,7 @@ jobs:
           go-version: "1.25.10"
 
       - name: Run Windows Stop command tests
-        run: go test ./plugin -run '^TestCodexWindowsStopVerifierRuntime$'
+        run: go test ./plugin -run '^TestCodexWindows(StopVerifier|SubagentCaptureManifest)Runtime$'
 
       - name: Run Windows setup verifier tests
         run: go test ./internal/setup -run '^TestVerifyInstalledCodexStopVerifierAcceptsWindowsCheckout$'

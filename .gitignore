@@ -29,3 +29,10 @@ Thumbs.db
 engram-dev
 .atl/
 .release-notes-beta.md
+
+# Recall study private execution state
+evals/recall-study/**/environment.json
+evals/recall-study/**/consent.json
+evals/recall-study/**/run-plan.json
+evals/recall-study/**/rows.json
+evals/recall-study/**/metrics.json

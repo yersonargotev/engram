@@ -430,6 +430,7 @@ Your production engram is fully untouched throughout.
 | `engram timeline <obs_id>`                 | Chronological context                                           |
 | `engram context [project]`                 | Recent session context                                           |
 | `engram activation-study verify\|run\|analyze` | Verify, execute, or analyze a frozen disposable Codex activation cohort |
+| `engram recall-study verify\|dry-run\|calibrate\|run-held-out\|report` | Verify and operate the frozen paired Recall study without enabling rollout |
 | `engram recall-baseline record\|report\|power\|purge` | Collect and reproduce the opt-in content-free local Recall baseline |
 | `engram checkpoint preflight [flags]`      | Inspect prospective Memories without writing local or replicated state |
 | `engram checkpoint record [flags]`         | Record an idempotent local `saved`, `needs_review`, or `skipped` root-turn checkpoint |
@@ -496,6 +497,15 @@ assistant content, paths, diffs, credentials, or raw lifecycle identifiers.
 See the [collection, privacy, retention, report, and power-analysis
 contract](docs/RECALL-BASELINE.md).
 
+### Paired Recall study
+
+`engram recall-study` validates the immutable v1 contract, cohort manifests,
+consent proof, and Compatibility tuple before it can create a private run plan
+or aggregate a report. Calibration and held-out metadata are non-overlapping;
+only the explicit `run-held-out` mode can authorize the held-out plan. No
+command changes default Recall, enables rollout, or publishes row-level state.
+See the [frozen study contract and operator workflow](docs/RECALL-STUDY.md).
+
 ### Key Environment Variables
 
 | Variable                        | Description                                                                                                            | Default        |
@@ -523,6 +533,7 @@ Full environment variable reference → [DOCS.md#environment-variables](DOCS.md#
 | [Agent Setup](docs/AGENT-SETUP.md)            | Per-agent configuration + Memory Protocol                              |
 | [Codebase Guide](docs/CODEBASE-GUIDE.md)      | Guide to the repository structure, flows, and implementation landmarks |
 | [Recall baseline](docs/RECALL-BASELINE.md)    | Content-free collection, privacy, retention, reporting, and power analysis |
+| [Paired Recall study](docs/RECALL-STUDY.md)   | Frozen cohorts, consent, private plans, aggregate reports, and GA gates |
 | [Architecture](docs/ARCHITECTURE.md)          | How it works + MCP tools + project structure                           |
 | [Plugins](docs/PLUGINS.md)                    | OpenCode & Claude Code plugin details                                  |
 | [Doctor](docs/DOCTOR.md)                      | Operational diagnosis and repair workflows                             |

@@ -84,6 +84,12 @@ commands keep human-readable output by default and expose `--json` for clean
 automation output. Successful JSON is written to stdout; structured errors use
 `{"code","message","details?"}` on stderr with a non-zero exit code.
 
+The separate `engram recall-study` interface is config-free and operates only
+on explicitly supplied frozen artifacts. Its `verify`, `dry-run`, `calibrate`,
+and `report` modes have no held-out task-input flag; `run-held-out` authorizes a
+private held-out plan only after the same hash, Compatibility, and consent
+verification. See [Paired Recall study](docs/RECALL-STUDY.md).
+
 Core curated-memory operations:
 
 ```text

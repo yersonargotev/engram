@@ -1,0 +1,20 @@
+{
+  "schema_version": "recall-study-manifest-v1",
+  "study_id": "codex-useful-recall",
+  "study_version": "v1",
+  "cohort_id": "held-out-v1",
+  "status": "frozen",
+  "namespace": "hold",
+  "first_sampling_unit": 61,
+  "sampling_units": 457,
+  "task_class_cycle": [
+    "repository-question",
+    "implementation",
+    "diagnosis",
+    "verification",
+    "routine-non-durable"
+  ],
+  "selection_seed": "codex-useful-recall-v1-held-out-v1",
+  "consent_requirement": "explicit-before-evidence",
+  "input_commitment": "sha256-per-consented-task"
+}

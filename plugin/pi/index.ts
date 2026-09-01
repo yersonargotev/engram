@@ -86,7 +86,10 @@ search. Automatic Recall requires strong or explicit project identity. Start
 with one narrow project search (at most 5 candidates/4 KiB) and reformulate at
 most once. Limits 6-10 and personal/cross-project scope require deliberate
 relevance. Empty or unavailable Recall does not block the task; conflicts and
-the single fail-open warning remain explicit. Reuse the supplied opaque
+the single fail-open warning remain explicit. Retrieve complete content only
+for one selected result using its recall_id and result_id. Each response is at
+most 16 KiB; continue a truncated result only with a new request at its exact
+continuation_position and the same authority/scope. Reuse the supplied opaque
 root-turn identity across continuations. The canonical engram-memory skill owns
 the detailed Recall, durability, and disposition rubric.
 
@@ -850,7 +853,19 @@ const MEMORY_TOOL_SCHEMAS: Record<string, ReturnType<typeof Type.Object>> = {
     project: optionalString("Filter by project name"),
   }),
   mem_get_observation: Type.Object({
-    id: Type.Number({ description: "Observation ID to retrieve" }),
+    id: Type.Optional(Type.Number({ description: "Legacy observation ID for explicit curation" })),
+    recall_id: optionalString("Opaque Recall run ID returned by mem_search"),
+    result_id: optionalString("Opaque selected result ID returned by mem_search"),
+    position: Type.Optional(Type.Integer({
+      minimum: 0,
+      description: "Explicit UTF-8 byte continuation position returned by the previous segment",
+    })),
+    project: optionalString("Explicit project scope; must match the selected Recall run"),
+    scope: Type.Optional(Type.Union(
+      [Type.Literal("project"), Type.Literal("personal"), Type.Literal("global")],
+      { description: "Recall scope; must match the selected Recall run" },
+    )),
+    all_projects: optionalBoolean("Cross-project Recall authority; must match the selected Recall run"),
   }),
   mem_checkpoint: Type.Object({
     host: Type.String({ description: "Opaque host identity supplied for the root turn" }),
@@ -981,8 +996,34 @@ async function callMemoryTool(toolName: string, params: Record<string, unknown>,
       return engramFetch("/stats");
     case "mem_timeline":
       return engramFetch(`/timeline${queryString({ observation_id: params.observation_id, before: params.before, after: params.after, project: params.project })}`);
-    case "mem_get_observation":
-      return engramFetch(`/observations/${encodeURIComponent(String(params.id))}`);
+    case "mem_get_observation": {
+      const hasLegacyID = params.id !== undefined && params.id !== null;
+      const hasRecallID = typeof params.recall_id === "string" && params.recall_id.trim() !== "";
+      const hasResultID = typeof params.result_id === "string" && params.result_id.trim() !== "";
+      if (hasLegacyID) {
+        if (hasRecallID || hasResultID) {
+          throw new EngramHttpError("id cannot be combined with recall_id or result_id", 400, { code: "incompatible_selection" });
+        }
+        return engramFetch(`/observations/${encodeURIComponent(String(params.id))}`);
+      }
+      if (!hasRecallID || !hasResultID) {
+        throw new EngramHttpError("provide either id or both recall_id and result_id", 400, { code: "selection_required" });
+      }
+      if (params.all_projects && requestedProject) {
+        throw new EngramHttpError("all_projects cannot be combined with project", 400, { code: "incompatible_scope" });
+      }
+      const scope = typeof params.scope === "string" ? params.scope.trim().toLowerCase() : "project";
+      const broadPersonal = (scope === "personal" || scope === "global") && !requestedProject;
+      return engramFetch(`/recall/content${queryString({
+        recall_id: params.recall_id,
+        result_id: params.result_id,
+        position: params.position,
+        project: params.all_projects || broadPersonal ? undefined : requestedProject || project,
+        project_strength: params.all_projects || broadPersonal ? "aggregate" : requestedProject ? "explicit" : projectStrength,
+        scope,
+        all_projects: params.all_projects,
+      })}`);
+    }
     case "mem_checkpoint": {
       const disposition = String(params.disposition || "");
       let checkpointProject = typeof params.project === "string" && params.project ? params.project : undefined;
@@ -1164,6 +1205,7 @@ function unavailableRecall(message: string, elapsedMonotonicMS: number) {
     recall_id: `recall-pi-${randomUUID().replaceAll("-", "")}`,
     results: [],
     result_ids: [],
+    opaque_result_ids: [],
     result_count: 0,
     delivered_utf8_bytes: 2,
     elapsed_monotonic_ms: Math.max(0, Math.floor(elapsedMonotonicMS)),
@@ -1177,9 +1219,31 @@ function unavailableRecall(message: string, elapsedMonotonicMS: number) {
   };
 }
 
+function unavailableRecallContent(params: Record<string, unknown>, message: string, elapsedMonotonicMS: number) {
+  return {
+    recall_id: String(params.recall_id || ""),
+    result_id: String(params.result_id || ""),
+    memory: { content: "" },
+    position: Number(params.position || 0),
+    original_bytes: 0,
+    delivered_utf8_bytes: 0,
+    limit_bytes: 16 * 1024,
+    truncated: false,
+    replayed: false,
+    elapsed_monotonic_ms: Math.max(0, Math.floor(elapsedMonotonicMS)),
+    provenance: { protocol_version: 1, binary_version: "unavailable" },
+    warning: {
+      code: "recall_unavailable",
+      message: "Complete Memory retrieval is unavailable; continuing without content.",
+      next_action: "Retry once only if the selected Memory remains material.",
+    },
+    diagnostics: [{ code: "recall_transport_failure", operation: "recall_content", detail: message }],
+  };
+}
+
 async function executeMemoryTool(toolName: string, params: Record<string, unknown>, ctx: MemoryToolContext) {
   const action = humanToolName(toolName);
-  const recallStartedAt = toolName === "mem_search" ? performance.now() : 0;
+  const recallStartedAt = toolName === "mem_search" || toolName === "mem_get_observation" ? performance.now() : 0;
 
   try {
     // Initialization runs inside the guarded path: a rejected startup must reach the agent as
@@ -1203,6 +1267,15 @@ async function executeMemoryTool(toolName: string, params: Record<string, unknow
     const message = error instanceof Error ? error.message : String(error);
     if (toolName === "mem_search" && (!(error instanceof EngramHttpError) || error.status >= 500)) {
       const data = unavailableRecall(message, performance.now() - recallStartedAt);
+      const result = { content: [{ type: "text" as const, text: textResult(data) }], details: { data } };
+      ctx.ui?.setStatus?.("engram", `🧠 ${project} · ${compactResultStatus(toolName, result)}`);
+      if (!(error instanceof EngramHttpError)) scheduleEngramSelfHeal(ctx);
+      return result;
+    }
+    const isOpaqueRecallContent = typeof params.recall_id === "string" && params.recall_id.trim() !== "" &&
+      typeof params.result_id === "string" && params.result_id.trim() !== "";
+    if (toolName === "mem_get_observation" && isOpaqueRecallContent && (!(error instanceof EngramHttpError) || error.status >= 500)) {
+      const data = unavailableRecallContent(params, message, performance.now() - recallStartedAt);
       const result = { content: [{ type: "text" as const, text: textResult(data) }], details: { data } };
       ctx.ui?.setStatus?.("engram", `🧠 ${project} · ${compactResultStatus(toolName, result)}`);
       if (!(error instanceof EngramHttpError)) scheduleEngramSelfHeal(ctx);

@@ -228,7 +228,7 @@ When `resolveWriteProject` returns `ErrAmbiguousProject`, write tool handlers MU
 
 ### Requirement: REQ-310 Read Tools Accept Supported Optional project Field
 
-The MCP read tools that expose project-scoped list/search behavior (`mem_search`, `mem_context`, `mem_timeline`, `mem_stats`, `mem_doctor`) MUST include `project` as an OPTIONAL field in their JSON schema. When `project` is omitted or empty, the handler MUST fall back to auto-detection via `DetectProjectFull`. `mem_get_observation` is ID-based and does not accept a project override; it resolves project only for response metadata and may use a plain-text degraded response when cwd is ambiguous.
+The MCP read tools that expose project-scoped list/search behavior (`mem_search`, `mem_context`, `mem_timeline`, `mem_stats`, `mem_doctor`) MUST include `project` as an OPTIONAL field in their JSON schema. When `project` is omitted or empty, the handler MUST fall back to auto-detection via `DetectProjectFull`. By default, `mem_get_observation` MUST accept an opaque Recall run/result selection and MUST revalidate its optional project/scope inputs against that run before returning a bounded content segment. For additive compatibility, explicit curation MAY instead use the legacy numeric observation `id`; the two selection modes MUST NOT be combined.
 
 #### Scenario: Omitted project falls back to auto-detect
 

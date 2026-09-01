@@ -44,7 +44,7 @@ test("supported memory tools all have chrome metadata", () => {
 test("compactToolArg prefers short meaningful identifiers", () => {
   assert.equal(compactToolArg("mem_search", { query: "auth model" }), "“auth model”");
   assert.equal(compactToolArg("mem_save", { title: "Fixed the session recovery issue" }), "“Fixed the session recovery issue”");
-  assert.equal(compactToolArg("mem_get_observation", { id: 42 }), "#42");
+  assert.equal(compactToolArg("mem_get_observation", { result_id: "result-abcdef" }), "“result-abcdef”");
   assert.equal(compactToolArg("mem_context", { project: "engram" }), "“engram”");
   assert.equal(compactToolArg("mem_compare", { memory_id_a: 42, memory_id_b: 43 }), "#42");
   assert.equal(compactToolArg("mem_judge", { judgment_id: "rel-abc", relation: "related" }), "“rel-abc”");
@@ -63,6 +63,8 @@ test("prompt capture chrome never renders prompt content", () => {
 
 test("compactResultStatus summarizes common Engram results", () => {
   assert.equal(compactResultStatus("mem_search", { details: { data: [{ id: 1 }, { id: 2 }] } }), "✓ 2 results");
+  assert.equal(compactResultStatus("mem_get_observation", { details: { data: { truncated: true } } }), "✓ loaded; continuation available");
+  assert.equal(compactResultStatus("mem_get_observation", { details: { data: { id: 42 } } }), "✓ observation #42");
   assert.equal(compactResultStatus("mem_save", { details: { data: { id: 7 } } }), "✓ saved #7");
   assert.equal(compactResultStatus("mem_context", { details: { data: { context: "recent memory" } } }), "✓ loaded");
   assert.equal(compactResultStatus("mem_suggest_topic_key", { details: { data: { topic_key: "auth-model" } } }), "✓ auth-model");

@@ -38,7 +38,11 @@ deliberate follow-up; personal or cross-project scope requires explicit task
 relevance or user direction. Empty Recall is successful, conflicts stay
 explicit, and unavailable Recall fails open with one warning plus diagnostics
 without blocking work.
-Retrieve complete content only for a selected candidate.
+Retrieve complete content only for a selected candidate by passing the
+`recall_id` and its opaque `result_id` to `mem_get_observation`. Each response
+contains at most 16 KiB of valid UTF-8 content and reports its byte limit and
+truncation. A truncated segment requires a new request with exactly the returned
+`continuation_position`; do not page silently or widen the original Recall scope.
 
 Treat the supplied `host`, `session_id`, and `root_turn_id` as opaque; reuse
 them unchanged across compaction or verifier continuations and never invent

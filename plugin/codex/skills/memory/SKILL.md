@@ -72,7 +72,12 @@ The initial request returns at most five candidate summaries and 4 KiB. If
 relevant Memory is reasonably expected, reformulate that same lookup intent at
 most once. A deliberate follow-up may set `limit` from 6 through 10, but the
 4 KiB budget and original scope still apply. Use `mem_get_observation` only for
-a selected candidate whose complete content matters.
+a selected candidate whose complete content matters. Pass the `recall_id` and
+that candidate's opaque `result_id`. One response contains at most 16 KiB of
+valid UTF-8 content and reports original bytes, delivered bytes, the limit, and
+truncation. When truncated, issue a new request with exactly the returned
+`continuation_position`; never infer a position, page silently, or widen the
+original project and Recall scope.
 
 Personal or cross-project Recall requires explicit task relevance or user
 direction. Account for each candidate before acting. Core excludes deleted,

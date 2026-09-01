@@ -1184,6 +1184,7 @@ func cmdSearch(cfg store.Config) {
 			"recall_id":              recallResult.RecallID,
 			"results":                recallResult.Candidates,
 			"result_ids":             recallResult.ResultIDs,
+			"opaque_result_ids":      recallResult.OpaqueResultIDs,
 			"result_count":           recallResult.ResultCount,
 			"delivered_utf8_bytes":   recallResult.DeliveredUTF8Bytes,
 			"elapsed_monotonic_ms":   recallResult.ElapsedMonotonicMS,
@@ -1225,8 +1226,8 @@ func cmdSearch(cfg store.Config) {
 		if candidate.Project != "" {
 			projectDisplay = fmt.Sprintf(" | project: %s", candidate.Project)
 		}
-		fmt.Printf("[%d] #%d (%s) — %s\n    %s\n    scope: %s%s\n",
-			i+1, candidate.ID, candidate.Type, candidate.Title, candidate.Summary, candidate.Scope, projectDisplay)
+		fmt.Printf("[%d] #%d (%s) — %s\n    %s\n    result: %s\n    scope: %s%s\n",
+			i+1, candidate.ID, candidate.Type, candidate.Title, candidate.Summary, candidate.ResultID, candidate.Scope, projectDisplay)
 		for _, conflict := range candidate.Conflicts {
 			fmt.Printf("    warning: unresolved conflict with #%d (%s) [%s]\n", conflict.MemoryID, conflict.Title, conflict.Status)
 		}
@@ -3439,7 +3440,9 @@ Commands:
                        [--topic-key KEY] [--json]
   save --title TITLE --content CONTENT
                      Equivalent named-input form with the same flags
-  get <obs_id>       Get one complete memory [--json]
+  get <obs_id>       Explicit curation: get complete Memory and relations [--json]
+  get --recall-id ID --result-id ID [--position BYTES]
+                       Get one selected Memory segment (max 16 KiB) [--json]
   update <obs_id>    Partially update a memory [--title V] [--content V] [--type V]
                        [--scope V] [--topic-key V|--clear-topic-key] [--json]
   review list        List due memories [--project P|--all-projects] [--limit N] [--json]

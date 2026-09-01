@@ -205,13 +205,13 @@ Establish the exact project before automatic candidate Recall or any project-sco
 The default agent profile contains exactly these five semantic tools:
 - mem_current_project — establish project scope and write authority
 - mem_search — recall prior Memory only when it can change the current work
-- mem_get_observation — retrieve complete content for a selected search result
+- mem_get_observation — retrieve at most 16 KiB for one selected search result; continue only from its explicit byte position
 - mem_checkpoint — commit the terminal Memory disposition and any durable result
 - mem_checkpoint_status — inspect one exact root-turn checkpoint
 
 ### SELECTIVE RECALL
 
-Search Memory only when prior decisions, tracked work, release state, configuration, preferences, known failures, or an explicit request can materially change the work. Routine self-contained work needs no search. Start with one narrow project mem_search: at most five candidates and 4 KiB, with at most one reformulation of the same intent. Limits 6 through 10 require a deliberate follow-up. Personal or cross-project scope requires explicit task relevance or user direction. Account for every candidate and conflict; call mem_get_observation only for a selected result whose complete content matters. Empty Recall succeeds, and an unavailable Recall fails open with one warning plus diagnostics.
+Search Memory only when prior decisions, tracked work, release state, configuration, preferences, known failures, or an explicit request can materially change the work. Routine self-contained work needs no search. Start with one narrow project mem_search: at most five candidates and 4 KiB, with at most one reformulation of the same intent. Limits 6 through 10 require a deliberate follow-up. Personal or cross-project scope requires explicit task relevance or user direction. Account for every candidate and conflict; call mem_get_observation only for a selected result using its recall_id and opaque result_id. Each content response is at most 16 KiB and a truncated result continues only through a new request at its returned continuation_position without widening scope. Empty Recall succeeds, and an unavailable Recall fails open with one warning plus diagnostics.
 
 ### TERMINAL MEMORY COMMIT
 

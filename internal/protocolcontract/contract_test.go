@@ -28,6 +28,9 @@ func TestContractV1PublishesStableMachineSemantics(t *testing.T) {
 	if CheckpointPersistence != "local_only" || RecallDefault != "agent_initiated" || CaptureDefault != "disabled" {
 		t.Fatalf("defaults = persistence=%q recall=%q capture=%q", CheckpointPersistence, RecallDefault, CaptureDefault)
 	}
+	if RecallInitialCandidateLimit != 5 || RecallFollowupCandidateLimit != 10 || RecallCandidateUTF8Budget != 4096 || RecallContentUTF8Limit != 16384 || RecallContinuationMode != "explicit_position" {
+		t.Fatalf("Recall limits drifted from Protocol v1")
+	}
 	if !reflect.DeepEqual(MinimumTools(), wantTools) {
 		t.Fatalf("MinimumTools = %#v", MinimumTools())
 	}

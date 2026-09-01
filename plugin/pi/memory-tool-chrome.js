@@ -33,7 +33,7 @@ const ARG_KEYS = {
   mem_context: ["project", "scope"],
   mem_stats: ["project"],
   mem_timeline: ["observation_id"],
-  mem_get_observation: ["id"],
+	mem_get_observation: ["result_id", "recall_id", "id"],
   mem_session_start: ["id"],
   mem_session_end: ["id"],
   mem_current_project: ["cwd"],
@@ -121,7 +121,11 @@ export function compactResultStatus(toolName, result, options = {}) {
   if (toolName === "mem_context") return `✓ ${firstTextContent(result) || data?.context ? "loaded" : "empty"}`;
   if (toolName === "mem_stats") return "✓ loaded";
   if (toolName === "mem_timeline") return `✓ ${count ?? "timeline"}`;
-  if (toolName === "mem_get_observation") return data?.id ? `✓ observation #${data.id}` : "✓ loaded";
+	if (toolName === "mem_get_observation") {
+		if (data?.warning?.code) return `✓ ${data.warning.code}`;
+		if (data?.id) return `✓ observation #${data.id}`;
+		return data?.truncated ? "✓ loaded; continuation available" : "✓ loaded";
+  }
   if (toolName === "mem_save" || toolName === "mem_session_summary") return data?.id ? `✓ saved #${data.id}` : "✓ saved";
   if (toolName === "mem_update") return data?.id ? `✓ updated #${data.id}` : "✓ updated";
   if (toolName === "mem_delete") return data?.id ? `✓ deleted #${data.id}` : "✓ deleted";

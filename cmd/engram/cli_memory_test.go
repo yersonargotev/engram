@@ -68,6 +68,16 @@ func TestCLIMemoryJSONWorkflow(t *testing.T) {
 		t.Fatalf("project=%v", saved["project"])
 	}
 
+	withArgs(t, "engram", "get", fmt.Sprint(id), "--json")
+	stdout, stderr = captureOutput(t, func() { cmdGet(cfg) })
+	legacy := decodeCLIJSON(t, stdout)
+	if stderr != "" || legacy["observation"].(map[string]any)["id"] != float64(id) {
+		t.Fatalf("legacy get stdout=%q stderr=%q", stdout, stderr)
+	}
+	if _, ok := legacy["relations"]; !ok {
+		t.Fatalf("legacy get lost relations metadata: %v", legacy)
+	}
+
 	withArgs(t, "engram", "search", "durable searchable", "--project", "cli project", "--match-mode", "all", "--json")
 	stdout, stderr = captureOutput(t, func() { cmdSearch(cfg) })
 	if stderr != "" {
@@ -77,8 +87,10 @@ func TestCLIMemoryJSONWorkflow(t *testing.T) {
 	if len(search["results"].([]any)) != 1 {
 		t.Fatalf("results=%v", search["results"])
 	}
+	recallID := search["recall_id"].(string)
+	resultID := search["opaque_result_ids"].([]any)[0].(string)
 
-	withArgs(t, "engram", "get", fmt.Sprint(id), "--json")
+	withArgs(t, "engram", "get", "--recall-id", recallID, "--result-id", resultID, "--project", "cli project", "--json")
 	stdout, stderr = captureOutput(t, func() { cmdGet(cfg) })
 	if stderr != "" || !strings.Contains(stdout, "durable searchable content") {
 		t.Fatalf("get stdout=%q stderr=%q", stdout, stderr)
@@ -119,7 +131,7 @@ func TestCmdSearchReturnsBoundedRecallEnvelope(t *testing.T) {
 	if recallID, _ := payload["recall_id"].(string); !strings.HasPrefix(recallID, "recall-") {
 		t.Fatalf("recall_id=%v", payload["recall_id"])
 	}
-	if payload["result_count"] != float64(1) || len(payload["result_ids"].([]any)) != 1 || len(payload["results"].([]any)) != 1 {
+	if payload["result_count"] != float64(1) || len(payload["result_ids"].([]any)) != 1 || len(payload["opaque_result_ids"].([]any)) != 1 || len(payload["results"].([]any)) != 1 {
 		t.Fatalf("result metadata=%v", payload)
 	}
 	if delivered, _ := payload["delivered_utf8_bytes"].(float64); delivered <= 0 || delivered > 4096 {

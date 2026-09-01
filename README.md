@@ -410,7 +410,8 @@ Your production engram is fully untouched throughout.
 | `engram tui`                               | Launch terminal UI                                              |
 | `engram search <query> [--json]`           | Recall bounded candidates; defaults to five results/4 KiB and supports `all|any` matching |
 | `engram save <title> <content> [flags]`    | Save a memory and surface pending conflict candidates; also accepts `--title TITLE --content CONTENT` |
-| `engram get <obs_id> [--json]`             | Retrieve one complete memory and its relations                  |
+| `engram get <obs_id> [--json]`             | Explicit curation: retrieve one complete memory and its relations |
+| `engram get --recall-id ID --result-id ID [--position BYTES] [--json]` | Retrieve at most 16 KiB for one selected Recall result and continue explicitly |
 | `engram update <obs_id> [fields]`          | Partially update a memory                                       |
 | `engram review list\|mark`                 | Review due memories and reset their local review cycle          |
 | `engram pin\|unpin <obs_id>`               | Change local-only context priority                              |

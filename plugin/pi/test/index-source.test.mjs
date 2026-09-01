@@ -326,6 +326,12 @@ test("mem_search exposes and forwards match_mode and all_projects", () => {
   assert.match(source, /case "mem_search":[\s\S]*engramFetch\(`\/recall[\s\S]*project_strength:[\s\S]*match_mode: params\.match_mode[\s\S]*all_projects: params\.all_projects/);
 });
 
+test("mem_get_observation preserves legacy ID and forwards opaque Recall continuation", () => {
+  assert.match(source, /mem_get_observation: Type\.Object\(\{[\s\S]*id: Type\.Optional\(Type\.Number[\s\S]*recall_id: optionalString[\s\S]*result_id: optionalString[\s\S]*position: Type\.Optional\(Type\.Integer/);
+  assert.match(source, /case "mem_get_observation":[\s\S]*hasLegacyID[\s\S]*engramFetch\(`\/observations\/\$\{encodeURIComponent\(String\(params\.id\)\)\}`\)/);
+  assert.match(source, /case "mem_get_observation":[\s\S]*engramFetch\(`\/recall\/content[\s\S]*recall_id: params\.recall_id[\s\S]*result_id: params\.result_id[\s\S]*position: params\.position[\s\S]*project_strength:[\s\S]*all_projects: params\.all_projects/);
+});
+
 test("project detection 404 falls back to local config or diagnostic", () => {
   assert.match(source, /function detectLocalConfigProject\(cwd: string\)/);
   assert.match(source, /project_name/);

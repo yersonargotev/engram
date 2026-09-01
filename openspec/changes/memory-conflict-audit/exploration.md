@@ -1,6 +1,6 @@
 # Exploration: memory-conflict-audit (Phase 3)
 
-> **Source of truth**: Engram observation `sdd/memory-conflict-audit/explore` (#2697). This file is a brief mirror for filesystem auditability — read engram for the full untruncated content via `mem_get_observation(id: 2697)`.
+> **Source of truth**: Engram observation `sdd/memory-conflict-audit/explore` (#2697). This file is a brief mirror for filesystem auditability — locate that exact observation with a narrow project Recall, then retrieve the selected result through bounded `mem_get_observation` continuation.
 
 ## Phase 2 Verification (Substrate Ready)
 

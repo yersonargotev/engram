@@ -53,8 +53,8 @@ func TestRecallCandidatesDefaultsToFiveProjectResultsWithinFourKiB(t *testing.T)
 	if result.RecallID != "recall-test-default" {
 		t.Fatalf("recall_id = %q", result.RecallID)
 	}
-	if result.ResultCount != 5 || len(result.Candidates) != 5 || len(result.ResultIDs) != 5 {
-		t.Fatalf("result count metadata = %d/%d/%d bytes=%d candidates=%#v, want five candidates", result.ResultCount, len(result.Candidates), len(result.ResultIDs), result.DeliveredUTF8Bytes, result.Candidates)
+	if result.ResultCount != 5 || len(result.Candidates) != 5 || len(result.ResultIDs) != 5 || len(result.OpaqueResultIDs) != 5 {
+		t.Fatalf("result count metadata = %d/%d/%d/%d bytes=%d candidates=%#v, want five candidates", result.ResultCount, len(result.Candidates), len(result.ResultIDs), len(result.OpaqueResultIDs), result.DeliveredUTF8Bytes, result.Candidates)
 	}
 	if result.DeliveredUTF8Bytes > RecallCandidateBudgetBytes {
 		t.Fatalf("delivered_utf8_bytes = %d, budget = %d", result.DeliveredUTF8Bytes, RecallCandidateBudgetBytes)
@@ -65,7 +65,10 @@ func TestRecallCandidatesDefaultsToFiveProjectResultsWithinFourKiB(t *testing.T)
 	if result.ElapsedMonotonicMS != 37 {
 		t.Fatalf("elapsed_monotonic_ms = %d, want 37", result.ElapsedMonotonicMS)
 	}
-	for _, candidate := range result.Candidates {
+	for index, candidate := range result.Candidates {
+		if result.ResultIDs[index] != candidate.ID || result.OpaqueResultIDs[index] != candidate.ResultID {
+			t.Fatalf("additive result identity mapping at %d = %d/%q, candidate=%#v", index, result.ResultIDs[index], result.OpaqueResultIDs[index], candidate)
+		}
 		if !strings.HasSuffix(candidate.Summary, "…") {
 			t.Fatalf("candidate summary was not byte-bounded: %q", candidate.Summary)
 		}
@@ -402,7 +405,11 @@ func TestRecallCandidatesRanksRelevanceBeforePinsAndRecency(t *testing.T) {
 
 func TestRecallCandidatesDefaultsToProjectScopeAndRequiresDeliberateBroadScope(t *testing.T) {
 	service := newTestService(t)
-	service.newRecallID = func() (string, error) { return "recall-test-scope", nil }
+	recallSequence := 0
+	service.newRecallID = func() (string, error) {
+		recallSequence++
+		return fmt.Sprintf("recall-test-scope-%d", recallSequence), nil
+	}
 	if err := service.store.CreateSession("recall-scope", "engram", "/work/engram"); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -448,7 +455,7 @@ func TestRecallCandidatesDefaultsToProjectScopeAndRequiresDeliberateBroadScope(t
 		t.Fatalf("deliberate personal Recall() error = %v", err)
 	}
 	if personalResult.ResultCount != 1 || personalResult.Candidates[0].ID != personalID {
-		t.Fatalf("personal scope candidates = %#v", personalResult.Candidates)
+		t.Fatalf("personal scope result = %#v", personalResult)
 	}
 }
 

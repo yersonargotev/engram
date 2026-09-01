@@ -21,6 +21,13 @@
       "mem_checkpoint_status"
     ],
     "recall_default": "agent_initiated",
+    "recall_limits": {
+      "initial_candidates": 5,
+      "followup_candidates": 10,
+      "candidate_utf8_bytes": 4096,
+      "content_utf8_bytes": 16384,
+      "continuation": "explicit_position"
+    },
     "capture_default": "disabled",
     "required_vocabulary": [
       "Protocol contract",
@@ -47,6 +54,7 @@
       "Automatic Recall requires strong or explicit project identity.",
       "Initial Recall: five candidates, 4 KiB, at most one reformulation.",
       "Deliberate follow-up: at most ten candidates; broad scope requires explicit relevance.",
+      "Complete Recall: one selected result, at most 16 KiB, with explicit positioned continuation.",
       "Unavailable Recall fails open without blocking the task.",
       "mem_current_project",
       "mem_search",
@@ -62,7 +70,7 @@
   "distributions": {
     "managed_pack": {
       "version": "3.3.0",
-      "skill_sha256": "8ec3ac2d0bf00d80c6c137393dbafa2ab62b56fc43081c8d220a898f38b1ce33",
+      "skill_sha256": "5e8e94eeea4dc6fb2d389999f0de92b1182784f6700bb89332f1040295c0b3a9",
       "legacy_compatible": true,
       "supported_protocol": {
         "minimum": 1,

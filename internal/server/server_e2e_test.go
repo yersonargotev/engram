@@ -5,6 +5,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,73 @@ import (
 	"github.com/yersonargotev/engram/internal/memoryops"
 	"github.com/yersonargotev/engram/internal/store"
 )
+
+func TestRecallContentSelectionAndContinuationE2E(t *testing.T) {
+	_, ts := newE2EServer(t)
+	client := ts.Client()
+
+	sessionResp := postJSON(t, client, ts.URL+"/sessions", map[string]any{
+		"id":        "s-recall-content",
+		"project":   "engram",
+		"directory": "/tmp/engram",
+	})
+	if sessionResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 creating session, got %d", sessionResp.StatusCode)
+	}
+	sessionResp.Body.Close()
+
+	content := strings.Repeat("界", memoryops.RecallContentBudgetBytes/3) + "continuation"
+	observationResp := postJSON(t, client, ts.URL+"/observations", map[string]any{
+		"session_id": "s-recall-content",
+		"type":       "decision",
+		"title":      "Selected bounded HTTP content",
+		"content":    content,
+		"project":    "engram",
+		"scope":      "project",
+	})
+	if observationResp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 creating observation, got %d", observationResp.StatusCode)
+	}
+	observationResp.Body.Close()
+
+	recallResp, err := client.Get(ts.URL + "/recall?q=Selected+bounded+HTTP+content&project=engram")
+	if err != nil {
+		t.Fatalf("recall: %v", err)
+	}
+	if recallResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 recalling candidates, got %d", recallResp.StatusCode)
+	}
+	recall := decodeJSON[memoryops.RecallResult](t, recallResp)
+	if len(recall.OpaqueResultIDs) != 1 {
+		t.Fatalf("expected one opaque result id, got %#v", recall.OpaqueResultIDs)
+	}
+
+	firstURL := fmt.Sprintf("%s/recall/content?recall_id=%s&result_id=%s&project=engram", ts.URL, recall.RecallID, recall.OpaqueResultIDs[0])
+	firstResp, err := client.Get(firstURL)
+	if err != nil {
+		t.Fatalf("first content segment: %v", err)
+	}
+	if firstResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 retrieving first segment, got %d", firstResp.StatusCode)
+	}
+	first := decodeJSON[memoryops.RecallContentResult](t, firstResp)
+	if !first.Truncated || first.ContinuationPosition == nil || first.DeliveredUTF8Bytes > memoryops.RecallContentBudgetBytes {
+		t.Fatalf("invalid first segment metadata: %#v", first)
+	}
+
+	continuationURL := fmt.Sprintf("%s&position=%d", firstURL, *first.ContinuationPosition)
+	continuationResp, err := client.Get(continuationURL)
+	if err != nil {
+		t.Fatalf("continuation segment: %v", err)
+	}
+	if continuationResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 retrieving continuation, got %d", continuationResp.StatusCode)
+	}
+	continuation := decodeJSON[memoryops.RecallContentResult](t, continuationResp)
+	if continuation.Position != *first.ContinuationPosition || continuation.Truncated || first.Memory.Content+continuation.Memory.Content != content {
+		t.Fatalf("invalid explicit continuation: first=%#v continuation=%#v", first, continuation)
+	}
+}
 
 func newE2EServer(t *testing.T) (*store.Store, *httptest.Server) {
 	t.Helper()

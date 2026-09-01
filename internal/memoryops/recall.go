@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	DefaultRecallCandidateLimit = 5
-	MaximumRecallCandidateLimit = 10
-	RecallCandidateBudgetBytes  = 4 * 1024
+	DefaultRecallCandidateLimit = protocolcontract.RecallInitialCandidateLimit
+	MaximumRecallCandidateLimit = protocolcontract.RecallFollowupCandidateLimit
+	RecallCandidateBudgetBytes  = protocolcontract.RecallCandidateUTF8Budget
+	RecallContentBudgetBytes    = protocolcontract.RecallContentUTF8Limit
 	recallCandidateSummaryBytes = 512
 )
 
@@ -63,6 +64,7 @@ type RecallConflict struct {
 // RecallCandidate is the bounded discovery representation returned before a
 // deliberate complete-Memory follow-up.
 type RecallCandidate struct {
+	ResultID  string           `json:"result_id"`
 	ID        int64            `json:"id"`
 	SyncID    string           `json:"sync_id"`
 	Title     string           `json:"title"`
@@ -96,6 +98,7 @@ type RecallResult struct {
 	RecallID           string             `json:"recall_id"`
 	Candidates         []RecallCandidate  `json:"results"`
 	ResultIDs          []int64            `json:"result_ids"`
+	OpaqueResultIDs    []string           `json:"opaque_result_ids"`
 	ResultCount        int                `json:"result_count"`
 	DeliveredUTF8Bytes int                `json:"delivered_utf8_bytes"`
 	ElapsedMonotonicMS int64              `json:"elapsed_monotonic_ms"`
@@ -148,6 +151,7 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 		RecallID:           recallID,
 		Candidates:         []RecallCandidate{},
 		ResultIDs:          []int64{},
+		OpaqueResultIDs:    []string{},
 		DeliveredUTF8Bytes: len("[]"),
 		Provenance: RecallProvenance{
 			ProtocolVersion: protocolcontract.Version,
@@ -194,9 +198,10 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 		return result, nil
 	}
 
-	for _, item := range search.Observations {
+	for index, item := range search.Observations {
 		observation := item.Observation
 		candidate := RecallCandidate{
+			ResultID:  recallResultID(recallID, observation.SyncID, index),
 			ID:        observation.ID,
 			SyncID:    observation.SyncID,
 			Title:     observation.Title,
@@ -212,12 +217,38 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 		result.Candidates = append(result.Candidates, candidate)
 	}
 	result.Candidates = fitRecallCandidates(result.Candidates, RecallCandidateBudgetBytes)
-	for _, candidate := range result.Candidates {
+	record := store.RecallRunRecord{
+		RecallID: recallID, Project: input.Project, Scope: input.Scope, AllProjects: input.AllProjects,
+		Results: make([]store.RecallResultRecord, 0, len(result.Candidates)),
+	}
+	for index, candidate := range result.Candidates {
 		result.ResultIDs = append(result.ResultIDs, candidate.ID)
+		result.OpaqueResultIDs = append(result.OpaqueResultIDs, candidate.ResultID)
+		record.Results = append(record.Results, store.RecallResultRecord{
+			ResultID: candidate.ResultID,
+			Snapshot: store.RecallObservationSnapshot{
+				ID: candidate.ID, SyncID: candidate.SyncID, Title: candidate.Title,
+				Type: candidate.Type, Content: search.Observations[index].Observation.Content,
+				Project: candidate.Project, Scope: candidate.Scope,
+				RevisionCount: search.Observations[index].Observation.RevisionCount,
+			},
+			Rank: index,
+		})
 	}
 	result.ResultCount = len(result.Candidates)
 	encoded, _ := json.Marshal(result.Candidates)
 	result.DeliveredUTF8Bytes = len(encoded)
+	if err := s.store.RecordRecallRunContext(ctx, record); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		result.Candidates = []RecallCandidate{}
+		result.ResultIDs = []int64{}
+		result.OpaqueResultIDs = []string{}
+		result.ResultCount = 0
+		result.DeliveredUTF8Bytes = len("[]")
+		setRecallUnavailable(result, "recall_store_failure", "recall_run", err)
+	}
 	return result, nil
 }
 
@@ -396,6 +427,11 @@ func newRecallID() (string, error) {
 		return "", err
 	}
 	return "recall-" + hex.EncodeToString(raw), nil
+}
+
+func recallResultID(recallID, syncID string, rank int) string {
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%d", recallID, syncID, rank)))
+	return "result-" + hex.EncodeToString(digest[:16])
 }
 
 var recallFallbackSequence atomic.Uint64

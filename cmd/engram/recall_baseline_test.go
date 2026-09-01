@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -176,7 +175,7 @@ func TestRecallBaselineAutomaticCollectionIsOptIn(t *testing.T) {
 
 func TestRecallBaselineCollectsCurrentCLISearchOperation(t *testing.T) {
 	t.Setenv("ENGRAM_RECALL_BASELINE", "1")
-	cfg := store.Config{DataDir: t.TempDir()}
+	cfg := store.Config{DataDir: t.TempDir(), MaxSearchResults: 20}
 	s, err := store.New(cfg)
 	if err != nil {
 		t.Fatalf("store.New() error = %v", err)
@@ -184,23 +183,29 @@ func TestRecallBaselineCollectsCurrentCLISearchOperation(t *testing.T) {
 	if err := s.CreateSession("session", "engram", "/tmp"); err != nil {
 		t.Fatalf("CreateSession() error = %v", err)
 	}
-	observationID, err := s.AddObservation(store.AddObservationParams{SessionID: "session", Project: "engram", Scope: "project", Type: "decision", Title: "Baseline", Content: "searchable baseline"})
+	_, err = s.AddObservation(store.AddObservationParams{SessionID: "session", Project: "engram", Scope: "project", Type: "decision", Title: "Baseline", Content: "searchable baseline"})
 	if err != nil {
 		t.Fatalf("AddObservation() error = %v", err)
 	}
 	_ = s.Close()
 
-	withArgs(t, "engram", "search", "searchable", "--project", "engram", "--json")
+	withArgs(t, "engram", "search", "Baseline", "--project", "engram", "--json")
 	stdout, stderr := captureOutput(t, func() { cmdSearch(cfg) })
 	if stderr != "" || !json.Valid([]byte(stdout)) {
 		t.Fatalf("search stdout=%q stderr=%q", stdout, stderr)
 	}
+	searchPayload := decodeCLIJSON(t, stdout)
+	if len(searchPayload["result_ids"].([]any)) != 1 {
+		t.Fatalf("search payload=%v", searchPayload)
+	}
+	recallID := searchPayload["recall_id"].(string)
+	resultID := searchPayload["opaque_result_ids"].([]any)[0].(string)
 	withArgs(t, "engram", "context", "engram", "--json")
 	contextOutput, contextErr := captureOutput(t, func() { cmdContext(cfg) })
 	if contextErr != "" || !json.Valid([]byte(contextOutput)) {
 		t.Fatalf("context stdout=%q stderr=%q", contextOutput, contextErr)
 	}
-	withArgs(t, "engram", "get", strconv.FormatInt(observationID, 10), "--json")
+	withArgs(t, "engram", "get", "--recall-id", recallID, "--result-id", resultID, "--project", "engram", "--json")
 	getOutput, getErr := captureOutput(t, func() { cmdGet(cfg) })
 	if getErr != "" || !json.Valid([]byte(getOutput)) {
 		t.Fatalf("get stdout=%q stderr=%q", getOutput, getErr)

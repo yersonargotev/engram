@@ -15,9 +15,14 @@ const (
 	// Version is the monotonic Protocol contract version implemented by Core.
 	Version = 1
 
-	CheckpointPersistence = "local_only"
-	RecallDefault         = "agent_initiated"
-	CaptureDefault        = "disabled"
+	CheckpointPersistence        = "local_only"
+	RecallDefault                = "agent_initiated"
+	CaptureDefault               = "disabled"
+	RecallInitialCandidateLimit  = 5
+	RecallFollowupCandidateLimit = 10
+	RecallCandidateUTF8Budget    = 4 * 1024
+	RecallContentUTF8Limit       = 16 * 1024
+	RecallContinuationMode       = "explicit_position"
 
 	BinaryMinimumProtocolVersion = 1
 	BinaryMaximumProtocolVersion = 1
@@ -224,17 +229,26 @@ type Fixture struct {
 }
 
 type FixtureProtocol struct {
-	Version                   int               `json:"version"`
-	IdentityFields            []string          `json:"identity_fields"`
-	CheckpointDispositions    []string          `json:"checkpoint_dispositions"`
-	CheckpointPersistence     string            `json:"checkpoint_persistence"`
-	MinimumTools              []string          `json:"minimum_tools"`
-	RecallDefault             string            `json:"recall_default"`
-	CaptureDefault            string            `json:"capture_default"`
-	RequiredVocabulary        []string          `json:"required_vocabulary"`
-	CueMarkers                []string          `json:"cue_markers"`
-	MCPInitializationGuidance []string          `json:"mcp_initialization_guidance"`
-	CheckpointDescriptions    map[string]string `json:"checkpoint_descriptions"`
+	Version                   int                  `json:"version"`
+	IdentityFields            []string             `json:"identity_fields"`
+	CheckpointDispositions    []string             `json:"checkpoint_dispositions"`
+	CheckpointPersistence     string               `json:"checkpoint_persistence"`
+	MinimumTools              []string             `json:"minimum_tools"`
+	RecallDefault             string               `json:"recall_default"`
+	RecallLimits              *FixtureRecallLimits `json:"recall_limits,omitempty"`
+	CaptureDefault            string               `json:"capture_default"`
+	RequiredVocabulary        []string             `json:"required_vocabulary"`
+	CueMarkers                []string             `json:"cue_markers"`
+	MCPInitializationGuidance []string             `json:"mcp_initialization_guidance"`
+	CheckpointDescriptions    map[string]string    `json:"checkpoint_descriptions"`
+}
+
+type FixtureRecallLimits struct {
+	InitialCandidates  int    `json:"initial_candidates"`
+	FollowupCandidates int    `json:"followup_candidates"`
+	CandidateUTF8Bytes int    `json:"candidate_utf8_bytes"`
+	ContentUTF8Bytes   int    `json:"content_utf8_bytes"`
+	Continuation       string `json:"continuation"`
 }
 
 type FixtureDistributions struct {
@@ -280,6 +294,13 @@ func ParseFixture(raw []byte) (Fixture, error) {
 		!slices.Equal(fixture.Protocol.MinimumTools, minimumTools) ||
 		fixture.Protocol.CheckpointPersistence != CheckpointPersistence ||
 		fixture.Protocol.RecallDefault != RecallDefault || fixture.Protocol.CaptureDefault != CaptureDefault {
+		return Fixture{}, fmt.Errorf("Protocol fixture semantics differ from Core")
+	}
+	if fixture.Protocol.RecallLimits != nil && *fixture.Protocol.RecallLimits != (FixtureRecallLimits{
+		InitialCandidates: RecallInitialCandidateLimit, FollowupCandidates: RecallFollowupCandidateLimit,
+		CandidateUTF8Bytes: RecallCandidateUTF8Budget, ContentUTF8Bytes: RecallContentUTF8Limit,
+		Continuation: RecallContinuationMode,
+	}) {
 		return Fixture{}, fmt.Errorf("Protocol fixture semantics differ from Core")
 	}
 	if len(fixture.Protocol.RequiredVocabulary) == 0 || len(fixture.Protocol.CueMarkers) != 2 ||

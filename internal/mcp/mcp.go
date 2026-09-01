@@ -245,18 +245,18 @@ func NewServer(s *store.Store) *server.MCPServer {
 // host explicitly selects their profile.
 const serverInstructions = `Engram provides persistent memory that survives across sessions and compactions.
 
-For every settled root user turn, use the canonical skill to finalize one terminal Memory checkpoint through a Terminal Memory commit. Before finalizing prospective Memories, call mem_checkpoint with operation=preflight; this bounded read returns exact duplicates and at most three full same-project candidates without creating state. Reuse exact duplicates and account for every candidate. The dispositions are saved, needs_review, and skipped(no_durable_knowledge). A needs_review result may preserve settled Memories plus exactly one proposal (Mixed Memory). Finalize once after all causal work settles; reuse the exact opaque identity across continuations.
+For each settled root user turn, make one terminal Memory checkpoint: one Terminal Memory commit. Before saving Memories, call mem_checkpoint with operation=preflight; it returns exact duplicates and at most three same-project candidates without writes. Reuse duplicates and account for each candidate. Dispositions: saved, needs_review, skipped(no_durable_knowledge). needs_review may preserve Memories plus one proposal (Mixed Memory). Finalize after causal work; reuse the opaque identity across continuations.
 
 DEFAULT AGENT TOOLS:
   mem_current_project — establish project scope and write authority
   mem_search — recall prior Memory only when it can change the current work
-  mem_get_observation — retrieve complete content for a selected search result
+  mem_get_observation — retrieve at most 16 KiB for one selected search result; continue only from its explicit byte position
   mem_checkpoint — preflight prospective Memories or commit the disposition and durable result
   mem_checkpoint_status — inspect one exact root-turn checkpoint
 
 Current user intent, maintained source, and runtime evidence override Memory. Empty Recall is successful. The canonical skill owns the detailed durability rubric; MCP guidance does not define a second policy.
 
-Recall only when prior decisions, tracked work, release/configuration, preferences, or failures can change the task; self-contained work needs none. Automatic Recall requires strong or explicit project identity. Initial Recall: five candidates, 4 KiB, at most one reformulation. Deliberate follow-up: at most ten candidates; broad scope requires explicit relevance. Unavailable Recall fails open without blocking the task.
+Recall only when prior decisions, tracked work, release/configuration, preferences, or failures can change the task; self-contained work needs none. Automatic Recall requires strong or explicit project identity. Initial Recall: five candidates, 4 KiB, at most one reformulation. Deliberate follow-up: at most ten candidates; broad scope requires explicit relevance. Complete Recall: one selected result, at most 16 KiB, with explicit positioned continuation. Unavailable Recall fails open without blocking the task.
 
 Optional Session summaries and independent saves require curation; host activity and Content capture require lifecycle; destructive maintenance requires admin.`
 
@@ -741,15 +741,35 @@ FORMAT for content — use this structured format:
 	if shouldRegister("mem_get_observation", allowlist) {
 		srv.AddTool(
 			mcp.NewTool("mem_get_observation",
-				mcp.WithDescription("Get the full content of a specific observation by ID. Use when you need the complete, untruncated content of an observation found via mem_search or mem_timeline."),
+				mcp.WithDescription("Retrieve one Memory. The default path uses a mem_search recall_id and opaque result_id for bounded 16 KiB segments; explicit curation may use a legacy observation id."),
 				mcp.WithTitleAnnotation("Get Observation"),
 				mcp.WithReadOnlyHintAnnotation(true),
 				mcp.WithDestructiveHintAnnotation(false),
 				mcp.WithIdempotentHintAnnotation(true),
 				mcp.WithOpenWorldHintAnnotation(false),
 				mcp.WithNumber("id",
-					mcp.Required(),
-					mcp.Description("The observation ID to retrieve"),
+					mcp.Description("Legacy observation ID for explicit curation; cannot be combined with recall_id/result_id"),
+				),
+				mcp.WithString("recall_id",
+					mcp.Description("Opaque Recall run identity returned by mem_search"),
+				),
+				mcp.WithString("result_id",
+					mcp.Description("Opaque selected result identity returned by the same mem_search response"),
+				),
+				mcp.WithNumber("position",
+					mcp.Description("UTF-8 byte continuation position returned by the preceding segment (default: 0)"),
+					mcp.Min(0),
+					mcp.MultipleOf(1),
+				),
+				mcp.WithString("project",
+					mcp.Description("Exact current project authority used by the original Recall. Cannot be combined with all_projects=true."),
+				),
+				mcp.WithBoolean("all_projects",
+					mcp.Description("Preserve an explicitly relevant all-projects boundary from the original Recall. Cannot be combined with project."),
+				),
+				mcp.WithString("scope",
+					mcp.Description("Preserve the original Recall scope: project (default), personal, or global"),
+					mcp.Enum("project", "personal", "global"),
 				),
 			),
 			handleGetObservation(s, cfg),
@@ -1188,6 +1208,7 @@ func handleSearch(s *store.Store, cfg MCPConfig, activity *SessionActivity) serv
 			"recall_id":            recallResult.RecallID,
 			"results":              recallResult.Candidates,
 			"result_ids":           recallResult.ResultIDs,
+			"opaque_result_ids":    recallResult.OpaqueResultIDs,
 			"result_count":         recallResult.ResultCount,
 			"delivered_utf8_bytes": recallResult.DeliveredUTF8Bytes,
 			"elapsed_monotonic_ms": recallResult.ElapsedMonotonicMS,
@@ -1887,52 +1908,112 @@ func handleTimeline(s *store.Store, cfg MCPConfig) server.ToolHandlerFunc {
 // handleGetObservation returns a tool handler function for mem_get_observation.
 func handleGetObservation(s *store.Store, cfg MCPConfig) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		recallID, _ := req.GetArguments()["recall_id"].(string)
+		resultID, _ := req.GetArguments()["result_id"].(string)
+		_, hasLegacyID := req.GetArguments()["id"]
 		id := int64(intArg(req, "id", 0))
-		if id == 0 {
-			return mcp.NewToolResultError("id is required"), nil
+		hasRecallID := strings.TrimSpace(recallID) != ""
+		hasResultID := strings.TrimSpace(resultID) != ""
+		if hasLegacyID {
+			if hasRecallID || hasResultID {
+				return mcp.NewToolResultError("id cannot be combined with recall_id or result_id"), nil
+			}
+			if id <= 0 {
+				return mcp.NewToolResultError("id must be a positive observation ID"), nil
+			}
+			return getObservationByLegacyID(s, cfg, id), nil
+		}
+		if !hasRecallID || !hasResultID {
+			return mcp.NewToolResultError("provide either id or both recall_id and result_id"), nil
+		}
+		projectOverride, _ := req.GetArguments()["project"].(string)
+		scope, scopeErr := memoryops.NormalizeRecallScope(stringArg(req, "scope", ""))
+		if scopeErr != nil {
+			return mcp.NewToolResultError(scopeErr.Error()), nil
+		}
+		allProjects := boolArg(req, "all_projects", false)
+		if allProjects && strings.TrimSpace(projectOverride) != "" {
+			return mcp.NewToolResultError("all_projects cannot be combined with project"), nil
 		}
 
-		getResult, err := memoryops.New(s).Get(id)
+		var detRes projectpkg.DetectionResult
+		switch {
+		case allProjects:
+			detRes = projectpkg.DetectionResult{Source: projectpkg.SourceAllProjects}
+		case scope != "project" && strings.TrimSpace(projectOverride) == "":
+			detRes = projectpkg.DetectionResult{Source: projectpkg.SourcePersonalScope}
+		case strings.TrimSpace(projectOverride) != "":
+			projectName, _ := store.NormalizeProject(projectOverride)
+			detRes = projectpkg.DetectionResult{Project: projectName, Source: projectpkg.SourceExplicitOverride}
+		default:
+			if processResult, ok := processProjectResult(cfg.DefaultProject); ok {
+				detRes = processResult
+			} else {
+				detRes, _ = detectCurrentProject()
+			}
+			detRes.Project, _ = store.NormalizeProject(detRes.Project)
+		}
+		authority := projectpkg.IdentityPolicyForResult(detRes)
+		contentResult, err := memoryops.New(s).RecallContentContext(ctx, memoryops.RecallContentInput{
+			RecallID: recallID, ResultID: resultID, Position: intArg(req, "position", 0),
+			Project: detRes.Project, Scope: scope,
+			AllProjects:     allProjects || (scope != "project" && detRes.Project == ""),
+			ProjectStrength: authority.Strength, DeliberateScope: allProjects || scope != "project",
+			BinaryVersion: cfg.BinaryVersion, BinaryRevision: cfg.BinaryRevision,
+		})
 		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("Observation #%d not found", id)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("Recall content error: %s", err)), nil
 		}
-		obs := getResult.Observation
-
-		// Resolve project from process override/cwd (REQ-310, REQ-314). No per-call
-		// override possible for get-by-ID. Tolerant: don't fail the fetch on
-		// resolution error; degrade to plain text.
-		detRes, detErr := resolveReadProjectWithProcessOverride(s, "", cfg.DefaultProject)
-
-		obsProject := ""
-		if obs.Project != nil {
-			obsProject = fmt.Sprintf("\nProject: %s", *obs.Project)
+		out, marshalErr := jsonMarshal(contentResult)
+		if marshalErr != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Recall content JSON error: %s", marshalErr)), nil
 		}
-		scope := fmt.Sprintf("\nScope: %s", obs.Scope)
-		topic := ""
-		if obs.TopicKey != nil {
-			topic = fmt.Sprintf("\nTopic: %s", *obs.TopicKey)
+		extra := make(map[string]any)
+		if err := json.Unmarshal(out, &extra); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Recall content JSON error: %s", err)), nil
 		}
-		toolName := ""
-		if obs.ToolName != nil {
-			toolName = fmt.Sprintf("\nTool: %s", *obs.ToolName)
+		message := "Retrieved one bounded complete-Memory segment."
+		if contentResult.Warning != nil {
+			message = "Complete Memory retrieval returned no content; continue with current authoritative evidence."
 		}
-		duplicateMeta := fmt.Sprintf("\nDuplicates: %d", obs.DuplicateCount)
-		revisionMeta := fmt.Sprintf("\nRevisions: %d", obs.RevisionCount)
-
-		result := fmt.Sprintf("#%d [%s] %s\n%s\nSession: %s%s%s\nCreated: %s",
-			obs.ID, obs.Type, obs.Title,
-			obs.Content,
-			obs.SessionID, obsProject+scope+topic, toolName+duplicateMeta+revisionMeta,
-			timeutil.FormatLocal(obs.CreatedAt),
-		)
-
-		if detErr != nil {
-			// Degraded path: resolution failed (e.g. ambiguous cwd). Return
-			// the observation content without envelope rather than erroring.
-			return mcp.NewToolResultText(result), nil
-		}
-		return respondWithProject(detRes, result, nil), nil
+		return respondWithProject(detRes, message, extra), nil
 	}
+}
+
+func getObservationByLegacyID(s *store.Store, cfg MCPConfig, id int64) *mcp.CallToolResult {
+	getResult, err := memoryops.New(s).Get(id)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Observation #%d not found", id))
+	}
+	obs := getResult.Observation
+	detRes, detErr := resolveReadProjectWithProcessOverride(s, "", cfg.DefaultProject)
+	obsProject := ""
+	if obs.Project != nil {
+		obsProject = fmt.Sprintf("\nProject: %s", *obs.Project)
+	}
+	scope := fmt.Sprintf("\nScope: %s", obs.Scope)
+	topic := ""
+	if obs.TopicKey != nil {
+		topic = fmt.Sprintf("\nTopic: %s", *obs.TopicKey)
+	}
+	toolName := ""
+	if obs.ToolName != nil {
+		toolName = fmt.Sprintf("\nTool: %s", *obs.ToolName)
+	}
+	result := fmt.Sprintf("#%d [%s] %s\n%s\nSession: %s%s%s\nCreated: %s",
+		obs.ID, obs.Type, obs.Title, obs.Content, obs.SessionID, obsProject+scope+topic,
+		toolName+fmt.Sprintf("\nDuplicates: %d\nRevisions: %d", obs.DuplicateCount, obs.RevisionCount),
+		timeutil.FormatLocal(obs.CreatedAt))
+	if detErr != nil {
+		return mcp.NewToolResultText(result)
+	}
+	return respondWithProject(detRes, result, nil)
+}
+
+// GetObservationToolHandler exposes the production complete-content adapter for
+// cross-host semantic parity tests and alternate MCP transports.
+func GetObservationToolHandler(s *store.Store, cfg MCPConfig) server.ToolHandlerFunc {
+	return handleGetObservation(s, cfg)
 }
 
 // handleSessionSummary returns a tool handler function that saves a comprehensive

@@ -146,7 +146,7 @@ Token-efficient memory retrieval — don't dump everything, drill in:
 
 ### What topic_key is
 
-`topic_key` turns `mem_save` into an **upsert**: if a memory with the same `project + scope + topic_key` already exists, the existing observation is updated in place (`revision_count++`) instead of creating a new row. Without a `topic_key`, every `mem_save` creates a new observation even when the content describes the same evolving topic.
+`topic_key` turns `mem_save` into an **upsert**: if a memory with the same `project + scope + topic_key` already exists, the existing observation is updated in place (`revision_count++`) instead of creating a new row. Without a `topic_key`, `mem_save` does not perform a topic upsert: changed content creates a new observation, while an exact duplicate within the rolling window reuses the existing row and updates duplicate metadata.
 
 Use topic keys for knowledge that changes over time: architecture decisions, long-running feature notes, recurring patterns, configuration choices. Skip them for one-off bugs, single facts, or anything that does not evolve.
 

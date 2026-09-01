@@ -195,6 +195,9 @@ func TestMaintainedDocsDescribeExactMemoryDedupeIdentity(t *testing.T) {
 		if !strings.Contains(content, identity) {
 			t.Errorf("%s does not document the exact Memory dedupe identity %q", path, identity)
 		}
+		if strings.Contains(content, "Without a `topic_key`, every `mem_save` creates a new observation") {
+			t.Errorf("%s contradicts exact dedupe for Memories without a topic key", path)
+		}
 	}
 }
 

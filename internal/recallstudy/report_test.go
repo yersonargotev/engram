@@ -245,7 +245,7 @@ func TestDerivedMetricsMatchIndependentReferenceVector(t *testing.T) {
 		t.Fatalf("targeted duplicate metric = %+v", duplicate)
 	}
 	timeToUseful := treatmentMetricByID(t, report, "targeted-recall", "time_to_useful_p95_ms")
-	if timeToUseful.Point != 120 || timeToUseful.Denominator != 60 {
+	if !timeToUseful.Available || timeToUseful.Point != 120 || timeToUseful.Denominator != 60 {
 		t.Fatalf("targeted time-to-useful metric = %+v", timeToUseful)
 	}
 
@@ -261,12 +261,16 @@ func TestDerivedMetricsMatchIndependentReferenceVector(t *testing.T) {
 			break
 		}
 	}
-	if _, err := study.Report(failed); err == nil || !strings.Contains(err.Error(), "contains quality evidence") {
+	if _, err := study.Report(failed); err == nil || !strings.Contains(err.Error(), "contains metric or quality evidence") {
 		t.Fatalf("operational failure retained quality evidence: %v", err)
 	}
 	failed.Rows[failedIndex].RecallResultCount = 0
 	failed.Rows[failedIndex].Assessments = nil
 	failed.Rows[failedIndex].FalseEmptyReview = "not_applicable"
+	failed.Rows[failedIndex].CheckpointSucceeded = false
+	failed.Rows[failedIndex].StopConflictOrLoop = false
+	failed.Rows[failedIndex].AutomaticInjectedUTF8Bytes = 0
+	failed.Rows[failedIndex].StartupCompactLatencyMillis = 0
 	failed.Rows[failedIndex].RecallLatencyMillis = 0
 	failed.Rows[failedIndex].TimeToUsefulMillis = 0
 	failedReport, err := study.Report(failed)
@@ -328,6 +332,99 @@ func TestReportRejectsTreatmentContradictionsAndSupportsFrozenHeldOutShape(t *te
 		ContractSHA256: study.Hash, CohortID: CombinedCohortID, Rows: append(calibrationRows.Rows, heldOutRows.Rows...)}
 	if report, err := fastStudy.Report(combined); err != nil || report.CohortID != CombinedCohortID || report.Labels.RunsObserved != 1551 || len(report.Treatments) != 34 {
 		t.Fatalf("combined Report() report=%+v error=%v", report, err)
+	}
+}
+
+func TestReportRetainsAnArmWithZeroSuccessfulTasks(t *testing.T) {
+	t.Parallel()
+
+	study, calibration, _ := verifiedStudy(t)
+	rows := completeRows(study, calibration, mustPlan(t, study, calibration))
+	failed := 0
+	for index := range rows.Rows {
+		if rows.Rows[index].Treatment == "no-recall" {
+			rows.Rows[index].TaskOutcome = "failed"
+			rows.Rows[index].TimeToUsefulMillis = 0
+			failed++
+		}
+	}
+	report, err := study.Report(rows)
+	if err != nil {
+		t.Fatalf("Report() rejected a complete zero-success arm: %v", err)
+	}
+	taskSuccess := treatmentMetricByID(t, report, "no-recall", "task_success_rate_percent")
+	if taskSuccess.Point != 0 || taskSuccess.Numerator != 0 || taskSuccess.Denominator != failed || taskSuccess.Unknown != 0 {
+		t.Fatalf("zero-success metric = %+v", taskSuccess)
+	}
+	timeToUseful := treatmentMetricByID(t, report, "no-recall", "time_to_useful_p95_ms")
+	if timeToUseful.Available || timeToUseful.Point != 0 || timeToUseful.CILower != 0 || timeToUseful.CIUpper != 0 ||
+		timeToUseful.Numerator != 0 || timeToUseful.Denominator != 0 || timeToUseful.Unknown != failed {
+		t.Fatalf("all-unknown time-to-useful metric = %+v", timeToUseful)
+	}
+}
+
+func TestReportRejectsUnfrozenFailureCodesAndResidualOperationalMetrics(t *testing.T) {
+	t.Parallel()
+
+	study, calibration, _ := verifiedStudy(t)
+	base := completeRows(study, calibration, mustPlan(t, study, calibration))
+	operationalIndex := -1
+	for index := range base.Rows {
+		if base.Rows[index].Treatment == "targeted-recall" {
+			operationalIndex = index
+			break
+		}
+	}
+	operationalRows := func(outcome, code string) RowSet {
+		rows := base
+		rows.Rows = append([]RunRow(nil), base.Rows...)
+		row := &rows.Rows[operationalIndex]
+		row.Outcome = outcome
+		row.TaskOutcome = "not_applicable"
+		row.OmissionCode = code
+		row.RecallResultCount = 0
+		row.Assessments = nil
+		row.FalseEmptyReview = "not_applicable"
+		row.CheckpointSucceeded = false
+		row.StopConflictOrLoop = false
+		row.AutomaticInjectedUTF8Bytes = 0
+		row.StartupCompactLatencyMillis = 0
+		row.RecallLatencyMillis = 0
+		row.TimeToUsefulMillis = 0
+		return rows
+	}
+	tests := []struct {
+		name   string
+		rows   RowSet
+		mutate func(*RunRow)
+		want   string
+	}{
+		{name: "unknown operational code", rows: operationalRows("operational_failure", "arbitrary"), want: "outcome mapping"},
+		{name: "unknown omission code", rows: operationalRows("omitted", "arbitrary"), want: "outcome mapping"},
+		{name: "checkpoint evidence", rows: operationalRows("operational_failure", "runner_timeout"), mutate: func(row *RunRow) { row.CheckpointSucceeded = true }, want: "metric or quality evidence"},
+		{name: "Stop evidence", rows: operationalRows("operational_failure", "runner_timeout"), mutate: func(row *RunRow) { row.StopConflictOrLoop = true }, want: "metric or quality evidence"},
+		{name: "injected-byte evidence", rows: operationalRows("operational_failure", "runner_timeout"), mutate: func(row *RunRow) { row.AutomaticInjectedUTF8Bytes = 1 }, want: "metric or quality evidence"},
+		{name: "startup evidence", rows: operationalRows("operational_failure", "runner_timeout"), mutate: func(row *RunRow) { row.StartupCompactLatencyMillis = 1 }, want: "metric or quality evidence"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.mutate != nil {
+				test.mutate(&test.rows.Rows[operationalIndex])
+			}
+			if _, err := study.Report(test.rows); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Report() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+	for _, valid := range []struct{ outcome, code string }{
+		{"operational_failure", "runner_timeout"},
+		{"operational_failure", "runner_process_failed"},
+		{"operational_failure", "fixture_integrity_mismatch"},
+		{"omitted", "task_not_attempted"},
+	} {
+		if _, err := study.Report(operationalRows(valid.outcome, valid.code)); err != nil {
+			t.Fatalf("Report() rejected frozen mapping %s/%s: %v", valid.outcome, valid.code, err)
+		}
 	}
 }
 

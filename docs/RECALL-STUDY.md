@@ -63,8 +63,8 @@ Git. A Compatibility file has this shape:
     "protocol_contract": {"version": "1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
     "telemetry_schema": {"version": "recall-baseline-events-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
     "capture_schema": {"version": "diagnostic-capture-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
-    "policy": {"version": "recall-policy-v1", "revision": "sha256:9d0d0207d1a90d48f4082bdb543b9a08f83d0b1f5a34af4ceb6cba986a151879"},
-    "metric": {"version": "recall-study-metrics-v1", "revision": "sha256:65507cf0f882e4e3c031335d0f41bdb79f908087e9c2288e223fcb9a7d22a589"},
+    "policy": {"version": "recall-policy-v1", "revision": "sha256:a5e3aa9c438e2efc3d4bd11e9e636ef231a3e9dc0468af9062e15426f93b9af1"},
+    "metric": {"version": "recall-study-metrics-v1", "revision": "sha256:78a701966e15a5bc6fb00ade131f95c49b2ca6af4ce17e06fbef185202c20eaa"},
     "source": {"version": "105778d820029a2326043739fd676647e5c037f6", "revision": "105778d820029a2326043739fd676647e5c037f6"}
   },
   "compatibility": {
@@ -148,8 +148,12 @@ all three arms, including distinct duplicate and time-to-useful results; the GA
 clauses remain the preregistered paired broad-versus-targeted comparisons.
 Completed attempts record a separate `task_outcome`: verifier failures remain
 in the paired quality population and in each arm's task-success rate. Harness
-failures are operational failures; they must contain no residual quality
-evidence, are rejected otherwise, and are reported separately.
+failures are operational failures; they must contain no residual metric or
+quality evidence, must use an exactly frozen outcome code, are rejected
+otherwise, and are reported separately. A treatment with zero task successes
+still reports a 0% success rate; value metrics that have no successful
+population carry `available: false`, denominator zero, and all affected runs as
+unknown instead of aborting the report.
 
 ```bash
 engram recall-study report "${COMMON[@]}" \

@@ -14,7 +14,7 @@
   "task_membership": "per-unit fixture, instruction, verifier, expected-result, and complete input SHA-256 commitments in each immutable cohort manifest",
   "pairing_key": "sampling_unit_id",
   "operational_failures": "exclude-from-quality-and-report-separately",
-  "operational_failure_quality_fields": "must-be-empty-and-rejected-otherwise",
+  "operational_failure_metric_and_quality_fields": "checkpoint, Stop, injected bytes, startup latency, Recall latency, time-to-useful, exposed results, reviews, and assessments must be zero or empty and are rejected otherwise",
   "task_verifier_failure": "completed-task_outcome-failed-retained-in-quality-and-task-success-rate",
   "calibration_report_only": true,
   "held_out_execution_owner": "issue-110",

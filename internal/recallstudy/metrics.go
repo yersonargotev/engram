@@ -167,17 +167,19 @@ func (study *Study) deriveTreatmentMetrics(rows []RunRow) ([]TreatmentMetric, er
 				successful = append(successful, row)
 			}
 		}
-		if len(successful) == 0 {
-			return nil, fmt.Errorf("Recall study treatment %s has no successful task rows", treatment.ID)
-		}
 		result = append(result,
 			treatmentRateMetric(treatment.ID, "task_success_rate_percent", completed, unknownRuns, func(row RunRow) bool { return row.TaskOutcome == "succeeded" }),
 			treatmentRateMetric(treatment.ID, "checkpoint_success_rate_percent", completed, unknownRuns, func(row RunRow) bool { return row.CheckpointSucceeded }),
 			treatmentRateMetric(treatment.ID, "stop_conflict_or_loop_rate_percent", completed, unknownRuns, func(row RunRow) bool { return row.StopConflictOrLoop }),
 			treatmentValueMetric(study, treatment.ID, "automatic_injected_bytes_mean", completed, unknownRuns, func(row RunRow) float64 { return float64(row.AutomaticInjectedUTF8Bytes) }, mean),
 			treatmentValueMetric(study, treatment.ID, "startup_compact_p95_ms", completed, unknownRuns, func(row RunRow) float64 { return row.StartupCompactLatencyMillis }, func(values []float64) float64 { return percentile(values, .95) }),
-			treatmentValueMetric(study, treatment.ID, "time_to_useful_p95_ms", successful, unknownRuns+len(completed)-len(successful), func(row RunRow) float64 { return row.TimeToUsefulMillis }, func(values []float64) float64 { return percentile(values, .95) }),
 		)
+		if len(successful) == 0 {
+			result = append(result, unavailableTreatmentValueMetric(treatment.ID, "time_to_useful_p95_ms", countTreatmentRows(rows, treatment.ID)))
+		} else {
+			result = append(result, treatmentValueMetric(study, treatment.ID, "time_to_useful_p95_ms", successful,
+				unknownRuns+len(completed)-len(successful), func(row RunRow) float64 { return row.TimeToUsefulMillis }, func(values []float64) float64 { return percentile(values, .95) }))
+		}
 		if treatment.ID == "targeted-recall" {
 			result = append(result, treatmentValueMetric(study, treatment.ID, "recall_p95_ms", completed, unknownRuns,
 				func(row RunRow) float64 { return row.RecallLatencyMillis }, func(values []float64) float64 { return percentile(values, .95) }))
@@ -199,7 +201,7 @@ func treatmentRateMetric(treatment, metric string, rows []RunRow, unknown int, p
 		count += boolInt(predicate(row))
 	}
 	lower, upper := wilsonPercent(count, len(rows))
-	return TreatmentMetric{Treatment: treatment, Metric: metric, Point: percent(count, len(rows)), CILower: lower, CIUpper: upper,
+	return TreatmentMetric{Treatment: treatment, Metric: metric, Available: true, Point: percent(count, len(rows)), CILower: lower, CIUpper: upper,
 		Numerator: count, Denominator: len(rows), Unknown: unknown}
 }
 
@@ -211,8 +213,12 @@ func treatmentValueMetric(study *Study, treatment, metric string, rows []RunRow,
 	point := statistic(values)
 	lower, upper := bootstrapValues(study.Contract.Intervals.BootstrapSeed+"\x00"+treatment+"\x00"+metric, values,
 		study.Contract.Intervals.BootstrapResamples, statistic)
-	return TreatmentMetric{Treatment: treatment, Metric: metric, Point: point, CILower: lower, CIUpper: upper,
+	return TreatmentMetric{Treatment: treatment, Metric: metric, Available: true, Point: point, CILower: lower, CIUpper: upper,
 		Numerator: int(math.Round(sum(values))), Denominator: len(values), Unknown: unknown}
+}
+
+func unavailableTreatmentValueMetric(treatment, metric string, unknown int) TreatmentMetric {
+	return TreatmentMetric{Treatment: treatment, Metric: metric, Available: false, Unknown: unknown}
 }
 
 func treatmentLabelMetrics(treatment string, rows []RunRow, unknownRuns int) []TreatmentMetric {
@@ -230,8 +236,11 @@ func treatmentLabelMetrics(treatment string, rows []RunRow, unknownRuns int) []T
 		duplicate += duplicateResults(row)
 	}
 	metric := func(id string, numerator, denominator, unknown int) TreatmentMetric {
+		if denominator == 0 {
+			return TreatmentMetric{Treatment: treatment, Metric: id, Available: false, Unknown: unknown + unknownRuns}
+		}
 		lower, upper := wilsonPercent(numerator, denominator)
-		return TreatmentMetric{Treatment: treatment, Metric: id, Point: percent(numerator, denominator), CILower: lower, CIUpper: upper,
+		return TreatmentMetric{Treatment: treatment, Metric: id, Available: true, Point: percent(numerator, denominator), CILower: lower, CIUpper: upper,
 			Numerator: numerator, Denominator: denominator, Unknown: unknown + unknownRuns}
 	}
 	return []TreatmentMetric{

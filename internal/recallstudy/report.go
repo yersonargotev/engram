@@ -63,6 +63,7 @@ type MetricEvidence struct {
 type TreatmentMetric struct {
 	Treatment   string  `json:"treatment"`
 	Metric      string  `json:"metric"`
+	Available   bool    `json:"available"`
 	Point       float64 `json:"point"`
 	CILower     float64 `json:"ci_lower"`
 	CIUpper     float64 `json:"ci_upper"`
@@ -256,8 +257,19 @@ func validateRunRow(row RunRow) error {
 	if row.Outcome != "completed" && row.Outcome != "operational_failure" && row.Outcome != "omitted" {
 		return fmt.Errorf("Recall study row outcome is invalid")
 	}
-	if row.Outcome == "completed" && row.OmissionCode != "" || row.Outcome != "completed" && strings.TrimSpace(row.OmissionCode) == "" {
-		return fmt.Errorf("Recall study row omission metadata is invalid")
+	switch row.Outcome {
+	case "completed":
+		if row.OmissionCode != "" {
+			return fmt.Errorf("Recall study row outcome mapping is invalid")
+		}
+	case "operational_failure":
+		if row.OmissionCode != "runner_timeout" && row.OmissionCode != "runner_process_failed" && row.OmissionCode != "fixture_integrity_mismatch" {
+			return fmt.Errorf("Recall study row outcome mapping is invalid")
+		}
+	case "omitted":
+		if row.OmissionCode != "task_not_attempted" {
+			return fmt.Errorf("Recall study row outcome mapping is invalid")
+		}
 	}
 	if row.Outcome == "completed" && row.TaskOutcome != "succeeded" && row.TaskOutcome != "failed" ||
 		row.Outcome != "completed" && row.TaskOutcome != "not_applicable" {
@@ -277,8 +289,9 @@ func validateRunRow(row RunRow) error {
 		return fmt.Errorf("Recall study failed task cannot claim time-to-useful evidence")
 	}
 	if row.Outcome != "completed" && (row.RecallResultCount != 0 || len(row.Assessments) != 0 || row.FalseEmptyReview != "not_applicable" ||
+		row.CheckpointSucceeded || row.StopConflictOrLoop || row.AutomaticInjectedUTF8Bytes != 0 || row.StartupCompactLatencyMillis != 0 ||
 		row.RecallLatencyMillis != 0 || row.TimeToUsefulMillis != 0) {
-		return fmt.Errorf("Recall study non-completed row contains quality evidence")
+		return fmt.Errorf("Recall study non-completed row contains metric or quality evidence")
 	}
 	if row.Outcome != "completed" {
 		return nil

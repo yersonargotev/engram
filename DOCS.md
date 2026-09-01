@@ -92,7 +92,9 @@ unknowns, and frozen confidence intervals from strict disposable calibration
 rows; the same frozen domain shape supports held-out and combined analysis in
 #110, with per-arm task-success, duplicate, and time-to-useful outcomes. Exact
 fixture, instruction, verifier, and expected-result commitments prevent task
-substitution, while operational failures reject residual quality evidence. See [Paired Recall
+substitution. Operational failures require frozen codes and reject residual
+metric or quality evidence; zero-success arms remain reportable with unavailable
+value populations marked explicitly. See [Paired Recall
 study](docs/RECALL-STUDY.md).
 
 Core curated-memory operations:

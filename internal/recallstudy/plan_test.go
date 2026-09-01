@@ -217,29 +217,85 @@ func TestVerifyTaskInputBindsFrozenMembershipAndFixtureSelection(t *testing.T) {
 	}
 }
 
-func TestFrozenTaskCommitmentMatchesIndependentReferenceVector(t *testing.T) {
+func TestFrozenTaskCommitmentsMatchIndependentReferenceVectors(t *testing.T) {
 	t.Parallel()
 
 	study, calibration, _ := verifiedStudy(t)
-	task := calibration.Tasks[0]
-	input := frozenTaskInput(study.Contract, calibration, task.SamplingUnitID, task.TaskClass)
-	if input.FixtureSeed != "81b9f9d1fdec31ea0904cc76bee306719550eedc2116f4de2ed1b9a0f3162fb9" ||
-		input.FixturePath != "docs/recall-fact.json" ||
-		input.FixtureUTF8 != "{\"fact_key\":\"c55c7115b808c728\",\"fact_value\":\"8aa93d44caa533c1\"}\n" ||
-		input.InstructionUTF8 != "Read docs/recall-fact.json and return the fact_value for fact_key c55c7115b808c728 as {\"answer\":\"VALUE\"}.\n" ||
-		input.VerifierID != "exact-json-answer-v1" || input.ExpectedResultUTF8 != "{\"answer\":\"8aa93d44caa533c1\"}\n" {
-		t.Fatalf("frozen task input does not match the independent vector: %+v", input)
+	common := TaskInput{StudyID: "codex-useful-recall", StudyVersion: "v1", CohortID: "calibration-v1",
+		SourceRevision:     "105778d820029a2326043739fd676647e5c037f6",
+		TaskProtocolSHA256: "f579656556750b9f2de67d27c1736a728d17878bffa67e8b362baef55885e345"}
+	vectors := []struct {
+		input TaskInput
+		want  TaskCommitment
+	}{
+		{
+			input: TaskInput{SamplingUnitID: "cal-0001", TaskClass: "repository-question", FixtureSeed: "81b9f9d1fdec31ea0904cc76bee306719550eedc2116f4de2ed1b9a0f3162fb9",
+				FixturePath: "docs/recall-fact.json", FixtureUTF8: "{\"fact_key\":\"c55c7115b808c728\",\"fact_value\":\"8aa93d44caa533c1\"}\n",
+				InstructionUTF8: "Read docs/recall-fact.json and return the fact_value for fact_key c55c7115b808c728 as {\"answer\":\"VALUE\"}.\n",
+				VerifierID:      "exact-json-answer-v1", VerifierUTF8: "parse one JSON object; require exactly the string field answer; compare it byte-for-byte with the expected answer",
+				ExpectedResultUTF8: "{\"answer\":\"8aa93d44caa533c1\"}\n"},
+			want: TaskCommitment{SamplingUnitID: "cal-0001", TaskClass: "repository-question",
+				FixtureSHA256: "a246b40ddb0e2ef8e376387157927f2f2bb55ca9160bdef262a52df5fb896e6d", InstructionSHA256: "c17ee0491ccb9e5126283043d306e8acbbd8ae10d40be355ad039a0c8fd980a1",
+				VerifierSHA256: "92de57d43db7fe742ca4657a4fde646fca9566474ec969d10ad0cb44a751a2ce", ExpectedSHA256: "6ab3254a9fb71aa9a72e829ed51fb3f12ef5778c1695e53068aaf36066b8f7b3",
+				InputSHA256: "cdbf6cc750d34d821c773b96768896faa8ba1b5d399dc72020664dc22458653b"},
+		},
+		{
+			input: TaskInput{SamplingUnitID: "cal-0002", TaskClass: "implementation", FixtureSeed: "894dcc1725380eda897ae939ca3ead8c606196e079ddb16cd20fd732b907b123",
+				FixturePath: "config/recall-setting.json", FixtureUTF8: "{\"current\":\"47dbff419d0c57aa\",\"required\":\"75c5ee24e935c39c\"}\n",
+				InstructionUTF8: "Update config/recall-setting.json so current equals required; preserve exactly those two keys and emit no other file changes.\n",
+				VerifierID:      "exact-file-json-v1", VerifierUTF8: "parse the named fixture as JSON; require exactly current and required; require both values equal the frozen expected value; reject any other changed path",
+				ExpectedResultUTF8: "{\"current\":\"75c5ee24e935c39c\",\"required\":\"75c5ee24e935c39c\"}\n"},
+			want: TaskCommitment{SamplingUnitID: "cal-0002", TaskClass: "implementation",
+				FixtureSHA256: "e8e0e278499ac067aec9e31fab055d9f12e1668cc7a7cb04b8320efddd931f24", InstructionSHA256: "6f91a6567cfe357ab72f77f87ba934559080614a5e622c98b849ba9b8f6cbf98",
+				VerifierSHA256: "30a28afabbb948d1cef8207ae0d3a90644c3ba8ab7b77070da48cfee336d9941", ExpectedSHA256: "5efdb66ff23fb83bb4f375012f0e56b1f0d09cad09e9b3caf745c7e93f2da0e2",
+				InputSHA256: "8b2192ccc41aed34b55100a11d660623bad32b8136df03218582652f939301bb"},
+		},
+		{
+			input: TaskInput{SamplingUnitID: "cal-0003", TaskClass: "diagnosis", FixtureSeed: "5ae46ce2b24b711ec135eed08f0b98c63a957ffe8e344e76e5aafd833481a147",
+				FixturePath: "diagnostics/recall-case.json", FixtureUTF8: "{\"expected\":\"e2449491ae70b15d\",\"observed\":\"165aae0aca25b286\",\"root_cause_code\":\"2d0e44fdeac23078\"}\n",
+				InstructionUTF8: "Diagnose diagnostics/recall-case.json and return its root cause as {\"root_cause_code\":\"CODE\"}; do not modify files.\n",
+				VerifierID:      "exact-json-root-cause-v1", VerifierUTF8: "require no file changes; parse one JSON object; require exactly root_cause_code; compare it byte-for-byte with the frozen code",
+				ExpectedResultUTF8: "{\"root_cause_code\":\"2d0e44fdeac23078\"}\n"},
+			want: TaskCommitment{SamplingUnitID: "cal-0003", TaskClass: "diagnosis",
+				FixtureSHA256: "49db6bda988f68fdcf2ea2e21ade8fd40644e44e462b5c9a9fdc13067793d3aa", InstructionSHA256: "96240e111066ee08bb3dcf465d2962af9d4976c1da3d32fb2fdba367562e270f",
+				VerifierSHA256: "c6d8c6f6cc73500419b80b74c17fecb8b3efe2438c7bb66a3240fe184e7f0f68", ExpectedSHA256: "21e4db3862f57e8b581f709c1703eb185fa6709b2a6039ce7e3c2a3fe59aae43",
+				InputSHA256: "ddaa0e4aa218e59ab8e39e6028b7ee71c293fe09213063b242bc2cba96c73efe"},
+		},
+		{
+			input: TaskInput{SamplingUnitID: "cal-0004", TaskClass: "verification", FixtureSeed: "aced5a89ea3d5acf3c3637e053d4d4f2bda33f450bdf3f47a7fbab01ba2f1d3c",
+				FixturePath: "verification/recall-check.json", FixtureUTF8: "{\"expected_sha256\":\"e8f70d7fadbc8725\",\"actual_sha256\":\"e8f70d7fadbc8725\"}\n",
+				InstructionUTF8: "Verify verification/recall-check.json and return {\"matches\":true} only when the two digests match; do not modify files.\n",
+				VerifierID:      "exact-json-verdict-v1", VerifierUTF8: "require no file changes; parse one JSON object; require exactly the boolean field matches; compare with the equality of the frozen fixture digests",
+				ExpectedResultUTF8: "{\"matches\":true}\n"},
+			want: TaskCommitment{SamplingUnitID: "cal-0004", TaskClass: "verification",
+				FixtureSHA256: "642af5b33405191a3002bd2801db58ed8b8dc61681dca627d7ff4fb310fe9180", InstructionSHA256: "e9e3ed7438c5675967d2fcad82531b7a02ad908345b764e4c2dfc6e66215332c",
+				VerifierSHA256: "737439635137c7e689fe65bba6788592ecf311f05f22d6769a18228317882d34", ExpectedSHA256: "833c5870785f518aa17b90be7e7b994aca1ff517574c2413c771708b4815e018",
+				InputSHA256: "61cbbf47208710a8a4bf639233da04b8dc9c62bdcf4d442eb5d71187e7fe8534"},
+		},
+		{
+			input: TaskInput{SamplingUnitID: "cal-0005", TaskClass: "routine-non-durable", FixtureSeed: "8621eeb26ff619bd4f610d1b64aa817b41518cbc04971886ac4f7057bd620749",
+				FixturePath: "maintenance/recall-items.json", FixtureUTF8: "{\"items\":[\"4d1baf45cd503bb0\",\"32a57ae84a329874\",\"e7a41f134ac34339\"]}\n",
+				InstructionUTF8: "Sort maintenance/recall-items.json items in ascending byte order; preserve exactly one items key and emit no other file changes.\n",
+				VerifierID:      "exact-sorted-json-v1", VerifierUTF8: "parse the named fixture as JSON; require exactly items; require the frozen three strings in ascending byte order; reject any other changed path",
+				ExpectedResultUTF8: "{\"items\":[\"32a57ae84a329874\",\"4d1baf45cd503bb0\",\"e7a41f134ac34339\"]}\n"},
+			want: TaskCommitment{SamplingUnitID: "cal-0005", TaskClass: "routine-non-durable",
+				FixtureSHA256: "ee2bf12a35fb1675a4b477b2ff3da7d482561f15c053d038afd3836377ee1bad", InstructionSHA256: "aad9ea96aa5e9dbd1c83886d0c92296943d8caf41ed4099dcbb2c5aff2d477f6",
+				VerifierSHA256: "92522eb1257c5784d8c2a57a8e4784c97da4bc3079138f9cc56f67641b5e7bbc", ExpectedSHA256: "40d49f219b8e79b9919d57033dda8f514831cd72930795fcf340d9ca601213ad",
+				InputSHA256: "a6963d2db461ce695ebf002a8e05766f7700a0baa2b31650bee239796e650b88"},
+		},
 	}
-	want := TaskCommitment{
-		SamplingUnitID: "cal-0001", TaskClass: "repository-question",
-		FixtureSHA256:     "a246b40ddb0e2ef8e376387157927f2f2bb55ca9160bdef262a52df5fb896e6d",
-		InstructionSHA256: "c17ee0491ccb9e5126283043d306e8acbbd8ae10d40be355ad039a0c8fd980a1",
-		VerifierSHA256:    "92de57d43db7fe742ca4657a4fde646fca9566474ec969d10ad0cb44a751a2ce",
-		ExpectedSHA256:    "6ab3254a9fb71aa9a72e829ed51fb3f12ef5778c1695e53068aaf36066b8f7b3",
-		InputSHA256:       "cdbf6cc750d34d821c773b96768896faa8ba1b5d399dc72020664dc22458653b",
-	}
-	if task != want || taskCommitmentFromInput(study.Contract, calibration, input) != want {
-		t.Fatalf("frozen task commitment = %+v, want %+v", task, want)
+	for index, vector := range vectors {
+		vector.input.StudyID = common.StudyID
+		vector.input.StudyVersion = common.StudyVersion
+		vector.input.CohortID = common.CohortID
+		vector.input.SourceRevision = common.SourceRevision
+		vector.input.TaskProtocolSHA256 = common.TaskProtocolSHA256
+		if err := study.VerifyTaskInput(calibration, vector.input); err != nil {
+			t.Fatalf("vector %d VerifyTaskInput() error = %v", index, err)
+		}
+		if calibration.Tasks[index] != vector.want {
+			t.Fatalf("vector %d commitment = %+v, want %+v", index, calibration.Tasks[index], vector.want)
+		}
 	}
 }
 

@@ -14,10 +14,10 @@ import (
 
 const (
 	ContractSchemaVersion  = "recall-study-contract-v1"
-	FrozenV1ContractSHA256 = "88e9b0ff2dd0d0ddd327be325a83c8166f3c6092ab3ff9080fa2e36092d1da88"
+	FrozenV1ContractSHA256 = "66c9911ce50bcab491d62662e41b2c7f73ffc872f45559aa27acccd09a3ef723"
 	maxContractBytes       = 1 << 20
-	frozenPolicyRevision   = "sha256:9d0d0207d1a90d48f4082bdb543b9a08f83d0b1f5a34af4ceb6cba986a151879"
-	frozenMetricRevision   = "sha256:65507cf0f882e4e3c031335d0f41bdb79f908087e9c2288e223fcb9a7d22a589"
+	frozenPolicyRevision   = "sha256:a5e3aa9c438e2efc3d4bd11e9e636ef231a3e9dc0468af9062e15426f93b9af1"
+	frozenMetricRevision   = "sha256:78a701966e15a5bc6fb00ade131f95c49b2ca6af4ce17e06fbef185202c20eaa"
 )
 
 type Study struct {

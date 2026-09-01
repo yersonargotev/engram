@@ -11,8 +11,9 @@
   "bootstrap_seed": "codex-useful-recall-v1-bootstrap",
   "bootstrap_quantiles": [0.025, 0.975],
   "unknowns": "reported-and-excluded-from-explicit-label-denominators",
-  "operational_failures": "reported-and-excluded-from-paired-quality-metrics; residual quality fields are invalid",
+  "operational_failures": "reported-and-excluded-from-paired quality metrics; residual metric or quality fields are invalid",
   "task_verifier_failures": "completed attempted rows retained in paired quality metrics and task_success_rate_percent",
+  "treatment_metric_availability": "available=false with zero numeric fields, denominator zero, and all affected runs unknown when no successful task supplies a value population",
   "label_sources": ["agent_explicit", "user_explicit", "evaluator"],
   "disagreements": "preserved; any harmful-or-noise label is counted conservatively",
   "three_arm_analysis": {

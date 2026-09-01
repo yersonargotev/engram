@@ -79,6 +79,33 @@ func TestCaptureConsentDefaultsOffAndProjectGrantControlsDiagnosticPromptCapture
 	}
 }
 
+func TestCaptureUsesObservedTimeSoLaterConsentCannotCaptureEarlierContent(t *testing.T) {
+	service := newTestService(t)
+	observedAt := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	grantedAt := observedAt.Add(time.Minute)
+	if err := service.store.UpsertCaptureConsent(store.CaptureConsent{
+		Project: "engram", ContentType: store.CaptureContentTypePrompt,
+		RetentionDays: store.DefaultDiagnosticRetentionDays, UpdatedAt: grantedAt,
+	}); err != nil {
+		t.Fatalf("seed later consent: %v", err)
+	}
+
+	earlier, err := service.Capture(CaptureInput{
+		Project: "engram", ContentType: store.CaptureContentTypePrompt,
+		SessionID: "session-before-consent", Content: "must-not-be-retroactively-captured", ObservedAt: observedAt,
+	})
+	if err != nil || earlier.Captured || earlier.ReasonCode != CaptureReasonConsentDisabled {
+		t.Fatalf("earlier capture = %+v err=%v, want disabled", earlier, err)
+	}
+	later, err := service.Capture(CaptureInput{
+		Project: "engram", ContentType: store.CaptureContentTypePrompt,
+		SessionID: "session-after-consent", Content: "eligible-after-consent", ObservedAt: grantedAt,
+	})
+	if err != nil || !later.Captured || later.ReasonCode != CaptureReasonCaptured {
+		t.Fatalf("later capture = %+v err=%v, want captured", later, err)
+	}
+}
+
 func TestCaptureSessionGrantExpiresAndProjectGrantRemainsIndependent(t *testing.T) {
 	service := newTestService(t)
 	now := time.Date(2026, time.August, 31, 18, 0, 0, 0, time.UTC)

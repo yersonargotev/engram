@@ -474,7 +474,7 @@ The command reports four independent capabilities:
 
 - `plugin`: the marketplace authority, release commit, and installed plugin identity are verified.
 - `mcp`: both the plugin MCP manifest and `[mcp_servers.engram]` are valid, the configured executable advertises `checkpoint record`, `checkpoint status`, and `checkpoint verify-stop`, and the MCP agent profile exposes `mem_checkpoint` plus `mem_checkpoint_status`. Homebrew installs use the stable `bin/engram` symlink instead of a versioned Cellar or Caskroom path.
-- `activation-cue`: the installed plugin contains the complete canonical checkpoint skill, projects its single short cue through model-visible `SessionStart.additionalContext`, and covers `startup`, `resume`, `clear`, and `compact` exactly once.
+- `activation-cue`: the installed plugin contains the complete canonical checkpoint skill, projects its single short cue through the same direct Core command on Unix and Windows, limits complete model-visible `SessionStart.additionalContext` to 4 KiB, and covers `startup`, `resume`, `clear`, and `compact` exactly once.
 - `verifier`: the installed plugin provides the exact synchronous Engram `Stop` commands for Unix and Windows, a three-second timeout, and the canonical `scripts/stop.sh` Unix launcher from the verified plugin tree. Windows delegates directly to the Engram CLI without an intermediate script.
 
 Setup is complete only when all four checks are `ready`. If the Codex CLI, plugin, MCP manifest, activation cue, or verifier is absent, the command reports an incomplete result instead of claiming success.
@@ -497,6 +497,7 @@ The command does not install, upgrade, repair, start an MCP server, rewrite conf
 - `marketplace` and `plugin`: registration is kept separate from installed/enabled plugin state; attributable source, requested ref, installed version, and resolved revision are included when known.
 - `mcp_configuration` and `mcp_readiness`: a present registration is kept separate from an executable that passes the non-starting checkpoint CLI preflight. Missing, invalid, customized, and unavailable states remain distinct; status does not claim that a live stdio transport was contacted.
 - `prompt_hook`, `session_hook`, `subagent_hook`, `activation_cue`, and `stop_verifier`: each canonical plugin contract is verified separately. The separate content-free `subagent_capture` object reports `default_disabled`, `consented`, `expired`, or `unavailable` without reading captured content or exposing session identifiers.
+- `lifecycle_canary`: the selected treatment, default/environment source, canonical cue readiness, injection limit, and content-free aggregate SessionStart latency/injected bytes. Missing observations remain `not_observed`; status never enables collection, Capture, or the canary.
 
 The stable `mode` field is conservative:
 
@@ -523,18 +524,39 @@ of carrying another protocol copy. Hook output uses
 `hookSpecificOutput.additionalContext`, so the cue reaches the model rather than
 appearing only as a UI warning.
 
+The canary is disabled by default, preserving the current bounded broad-context
+treatment. To select the cue-only treatment for a Codex process, set:
+
+```bash
+export ENGRAM_CODEX_RECALL_CANARY=targeted-recall
+```
+
+Use `targeted-recall-exact-session` only for the declared compact variant: its
+`startup`, `resume`, and `clear` events remain cue-only, while `compact` may add
+bounded context from the exact persisted session. Neither value enables
+Capture. An unknown value is not treated as a canary and is surfaced as
+`lifecycle_canary_treatment_invalid` by read-only status.
+
 On every actual user prompt, `UserPromptSubmit` forwards Codex's opaque
 `session_id` and `turn_id` as the checkpoint identity
 `(host=codex, session_id, root_turn_id)`. This identity path always runs for a
 valid event and never depends on prompt persistence. The prompt hook may offer
 content to Core, but Diagnostic capture is disabled by default and requires
-explicit local project/content-type consent. The `SubagentStop` hook delegates
+explicit local project/content-type consent. Prompt persistence receives the
+event only through a detached Core command's `stdin`, and eligibility is bound
+to the event's observed time so later consent cannot capture earlier content.
+The `SubagentStop` hook delegates
 directly to Core and defaults to no persistence; even with independent
 `subagent_output` consent it accepts only the bounded Diagnostic envelope
 described above. Neither hook selects a disposition or creates a checkpoint.
 Tool calls, subagents, compaction events, and continuations remain within the
 original root user turn; the root agent applies the canonical skill and
 finalizes once.
+
+The Unix and Windows manifests use the same direct Core commands for
+`SessionStart` and `UserPromptSubmit`; no Git Bash lifecycle wrapper is needed.
+`SessionEnd` remains a bounded transport-only close and never creates Memory,
+a proposal, checkpoint, summary, feedback, or model context.
 
 `Stop` delegates the complete event to
 `engram checkpoint verify-stop --host=codex`. The Go core queries the exact identity in the local checkpoint

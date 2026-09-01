@@ -25,13 +25,16 @@ func TestCodexSessionStartEmitsOneCanonicalCueAsModelContextForEverySource(t *te
 
 	manifest := readCodexHooksManifest(t, filepath.Join(pluginRoot, "hooks", "hooks.json"))
 	workspace := t.TempDir()
-	fakeBin := writeCodexActivationFakeBin(t)
+	binDir := buildCodexActivationCLI(t, root)
+	t.Setenv("ENGRAM_DATA_DIR", t.TempDir())
+	t.Setenv("ENGRAM_PROJECT", "engram")
+	t.Setenv("ENGRAM_CODEX_RECALL_CANARY", "targeted-recall")
 
 	for _, source := range []string{"startup", "resume", "clear", "compact"} {
 		t.Run(source, func(t *testing.T) {
 			command := matchingSessionStartCommand(t, manifest, source)
 			input := `{"session_id":"session-46","cwd":` + quoteJSON(t, workspace) + `,"source":` + quoteJSON(t, source) + `}`
-			output := runCodexHook(t, command, input, pluginRoot, fakeBin)
+			output := runCodexHook(t, command, input, pluginRoot, binDir)
 
 			var response codexHookResponse
 			if err := json.Unmarshal([]byte(output), &response); err != nil {
@@ -44,6 +47,9 @@ func TestCodexSessionStartEmitsOneCanonicalCueAsModelContextForEverySource(t *te
 				t.Fatalf("hook event name = %q, want SessionStart", response.HookSpecificOutput.HookEventName)
 			}
 			context := response.HookSpecificOutput.AdditionalContext
+			if context != cue {
+				t.Fatalf("canary %s injected historical context instead of cue only:\n%s", source, context)
+			}
 			if count := strings.Count(context, cue); count != 1 {
 				t.Fatalf("canonical cue appears %d times in model context, want exactly once\ncontext: %s", count, context)
 			}
@@ -69,10 +75,12 @@ func TestCodexUserPromptSubmitForwardsStableRootTurnIdentityAsModelContext(t *te
 		`,"turn_id":` + quoteJSON(t, rootTurnID) +
 		`,"cwd":` + quoteJSON(t, workspace) +
 		`,"prompt":"Implement issue 46"}`
-	fakeBin := writeCodexActivationFakeBin(t)
+	binDir := buildCodexActivationCLI(t, root)
+	t.Setenv("ENGRAM_DATA_DIR", t.TempDir())
+	t.Setenv("ENGRAM_PROJECT", "engram")
 
-	first := runCodexHook(t, command, input, pluginRoot, fakeBin)
-	second := runCodexHook(t, command, input, pluginRoot, fakeBin)
+	first := runCodexHook(t, command, input, pluginRoot, binDir)
+	second := runCodexHook(t, command, input, pluginRoot, binDir)
 	if first != second {
 		t.Fatalf("identity context changed for the same root turn\nfirst:  %s\nsecond: %s", first, second)
 	}
@@ -105,7 +113,8 @@ func TestCodexUserPromptSubmitDoesNotInventCheckpointIdentity(t *testing.T) {
 	pluginRoot := filepath.Join(root, "plugin", "codex")
 	manifest := readCodexHooksManifest(t, filepath.Join(pluginRoot, "hooks", "hooks.json"))
 	command := singleCodexHookCommand(t, manifest, "UserPromptSubmit")
-	fakeBin := writeCodexActivationFakeBin(t)
+	binDir := buildCodexActivationCLI(t, root)
+	t.Setenv("ENGRAM_DATA_DIR", t.TempDir())
 
 	for _, tc := range []struct {
 		name  string
@@ -118,7 +127,7 @@ func TestCodexUserPromptSubmitDoesNotInventCheckpointIdentity(t *testing.T) {
 		{name: "numeric turn", input: `{"session_id":"session-46","turn_id":46,"prompt":"hello"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			output := runCodexHook(t, command, tc.input, pluginRoot, fakeBin)
+			output := runCodexHook(t, command, tc.input, pluginRoot, binDir)
 			var response map[string]any
 			if err := json.Unmarshal([]byte(output), &response); err != nil {
 				t.Fatalf("invalid input produced invalid hook JSON: %v\noutput: %s", err, output)
@@ -127,6 +136,35 @@ func TestCodexUserPromptSubmitDoesNotInventCheckpointIdentity(t *testing.T) {
 				t.Fatalf("invalid input produced checkpoint identity context: %s", output)
 			}
 		})
+	}
+}
+
+func TestCodexLifecycleManifestUsesTheSameBoundedCoreCommandsOnUnixAndWindows(t *testing.T) {
+	root := repoRoot(t)
+	manifest := readCodexHooksManifest(t, filepath.Join(root, "plugin", "codex", "hooks", "hooks.json"))
+	const sessionCommand = `engram lifecycle session-start --host=codex --plugin-root="${PLUGIN_ROOT}"`
+	const promptCommand = "engram capture prompt-hook --host=codex"
+	for _, duplicateCompactEvent := range []string{"PreCompact", "PostCompact"} {
+		if len(manifest.Hooks[duplicateCompactEvent]) != 0 {
+			t.Fatalf("%s must not introduce a second compact-recovery path", duplicateCompactEvent)
+		}
+	}
+
+	for _, source := range []string{"startup", "resume", "clear", "compact"} {
+		matched := matchingSessionStartHook(t, manifest, source)
+		if matched.Command != sessionCommand || matched.CommandWindows != sessionCommand {
+			t.Errorf("SessionStart %s commands = %q / %q, want exact shared core command", source, matched.Command, matched.CommandWindows)
+		}
+		if matched.Timeout != 10 || matched.AdditionalContextLimit != 4096 {
+			t.Errorf("SessionStart %s timeout/limit = %d/%d, want 10/4096", source, matched.Timeout, matched.AdditionalContextLimit)
+		}
+	}
+	prompt := singleCodexHook(t, manifest, "UserPromptSubmit")
+	if prompt.Command != promptCommand || prompt.CommandWindows != promptCommand {
+		t.Fatalf("UserPromptSubmit commands = %q / %q, want exact shared core command", prompt.Command, prompt.CommandWindows)
+	}
+	if prompt.Timeout != 2 || prompt.AdditionalContextLimit != 1024 {
+		t.Fatalf("UserPromptSubmit timeout/limit = %d/%d, want 2/1024", prompt.Timeout, prompt.AdditionalContextLimit)
 	}
 }
 
@@ -170,8 +208,12 @@ func readCodexHooksManifest(t *testing.T, path string) hooksJSON {
 }
 
 func matchingSessionStartCommand(t *testing.T, manifest hooksJSON, source string) string {
+	return matchingSessionStartHook(t, manifest, source).Command
+}
+
+func matchingSessionStartHook(t *testing.T, manifest hooksJSON, source string) hookEntry {
 	t.Helper()
-	var commands []string
+	var hooks []hookEntry
 	for _, group := range manifest.Hooks["SessionStart"] {
 		matcher := group.Matcher
 		if matcher == "" {
@@ -186,30 +228,34 @@ func matchingSessionStartCommand(t *testing.T, manifest hooksJSON, source string
 		}
 		for _, hook := range group.Hooks {
 			if hook.Type == "command" {
-				commands = append(commands, hook.Command)
+				hooks = append(hooks, hook)
 			}
 		}
 	}
-	if len(commands) != 1 {
-		t.Fatalf("SessionStart source %q matched %d command hooks, want exactly one", source, len(commands))
+	if len(hooks) != 1 {
+		t.Fatalf("SessionStart source %q matched %d command hooks, want exactly one", source, len(hooks))
 	}
-	return commands[0]
+	return hooks[0]
 }
 
 func singleCodexHookCommand(t *testing.T, manifest hooksJSON, event string) string {
+	return singleCodexHook(t, manifest, event).Command
+}
+
+func singleCodexHook(t *testing.T, manifest hooksJSON, event string) hookEntry {
 	t.Helper()
-	var commands []string
+	var hooks []hookEntry
 	for _, group := range manifest.Hooks[event] {
 		for _, hook := range group.Hooks {
 			if hook.Type == "command" {
-				commands = append(commands, hook.Command)
+				hooks = append(hooks, hook)
 			}
 		}
 	}
-	if len(commands) != 1 {
-		t.Fatalf("%s has %d command hooks, want exactly one", event, len(commands))
+	if len(hooks) != 1 {
+		t.Fatalf("%s has %d command hooks, want exactly one", event, len(hooks))
 	}
-	return commands[0]
+	return hooks[0]
 }
 
 func quoteJSON(t *testing.T, value string) string {
@@ -237,18 +283,14 @@ func runCodexHook(t *testing.T, command, input, pluginRoot, fakeBin string) stri
 	return string(output)
 }
 
-func writeCodexActivationFakeBin(t *testing.T) string {
+func buildCodexActivationCLI(t *testing.T, root string) string {
 	t.Helper()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "curl")
-	script := `#!/bin/bash
-case "$*" in
-  *"/context?project="*) printf '%s\n' '{"context":"Prior Engram context."}' ;;
-esac
-exit 0
-`
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake curl: %v", err)
+	path := filepath.Join(dir, "engram")
+	build := exec.Command("go", "build", "-o", path, "./cmd/engram")
+	build.Dir = root
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build Engram lifecycle CLI: %v\n%s", err, output)
 	}
 	return dir
 }

@@ -49,7 +49,7 @@ Only primary sources were used:
 - Engram source and repository documentation:
   [`plugin/codex/hooks/hooks.json`](../../plugin/codex/hooks/hooks.json),
   [`plugin/codex/.mcp.json`](../../plugin/codex/.mcp.json),
-  [`plugin/codex/scripts/user-prompt-submit.sh`](../../plugin/codex/scripts/user-prompt-submit.sh),
+  [snapshot `plugin/codex/scripts/user-prompt-submit.sh`](https://github.com/yersonargotev/engram/blob/d65480ce8efa6cca5fb68a04b3a833902b7cc31a/plugin/codex/scripts/user-prompt-submit.sh),
   [`internal/mcp/mcp.go`](../../internal/mcp/mcp.go), and
   [`docs/AGENT-SETUP.md`](../AGENT-SETUP.md#codex).
 - Official OpenAI documentation for [MCP](https://developers.openai.com/codex/mcp/)

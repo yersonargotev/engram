@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yersonargotev/engram/internal/codexlifecycle"
 	projectpkg "github.com/yersonargotev/engram/internal/project"
 	"github.com/yersonargotev/engram/internal/protocolcontract"
+	"github.com/yersonargotev/engram/internal/recallbaseline"
 	"github.com/yersonargotev/engram/internal/store"
 	"golang.org/x/mod/semver"
 )
@@ -124,12 +126,53 @@ type CodexSubagentCaptureStatus struct {
 	ReasonCode    string                      `json:"reason_code"`
 }
 
+// CodexLifecycleMetricsState distinguishes an absent observation window from
+// an unavailable read-only baseline inspection.
+type CodexLifecycleMetricsState string
+
+const (
+	CodexLifecycleMetricsNotObserved CodexLifecycleMetricsState = "not_observed"
+	CodexLifecycleMetricsObserved    CodexLifecycleMetricsState = "observed"
+	CodexLifecycleMetricsUnavailable CodexLifecycleMetricsState = "unavailable"
+)
+
+// CodexLifecycleMetricsStatus is an aggregate, content-free snapshot. The v1
+// baseline does not attribute historical events to a treatment, so the source
+// remains explicit instead of implying treatment-level causality.
+type CodexLifecycleMetricsStatus struct {
+	State                    CodexLifecycleMetricsState `json:"state"`
+	Source                   string                     `json:"source"`
+	Events                   int64                      `json:"events"`
+	LatencySamples           int64                      `json:"latency_samples"`
+	P50LatencyMillis         float64                    `json:"p50_latency_ms"`
+	P95LatencyMillis         float64                    `json:"p95_latency_ms"`
+	ByteSamples              int64                      `json:"byte_samples"`
+	TotalInjectedUTF8Bytes   int64                      `json:"total_injected_utf8_bytes"`
+	AverageInjectedUTF8Bytes float64                    `json:"average_injected_utf8_bytes"`
+	ReasonCode               string                     `json:"reason_code"`
+}
+
+// CodexLifecycleCanaryStatus reports selection and readiness without changing
+// environment, Capture consent, plugin files, or local stores.
+type CodexLifecycleCanaryStatus struct {
+	Enabled                 bool                        `json:"enabled"`
+	Valid                   bool                        `json:"valid"`
+	Treatment               codexlifecycle.Treatment    `json:"treatment"`
+	SelectionSource         string                      `json:"selection_source"`
+	EnvironmentVariable     string                      `json:"environment_variable"`
+	ActivationCue           CodexIntegrationCheckStatus `json:"activation_cue"`
+	InjectionLimitUTF8Bytes int                         `json:"injection_limit_utf8_bytes"`
+	Metrics                 CodexLifecycleMetricsStatus `json:"metrics"`
+	ReasonCode              string                      `json:"reason_code"`
+}
+
 // CodexIntegrationStatus is a deterministic, read-only capability snapshot.
 type CodexIntegrationStatus struct {
 	SchemaVersion   string                               `json:"schema_version"`
 	Agent           string                               `json:"agent"`
 	Mode            CodexOperatingMode                   `json:"mode"`
 	Compatibility   protocolcontract.CompatibilityReport `json:"compatibility"`
+	LifecycleCanary CodexLifecycleCanaryStatus           `json:"lifecycle_canary"`
 	PromptCapture   CodexPromptCaptureStatus             `json:"prompt_capture"`
 	SubagentCapture CodexSubagentCaptureStatus           `json:"subagent_capture"`
 	Checks          []CodexIntegrationCheck              `json:"checks"`
@@ -227,10 +270,13 @@ func inspectCodexStatus(runningVersion, runningRevision, workingDirectory string
 		codexPluginCapabilityCheck(plugin, "subagent_hook", plugin.Capabilities.SubagentHookReady),
 	)
 
+	now := time.Now().UTC()
 	promptCapture := inspectCodexPromptCaptureStatus(workingDirectory, checks)
-	subagentCapture := inspectCodexSubagentCaptureStatus(workingDirectory, checks, time.Now().UTC())
+	subagentCapture := inspectCodexSubagentCaptureStatus(workingDirectory, checks, now)
 	checks = append(checks, codexPromptCaptureCheck(promptCapture))
 	checks = append(checks, codexSubagentCaptureCheck(subagentCapture))
+	lifecycleCanary := inspectCodexLifecycleCanaryStatus(checks, now)
+	checks = append(checks, codexLifecycleCanaryCheck(lifecycleCanary))
 	mode := deriveCodexOperatingMode(checks)
 	if mode == CodexModeCheckpointReady && compatibility.Status != protocolcontract.CompatibilityReady {
 		mode = CodexModePartialPlugin
@@ -240,10 +286,106 @@ func inspectCodexStatus(runningVersion, runningRevision, workingDirectory string
 		Agent:           "codex",
 		Mode:            mode,
 		Compatibility:   compatibility,
+		LifecycleCanary: lifecycleCanary,
 		PromptCapture:   promptCapture,
 		SubagentCapture: subagentCapture,
 		Checks:          checks,
 	}, nil
+}
+
+func inspectCodexLifecycleCanaryStatus(checks []CodexIntegrationCheck, now time.Time) CodexLifecycleCanaryStatus {
+	rawTreatment := os.Getenv(codexlifecycle.EnvTreatment)
+	selection := codexlifecycle.SelectTreatment(rawTreatment)
+	status := CodexLifecycleCanaryStatus{
+		Enabled: selection.Enabled, Valid: selection.Valid, Treatment: selection.Treatment,
+		SelectionSource: "default", EnvironmentVariable: codexlifecycle.EnvTreatment,
+		ActivationCue: CodexCheckUnavailable, InjectionLimitUTF8Bytes: codexlifecycle.MaxInjectedUTF8Bytes,
+		Metrics: CodexLifecycleMetricsStatus{
+			State: CodexLifecycleMetricsNotObserved, Source: "recall_baseline_session_start",
+			ReasonCode: "lifecycle_metrics_not_observed",
+		},
+		ReasonCode: selection.ReasonCode,
+	}
+	if strings.TrimSpace(rawTreatment) != "" {
+		status.SelectionSource = "environment"
+	}
+	for _, check := range checks {
+		if check.Capability == "activation_cue" {
+			status.ActivationCue = check.Status
+			break
+		}
+	}
+	dataDir := os.Getenv("ENGRAM_DATA_DIR")
+	if dataDir == "" {
+		home, err := userHomeDir()
+		if err != nil || strings.TrimSpace(home) == "" {
+			status.Metrics.State = CodexLifecycleMetricsUnavailable
+			status.Metrics.ReasonCode = "lifecycle_metrics_store_unavailable"
+			return status
+		}
+		dataDir = filepath.Join(home, ".engram")
+	}
+	report, observed, err := recallbaseline.InspectOperationReadOnly(
+		recallbaseline.Config{DataDir: dataDir, Now: func() time.Time { return now }},
+		recallbaseline.SurfaceLifecycle, "session_start",
+	)
+	if err != nil {
+		status.Metrics.State = CodexLifecycleMetricsUnavailable
+		status.Metrics.ReasonCode = "lifecycle_metrics_inspection_failed"
+		return status
+	}
+	if !observed {
+		return status
+	}
+	status.Metrics.State = CodexLifecycleMetricsObserved
+	status.Metrics.ReasonCode = "lifecycle_metrics_observed"
+	status.Metrics.Events = report.Events
+	status.Metrics.LatencySamples = report.LatencySamples
+	status.Metrics.P50LatencyMillis = report.P50LatencyMillis
+	status.Metrics.P95LatencyMillis = report.P95LatencyMillis
+	status.Metrics.ByteSamples = report.ByteSamples
+	status.Metrics.TotalInjectedUTF8Bytes = report.TotalUTF8Bytes
+	if report.ByteSamples > 0 {
+		status.Metrics.AverageInjectedUTF8Bytes = float64(report.TotalUTF8Bytes) / float64(report.ByteSamples)
+	}
+	return status
+}
+
+func codexLifecycleCanaryCheck(status CodexLifecycleCanaryStatus) CodexIntegrationCheck {
+	checkStatus := CodexCheckReady
+	reasonCode := "lifecycle_canary_disabled"
+	reason := "The Codex lifecycle canary is disabled; the existing broad-context treatment remains selected."
+	if !status.Valid {
+		checkStatus = CodexCheckInvalid
+		reasonCode = "lifecycle_canary_treatment_invalid"
+		reason = "The configured Codex lifecycle canary treatment is not declared and was not enabled."
+	} else if status.ActivationCue != CodexCheckReady {
+		checkStatus = status.ActivationCue
+		reasonCode = "lifecycle_activation_cue_unavailable"
+		reason = "The selected lifecycle treatment cannot be ready because the canonical activation cue is unavailable."
+	} else if status.Enabled {
+		reasonCode = "lifecycle_canary_selected"
+		reason = "A declared opt-in Codex lifecycle canary treatment is selected."
+	}
+	evidence := []CodexIntegrationEvidence{
+		codexEvidence("enabled", strconv.FormatBool(status.Enabled)),
+		codexEvidence("valid", strconv.FormatBool(status.Valid)),
+		codexEvidence("treatment", string(status.Treatment)),
+		codexEvidence("selection_source", status.SelectionSource),
+		codexEvidence("activation_cue", string(status.ActivationCue)),
+		codexEvidence("injection_limit_utf8_bytes", strconv.Itoa(status.InjectionLimitUTF8Bytes)),
+		codexEvidence("metrics_state", string(status.Metrics.State)),
+	}
+	if status.Metrics.State == CodexLifecycleMetricsObserved {
+		evidence = append(evidence,
+			codexEvidence("observed_events", strconv.FormatInt(status.Metrics.Events, 10)),
+			codexEvidence("p50_latency_ms", strconv.FormatFloat(status.Metrics.P50LatencyMillis, 'f', -1, 64)),
+			codexEvidence("p95_latency_ms", strconv.FormatFloat(status.Metrics.P95LatencyMillis, 'f', -1, 64)),
+			codexEvidence("total_injected_utf8_bytes", strconv.FormatInt(status.Metrics.TotalInjectedUTF8Bytes, 10)),
+			codexEvidence("average_injected_utf8_bytes", strconv.FormatFloat(status.Metrics.AverageInjectedUTF8Bytes, 'f', -1, 64)),
+		)
+	}
+	return codexStatusCheck("lifecycle_canary", checkStatus, reasonCode, reason, evidence...)
 }
 
 func codexSubagentCaptureCheck(status CodexSubagentCaptureStatus) CodexIntegrationCheck {

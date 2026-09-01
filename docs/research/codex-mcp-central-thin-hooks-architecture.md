@@ -14,7 +14,7 @@ The product objective is not to preserve the current architecture. It is to maxi
 
 The current repository already establishes several strong foundations:
 
-- the plugin skill is explicitly canonical, and its cue is extracted rather than duplicated ([skill](../../plugin/codex/skills/memory/SKILL.md#L8-L13), [helper](../../plugin/codex/scripts/_checkpoint.sh#L1-L31));
+- the plugin skill is explicitly canonical, and its cue is extracted rather than duplicated ([skill](../../plugin/codex/skills/memory/SKILL.md#L8-L13), [snapshot helper](https://github.com/yersonargotev/engram/blob/79a90fbc3a68b053f8260e1d16d84e15606fc5ef/plugin/codex/scripts/_checkpoint.sh#L1-L31));
 - `(host, session_id, root_turn_id)` is an opaque, unique, local checkpoint key ([store](../../internal/store/checkpoint.go#L32-L42), [schema](../../internal/store/checkpoint.go#L96-L112));
 - `Stop` is already a four-line adapter into the core verifier ([stop.sh](../../plugin/codex/scripts/stop.sh#L1-L4)); and
 - `SessionEnd` only closes the session today; it does not create a Memory or summary ([session-end.sh](../../plugin/codex/scripts/session-end.sh#L1-L40)).
@@ -23,8 +23,8 @@ However, four exact policy conflicts should be fixed before calling the architec
 
 1. MCP initialization still says `mem_session_summary` is mandatory before saying “done” and says to save after **any** decision, fix, discovery, or convention ([mcp.go](../../internal/mcp/mcp.go#L186-L215)). The canonical skill instead requires one terminal root-turn checkpoint, selective recall, and a value/safety rubric ([skill](../../plugin/codex/skills/memory/SKILL.md#L15-L90)). These are competing completion and persistence policies.
 2. The repository-scoped `engram-memory-protocol` skill independently orders immediate `mem_save` calls and a mandatory `mem_session_summary` at session close ([project skill](../../skills/memory-protocol/SKILL.md)). Because `AGENTS.md` activates that skill for decisions and session closure, this is an active agent-policy conflict, not stale documentation.
-3. `UserPromptSubmit` currently persists every non-empty full prompt best-effort by default ([user-prompt-submit.sh](../../plugin/codex/scripts/user-prompt-submit.sh#L23-L40)). Prompt content is searchable/sync-capable product data, not local-only checkpoint metadata ([schema](../../internal/store/store.go#L833-L859), [FTS](../../internal/store/store.go#L1151-L1179), [sync mutation](../../internal/store/store.go#L2857-L2907)). Full-prompt capture therefore must become explicit opt-in, independently of opaque identity delivery.
-4. `SubagentStop` currently posts the complete last subagent message to passive extraction by default ([subagent-stop.sh](../../plugin/codex/scripts/subagent-stop.sh#L18-L39)). That contradicts the canonical rule that only the root agent finalizes and increases duplication, privacy, and latency risk. Disable it by default; if retained, accept only an explicit bounded learning envelope, never infer from an entire subagent answer.
+3. `UserPromptSubmit` currently persists every non-empty full prompt best-effort by default ([snapshot user-prompt-submit.sh](https://github.com/yersonargotev/engram/blob/79a90fbc3a68b053f8260e1d16d84e15606fc5ef/plugin/codex/scripts/user-prompt-submit.sh#L23-L40)). Prompt content is searchable/sync-capable product data, not local-only checkpoint metadata ([schema](../../internal/store/store.go#L833-L859), [FTS](../../internal/store/store.go#L1151-L1179), [sync mutation](../../internal/store/store.go#L2857-L2907)). Full-prompt capture therefore must become explicit opt-in, independently of opaque identity delivery.
+4. `SubagentStop` currently posts the complete last subagent message to passive extraction by default ([snapshot subagent-stop.sh](https://github.com/yersonargotev/engram/blob/79a90fbc3a68b053f8260e1d16d84e15606fc5ef/plugin/codex/scripts/subagent-stop.sh#L18-L39)). That contradicts the canonical rule that only the root agent finalizes and increases duplication, privacy, and latency risk. Disable it by default; if retained, accept only an explicit bounded learning envelope, never infer from an entire subagent answer.
 
 The highest-priority implementation sequence is: (P0) align every agent-facing policy with the checkpoint skill; (P0) make full-prompt and subagent-output capture opt-in; (P1) make startup/resume/clear cue-only and evaluate exact-session compaction recovery separately; (P1) add local-only usefulness and noise telemetry; (P2) simplify the 20-tool agent profile and version reporting. Preserve `Stop` as the sole synchronous “exactly one checkpoint” verifier unless measured evidence shows a better Codex boundary.
 
@@ -178,10 +178,10 @@ The canonical plugin skill defines one checkpoint per settled root user turn, op
 
 Current lifecycle behavior is heavier than the target:
 
-- `SessionStart` starts an HTTP server, creates a session, may import a repository manifest in the background, fetches full project context, and emits cue plus context ([session-start.sh](../../plugin/codex/scripts/session-start.sh#L20-L136)).
-- compact recovery re-creates the session and fetches context again ([post-compaction.sh](../../plugin/codex/scripts/post-compaction.sh#L14-L39)).
-- prompt submission saves the full prompt and separately emits opaque identity ([user-prompt-submit.sh](../../plugin/codex/scripts/user-prompt-submit.sh#L23-L55)).
-- subagent stop sends the whole last assistant message to passive capture ([subagent-stop.sh](../../plugin/codex/scripts/subagent-stop.sh#L18-L39)).
+- `SessionStart` starts an HTTP server, creates a session, may import a repository manifest in the background, fetches full project context, and emits cue plus context ([snapshot session-start.sh](https://github.com/yersonargotev/engram/blob/79a90fbc3a68b053f8260e1d16d84e15606fc5ef/plugin/codex/scripts/session-start.sh#L20-L136)).
+- compact recovery re-creates the session and fetches context again ([snapshot post-compaction.sh](https://github.com/yersonargotev/engram/blob/79a90fbc3a68b053f8260e1d16d84e15606fc5ef/plugin/codex/scripts/post-compaction.sh#L14-L39)).
+- prompt submission saves the full prompt and separately emits opaque identity ([snapshot user-prompt-submit.sh](https://github.com/yersonargotev/engram/blob/79a90fbc3a68b053f8260e1d16d84e15606fc5ef/plugin/codex/scripts/user-prompt-submit.sh#L23-L55)).
+- subagent stop sends the whole last assistant message to passive capture ([snapshot subagent-stop.sh](https://github.com/yersonargotev/engram/blob/79a90fbc3a68b053f8260e1d16d84e15606fc5ef/plugin/codex/scripts/subagent-stop.sh#L18-L39)).
 - Stop delegates to the binary verifier ([stop.sh](../../plugin/codex/scripts/stop.sh#L1-L4)).
 - SessionEnd only marks the existing session ended ([session-end.sh](../../plugin/codex/scripts/session-end.sh#L26-L40)).
 

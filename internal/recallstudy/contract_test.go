@@ -112,7 +112,7 @@ func TestFrozenStudyArtifactsRejectContentAndSidecarTampering(t *testing.T) {
 	artifacts := []struct{ name, revision string }{
 		{name: "policy", revision: frozenPolicyRevision},
 		{name: "metrics", revision: frozenMetricRevision},
-		{name: "task-protocol", revision: "sha256:669c2261f43f946dac302605401694c827d255693b0ee3688bac7871c12f148c"},
+		{name: "task-protocol", revision: "sha256:f579656556750b9f2de67d27c1736a728d17878bffa67e8b362baef55885e345"},
 	}
 	for _, artifact := range artifacts {
 		t.Run(artifact.name, func(t *testing.T) {
@@ -181,7 +181,7 @@ func validContract() Contract {
 		Randomization: RandomizationContract{Method: "sha256-seeded-block-order-v1", Seed: "codex-useful-recall-v1", PairingKey: "sampling_unit_id", Stratification: "task_class"},
 		Model:         ModelContract{Provider: "openai", Name: "gpt-5.6-luna", ReasoningEffort: "low", CodexVersion: "0.152.0"},
 		Repository:    RepositoryContract{URL: "https://github.com/yersonargotev/engram.git", Revision: frozenSourceRevision},
-		TaskProtocol:  TaskProtocolContract{Version: "recall-task-protocol-v1", ArtifactSHA256: "669c2261f43f946dac302605401694c827d255693b0ee3688bac7871c12f148c", Execution: "fresh-ephemeral-checkout", FixedEnvironment: true, OperationalFailures: "separate-from-recall-quality"},
+		TaskProtocol:  TaskProtocolContract{Version: "recall-task-protocol-v1", ArtifactSHA256: "f579656556750b9f2de67d27c1736a728d17878bffa67e8b362baef55885e345", Execution: "fresh-ephemeral-checkout", FixedEnvironment: true, OperationalFailures: "separate-from-recall-quality"},
 		EvaluationRubric: EvaluationRubricContract{
 			Version:       "recall-labels-v1",
 			Utility:       []string{"decisive", "orienting", "duplicate", "unused", "unknown"},

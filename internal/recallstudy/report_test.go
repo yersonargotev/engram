@@ -22,7 +22,7 @@ func TestReportPreservesLabelsUnknownsDisagreementsAndOnlySharesAggregates(t *te
 	for index, run := range plan {
 		row := RunRow{
 			RunID: run.RunID, SamplingUnitID: run.SamplingUnitID, TaskClass: run.TaskClass, Treatment: run.Treatment,
-			Outcome: "completed", RecallResultCount: 0, FalseEmptyReview: "not_applicable",
+			Outcome: "completed", TaskOutcome: "succeeded", RecallResultCount: 0, FalseEmptyReview: "not_applicable",
 			CheckpointSucceeded: true, AutomaticInjectedUTF8Bytes: 1000, StartupCompactLatencyMillis: 100, TimeToUsefulMillis: 200,
 		}
 		if run.Treatment == "targeted-recall" {
@@ -208,20 +208,32 @@ func TestDerivedMetricsMatchIndependentReferenceVector(t *testing.T) {
 		}
 		return metric
 	}
-	assertMetric("checkpoint_rate_delta_pp", -10, 54, 60, 0)
-	assertMetric("stop_growth_pp", 5, 3, 60, 0)
+	checkpointVector := assertMetric("checkpoint_rate_delta_pp", -10, 54, 60, 0)
+	assertClose(t, checkpointVector.CILower, -18.333333333333332)
+	assertClose(t, checkpointVector.CIUpper, -3.3333333333333335)
+	stopVector := assertMetric("stop_growth_pp", 5, 3, 60, 0)
+	assertClose(t, stopVector.CILower, 0)
+	assertClose(t, stopVector.CIUpper, 11.666666666666666)
 	assertMetric("automatic_injected_bytes_reduction_percent", 50, 30000, 60000, 0)
-	assertMetric("startup_compact_p95_reduction_percent", 40, 3600, 6000, 0)
+	startupVector := assertMetric("startup_compact_p95_reduction_percent", 40, 3600, 6000, 0)
+	assertClose(t, startupVector.CILower, 40)
+	assertClose(t, startupVector.CIUpper, 40)
 	assertMetric("recall_p95_ms", 156, 156, 60, 0)
-	assertMetric("utility_relative_improvement_percent", 50, 30, 40, 0)
+	utilityVector := assertMetric("utility_relative_improvement_percent", 50, 30, 40, 0)
+	assertClose(t, utilityVector.CILower, 15.220483641536276)
+	assertClose(t, utilityVector.CIUpper, 101.2987012987013)
 	noise := assertMetric("noise_rate_percent", 25, 10, 40, 0)
 	assertClose(t, noise.CILower, 14.187118639096303)
 	assertClose(t, noise.CIUpper, 40.19396142076803)
-	assertMetric("noise_improvement_pp", 25, 10, 40, 0)
+	noiseImprovementVector := assertMetric("noise_improvement_pp", 25, 10, 40, 0)
+	assertClose(t, noiseImprovementVector.CILower, 8.636363636363637)
+	assertClose(t, noiseImprovementVector.CIUpper, 40.55555555555556)
 	harm := assertMetric("harm_rate_percent", 5, 2, 40, 0)
 	assertClose(t, harm.CILower, 1.3820667386148344)
 	assertClose(t, harm.CIUpper, 16.503877369140962)
-	assertMetric("harm_difference_pp", -5, 2, 40, 0)
+	harmDifferenceVector := assertMetric("harm_difference_pp", -5, 2, 40, 0)
+	assertClose(t, harmDifferenceVector.CILower, -15)
+	assertClose(t, harmDifferenceVector.CIUpper, 5.526315789473683)
 	falseEmpty := assertMetric("false_empty_rate_percent", 100.0/15.0, 1, 15, 5)
 	assertClose(t, falseEmpty.CILower, 1.1866895493268554)
 	assertClose(t, falseEmpty.CIUpper, 29.816529873780027)
@@ -239,13 +251,24 @@ func TestDerivedMetricsMatchIndependentReferenceVector(t *testing.T) {
 
 	failed := rows
 	failed.Rows = append([]RunRow(nil), rows.Rows...)
+	failedIndex := -1
 	for index := range failed.Rows {
 		if failed.Rows[index].Treatment == "targeted-recall" {
+			failedIndex = index
 			failed.Rows[index].Outcome = "operational_failure"
+			failed.Rows[index].TaskOutcome = "not_applicable"
 			failed.Rows[index].OmissionCode = "runner_process_failed"
 			break
 		}
 	}
+	if _, err := study.Report(failed); err == nil || !strings.Contains(err.Error(), "contains quality evidence") {
+		t.Fatalf("operational failure retained quality evidence: %v", err)
+	}
+	failed.Rows[failedIndex].RecallResultCount = 0
+	failed.Rows[failedIndex].Assessments = nil
+	failed.Rows[failedIndex].FalseEmptyReview = "not_applicable"
+	failed.Rows[failedIndex].RecallLatencyMillis = 0
+	failed.Rows[failedIndex].TimeToUsefulMillis = 0
 	failedReport, err := study.Report(failed)
 	if err != nil {
 		t.Fatal(err)
@@ -253,6 +276,19 @@ func TestDerivedMetricsMatchIndependentReferenceVector(t *testing.T) {
 	checkpoint := metricByID(t, failedReport.Gates, "checkpoint_rate_delta_pp")
 	if checkpoint.Denominator != 59 || checkpoint.Unknown != 1 {
 		t.Fatalf("operational failure was not excluded and reported: %+v", checkpoint)
+	}
+
+	taskFailed := rows
+	taskFailed.Rows = append([]RunRow(nil), rows.Rows...)
+	taskFailed.Rows[failedIndex].TaskOutcome = "failed"
+	taskFailed.Rows[failedIndex].TimeToUsefulMillis = 0
+	taskFailedReport, err := study.Report(taskFailed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskSuccess := treatmentMetricByID(t, taskFailedReport, "targeted-recall", "task_success_rate_percent")
+	if taskSuccess.Denominator != 60 || taskSuccess.Numerator != 59 || taskSuccess.Unknown != 0 || taskFailedReport.Labels.TaskFailed != 1 {
+		t.Fatalf("attempted task failure disappeared from quality evidence: metric=%+v labels=%+v", taskSuccess, taskFailedReport.Labels)
 	}
 }
 
@@ -290,7 +326,7 @@ func TestReportRejectsTreatmentContradictionsAndSupportsFrozenHeldOutShape(t *te
 	calibrationRows := completeRows(study, calibration, mustPlan(t, study, calibration))
 	combined := RowSet{SchemaVersion: RowSetSchemaVersion, StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
 		ContractSHA256: study.Hash, CohortID: CombinedCohortID, Rows: append(calibrationRows.Rows, heldOutRows.Rows...)}
-	if report, err := fastStudy.Report(combined); err != nil || report.CohortID != CombinedCohortID || report.Labels.RunsObserved != 1551 || len(report.Treatments) != 31 {
+	if report, err := fastStudy.Report(combined); err != nil || report.CohortID != CombinedCohortID || report.Labels.RunsObserved != 1551 || len(report.Treatments) != 34 {
 		t.Fatalf("combined Report() report=%+v error=%v", report, err)
 	}
 }
@@ -318,7 +354,7 @@ func completeRows(study *Study, manifest *Manifest, plan []PlannedRun) RowSet {
 	rows := RowSet{SchemaVersion: RowSetSchemaVersion, StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion, ContractSHA256: study.Hash, CohortID: manifest.CohortID}
 	for _, run := range plan {
 		row := RunRow{RunID: run.RunID, SamplingUnitID: run.SamplingUnitID, TaskClass: run.TaskClass, Treatment: run.Treatment,
-			Outcome: "completed", FalseEmptyReview: "not_applicable", CheckpointSucceeded: true,
+			Outcome: "completed", TaskOutcome: "succeeded", FalseEmptyReview: "not_applicable", CheckpointSucceeded: true,
 			AutomaticInjectedUTF8Bytes: 1000, StartupCompactLatencyMillis: 100, TimeToUsefulMillis: 200}
 		if run.Treatment == "targeted-recall" {
 			row.AutomaticInjectedUTF8Bytes = 500
@@ -333,17 +369,6 @@ func completeRows(study *Study, manifest *Manifest, plan []PlannedRun) RowSet {
 		rows.Rows = append(rows.Rows, row)
 	}
 	return rows
-}
-
-func gateByID(t *testing.T, report GateReport, id string) GateResult {
-	t.Helper()
-	for _, gate := range report.Gates {
-		if gate.ID == id {
-			return gate
-		}
-	}
-	t.Fatalf("gate %q not found", id)
-	return GateResult{}
 }
 
 func metricByID(t *testing.T, report GateReport, id string) MetricEvidence {

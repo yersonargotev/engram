@@ -4,38 +4,132 @@
   "study_version": "v1",
   "source_revision": "105778d820029a2326043739fd676647e5c037f6",
   "input_schema": "recall-task-input-v1",
-  "input_canonicalization": "utf8-nul-delimited-required-fields-v1",
+  "input_canonicalization": "utf8-nul-delimited-component-hashes-v1",
   "input_commitment_domain": "recall-task-input-v1",
-  "required_input_fields": ["study_id", "study_version", "cohort_id", "sampling_unit_id", "task_class", "source_revision", "fixture_seed"],
-  "fixture_selection": {
-    "method": "sha256-ranked-source-inventory-v1",
-    "inventory": "sorted-regular-files-from-frozen-git-tree",
-    "seed": "fixture_seed = SHA256(cohort selection seed || sampling_unit_id || task_class)",
-    "path_exclusions": [".git", "evals/recall-study", "vendor"],
-    "mutation": "none"
+  "input_commitment_fields_in_order": [
+    "literal:recall-task-input-v1",
+    "study_id",
+    "study_version",
+    "cohort_id",
+    "sampling_unit_id",
+    "task_class",
+    "source_revision",
+    "task_protocol_sha256",
+    "fixture_seed",
+    "fixture_sha256",
+    "instruction_sha256",
+    "verifier_sha256",
+    "expected_result_sha256"
+  ],
+  "component_commitments": {
+    "fixture_sha256": "SHA256(fixture_path || NUL || fixture_utf8)",
+    "instruction_sha256": "SHA256(instruction_utf8)",
+    "verifier_sha256": "SHA256(verifier_id || NUL || verifier_utf8)",
+    "expected_result_sha256": "SHA256(expected_result_utf8)",
+    "input_sha256": "SHA256(the input_commitment_fields_in_order joined by NUL)"
+  },
+  "fixture_generation": {
+    "method": "recall-disposable-fixture-v1",
+    "seed": "fixture_seed = SHA256(cohort selection seed || NUL || sampling_unit_id || NUL || task_class)",
+    "tokens": "for each x in the literal UTF-8 strings a, b, and c: token x = first 16 lowercase hexadecimal characters of SHA256(UTF8(x) || NUL || UTF8(fixture_seed))",
+    "encoding": "the exact UTF-8 templates below with lowercase token text and one terminal LF",
+    "privacy": "synthetic-disposable-no-user-or-session-content"
   },
   "task_templates": [
-    {"task_class": "repository-question", "objective": "Answer the selected bounded repository question using maintained source and runtime evidence."},
-    {"task_class": "implementation", "objective": "Implement the selected bounded behavior change and preserve public compatibility."},
-    {"task_class": "diagnosis", "objective": "Diagnose the selected disposable failing scenario and identify its root cause."},
-    {"task_class": "verification", "objective": "Verify the selected behavior and report evidence for the observable contract."},
-    {"task_class": "routine-non-durable", "objective": "Complete the selected self-contained maintenance task without creating durable project knowledge."}
+    {
+      "task_class": "repository-question",
+      "fixture_path": "docs/recall-fact.json",
+      "fixture_utf8": "{\"fact_key\":\"<a>\",\"fact_value\":\"<b>\"}\n",
+      "instruction_utf8": "Read docs/recall-fact.json and return the fact_value for fact_key <a> as {\"answer\":\"VALUE\"}.\n",
+      "verifier_id": "exact-json-answer-v1",
+      "verifier_utf8": "parse one JSON object; require exactly the string field answer; compare it byte-for-byte with the expected answer",
+      "expected_result_utf8": "{\"answer\":\"<b>\"}\n"
+    },
+    {
+      "task_class": "implementation",
+      "fixture_path": "config/recall-setting.json",
+      "fixture_utf8": "{\"current\":\"<a>\",\"required\":\"<b>\"}\n",
+      "instruction_utf8": "Update config/recall-setting.json so current equals required; preserve exactly those two keys and emit no other file changes.\n",
+      "verifier_id": "exact-file-json-v1",
+      "verifier_utf8": "parse the named fixture as JSON; require exactly current and required; require both values equal the frozen expected value; reject any other changed path",
+      "expected_result_utf8": "{\"current\":\"<b>\",\"required\":\"<b>\"}\n"
+    },
+    {
+      "task_class": "diagnosis",
+      "fixture_path": "diagnostics/recall-case.json",
+      "fixture_utf8": "{\"expected\":\"<a>\",\"observed\":\"<b>\",\"root_cause_code\":\"<c>\"}\n",
+      "instruction_utf8": "Diagnose diagnostics/recall-case.json and return its root cause as {\"root_cause_code\":\"CODE\"}; do not modify files.\n",
+      "verifier_id": "exact-json-root-cause-v1",
+      "verifier_utf8": "require no file changes; parse one JSON object; require exactly root_cause_code; compare it byte-for-byte with the frozen code",
+      "expected_result_utf8": "{\"root_cause_code\":\"<c>\"}\n"
+    },
+    {
+      "task_class": "verification",
+      "fixture_path": "verification/recall-check.json",
+      "fixture_utf8": "{\"expected_sha256\":\"<a>\",\"actual_sha256\":\"<a>\"}\n",
+      "instruction_utf8": "Verify verification/recall-check.json and return {\"matches\":true} only when the two digests match; do not modify files.\n",
+      "verifier_id": "exact-json-verdict-v1",
+      "verifier_utf8": "require no file changes; parse one JSON object; require exactly the boolean field matches; compare with the equality of the frozen fixture digests",
+      "expected_result_utf8": "{\"matches\":true}\n"
+    },
+    {
+      "task_class": "routine-non-durable",
+      "fixture_path": "maintenance/recall-items.json",
+      "fixture_utf8": "{\"items\":[\"<c>\",\"<a>\",\"<b>\"]}\n",
+      "instruction_utf8": "Sort maintenance/recall-items.json items in ascending byte order; preserve exactly one items key and emit no other file changes.\n",
+      "verifier_id": "exact-sorted-json-v1",
+      "verifier_utf8": "parse the named fixture as JSON; require exactly items; require the frozen three strings in ascending byte order; reject any other changed path",
+      "expected_result_utf8": "{\"items\":[\"<lexicographic-min(a,b,c)>\",\"<lexicographic-middle(a,b,c)>\",\"<lexicographic-max(a,b,c)>\"]}\n"
+    }
   ],
   "launch": {
     "working_tree": "fresh-ephemeral-checkout",
-    "network": "disabled-unless-task-fixture-declares-required",
+    "network": "disabled",
     "timeout_seconds": 900,
     "model": "gpt-5.6-luna",
     "reasoning_effort": "low",
     "codex_version": "0.152.0",
-    "environment_allowlist": ["HOME", "PATH", "TMPDIR", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"]
+    "environment_allowlist": [
+      "HOME",
+      "PATH",
+      "TMPDIR",
+      "XDG_CACHE_HOME",
+      "XDG_CONFIG_HOME",
+      "XDG_DATA_HOME"
+    ]
   },
-  "task_success_observation": "executor-exit-zero-and-frozen-verifier-pass",
+  "task_success_observation": "outcome completed, task_outcome succeeded, executor exit zero, and frozen verifier pass",
+  "task_failure_observation": "outcome completed, task_outcome failed, executor exit zero, and frozen verifier fail; retained in quality metrics and task-success rate",
   "failure_mapping": [
-    {"condition": "timeout", "outcome": "operational_failure", "omission_code": "runner_timeout"},
-    {"condition": "process_exit_nonzero", "outcome": "operational_failure", "omission_code": "runner_process_failed"},
-    {"condition": "fixture_verification_failed", "outcome": "operational_failure", "omission_code": "fixture_verification_failed"},
-    {"condition": "task_not_attempted", "outcome": "omitted", "omission_code": "task_not_attempted"}
+    {
+      "condition": "timeout",
+      "outcome": "operational_failure",
+      "task_outcome": "not_applicable",
+      "omission_code": "runner_timeout"
+    },
+    {
+      "condition": "process_exit_nonzero",
+      "outcome": "operational_failure",
+      "task_outcome": "not_applicable",
+      "omission_code": "runner_process_failed"
+    },
+    {
+      "condition": "prelaunch_fixture_integrity_mismatch",
+      "outcome": "operational_failure",
+      "task_outcome": "not_applicable",
+      "omission_code": "fixture_integrity_mismatch"
+    },
+    {
+      "condition": "postexecution_task_verifier_failed",
+      "outcome": "completed",
+      "task_outcome": "failed"
+    },
+    {
+      "condition": "task_not_attempted",
+      "outcome": "omitted",
+      "task_outcome": "not_applicable",
+      "omission_code": "task_not_attempted"
+    }
   ],
   "cleanup": "remove-each-ephemeral-checkout-and-local-agent-state-after-row-persistence"
 }

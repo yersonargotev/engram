@@ -21,17 +21,20 @@ The immutable artifacts live in `evals/recall-study/v1/`:
 - `policy.json`, `metrics.json`, and their sidecars provide content-addressed
   treatment and analysis specifications;
 - `task-protocol.json` and its sidecar freeze task-input canonicalization,
-  fixture selection, launch environment, timeout, success observation, failure
-  mapping, and cleanup;
+  exact synthetic fixture, instruction, verifier and expected-result templates,
+  launch environment, timeout, success observation, failure mapping, and cleanup;
 - `calibration/manifest.json` and its sidecar allocate blocks 1–60;
 - `held-out/manifest.json` and its sidecar allocate blocks 61–517.
 
 Every block is paired across all three treatments. The power analysis freezes
 517 blocks per treatment and 1551 total cells. Calibration and held-out
 metadata use separate namespaces and seeds, and their numeric ranges cannot
-overlap. Every unit also carries a unique SHA-256 commitment to its canonical
-`recall-task-input-v1`; verification recomputes all 517 commitments and rejects
-cross-cohort reuse.
+overlap. Every unit carries separate SHA-256 commitments to its fixture,
+instruction, verifier and expected result, plus one commitment to the complete
+canonical `recall-task-input-v1`. The manifest hashes bind all 517 memberships;
+metadata-only verification validates those commitments and rejects cross-cohort
+reuse without materializing held-out input bytes. The consented #110 executor
+must provide byte-identical private inputs at the `VerifyTaskInput` seam.
 
 The source snapshot is
 `105778d820029a2326043739fd676647e5c037f6`. The contract separately records
@@ -60,8 +63,8 @@ Git. A Compatibility file has this shape:
     "protocol_contract": {"version": "1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
     "telemetry_schema": {"version": "recall-baseline-events-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
     "capture_schema": {"version": "diagnostic-capture-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
-    "policy": {"version": "recall-policy-v1", "revision": "sha256:4756324cf6c42839d2fb25de3db01f301c21141926fe7d15c05a7515fabe8510"},
-    "metric": {"version": "recall-study-metrics-v1", "revision": "sha256:2730b78c4616b54df30c3108356de72441a3aaabc10e8624593fd76c7b5aef9b"},
+    "policy": {"version": "recall-policy-v1", "revision": "sha256:9d0d0207d1a90d48f4082bdb543b9a08f83d0b1f5a34af4ceb6cba986a151879"},
+    "metric": {"version": "recall-study-metrics-v1", "revision": "sha256:65507cf0f882e4e3c031335d0f41bdb79f908087e9c2288e223fcb9a7d22a589"},
     "source": {"version": "105778d820029a2326043739fd676647e5c037f6", "revision": "105778d820029a2326043739fd676647e5c037f6"}
   },
   "compatibility": {
@@ -143,6 +146,10 @@ issue #110, but this #109 CLI rejects them before analysis so it cannot become a
 held-out access path. Its aggregate output includes per-treatment intervals for
 all three arms, including distinct duplicate and time-to-useful results; the GA
 clauses remain the preregistered paired broad-versus-targeted comparisons.
+Completed attempts record a separate `task_outcome`: verifier failures remain
+in the paired quality population and in each arm's task-success rate. Harness
+failures are operational failures; they must contain no residual quality
+evidence, are rejected otherwise, and are reported separately.
 
 ```bash
 engram recall-study report "${COMMON[@]}" \

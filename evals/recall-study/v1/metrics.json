@@ -11,13 +11,14 @@
   "bootstrap_seed": "codex-useful-recall-v1-bootstrap",
   "bootstrap_quantiles": [0.025, 0.975],
   "unknowns": "reported-and-excluded-from-explicit-label-denominators",
-  "operational_failures": "reported-and-excluded-from-paired-quality-metrics",
+  "operational_failures": "reported-and-excluded-from-paired-quality-metrics; residual quality fields are invalid",
+  "task_verifier_failures": "completed attempted rows retained in paired quality metrics and task_success_rate_percent",
   "label_sources": ["agent_explicit", "user_explicit", "evaluator"],
   "disagreements": "preserved; any harmful-or-noise label is counted conservatively",
   "three_arm_analysis": {
     "treatments": ["broad-chronological", "targeted-recall", "no-recall"],
     "method": "treatment-level descriptive points and 95-percent intervals plus paired broad-versus-targeted GA gates",
-    "metrics": ["checkpoint_success_rate_percent", "stop_conflict_or_loop_rate_percent", "automatic_injected_bytes_mean", "startup_compact_p95_ms", "recall_p95_ms", "time_to_useful_p95_ms", "utility_rate_percent", "noise_rate_percent", "duplicate_rate_percent", "harm_rate_percent", "explicit_label_coverage_percent"]
+    "metrics": ["task_success_rate_percent", "checkpoint_success_rate_percent", "stop_conflict_or_loop_rate_percent", "automatic_injected_bytes_mean", "startup_compact_p95_ms", "recall_p95_ms", "time_to_useful_p95_ms", "utility_rate_percent", "noise_rate_percent", "duplicate_rate_percent", "harm_rate_percent", "explicit_label_coverage_percent"]
   },
   "metrics": [
     {"id": "checkpoint_rate_delta_pp", "formula": "100*(targeted checkpoint rate-broad checkpoint rate)", "interval": "paired"},

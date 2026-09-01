@@ -90,7 +90,9 @@ on explicitly supplied frozen artifacts. Its `verify`, `dry-run`,
 authorize held-out execution. Reports derive their points, raw denominators,
 unknowns, and frozen confidence intervals from strict disposable calibration
 rows; the same frozen domain shape supports held-out and combined analysis in
-#110, with per-arm duplicate and time-to-useful outcomes. See [Paired Recall
+#110, with per-arm task-success, duplicate, and time-to-useful outcomes. Exact
+fixture, instruction, verifier, and expected-result commitments prevent task
+substitution, while operational failures reject residual quality evidence. See [Paired Recall
 study](docs/RECALL-STUDY.md).
 
 Core curated-memory operations:

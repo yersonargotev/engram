@@ -30,6 +30,7 @@ type RunRow struct {
 	TaskClass                   string       `json:"task_class"`
 	Treatment                   string       `json:"treatment"`
 	Outcome                     string       `json:"outcome"`
+	TaskOutcome                 string       `json:"task_outcome"`
 	OmissionCode                string       `json:"omission_code,omitempty"`
 	RecallResultCount           int          `json:"recall_result_count"`
 	FalseEmptyReview            string       `json:"false_empty_review"`
@@ -97,6 +98,8 @@ type TreatmentAggregate struct {
 	Runs                int            `json:"runs"`
 	OperationalFailures int            `json:"operational_failures"`
 	Omissions           int            `json:"omissions"`
+	TaskSucceeded       int            `json:"task_succeeded"`
+	TaskFailed          int            `json:"task_failed"`
 	ExposedMemories     int            `json:"exposed_memories"`
 	UnknownAssessments  int            `json:"unknown_assessments"`
 	Utility             map[string]int `json:"utility"`
@@ -108,6 +111,8 @@ type LabelAggregate struct {
 	RunsObserved        int                  `json:"runs_observed"`
 	OperationalFailures int                  `json:"operational_failures"`
 	Omissions           int                  `json:"omissions"`
+	TaskSucceeded       int                  `json:"task_succeeded"`
+	TaskFailed          int                  `json:"task_failed"`
 	ExposedMemories     int                  `json:"exposed_memories"`
 	ExplicitAssessments int                  `json:"explicit_assessments"`
 	UnknownAssessments  int                  `json:"unknown_assessments"`
@@ -196,16 +201,26 @@ func (study *Study) aggregateRows(rows RowSet) (LabelAggregate, error) {
 		}
 		treatment := byTreatment[row.Treatment]
 		treatment.Runs++
-		aggregate.ExposedMemories += row.RecallResultCount
-		treatment.ExposedMemories += row.RecallResultCount
 		switch row.Outcome {
 		case "operational_failure":
 			aggregate.OperationalFailures++
 			treatment.OperationalFailures++
+			continue
 		case "omitted":
 			aggregate.Omissions++
 			treatment.Omissions++
+			continue
 		}
+		switch row.TaskOutcome {
+		case "succeeded":
+			aggregate.TaskSucceeded++
+			treatment.TaskSucceeded++
+		case "failed":
+			aggregate.TaskFailed++
+			treatment.TaskFailed++
+		}
+		aggregate.ExposedMemories += row.RecallResultCount
+		treatment.ExposedMemories += row.RecallResultCount
 		switch row.FalseEmptyReview {
 		case "confirmed":
 			aggregate.FalseEmptyConfirmed++
@@ -244,6 +259,10 @@ func validateRunRow(row RunRow) error {
 	if row.Outcome == "completed" && row.OmissionCode != "" || row.Outcome != "completed" && strings.TrimSpace(row.OmissionCode) == "" {
 		return fmt.Errorf("Recall study row omission metadata is invalid")
 	}
+	if row.Outcome == "completed" && row.TaskOutcome != "succeeded" && row.TaskOutcome != "failed" ||
+		row.Outcome != "completed" && row.TaskOutcome != "not_applicable" {
+		return fmt.Errorf("Recall study row task outcome is invalid")
+	}
 	if row.RecallResultCount < 0 {
 		return fmt.Errorf("Recall study row result count is invalid")
 	}
@@ -251,8 +270,18 @@ func validateRunRow(row RunRow) error {
 		!finite(row.RecallLatencyMillis) || row.RecallLatencyMillis < 0 || !finite(row.TimeToUsefulMillis) || row.TimeToUsefulMillis < 0 {
 		return fmt.Errorf("Recall study row measurements are invalid")
 	}
-	if row.Outcome == "completed" && row.TimeToUsefulMillis <= 0 {
+	if row.Outcome == "completed" && row.TaskOutcome == "succeeded" && row.TimeToUsefulMillis <= 0 {
 		return fmt.Errorf("Recall study completed row is missing time-to-useful evidence")
+	}
+	if row.Outcome == "completed" && row.TaskOutcome == "failed" && row.TimeToUsefulMillis != 0 {
+		return fmt.Errorf("Recall study failed task cannot claim time-to-useful evidence")
+	}
+	if row.Outcome != "completed" && (row.RecallResultCount != 0 || len(row.Assessments) != 0 || row.FalseEmptyReview != "not_applicable" ||
+		row.RecallLatencyMillis != 0 || row.TimeToUsefulMillis != 0) {
+		return fmt.Errorf("Recall study non-completed row contains quality evidence")
+	}
+	if row.Outcome != "completed" {
+		return nil
 	}
 	if row.Treatment == "targeted-recall" && row.Outcome == "completed" && row.RecallLatencyMillis <= 0 {
 		return fmt.Errorf("Recall study targeted-Recall row is missing Recall latency")

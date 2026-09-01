@@ -161,12 +161,22 @@ func (study *Study) deriveTreatmentMetrics(rows []RunRow) ([]TreatmentMetric, er
 		if len(completed) == 0 {
 			return nil, fmt.Errorf("Recall study treatment %s has no completed rows", treatment.ID)
 		}
+		successful := make([]RunRow, 0, len(completed))
+		for _, row := range completed {
+			if row.TaskOutcome == "succeeded" {
+				successful = append(successful, row)
+			}
+		}
+		if len(successful) == 0 {
+			return nil, fmt.Errorf("Recall study treatment %s has no successful task rows", treatment.ID)
+		}
 		result = append(result,
+			treatmentRateMetric(treatment.ID, "task_success_rate_percent", completed, unknownRuns, func(row RunRow) bool { return row.TaskOutcome == "succeeded" }),
 			treatmentRateMetric(treatment.ID, "checkpoint_success_rate_percent", completed, unknownRuns, func(row RunRow) bool { return row.CheckpointSucceeded }),
 			treatmentRateMetric(treatment.ID, "stop_conflict_or_loop_rate_percent", completed, unknownRuns, func(row RunRow) bool { return row.StopConflictOrLoop }),
 			treatmentValueMetric(study, treatment.ID, "automatic_injected_bytes_mean", completed, unknownRuns, func(row RunRow) float64 { return float64(row.AutomaticInjectedUTF8Bytes) }, mean),
 			treatmentValueMetric(study, treatment.ID, "startup_compact_p95_ms", completed, unknownRuns, func(row RunRow) float64 { return row.StartupCompactLatencyMillis }, func(values []float64) float64 { return percentile(values, .95) }),
-			treatmentValueMetric(study, treatment.ID, "time_to_useful_p95_ms", completed, unknownRuns, func(row RunRow) float64 { return row.TimeToUsefulMillis }, func(values []float64) float64 { return percentile(values, .95) }),
+			treatmentValueMetric(study, treatment.ID, "time_to_useful_p95_ms", successful, unknownRuns+len(completed)-len(successful), func(row RunRow) float64 { return row.TimeToUsefulMillis }, func(values []float64) float64 { return percentile(values, .95) }),
 		)
 		if treatment.ID == "targeted-recall" {
 			result = append(result, treatmentValueMetric(study, treatment.ID, "recall_p95_ms", completed, unknownRuns,

@@ -503,8 +503,10 @@ contract](docs/RECALL-BASELINE.md).
 content-addressed policy and metric specifications, cohort manifests, consent
 proof, task-protocol specification, and Compatibility tuple before it can
 create a private calibration plan or derive an aggregate report from disposable
-calibration rows. Cohort manifests bind every canonical task input, while the
-frozen analyzer covers all three arms, duplicate rate, and time-to-useful. No
+calibration rows. Cohort manifests bind each fixture, instruction, verifier,
+expected result, and complete canonical task input. The frozen analyzer covers
+all three arms, task success, duplicate rate, and time-to-useful while keeping
+task-verifier failures distinct from operational failures. No
 #109 command
 accepts task-input paths, authorizes held-out execution, changes default Recall,
 enables rollout, or publishes row-level state.

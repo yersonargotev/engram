@@ -123,7 +123,7 @@ func TestRecallStudyCLIReportDerivesAndWritesAggregateEvidence(t *testing.T) {
 		StudyVersion: study.Contract.StudyVersion, ContractSHA256: study.Hash, CohortID: calibration.Manifest.CohortID}
 	for _, run := range plan {
 		row := recallstudy.RunRow{RunID: run.RunID, SamplingUnitID: run.SamplingUnitID, TaskClass: run.TaskClass,
-			Treatment: run.Treatment, Outcome: "completed", FalseEmptyReview: "not_applicable",
+			Treatment: run.Treatment, Outcome: "completed", TaskOutcome: "succeeded", FalseEmptyReview: "not_applicable",
 			CheckpointSucceeded: true, AutomaticInjectedUTF8Bytes: 1000, StartupCompactLatencyMillis: 100, TimeToUsefulMillis: 200}
 		if run.Treatment == "targeted-recall" {
 			row.AutomaticInjectedUTF8Bytes = 500

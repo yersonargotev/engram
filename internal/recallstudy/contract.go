@@ -14,10 +14,10 @@ import (
 
 const (
 	ContractSchemaVersion  = "recall-study-contract-v1"
-	FrozenV1ContractSHA256 = "f312b9dcaedc859f6512771d5dc19d52bc7d5c84b2c519a10170541ccbf6e466"
+	FrozenV1ContractSHA256 = "88e9b0ff2dd0d0ddd327be325a83c8166f3c6092ab3ff9080fa2e36092d1da88"
 	maxContractBytes       = 1 << 20
-	frozenPolicyRevision   = "sha256:4756324cf6c42839d2fb25de3db01f301c21141926fe7d15c05a7515fabe8510"
-	frozenMetricRevision   = "sha256:2730b78c4616b54df30c3108356de72441a3aaabc10e8624593fd76c7b5aef9b"
+	frozenPolicyRevision   = "sha256:9d0d0207d1a90d48f4082bdb543b9a08f83d0b1f5a34af4ceb6cba986a151879"
+	frozenMetricRevision   = "sha256:65507cf0f882e4e3c031335d0f41bdb79f908087e9c2288e223fcb9a7d22a589"
 )
 
 type Study struct {
@@ -298,7 +298,7 @@ func (contract Contract) validate() error {
 	if contract.Model.Provider == "" || contract.Model.Name == "" || contract.Model.ReasoningEffort == "" || contract.Model.CodexVersion == "" {
 		return fmt.Errorf("Recall study model contract is incomplete")
 	}
-	if contract.TaskProtocol.Version != "recall-task-protocol-v1" || contract.TaskProtocol.ArtifactSHA256 != "669c2261f43f946dac302605401694c827d255693b0ee3688bac7871c12f148c" ||
+	if contract.TaskProtocol.Version != "recall-task-protocol-v1" || contract.TaskProtocol.ArtifactSHA256 != "f579656556750b9f2de67d27c1736a728d17878bffa67e8b362baef55885e345" ||
 		contract.TaskProtocol.Execution != "fresh-ephemeral-checkout" ||
 		!contract.TaskProtocol.FixedEnvironment || contract.TaskProtocol.OperationalFailures != "separate-from-recall-quality" {
 		return fmt.Errorf("Recall study task protocol is incomplete")

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/yersonargotev/engram/internal/protocolcontract"
@@ -34,19 +35,30 @@ type Manifest struct {
 }
 
 type TaskCommitment struct {
-	SamplingUnitID string `json:"sampling_unit_id"`
-	TaskClass      string `json:"task_class"`
-	InputSHA256    string `json:"input_sha256"`
+	SamplingUnitID    string `json:"sampling_unit_id"`
+	TaskClass         string `json:"task_class"`
+	FixtureSHA256     string `json:"fixture_sha256"`
+	InstructionSHA256 string `json:"instruction_sha256"`
+	VerifierSHA256    string `json:"verifier_sha256"`
+	ExpectedSHA256    string `json:"expected_result_sha256"`
+	InputSHA256       string `json:"input_sha256"`
 }
 
 type TaskInput struct {
-	StudyID        string `json:"study_id"`
-	StudyVersion   string `json:"study_version"`
-	CohortID       string `json:"cohort_id"`
-	SamplingUnitID string `json:"sampling_unit_id"`
-	TaskClass      string `json:"task_class"`
-	SourceRevision string `json:"source_revision"`
-	FixtureSeed    string `json:"fixture_seed"`
+	StudyID            string `json:"study_id"`
+	StudyVersion       string `json:"study_version"`
+	CohortID           string `json:"cohort_id"`
+	SamplingUnitID     string `json:"sampling_unit_id"`
+	TaskClass          string `json:"task_class"`
+	SourceRevision     string `json:"source_revision"`
+	TaskProtocolSHA256 string `json:"task_protocol_sha256"`
+	FixtureSeed        string `json:"fixture_seed"`
+	FixturePath        string `json:"fixture_path"`
+	FixtureUTF8        string `json:"fixture_utf8"`
+	InstructionUTF8    string `json:"instruction_utf8"`
+	VerifierID         string `json:"verifier_id"`
+	VerifierUTF8       string `json:"verifier_utf8"`
+	ExpectedResultUTF8 string `json:"expected_result_utf8"`
 }
 
 type FrozenManifest struct {
@@ -155,7 +167,10 @@ func (manifest Manifest) validate() error {
 	for offset, task := range manifest.Tasks {
 		wantUnit := fmt.Sprintf("%s-%04d", manifest.Namespace, manifest.FirstSamplingUnit+offset)
 		wantClass := manifest.TaskClassCycle[offset%len(manifest.TaskClassCycle)]
-		if task.SamplingUnitID != wantUnit || task.TaskClass != wantClass || !validHexDigest(task.InputSHA256, sha256.Size) ||
+		if task.SamplingUnitID != wantUnit || task.TaskClass != wantClass ||
+			!validHexDigest(task.FixtureSHA256, sha256.Size) || !validHexDigest(task.InstructionSHA256, sha256.Size) ||
+			!validHexDigest(task.VerifierSHA256, sha256.Size) || !validHexDigest(task.ExpectedSHA256, sha256.Size) ||
+			!validHexDigest(task.InputSHA256, sha256.Size) ||
 			seenUnits[task.SamplingUnitID] || seenInputs[task.InputSHA256] {
 			return fmt.Errorf("Recall study manifest task membership is invalid or duplicated")
 		}
@@ -258,19 +273,17 @@ func (study *Study) verifyManifest(manifest *Manifest, cohort CohortContract) er
 		return fmt.Errorf("Recall study manifest task classes changed")
 	}
 	for _, task := range manifest.Tasks {
-		if task.InputSHA256 != study.taskInputCommitment(manifest, task.SamplingUnitID, task.TaskClass) {
+		if task.InputSHA256 != taskCommitmentDigest(study.Contract, manifest, task) {
 			return fmt.Errorf("Recall study manifest task input commitment changed")
 		}
 	}
 	return nil
 }
 
-func (study *Study) taskInputCommitment(manifest *Manifest, unitID, taskClass string) string {
-	return taskInputCommitment(study.Contract, manifest, unitID, taskClass)
-}
-
-// VerifyTaskInput binds one future execution input to its frozen cohort
-// membership and deterministic fixture selector without opening held-out data.
+// VerifyTaskInput binds one future execution input byte-for-byte to its frozen
+// fixture, instruction, verifier, and expected result. Only issue #110's
+// consented executor supplies these private bytes; metadata-only commands never
+// call this seam or materialize held-out inputs.
 func (study *Study) VerifyTaskInput(manifest *Manifest, input TaskInput) error {
 	if study == nil || manifest == nil {
 		return fmt.Errorf("Recall study task input requires a frozen study and manifest")
@@ -284,12 +297,14 @@ func (study *Study) VerifyTaskInput(manifest *Manifest, input TaskInput) error {
 	}
 	if input.StudyID != study.Contract.StudyID || input.StudyVersion != study.Contract.StudyVersion ||
 		input.CohortID != manifest.CohortID || input.SourceRevision != study.Contract.SourceRevision ||
+		input.TaskProtocolSHA256 != study.Contract.TaskProtocol.ArtifactSHA256 ||
 		input.FixtureSeed != taskFixtureSeed(manifest, input.SamplingUnitID, input.TaskClass) {
 		return fmt.Errorf("Recall study task input identity changed")
 	}
 	for _, task := range manifest.Tasks {
 		if task.SamplingUnitID == input.SamplingUnitID {
-			if task.TaskClass != input.TaskClass || task.InputSHA256 != study.taskInputCommitment(manifest, input.SamplingUnitID, input.TaskClass) {
+			provided := taskCommitmentFromInput(study.Contract, manifest, input)
+			if task.TaskClass != input.TaskClass || provided != task {
 				return fmt.Errorf("Recall study task input commitment changed")
 			}
 			return nil
@@ -298,12 +313,84 @@ func (study *Study) VerifyTaskInput(manifest *Manifest, input TaskInput) error {
 	return fmt.Errorf("Recall study task input is not a frozen cohort member")
 }
 
-func taskInputCommitment(contract Contract, manifest *Manifest, unitID, taskClass string) string {
+func taskCommitmentFromInput(contract Contract, manifest *Manifest, input TaskInput) TaskCommitment {
+	commitment := TaskCommitment{
+		SamplingUnitID:    input.SamplingUnitID,
+		TaskClass:         input.TaskClass,
+		FixtureSHA256:     hashText(input.FixturePath + "\x00" + input.FixtureUTF8),
+		InstructionSHA256: hashText(input.InstructionUTF8),
+		VerifierSHA256:    hashText(input.VerifierID + "\x00" + input.VerifierUTF8),
+		ExpectedSHA256:    hashText(input.ExpectedResultUTF8),
+	}
+	commitment.InputSHA256 = taskCommitmentDigest(contract, manifest, commitment)
+	return commitment
+}
+
+func taskCommitmentDigest(contract Contract, manifest *Manifest, task TaskCommitment) string {
 	digest := sha256.Sum256([]byte(strings.Join([]string{
 		"recall-task-input-v1", contract.StudyID, contract.StudyVersion, manifest.CohortID,
-		unitID, taskClass, contract.SourceRevision, contract.TaskProtocol.ArtifactSHA256, taskFixtureSeed(manifest, unitID, taskClass),
+		task.SamplingUnitID, task.TaskClass, contract.SourceRevision, contract.TaskProtocol.ArtifactSHA256,
+		taskFixtureSeed(manifest, task.SamplingUnitID, task.TaskClass), task.FixtureSHA256, task.InstructionSHA256,
+		task.VerifierSHA256, task.ExpectedSHA256,
 	}, "\x00")))
 	return hex.EncodeToString(digest[:])
+}
+
+func hashText(value string) string {
+	digest := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(digest[:])
+}
+
+// frozenTaskInput materializes one exact disposable task. It is deliberately
+// unexported: #109 can freeze and test the input, while only #110 may expose a
+// consented execution path that obtains it.
+func frozenTaskInput(contract Contract, manifest *Manifest, unitID, taskClass string) TaskInput {
+	seed := taskFixtureSeed(manifest, unitID, taskClass)
+	short := func(domain string) string { return hashText(domain + "\x00" + seed)[:16] }
+	a, b, c := short("a"), short("b"), short("c")
+	input := TaskInput{StudyID: contract.StudyID, StudyVersion: contract.StudyVersion, CohortID: manifest.CohortID,
+		SamplingUnitID: unitID, TaskClass: taskClass, SourceRevision: contract.SourceRevision,
+		TaskProtocolSHA256: contract.TaskProtocol.ArtifactSHA256, FixtureSeed: seed}
+	switch taskClass {
+	case "repository-question":
+		input.FixturePath = "docs/recall-fact.json"
+		input.FixtureUTF8 = fmt.Sprintf("{\"fact_key\":%q,\"fact_value\":%q}\n", a, b)
+		input.InstructionUTF8 = fmt.Sprintf("Read docs/recall-fact.json and return the fact_value for fact_key %s as {\"answer\":\"VALUE\"}.\n", a)
+		input.VerifierID = "exact-json-answer-v1"
+		input.VerifierUTF8 = "parse one JSON object; require exactly the string field answer; compare it byte-for-byte with the expected answer"
+		input.ExpectedResultUTF8 = fmt.Sprintf("{\"answer\":%q}\n", b)
+	case "implementation":
+		input.FixturePath = "config/recall-setting.json"
+		input.FixtureUTF8 = fmt.Sprintf("{\"current\":%q,\"required\":%q}\n", a, b)
+		input.InstructionUTF8 = "Update config/recall-setting.json so current equals required; preserve exactly those two keys and emit no other file changes.\n"
+		input.VerifierID = "exact-file-json-v1"
+		input.VerifierUTF8 = "parse the named fixture as JSON; require exactly current and required; require both values equal the frozen expected value; reject any other changed path"
+		input.ExpectedResultUTF8 = fmt.Sprintf("{\"current\":%q,\"required\":%q}\n", b, b)
+	case "diagnosis":
+		input.FixturePath = "diagnostics/recall-case.json"
+		input.FixtureUTF8 = fmt.Sprintf("{\"expected\":%q,\"observed\":%q,\"root_cause_code\":%q}\n", a, b, c)
+		input.InstructionUTF8 = "Diagnose diagnostics/recall-case.json and return its root cause as {\"root_cause_code\":\"CODE\"}; do not modify files.\n"
+		input.VerifierID = "exact-json-root-cause-v1"
+		input.VerifierUTF8 = "require no file changes; parse one JSON object; require exactly root_cause_code; compare it byte-for-byte with the frozen code"
+		input.ExpectedResultUTF8 = fmt.Sprintf("{\"root_cause_code\":%q}\n", c)
+	case "verification":
+		input.FixturePath = "verification/recall-check.json"
+		input.FixtureUTF8 = fmt.Sprintf("{\"expected_sha256\":%q,\"actual_sha256\":%q}\n", a, a)
+		input.InstructionUTF8 = "Verify verification/recall-check.json and return {\"matches\":true} only when the two digests match; do not modify files.\n"
+		input.VerifierID = "exact-json-verdict-v1"
+		input.VerifierUTF8 = "require no file changes; parse one JSON object; require exactly the boolean field matches; compare with the equality of the frozen fixture digests"
+		input.ExpectedResultUTF8 = "{\"matches\":true}\n"
+	case "routine-non-durable":
+		input.FixturePath = "maintenance/recall-items.json"
+		input.FixtureUTF8 = fmt.Sprintf("{\"items\":[%q,%q,%q]}\n", c, a, b)
+		input.InstructionUTF8 = "Sort maintenance/recall-items.json items in ascending byte order; preserve exactly one items key and emit no other file changes.\n"
+		input.VerifierID = "exact-sorted-json-v1"
+		input.VerifierUTF8 = "parse the named fixture as JSON; require exactly items; require the frozen three strings in ascending byte order; reject any other changed path"
+		values := []string{a, b, c}
+		sort.Strings(values)
+		input.ExpectedResultUTF8 = fmt.Sprintf("{\"items\":[%q,%q,%q]}\n", values[0], values[1], values[2])
+	}
+	return input
 }
 
 func taskFixtureSeed(manifest *Manifest, unitID, taskClass string) string {

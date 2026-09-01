@@ -185,21 +185,61 @@ func TestVerifyTaskInputBindsFrozenMembershipAndFixtureSelection(t *testing.T) {
 
 	study, calibration, _ := verifiedStudy(t)
 	member := calibration.Tasks[0]
-	input := TaskInput{StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion, CohortID: calibration.CohortID,
-		SamplingUnitID: member.SamplingUnitID, TaskClass: member.TaskClass, SourceRevision: study.Contract.SourceRevision,
-		FixtureSeed: taskFixtureSeed(calibration, member.SamplingUnitID, member.TaskClass)}
+	input := frozenTaskInput(study.Contract, calibration, member.SamplingUnitID, member.TaskClass)
 	if err := study.VerifyTaskInput(calibration, input); err != nil {
 		t.Fatalf("VerifyTaskInput() error = %v", err)
+	}
+	mutations := []struct {
+		name   string
+		mutate func(*TaskInput)
+	}{
+		{"fixture path", func(input *TaskInput) { input.FixturePath += ".substituted" }},
+		{"fixture content", func(input *TaskInput) { input.FixtureUTF8 += " substituted" }},
+		{"instruction", func(input *TaskInput) { input.InstructionUTF8 += " substituted" }},
+		{"verifier identity", func(input *TaskInput) { input.VerifierID += "-substituted" }},
+		{"verifier definition", func(input *TaskInput) { input.VerifierUTF8 += " substituted" }},
+		{"expected result", func(input *TaskInput) { input.ExpectedResultUTF8 += " substituted" }},
+	}
+	for _, test := range mutations {
+		changed := input
+		test.mutate(&changed)
+		if err := study.VerifyTaskInput(calibration, changed); err == nil || !strings.Contains(err.Error(), "commitment changed") {
+			t.Fatalf("changed %s VerifyTaskInput() error = %v", test.name, err)
+		}
 	}
 	input.SourceRevision = strings.Repeat("0", 40)
 	if err := study.VerifyTaskInput(calibration, input); err == nil || !strings.Contains(err.Error(), "identity changed") {
 		t.Fatalf("changed source VerifyTaskInput() error = %v", err)
 	}
-	input.SourceRevision = study.Contract.SourceRevision
-	input.SamplingUnitID = "hold-0061"
-	input.FixtureSeed = taskFixtureSeed(calibration, input.SamplingUnitID, input.TaskClass)
+	input = frozenTaskInput(study.Contract, calibration, "hold-0061", input.TaskClass)
 	if err := study.VerifyTaskInput(calibration, input); err == nil || !strings.Contains(err.Error(), "not a frozen cohort member") {
 		t.Fatalf("cross-cohort VerifyTaskInput() error = %v", err)
+	}
+}
+
+func TestFrozenTaskCommitmentMatchesIndependentReferenceVector(t *testing.T) {
+	t.Parallel()
+
+	study, calibration, _ := verifiedStudy(t)
+	task := calibration.Tasks[0]
+	input := frozenTaskInput(study.Contract, calibration, task.SamplingUnitID, task.TaskClass)
+	if input.FixtureSeed != "81b9f9d1fdec31ea0904cc76bee306719550eedc2116f4de2ed1b9a0f3162fb9" ||
+		input.FixturePath != "docs/recall-fact.json" ||
+		input.FixtureUTF8 != "{\"fact_key\":\"c55c7115b808c728\",\"fact_value\":\"8aa93d44caa533c1\"}\n" ||
+		input.InstructionUTF8 != "Read docs/recall-fact.json and return the fact_value for fact_key c55c7115b808c728 as {\"answer\":\"VALUE\"}.\n" ||
+		input.VerifierID != "exact-json-answer-v1" || input.ExpectedResultUTF8 != "{\"answer\":\"8aa93d44caa533c1\"}\n" {
+		t.Fatalf("frozen task input does not match the independent vector: %+v", input)
+	}
+	want := TaskCommitment{
+		SamplingUnitID: "cal-0001", TaskClass: "repository-question",
+		FixtureSHA256:     "a246b40ddb0e2ef8e376387157927f2f2bb55ca9160bdef262a52df5fb896e6d",
+		InstructionSHA256: "c17ee0491ccb9e5126283043d306e8acbbd8ae10d40be355ad039a0c8fd980a1",
+		VerifierSHA256:    "92de57d43db7fe742ca4657a4fde646fca9566474ec969d10ad0cb44a751a2ce",
+		ExpectedSHA256:    "6ab3254a9fb71aa9a72e829ed51fb3f12ef5778c1695e53068aaf36066b8f7b3",
+		InputSHA256:       "cdbf6cc750d34d821c773b96768896faa8ba1b5d399dc72020664dc22458653b",
+	}
+	if task != want || taskCommitmentFromInput(study.Contract, calibration, input) != want {
+		t.Fatalf("frozen task commitment = %+v, want %+v", task, want)
 	}
 }
 
@@ -244,7 +284,8 @@ func validManifest(contract Contract, cohortID, namespace string, first, count i
 	for offset := 0; offset < count; offset++ {
 		unitID := fmt.Sprintf("%s-%04d", namespace, first+offset)
 		class := classes[offset%len(classes)]
-		manifest.Tasks = append(manifest.Tasks, TaskCommitment{SamplingUnitID: unitID, TaskClass: class, InputSHA256: taskInputCommitment(contract, &manifest, unitID, class)})
+		input := frozenTaskInput(contract, &manifest, unitID, class)
+		manifest.Tasks = append(manifest.Tasks, taskCommitmentFromInput(contract, &manifest, input))
 	}
 	return manifest
 }

@@ -726,6 +726,8 @@ func main() {
 		runRecallBaselineCLI(cfg, "protocol_mode", func() { cmdProtocolMode(cfg) })
 	case "activation-study":
 		cmdActivationStudy()
+	case "recall-study":
+		cmdRecallStudy()
 	case "recall-baseline":
 		cmdRecallBaseline(cfg)
 	case "recall-feedback":
@@ -755,7 +757,7 @@ func shouldCheckForUpdates(args []string) bool {
 	}
 	command := strings.ToLower(strings.TrimSpace(args[0]))
 	switch command {
-	case "mcp", "serve", "protocol-mode", "activation-study", "recall-baseline", "lifecycle":
+	case "mcp", "serve", "protocol-mode", "activation-study", "recall-study", "recall-baseline", "lifecycle":
 		return false
 	case "capture":
 		if len(args) < 2 {
@@ -782,6 +784,9 @@ func handleConfigFreeCommand(args []string) bool {
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
 	case "activation-study":
 		cmdActivationStudy()
+		return true
+	case "recall-study":
+		cmdRecallStudy()
 		return true
 	case "recall-baseline":
 		if len(args) >= 2 {
@@ -3547,6 +3552,7 @@ Commands:
   doctor             Run read-only operational diagnostics [--json] [--project P] [--check CODE]
   context [project]  Show recent context from previous sessions [--scope SCOPE] [--json]
   activation-study   Verify, run, or analyze the frozen Codex activation cohort
+  recall-study       Verify, plan, or report the frozen paired Recall study
   recall-baseline    Record and report content-free local operational evidence
                        record|report|power|purge (see recall-baseline --help)
   recall-feedback    Report aggregate-only local Recall utility and quality metrics

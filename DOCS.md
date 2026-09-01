@@ -84,6 +84,19 @@ commands keep human-readable output by default and expose `--json` for clean
 automation output. Successful JSON is written to stdout; structured errors use
 `{"code","message","details?"}` on stderr with a non-zero exit code.
 
+The separate `engram recall-study` interface is config-free and operates only
+on explicitly supplied frozen artifacts. Its `verify`, `dry-run`,
+`plan-calibration`, and `report` modes have no task-input flag and cannot
+authorize held-out execution. Reports derive their points, raw denominators,
+unknowns, and frozen confidence intervals from strict disposable calibration
+rows; the same frozen domain shape supports held-out and combined analysis in
+#110, with per-arm task-success, duplicate, and time-to-useful outcomes. Exact
+fixture, instruction, verifier, and expected-result commitments prevent task
+substitution. Operational failures require frozen codes and reject residual
+metric or quality evidence; zero-success arms remain reportable with unavailable
+value populations marked explicitly. See [Paired Recall
+study](docs/RECALL-STUDY.md).
+
 Core curated-memory operations:
 
 ```text

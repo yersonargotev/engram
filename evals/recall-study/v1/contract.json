@@ -1,0 +1,144 @@
+{
+  "schema_version": "recall-study-contract-v1",
+  "study_id": "codex-useful-recall",
+  "study_version": "v1",
+  "status": "frozen",
+  "source_revision": "105778d820029a2326043739fd676647e5c037f6",
+  "cohorts": {
+    "required_per_treatment": 517,
+    "required_total": 1551,
+    "calibration": {
+      "id": "calibration-v1",
+      "first_sampling_unit": 1,
+      "sampling_units": 60,
+      "manifest_sha256": "6bc2cd8ca1c0967290c21721722d2bc503fdea5d8d04302d1b33ff833e34e4cd",
+      "namespace": "cal",
+      "selection_seed": "codex-useful-recall-v1-calibration-v1"
+    },
+    "held_out": {
+      "id": "held-out-v1",
+      "first_sampling_unit": 61,
+      "sampling_units": 457,
+      "manifest_sha256": "df5adf10d653ff7357ac41c9421a692494d67b84113179881d8f44b2516a9046",
+      "namespace": "hold",
+      "selection_seed": "codex-useful-recall-v1-held-out-v1"
+    }
+  },
+  "sampling_unit": "matched-task-block",
+  "task_classes": [
+    {"id": "repository-question", "self_contained": true},
+    {"id": "implementation", "self_contained": true},
+    {"id": "diagnosis", "self_contained": true},
+    {"id": "verification", "self_contained": true},
+    {"id": "routine-non-durable", "self_contained": true}
+  ],
+  "treatments": [
+    {"id": "broad-chronological", "recall": "broad-chronological-injection"},
+    {"id": "targeted-recall", "recall": "cue-only-agent-initiated"},
+    {"id": "no-recall", "recall": "cue-only-none"}
+  ],
+  "randomization": {
+    "method": "sha256-seeded-block-order-v1",
+    "seed": "codex-useful-recall-v1",
+    "pairing_key": "sampling_unit_id",
+    "stratification": "task_class"
+  },
+  "model": {
+    "provider": "openai",
+    "name": "gpt-5.6-luna",
+    "reasoning_effort": "low",
+    "codex_version": "0.152.0"
+  },
+  "repository": {
+    "url": "https://github.com/yersonargotev/engram.git",
+    "revision": "105778d820029a2326043739fd676647e5c037f6"
+  },
+  "task_protocol": {
+    "version": "recall-task-protocol-v1",
+    "artifact_sha256": "f579656556750b9f2de67d27c1736a728d17878bffa67e8b362baef55885e345",
+    "execution": "fresh-ephemeral-checkout",
+    "fixed_environment": true,
+    "operational_failures": "separate-from-recall-quality"
+  },
+  "evaluation_rubric": {
+    "version": "recall-labels-v1",
+    "utility": ["decisive", "orienting", "duplicate", "unused", "unknown"],
+    "quality": ["current", "stale", "contradictory", "unknown"],
+    "label_sources": ["agent_explicit", "user_explicit", "evaluator", "unknown"],
+    "missing_labels": "unknown",
+    "omissions": "preserved",
+    "disagreements": "preserved",
+    "false_empty_review": "explicit-or-unknown"
+  },
+  "consent": {
+    "required": true,
+    "scope": "project-task-and-content",
+    "proof": "sha256-commitment",
+    "missing": "reject-before-evidence"
+  },
+  "allowed_outputs": {
+    "private": ["consented_task_inputs", "row_level_runs", "explicit_labels"],
+    "shared": ["contract", "cohort_manifests", "aggregate_report"],
+    "forbidden_fields": ["prompt", "query", "memory_content", "assistant_text", "transcript_path", "raw_identifier", "repository_diff"]
+  },
+  "revisions": {
+    "managed_pack": {"version": "3.3.0", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+    "engram_binary": {"version": "3.0.0", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+    "codex_plugin": {"version": "0.1.7", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+    "protocol_contract": {"version": "1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+    "telemetry_schema": {"version": "recall-baseline-events-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+    "capture_schema": {"version": "diagnostic-capture-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+    "policy": {"version": "recall-policy-v1", "revision": "sha256:a5e3aa9c438e2efc3d4bd11e9e636ef231a3e9dc0468af9062e15426f93b9af1"},
+    "metric": {"version": "recall-study-metrics-v1", "revision": "sha256:78a701966e15a5bc6fb00ade131f95c49b2ca6af4ce17e06fbef185202c20eaa"},
+    "source": {"version": "105778d820029a2326043739fd676647e5c037f6", "revision": "105778d820029a2326043739fd676647e5c037f6"}
+  },
+  "power": {
+    "schema_version": "recall-baseline-power-v1",
+    "method": "two-sided-two-proportion-normal-bonferroni-v1",
+    "baseline_rate": 0.5,
+    "minimum_detectable_absolute_difference": 0.1,
+    "familywise_alpha": 0.05,
+    "power": 0.8,
+    "comparisons": 3,
+    "treatments": 3,
+    "required_per_treatment": 517,
+    "required_total": 1551
+  },
+  "intervals": {
+    "rate": "wilson-95",
+    "paired_difference": "deterministic-bootstrap-95",
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": "codex-useful-recall-v1-bootstrap"
+  },
+  "gates": [
+    {"id": "checkpoint-non-inferiority", "clauses": [{"metric": "checkpoint_rate_delta_pp", "statistic": "ci_lower", "comparator": "gte", "threshold": -2}]},
+    {"id": "stop-growth", "clauses": [{"metric": "stop_growth_pp", "statistic": "ci_upper", "comparator": "lt", "threshold": 1}]},
+    {"id": "injected-bytes", "clauses": [{"metric": "automatic_injected_bytes_reduction_percent", "statistic": "ci_lower", "comparator": "gte", "threshold": 30}]},
+    {"id": "startup-compact-latency", "clauses": [{"metric": "startup_compact_p95_reduction_percent", "statistic": "ci_lower", "comparator": "gte", "threshold": 25}]},
+    {"id": "recall-latency", "clauses": [{"metric": "recall_p95_ms", "statistic": "point", "comparator": "lt", "threshold": 250}]},
+    {"id": "utility", "clauses": [
+      {"metric": "utility_relative_improvement_percent", "statistic": "point", "comparator": "gte", "threshold": 10},
+      {"metric": "utility_relative_improvement_percent", "statistic": "ci_lower", "comparator": "gte", "threshold": 0}
+    ]},
+    {"id": "noise", "clauses": [
+      {"metric": "noise_rate_percent", "statistic": "ci_upper", "comparator": "lt", "threshold": 20},
+      {"metric": "noise_improvement_pp", "statistic": "ci_lower", "comparator": "gt", "threshold": 0}
+    ]},
+    {"id": "harm", "clauses": [
+      {"metric": "harm_rate_percent", "statistic": "ci_upper", "comparator": "lte", "threshold": 2},
+      {"metric": "harm_difference_pp", "statistic": "ci_upper", "comparator": "lte", "threshold": 0}
+    ]},
+    {"id": "false-empty", "clauses": [{"metric": "false_empty_rate_percent", "statistic": "ci_upper", "comparator": "lte", "threshold": 5}]},
+    {"id": "label-coverage", "clauses": [{"metric": "explicit_label_coverage_percent", "statistic": "ci_lower", "comparator": "gte", "threshold": 80}]}
+  ],
+  "runner": {
+    "plan_schema_version": "recall-study-run-plan-v1",
+    "row_schema_version": "recall-study-rows-v1",
+    "execution_stage": "issue-110",
+    "accepts_task_inputs": false,
+    "default_recall_enabled": false,
+    "automatic_rollout_enabled": false,
+    "held_out_mode": "issue-110-execution-only",
+    "no_held_out_access_modes": ["verify", "dry-run", "plan-calibration", "report"]
+  }
+}

@@ -3,108 +3,146 @@
 package plugin_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yersonargotev/engram/internal/protocolcontract"
+	"github.com/yersonargotev/engram/internal/recallbaseline"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
-func TestCodexCaptureHooksEmitOnlyBoundedBaselineMetadataWhenEnabled(t *testing.T) {
+func TestCodexCoreLifecycleHooksRecordOnlyContentFreeOptInMetrics(t *testing.T) {
 	root := repoRoot(t)
 	pluginRoot := filepath.Join(root, "plugin", "codex")
-	binDir := t.TempDir()
-	logPath := filepath.Join(binDir, "baseline-args.log")
-
-	writeExecutable(t, filepath.Join(binDir, "curl"), `#!/bin/bash
-case "$*" in
-  *'/project/current'*) printf '%s' '{"project":"engram","project_source":"config","project_strength":"strong","implicit_write_allowed":true}' ;;
-esac
-exit 0
-`)
-	writeExecutable(t, filepath.Join(binDir, "engram"), `#!/bin/bash
-printf '%s\n' "$*" >> "$BASELINE_ARGS_LOG"
-`)
-
-	run := func(script, input string) string {
-		t.Helper()
-		command := exec.Command(codexTestBash(t), filepath.Join(pluginRoot, "scripts", script))
-		command.Stdin = strings.NewReader(input)
-		command.Env = append(os.Environ(),
-			"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
-			"ENGRAM_RECALL_BASELINE=1",
-			"BASELINE_ARGS_LOG="+logPath,
-		)
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("run %s: %v\n%s", script, err, output)
-		} else {
-			return string(output)
-		}
-		return ""
-	}
-
-	run("user-prompt-submit.sh", `{"cwd":"/tmp/repo","session_id":"session-secret","turn_id":"turn-secret","prompt":"PROMPT-CONTENT-MUST-NOT-LEAK"}`)
-	sessionStartOutput := run("session-start.sh", `{"cwd":"/tmp/repo","session_id":"session-secret","source":"startup"}`)
-
-	deadline := time.Now().Add(2 * time.Second)
-	var logged string
-	for time.Now().Before(deadline) {
-		raw, err := os.ReadFile(logPath)
-		if err == nil {
-			logged = string(raw)
-			if strings.Contains(logged, "--kind capture") && strings.Contains(logged, "--operation session_start") {
-				break
-			}
-		} else if !os.IsNotExist(err) {
-			t.Fatalf("read baseline args: %v", err)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	for _, want := range []string{
-		"recall-baseline record --kind capture --surface lifecycle --operation prompt --outcome unknown",
-		"recall-baseline record --kind operation --surface lifecycle --operation session_start --outcome success --delivered-bytes ",
-	} {
-		if !strings.Contains(logged, want) {
-			t.Fatalf("baseline calls do not contain %q\n%s", want, logged)
-		}
-	}
-	if !strings.Contains(logged, "--delivered-bytes "+strconv.Itoa(len(sessionStartOutput))) {
-		t.Fatalf("SessionStart byte count does not match %d delivered UTF-8 bytes\n%s", len(sessionStartOutput), logged)
-	}
-	for _, forbidden := range []string{"PROMPT-CONTENT-MUST-NOT-LEAK", "/tmp/repo"} {
-		if strings.Contains(logged, forbidden) {
-			t.Fatalf("baseline call leaked %q\n%s", forbidden, logged)
-		}
-	}
-	for _, unnecessaryIdentity := range []string{"session-secret", "turn-secret", "--host"} {
-		if strings.Contains(logged, unnecessaryIdentity) {
-			t.Fatalf("baseline call retained unnecessary identity %q\n%s", unnecessaryIdentity, logged)
-		}
-	}
-
-	if err := os.Remove(logPath); err != nil {
-		t.Fatalf("remove enabled baseline log: %v", err)
-	}
-	command := exec.Command(codexTestBash(t), filepath.Join(pluginRoot, "scripts", "user-prompt-submit.sh"))
-	command.Stdin = strings.NewReader(`{"cwd":"/tmp/repo","session_id":"session-secret","turn_id":"turn-secret","prompt":"disabled baseline"}`)
-	command.Env = append(os.Environ(),
+	manifest := readCodexHooksManifest(t, filepath.Join(pluginRoot, "hooks", "hooks.json"))
+	binDir := buildCodexActivationCLI(t, root)
+	dataDir := t.TempDir()
+	env := append(os.Environ(),
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"ENGRAM_RECALL_BASELINE=",
-		"BASELINE_ARGS_LOG="+logPath,
+		"ENGRAM_DATA_DIR="+dataDir,
+		"ENGRAM_PROJECT=engram",
+		"ENGRAM_CODEX_RECALL_CANARY=targeted-recall",
+		"ENGRAM_RECALL_BASELINE=1",
 	)
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("run disabled baseline hook: %v\n%s", err, output)
+
+	sessionOutput := runCodexBaselineManifest(t, matchingSessionStartCommand(t, manifest, "startup"),
+		`{"cwd":"/tmp/repo","session_id":"session-secret","source":"startup"}`, pluginRoot, env)
+	promptOutput := runCodexBaselineManifest(t, singleCodexHookCommand(t, manifest, "UserPromptSubmit"),
+		`{"cwd":"/tmp/repo","session_id":"session-secret","turn_id":"turn-secret","prompt":"PROMPT-CONTENT-MUST-NOT-LEAK"}`, pluginRoot, env)
+	if !json.Valid([]byte(sessionOutput)) || !json.Valid([]byte(promptOutput)) {
+		t.Fatalf("hook output is not valid JSON: session=%q prompt=%q", sessionOutput, promptOutput)
 	}
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Fatalf("disabled hook invoked baseline recorder: %v", err)
+	firstReport := waitCodexLifecycleBaseline(t, dataDir, 1)
+	if firstReport.Lifecycle.Capture.Disabled != 1 {
+		t.Fatalf("default-off prompt Capture metrics = %+v, want one disabled event", firstReport.Lifecycle.Capture)
+	}
+	var sessionResponse codexHookResponse
+	if err := json.Unmarshal([]byte(sessionOutput), &sessionResponse); err != nil {
+		t.Fatalf("decode SessionStart output: %v", err)
+	}
+
+	s, err := store.New(store.FallbackConfig(dataDir))
+	if err != nil {
+		t.Fatalf("open prompt consent store: %v", err)
+	}
+	if err := s.UpsertCaptureConsent(store.CaptureConsent{
+		Project: "engram", ContentType: store.CaptureContentTypePrompt,
+		RetentionDays: store.DefaultDiagnosticRetentionDays, UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("enable prompt capture: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close prompt consent store: %v", err)
+	}
+	consentedOutput := runCodexBaselineManifest(t, singleCodexHookCommand(t, manifest, "UserPromptSubmit"),
+		`{"cwd":"/tmp/repo","session_id":"session-secret","turn_id":"turn-consented","prompt":"CONSENTED-PROMPT-STAYS-DIAGNOSTIC"}`, pluginRoot, env)
+	if strings.Contains(consentedOutput, "CONSENTED-PROMPT-STAYS-DIAGNOSTIC") {
+		t.Fatalf("consented prompt leaked into hook output: %s", consentedOutput)
+	}
+
+	report := waitCodexLifecycleBaseline(t, dataDir, 2)
+	if report.Lifecycle.Capture.Events != 2 || report.Lifecycle.Capture.Disabled != 1 || report.Lifecycle.Capture.Enabled != 1 {
+		t.Fatalf("prompt Capture metrics = %+v, want one disabled and one enabled event", report.Lifecycle.Capture)
+	}
+	if len(report.Operations) != 1 {
+		t.Fatalf("lifecycle operations = %+v", report.Operations)
+	}
+	operation := report.Operations[0]
+	wantBytes := int64(len(sessionResponse.HookSpecificOutput.AdditionalContext))
+	if operation.Surface != recallbaseline.SurfaceLifecycle || operation.Operation != "session_start" ||
+		operation.Events != 1 || operation.LatencySamples != 1 || operation.ByteSamples != 1 || operation.TotalUTF8Bytes != wantBytes {
+		t.Fatalf("SessionStart metrics = %+v, want injected bytes %d", operation, wantBytes)
+	}
+	raw, err := os.ReadFile(recallbaseline.DatabasePath(dataDir))
+	if err != nil {
+		t.Fatalf("read content-free baseline: %v", err)
+	}
+	for _, forbidden := range []string{"PROMPT-CONTENT-MUST-NOT-LEAK", "CONSENTED-PROMPT-STAYS-DIAGNOSTIC", "/tmp/repo", "session-secret", "turn-secret", "turn-consented"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("baseline database leaked %q", forbidden)
+		}
+	}
+
+	disabledDir := t.TempDir()
+	disabledEnv := append(os.Environ(),
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"ENGRAM_DATA_DIR="+disabledDir,
+		"ENGRAM_PROJECT=engram",
+		"ENGRAM_RECALL_BASELINE=",
+	)
+	runCodexBaselineManifest(t, singleCodexHookCommand(t, manifest, "UserPromptSubmit"),
+		`{"session_id":"missing","turn_id":"turn","prompt":"disabled baseline"}`, pluginRoot, disabledEnv)
+	if _, err := os.Stat(recallbaseline.DatabasePath(disabledDir)); !os.IsNotExist(err) {
+		t.Fatalf("disabled hook created baseline state: %v", err)
 	}
 }
 
-func writeExecutable(t *testing.T, path, contents string) {
+func waitCodexLifecycleBaseline(t *testing.T, dataDir string, captureEvents int64) recallbaseline.Report {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(contents), 0o755); err != nil {
-		t.Fatalf("write executable %s: %v", path, err)
+	deadline := time.Now().Add(10 * time.Second)
+	var lastReport recallbaseline.Report
+	for {
+		ledger, err := recallbaseline.Open(recallbaseline.Config{DataDir: dataDir})
+		if err != nil {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out opening lifecycle baseline: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		report, reportErr := ledger.Report(protocolcontract.CompatibilityReport{})
+		closeErr := ledger.Close()
+		if reportErr != nil || closeErr != nil {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out reading lifecycle baseline: report=%v close=%v", reportErr, closeErr)
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		lastReport = report
+		if report.Lifecycle.Capture.Events >= captureEvents && len(report.Operations) > 0 {
+			return report
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for lifecycle baseline: %+v", lastReport)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func runCodexBaselineManifest(t *testing.T, command, input, pluginRoot string, env []string) string {
+	t.Helper()
+	run := exec.Command(codexTestBash(t), "-c", command)
+	run.Env = append(env, "PLUGIN_ROOT="+pluginRoot)
+	run.Stdin = strings.NewReader(input)
+	output, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run lifecycle manifest command: %v\n%s", err, output)
+	}
+	return string(output)
 }

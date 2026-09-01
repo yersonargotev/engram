@@ -6,8 +6,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${PLUGIN_ROOT}/scripts/session-start.sh\"",
+            "command": "engram lifecycle session-start --host=codex --plugin-root=\"${PLUGIN_ROOT}\"",
+            "commandWindows": "engram lifecycle session-start --host=codex --plugin-root=\"${PLUGIN_ROOT}\"",
             "timeout": 10,
+            "additionalContextLimit": 4096,
             "statusMessage": "Loading engram memory..."
           }
         ]
@@ -17,8 +19,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${PLUGIN_ROOT}/scripts/post-compaction.sh\"",
+            "command": "engram lifecycle session-start --host=codex --plugin-root=\"${PLUGIN_ROOT}\"",
+            "commandWindows": "engram lifecycle session-start --host=codex --plugin-root=\"${PLUGIN_ROOT}\"",
             "timeout": 10,
+            "additionalContextLimit": 4096,
             "statusMessage": "Recovering engram context after compaction..."
           }
         ]
@@ -29,8 +33,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${PLUGIN_ROOT}/scripts/user-prompt-submit.sh\"",
-            "timeout": 2
+            "command": "engram capture prompt-hook --host=codex",
+            "commandWindows": "engram capture prompt-hook --host=codex",
+            "timeout": 2,
+            "additionalContextLimit": 1024
           }
         ]
       }
@@ -66,8 +72,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${PLUGIN_ROOT}/scripts/session-end.sh\"",
-            "commandWindows": "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${PLUGIN_ROOT}\\scripts\\session-end.ps1\"",
+            "command": "engram lifecycle session-end --host=codex",
+            "commandWindows": "engram lifecycle session-end --host=codex",
             "timeout": 3
           }
         ]

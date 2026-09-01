@@ -195,29 +195,46 @@ checkpoint core:
 plugin/codex/
 ├── .codex-plugin/plugin.json
 ├── .mcp.json
-├── hooks/hooks.json
+├── hooks/hooks.json               # Direct Core commands on Unix and Windows
 ├── scripts/
-│   ├── _checkpoint.sh             # Extracts and renders the canonical cue
-│   ├── session-start.sh           # startup, resume, and clear
-│   ├── post-compaction.sh         # compact
-│   ├── user-prompt-submit.sh      # Opaque root identity + consent-gated capture offer
 │   └── stop.sh                    # Unix exact-checkpoint verifier
 └── skills/memory/SKILL.md         # Canonical cue and complete rubric
 ```
 
 The skill is the single source for both the minimal cue and the detailed
-`saved`, `skipped(no_durable_knowledge)`, and `needs_review` rubric. The two
-`SessionStart` scripts extract that cue and return it through
-`hookSpecificOutput.additionalContext`; they contain no independent Memory
-policy. Codex runs them exactly once for each supported source: `startup`,
-`resume`, `clear`, and `compact`.
+`saved`, `skipped(no_durable_knowledge)`, and `needs_review` rubric.
+`SessionStart` delegates directly to
+`engram lifecycle session-start --host=codex` on Unix and Windows. Core reads
+the cue and returns it through `hookSpecificOutput.additionalContext`; the
+manifest contains no independent Memory policy. Codex runs exactly one command
+for each supported source: `startup`, `resume`, `clear`, and `compact`, with a
+4 KiB complete injection limit.
 
-`UserPromptSubmit` forwards Codex's `turn_id` as Engram's `root_turn_id` beside
-the session ID. It does not finalize a checkpoint. This preserves one root-turn
+The cue-only lifecycle canary is opt-in through
+`ENGRAM_CODEX_RECALL_CANARY`:
+
+| Value | Startup, resume, clear | Compact |
+| --- | --- | --- |
+| unset | Existing bounded cue plus broad project context | Existing bounded cue plus broad project context |
+| `targeted-recall` | Cue only | Cue only; the canonical skill performs project-scoped MCP Recall only when it can change the continuation |
+| `targeted-recall-exact-session` | Cue only | Cue plus bounded context from the exact persisted session only |
+
+An unknown value does not enable a canary and is reported as invalid by
+`engram setup status codex`. Neither canary value enables prompt/subagent
+Capture, creates Memory, changes the five-tool profile, or changes the
+single-continuation Stop contract.
+
+`UserPromptSubmit` delegates directly to
+`engram capture prompt-hook --host=codex` on Unix and Windows and forwards
+Codex's `turn_id` as Engram's `root_turn_id` beside the session ID. It does not
+finalize a checkpoint. This preserves one root-turn
 identity for the root agent while tools and subagents remain internal activity.
 Identity reporting does not require prompt persistence: Diagnostic capture is
 off by default and Core evaluates any content offer against explicit local
-project/content-type consent.
+project/content-type consent. The foreground hook sends the content only over
+`stdin` to a detached Core persistence command; it never places prompts in
+arguments or environment variables. Core binds eligibility to the event's
+observed time, so consent granted later cannot capture an earlier prompt.
 
 `SubagentStop` delegates directly to
 `engram capture subagent-hook --host=codex` on Unix and Windows. It does not
@@ -238,6 +255,11 @@ second continuation. Invalid input and store failures are surfaced as
 integration messages. Executable failures, malformed command output, and
 Codex's three-second hook timeout remain visible and never become `skipped`.
 
+`SessionEnd` delegates directly to
+`engram lifecycle session-end --host=codex` on Unix and Windows. Core closes
+only the exact existing session and creates no Memory, proposal, checkpoint,
+summary, feedback, or additional model context.
+
 `engram setup codex` verifies the immutable plugin tree, MCP manifest, canonical
 skill, cue, lifecycle coverage, exact synchronous `Stop` command, timeout, and
 the Unix launcher used by the verifier. It preserves user-owned settings and never
@@ -250,7 +272,11 @@ installed/enabled plugin provenance, MCP configuration and executable preflight,
 prompt/session/subagent hooks, the canonical activation cue, and the Stop
 verifier as separate checks. Its content-free `subagent_capture` object reports
 `default_disabled`, `consented`, `expired`, or `unavailable` without reading
-captured content or exposing session identifiers. It also reports Managed Pack,
+captured content or exposing session identifiers. Its `lifecycle_canary`
+object reports the selected treatment, selection source, cue readiness, 4 KiB
+limit, and content-free SessionStart latency/injected-byte aggregates when the
+opt-in baseline has observations. Reading status never selects a canary,
+enables Capture, creates baseline state, or runs a hook. It also reports Managed Pack,
 binary, plugin, and Protocol contract versions separately, with attributable
 range declarations and their computed intersection. Its `manual_skill_cli`, `mcp_only`, `partial_plugin`,
 `checkpoint_ready`, and `unknown` modes never promote marketplace registration

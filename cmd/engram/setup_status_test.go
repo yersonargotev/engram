@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yersonargotev/engram/internal/codexlifecycle"
 	"github.com/yersonargotev/engram/internal/protocolcontract"
 	"github.com/yersonargotev/engram/internal/setup"
 	"github.com/yersonargotev/engram/internal/store"
@@ -37,6 +38,13 @@ func TestCmdSetupStatusCodexJSONDoesNotInstall(t *testing.T) {
 			SchemaVersion: setup.CodexIntegrationStatusSchemaVersion,
 			Mode:          setup.CodexModeManualSkillCLI,
 			Compatibility: compatibility,
+			LifecycleCanary: setup.CodexLifecycleCanaryStatus{
+				Enabled: true, Valid: true, Treatment: codexlifecycle.TreatmentCueOnlyTargetedRecall,
+				SelectionSource: "environment", EnvironmentVariable: codexlifecycle.EnvTreatment,
+				ActivationCue: setup.CodexCheckReady, InjectionLimitUTF8Bytes: codexlifecycle.MaxInjectedUTF8Bytes,
+				Metrics:    setup.CodexLifecycleMetricsStatus{State: setup.CodexLifecycleMetricsNotObserved, Source: "recall_baseline_session_start", ReasonCode: "lifecycle_metrics_not_observed"},
+				ReasonCode: "canary_targeted_recall",
+			},
 			PromptCapture: setup.CodexPromptCaptureStatus{
 				Capability:     setup.CodexCheckReady,
 				Identity:       setup.CodexCheckMissing,
@@ -92,6 +100,10 @@ func TestCmdSetupStatusCodexJSONDoesNotInstall(t *testing.T) {
 	}
 	if got.Compatibility.Status != protocolcontract.CompatibilityReady || len(got.Compatibility.Axes) != 4 {
 		t.Fatalf("setup status compatibility = %#v", got.Compatibility)
+	}
+	if !got.LifecycleCanary.Enabled || got.LifecycleCanary.Treatment != codexlifecycle.TreatmentCueOnlyTargetedRecall ||
+		got.LifecycleCanary.ActivationCue != setup.CodexCheckReady || got.LifecycleCanary.Metrics.State != setup.CodexLifecycleMetricsNotObserved {
+		t.Fatalf("setup lifecycle canary status = %#v", got.LifecycleCanary)
 	}
 	if got.PromptCapture.Capability != setup.CodexCheckReady ||
 		got.PromptCapture.DefaultConsent != setup.CodexCaptureConsentDisabled ||
@@ -150,6 +162,17 @@ func TestPrintCodexIntegrationStatusReportsTheFourVersionAxes(t *testing.T) {
 		printCodexIntegrationStatus(setup.CodexIntegrationStatus{
 			Mode:          setup.CodexModeCheckpointReady,
 			Compatibility: report,
+			LifecycleCanary: setup.CodexLifecycleCanaryStatus{
+				Enabled: true, Valid: true, Treatment: codexlifecycle.TreatmentCueOnlyTargetedRecallExactSession,
+				SelectionSource: "environment", EnvironmentVariable: codexlifecycle.EnvTreatment,
+				ActivationCue: setup.CodexCheckReady, InjectionLimitUTF8Bytes: codexlifecycle.MaxInjectedUTF8Bytes,
+				Metrics: setup.CodexLifecycleMetricsStatus{
+					State: setup.CodexLifecycleMetricsObserved, Events: 3, P50LatencyMillis: 8.5, P95LatencyMillis: 12,
+					TotalInjectedUTF8Bytes: 630, AverageInjectedUTF8Bytes: 210,
+				},
+			},
+			PromptCapture:   setup.CodexPromptCaptureStatus{CurrentConsent: setup.CodexCaptureConsentDisabled},
+			SubagentCapture: setup.CodexSubagentCaptureStatus{State: setup.CodexSubagentCaptureDefaultDisabled},
 			Checks: []setup.CodexIntegrationCheck{{
 				Capability: "prompt_capture",
 				Status:     setup.CodexCheckReady,
@@ -173,6 +196,10 @@ func TestPrintCodexIntegrationStatusReportsTheFourVersionAxes(t *testing.T) {
 		"Codex plugin: 0.1.6; Protocol 1..1; plugin:def",
 		"Protocol contract: 1; Protocol 1..1; engram-core",
 		"Protocol intersection: 1..1",
+		"Codex lifecycle treatment: cue_only_targeted_recall_exact_session (canary enabled: true; source: environment)",
+		"Activation cue: ready; injection limit: 4096 UTF-8 bytes",
+		"Capture state: prompt=disabled; subagent=default_disabled",
+		"Lifecycle metrics: observed; events=3; p50=8.5ms; p95=12ms; total injected=630 UTF-8 bytes; average=210",
 		"prompt_capture: ready",
 		"identity: ready",
 		"default_consent: disabled",

@@ -691,7 +691,9 @@ func main() {
 		}
 		runRecallBaselineCLI(cfg, operation, func() { cmdCheckpoint(cfg) })
 	case "capture":
-		if len(os.Args) >= 3 && strings.EqualFold(strings.TrimSpace(os.Args[2]), "subagent-hook") {
+		if len(os.Args) >= 3 && (strings.EqualFold(strings.TrimSpace(os.Args[2]), "subagent-hook") ||
+			strings.EqualFold(strings.TrimSpace(os.Args[2]), "prompt-hook") ||
+			strings.EqualFold(strings.TrimSpace(os.Args[2]), "prompt-persist")) {
 			cmdCapture(cfg)
 			break
 		}
@@ -700,6 +702,8 @@ func main() {
 			operation += "_" + strings.ToLower(strings.TrimSpace(os.Args[2]))
 		}
 		runRecallBaselineCLI(cfg, operation, func() { cmdCapture(cfg) })
+	case "lifecycle":
+		cmdLifecycle(cfg)
 	case "legacy-prompts":
 		runRecallBaselineCLI(cfg, "legacy_prompts", func() { cmdLegacyPrompts(cfg) })
 	case "stats":
@@ -751,10 +755,14 @@ func shouldCheckForUpdates(args []string) bool {
 	}
 	command := strings.ToLower(strings.TrimSpace(args[0]))
 	switch command {
-	case "mcp", "serve", "protocol-mode", "activation-study", "recall-baseline":
+	case "mcp", "serve", "protocol-mode", "activation-study", "recall-baseline", "lifecycle":
 		return false
 	case "capture":
-		return len(args) < 2 || strings.ToLower(strings.TrimSpace(args[1])) != "subagent-hook"
+		if len(args) < 2 {
+			return true
+		}
+		subcommand := strings.ToLower(strings.TrimSpace(args[1]))
+		return subcommand != "subagent-hook" && subcommand != "prompt-hook" && subcommand != "prompt-persist"
 	case "checkpoint":
 		return len(args) >= 2 && strings.ToLower(strings.TrimSpace(args[1])) != "verify-stop"
 	case "cloud":
@@ -3214,6 +3222,22 @@ func printCodexIntegrationStatus(status setup.CodexIntegrationStatus) {
 			fmt.Printf("  Protocol intersection: %d..%d\n", status.Compatibility.Intersection.Minimum, status.Compatibility.Intersection.Maximum)
 		}
 	}
+	if status.LifecycleCanary.Treatment != "" {
+		fmt.Printf("Codex lifecycle treatment: %s (canary enabled: %t; source: %s)\n",
+			status.LifecycleCanary.Treatment, status.LifecycleCanary.Enabled, status.LifecycleCanary.SelectionSource)
+		fmt.Printf("  Activation cue: %s; injection limit: %d UTF-8 bytes\n",
+			status.LifecycleCanary.ActivationCue, status.LifecycleCanary.InjectionLimitUTF8Bytes)
+		fmt.Printf("  Capture state: prompt=%s; subagent=%s\n",
+			status.PromptCapture.CurrentConsent, status.SubagentCapture.State)
+		metrics := status.LifecycleCanary.Metrics
+		if metrics.State == setup.CodexLifecycleMetricsObserved {
+			fmt.Printf("  Lifecycle metrics: %s; events=%d; p50=%gms; p95=%gms; total injected=%d UTF-8 bytes; average=%g\n",
+				metrics.State, metrics.Events, metrics.P50LatencyMillis, metrics.P95LatencyMillis,
+				metrics.TotalInjectedUTF8Bytes, metrics.AverageInjectedUTF8Bytes)
+		} else {
+			fmt.Printf("  Lifecycle metrics: %s (%s)\n", metrics.State, metrics.ReasonCode)
+		}
+	}
 	for _, check := range status.Checks {
 		fmt.Printf("  - %s: %s — %s\n", check.Capability, check.Status, check.Reason)
 		for _, evidence := range check.Evidence {
@@ -3595,6 +3619,9 @@ Commands:
 Environment:
   ENGRAM_DATA_DIR    Override data directory (default: ~/.engram)
   ENGRAM_PORT        Override HTTP server port (default: 7437)
+  ENGRAM_CODEX_RECALL_CANARY
+                     Opt into targeted-recall or targeted-recall-exact-session.
+                     Unset preserves broad context; unknown values do not enable a canary.
   ENGRAM_PROJECT     Process-level default project override, applied by every entry point
                      with one precedence rule: explicit request project (engram save --project,
                      an MCP tool project argument) > process override (engram mcp --project,

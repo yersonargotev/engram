@@ -18,10 +18,12 @@ type hookGroup struct {
 }
 
 type hookEntry struct {
-	Type           string `json:"type"`
-	Command        string `json:"command,omitempty"`
-	CommandWindows string `json:"commandWindows,omitempty"`
-	Path           string `json:"path,omitempty"`
+	Type                   string `json:"type"`
+	Command                string `json:"command,omitempty"`
+	CommandWindows         string `json:"commandWindows,omitempty"`
+	Path                   string `json:"path,omitempty"`
+	Timeout                int    `json:"timeout,omitempty"`
+	AdditionalContextLimit int    `json:"additionalContextLimit,omitempty"`
 }
 
 // TestHooksJSONPluginRootIsQuoted loads plugin/claude-code/hooks/hooks.json and

@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yersonargotev/engram/internal/codexlifecycle"
 	"github.com/yersonargotev/engram/internal/protocolcontract"
+	"github.com/yersonargotev/engram/internal/recallbaseline"
 	"github.com/yersonargotev/engram/internal/store"
 )
 
@@ -65,6 +67,7 @@ func TestInspectCodexStatusEmptyProfileIsConservativeAndReadOnly(t *testing.T) {
 		{"subagent_hook", CodexCheckMissing, "plugin_missing"},
 		{"prompt_capture", CodexCheckReady, "prompt_capture_available"},
 		{"subagent_capture", CodexCheckReady, "subagent_capture_available"},
+		{"lifecycle_canary", CodexCheckMissing, "lifecycle_activation_cue_unavailable"},
 	}
 	if len(status.Checks) != len(want) {
 		t.Fatalf("checks = %#v, want %d", status.Checks, len(want))
@@ -102,6 +105,62 @@ func TestInspectCodexStatusEmptyProfileIsConservativeAndReadOnly(t *testing.T) {
 	after := snapshotStatusTestTree(t, home)
 	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("status inspection mutated isolated profile:\nbefore=%#v\nafter=%#v", before, after)
+	}
+}
+
+func TestInspectCodexLifecycleCanaryStatusReportsSelectionCueAndReadOnlyMetrics(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	dataDir := filepath.Join(home, ".engram")
+	t.Setenv("ENGRAM_DATA_DIR", dataDir)
+	t.Setenv(codexlifecycle.EnvTreatment, "targeted-recall-exact-session")
+	now := time.Date(2026, time.September, 1, 15, 0, 0, 0, time.UTC)
+	ledger, err := recallbaseline.Open(recallbaseline.Config{DataDir: dataDir, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("open lifecycle baseline: %v", err)
+	}
+	for _, event := range []recallbaseline.Event{
+		{Kind: recallbaseline.EventOperation, Surface: recallbaseline.SurfaceLifecycle, Operation: "session_start", Outcome: recallbaseline.OutcomeSuccess, Latency: recallbaseline.KnownLatency(8 * time.Millisecond), DeliveredUTF8Bytes: recallbaseline.KnownBytes(210)},
+		{Kind: recallbaseline.EventOperation, Surface: recallbaseline.SurfaceLifecycle, Operation: "session_start", Outcome: recallbaseline.OutcomeSuccess, Latency: recallbaseline.KnownLatency(13 * time.Millisecond), DeliveredUTF8Bytes: recallbaseline.KnownBytes(230)},
+	} {
+		if err := ledger.Record(event); err != nil {
+			t.Fatalf("record lifecycle baseline: %v", err)
+		}
+	}
+	if err := ledger.Close(); err != nil {
+		t.Fatalf("close lifecycle baseline: %v", err)
+	}
+	before := snapshotStatusTestTree(t, home)
+
+	status := inspectCodexLifecycleCanaryStatus([]CodexIntegrationCheck{{Capability: "activation_cue", Status: CodexCheckReady}}, now)
+	if !status.Enabled || !status.Valid || status.Treatment != codexlifecycle.TreatmentCueOnlyTargetedRecallExactSession ||
+		status.SelectionSource != "environment" || status.ActivationCue != CodexCheckReady ||
+		status.InjectionLimitUTF8Bytes != codexlifecycle.MaxInjectedUTF8Bytes || status.ReasonCode != "canary_targeted_recall_exact_session" {
+		t.Fatalf("lifecycle canary status = %#v", status)
+	}
+	metrics := status.Metrics
+	if metrics.State != CodexLifecycleMetricsObserved || metrics.Events != 2 || metrics.LatencySamples != 2 ||
+		metrics.P50LatencyMillis != 8 || metrics.P95LatencyMillis != 13 || metrics.ByteSamples != 2 ||
+		metrics.TotalInjectedUTF8Bytes != 440 || metrics.AverageInjectedUTF8Bytes != 220 {
+		t.Fatalf("lifecycle canary metrics = %#v", metrics)
+	}
+	after := snapshotStatusTestTree(t, home)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("lifecycle status mutated profile:\nbefore=%#v\nafter=%#v", before, after)
+	}
+}
+
+func TestInspectCodexLifecycleCanaryStatusDoesNotEnableInvalidTreatment(t *testing.T) {
+	resetSetupSeams(t)
+	useTestHome(t)
+	t.Setenv(codexlifecycle.EnvTreatment, "invented-treatment")
+	status := inspectCodexLifecycleCanaryStatus([]CodexIntegrationCheck{{Capability: "activation_cue", Status: CodexCheckReady}}, time.Now().UTC())
+	if status.Enabled || status.Valid || status.Treatment != codexlifecycle.TreatmentBroadProjectContext || status.ReasonCode != "canary_treatment_invalid" {
+		t.Fatalf("invalid treatment status = %#v", status)
+	}
+	check := codexLifecycleCanaryCheck(status)
+	if check.Status != CodexCheckInvalid || check.ReasonCode != "lifecycle_canary_treatment_invalid" {
+		t.Fatalf("invalid treatment check = %#v", check)
 	}
 }
 

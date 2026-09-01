@@ -12,16 +12,19 @@ const (
 	codexCheckpointCueEnd   = "<!-- engram:checkpoint-cue:end -->"
 )
 
+type codexActivationHook struct {
+	Type                   string `json:"type"`
+	Command                string `json:"command"`
+	CommandWindows         string `json:"commandWindows"`
+	Timeout                int    `json:"timeout"`
+	AdditionalContextLimit int    `json:"additionalContextLimit"`
+	Async                  bool   `json:"async"`
+}
+
 type codexActivationHooksManifest struct {
 	Hooks map[string][]struct {
-		Matcher string `json:"matcher"`
-		Hooks   []struct {
-			Type           string `json:"type"`
-			Command        string `json:"command"`
-			CommandWindows string `json:"commandWindows"`
-			Timeout        int    `json:"timeout"`
-			Async          bool   `json:"async"`
-		} `json:"hooks"`
+		Matcher string                `json:"matcher"`
+		Hooks   []codexActivationHook `json:"hooks"`
 	} `json:"hooks"`
 }
 
@@ -50,40 +53,28 @@ func verifyInstalledCodexSessionHooks(installedPath string, hooksRaw []byte) boo
 		return false
 	}
 	end := groups[0].Hooks[0]
-	if end.Type != "command" || end.Command != `"${PLUGIN_ROOT}/scripts/session-end.sh"` ||
-		end.CommandWindows != `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${PLUGIN_ROOT}\scripts\session-end.ps1"` ||
+	const command = "engram lifecycle session-end --host=codex"
+	if end.Type != "command" || end.Command != command || end.CommandWindows != command ||
 		end.Timeout != 3 || end.Async {
 		return false
-	}
-	for _, relative := range []string{"scripts/session-end.sh", "scripts/session-end.ps1"} {
-		if _, err := readFileFn(filepath.Join(installedPath, filepath.FromSlash(relative))); err != nil {
-			return false
-		}
 	}
 	return true
 }
 
 func verifyInstalledCodexSessionStartHooks(installedPath string, hooksRaw []byte) bool {
-	helperRaw, err := readFileFn(filepath.Join(installedPath, "scripts", "_checkpoint.sh"))
-	if err != nil || !validCodexCheckpointHelper(string(helperRaw)) {
-		return false
-	}
-
 	var manifest codexActivationHooksManifest
 	if json.Unmarshal(hooksRaw, &manifest) != nil {
 		return false
 	}
+	const command = `engram lifecycle session-start --host=codex --plugin-root="${PLUGIN_ROOT}"`
 	for _, source := range []string{"startup", "resume", "clear", "compact"} {
-		commands := matchingCodexSessionStartCommands(manifest, source)
-		if len(commands) != 1 {
+		hooks := matchingCodexSessionStartHooks(manifest, source)
+		if len(hooks) != 1 {
 			return false
 		}
-		scriptPath, ok := installedCodexPluginScriptPath(installedPath, commands[0])
-		if !ok {
-			return false
-		}
-		scriptRaw, err := readFileFn(scriptPath)
-		if err != nil || !validCodexSessionStartAdapter(string(scriptRaw)) {
+		hook := hooks[0]
+		if hook.Command != command || hook.CommandWindows != command || hook.Timeout != 10 ||
+			hook.AdditionalContextLimit != 4096 || hook.Async {
 			return false
 		}
 	}
@@ -100,16 +91,9 @@ func verifyInstalledCodexPromptHook(installedPath string, hooksRaw []byte) bool 
 		return false
 	}
 	hook := groups[0].Hooks[0]
-	if hook.Type != "command" || hook.Command != `"${PLUGIN_ROOT}/scripts/user-prompt-submit.sh"` || hook.Timeout != 2 || hook.Async {
-		return false
-	}
-	scriptRaw, err := readFileFn(filepath.Join(installedPath, "scripts", "user-prompt-submit.sh"))
-	if err != nil {
-		return false
-	}
-	script := string(scriptRaw)
-	return strings.Contains(script, `"${ENGRAM_URL}/prompts"`) &&
-		strings.Contains(script, "session_id") && strings.Contains(script, "turn_id")
+	const command = "engram capture prompt-hook --host=codex"
+	return hook.Type == "command" && hook.Command == command && hook.CommandWindows == command &&
+		hook.Timeout == 2 && hook.AdditionalContextLimit == 1024 && !hook.Async
 }
 
 func validCodexCheckpointSkill(skill string) bool {
@@ -161,24 +145,8 @@ func extractCodexCheckpointCue(skill string) (string, bool) {
 	return cue, cue != ""
 }
 
-func validCodexCheckpointHelper(helper string) bool {
-	for _, required := range []string{
-		codexCheckpointCueStart,
-		codexCheckpointCueEnd,
-		"checkpoint_activation_cue",
-		"hookSpecificOutput",
-		"additionalContext",
-		`hookEventName:"SessionStart"`,
-	} {
-		if !strings.Contains(helper, required) {
-			return false
-		}
-	}
-	return true
-}
-
-func matchingCodexSessionStartCommands(manifest codexActivationHooksManifest, source string) []string {
-	var commands []string
+func matchingCodexSessionStartHooks(manifest codexActivationHooksManifest, source string) []codexActivationHook {
+	var hooks []codexActivationHook
 	for _, group := range manifest.Hooks["SessionStart"] {
 		matcher := group.Matcher
 		if matcher == "" {
@@ -190,35 +158,9 @@ func matchingCodexSessionStartCommands(manifest codexActivationHooksManifest, so
 		}
 		for _, hook := range group.Hooks {
 			if hook.Type == "command" {
-				commands = append(commands, hook.Command)
+				hooks = append(hooks, hook)
 			}
 		}
 	}
-	return commands
-}
-
-func installedCodexPluginScriptPath(installedPath, command string) (string, bool) {
-	const prefix = `"${PLUGIN_ROOT}/scripts/`
-	trimmed := strings.TrimSpace(command)
-	if !strings.HasPrefix(trimmed, prefix) || !strings.HasSuffix(trimmed, `"`) {
-		return "", false
-	}
-	relative := strings.TrimSuffix(strings.TrimPrefix(trimmed, prefix), `"`)
-	if relative == "" || filepath.Base(relative) != relative {
-		return "", false
-	}
-	return filepath.Join(installedPath, "scripts", relative), true
-}
-
-func validCodexSessionStartAdapter(script string) bool {
-	if !strings.Contains(script, `source "${SCRIPT_DIR}/_checkpoint.sh"`) ||
-		!strings.Contains(script, "emit_session_start_context") {
-		return false
-	}
-	for _, rubricHeading := range []string{"## Choose a disposition", "## Finalize idempotently"} {
-		if strings.Contains(script, rubricHeading) {
-			return false
-		}
-	}
-	return true
+	return hooks
 }

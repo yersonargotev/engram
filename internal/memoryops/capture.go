@@ -67,6 +67,7 @@ type CaptureInput struct {
 	ContentType string
 	SessionID   string
 	Content     string
+	ObservedAt  time.Time
 }
 
 type CaptureResult struct {
@@ -168,9 +169,13 @@ func (s *Service) Capture(input CaptureInput) (*CaptureResult, error) {
 	if contentType == store.CaptureContentTypePrompt && strings.TrimSpace(input.SessionID) == "" {
 		return nil, errors.New("session id is required for prompt capture")
 	}
+	observedAt := input.ObservedAt.UTC()
+	if observedAt.IsZero() {
+		observedAt = s.now().UTC()
+	}
 	result, err := s.store.CaptureDiagnostic(store.CaptureDiagnosticParams{
 		Project: project, ContentType: contentType, SessionID: strings.TrimSpace(input.SessionID),
-		Content: input.Content, Now: s.now(),
+		Content: input.Content, Now: observedAt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("capture Diagnostic content: %w", err)

@@ -147,6 +147,9 @@ func TestCodexCheckpointAcceptanceUsesRealCLIAndScripts(t *testing.T) {
 	writeCodexAcceptanceCurl(t, binDir)
 	dataDir := t.TempDir()
 	baseEnv := append(os.Environ(), "ENGRAM_DATA_DIR="+dataDir)
+	t.Setenv("ENGRAM_DATA_DIR", dataDir)
+	t.Setenv("ENGRAM_PROJECT", "engram")
+	t.Setenv("ENGRAM_CODEX_RECALL_CANARY", "targeted-recall")
 
 	cue := readCanonicalCheckpointCue(t, filepath.Join(pluginRoot, "skills", "memory", "SKILL.md"))
 	sessionCommand := matchingSessionStartCommand(t, manifest, "startup")

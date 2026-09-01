@@ -77,7 +77,8 @@ engram recall-baseline purge --json
 ```
 
 Current automatic observers cover checkpoint/Stop outcomes, prompt and
-subagent Capture enablement, SubagentStop activity, SessionStart bytes, every
+subagent Capture enablement, SubagentStop activity, SessionStart monotonic
+latency and exact injected `additionalContext` UTF-8 bytes, every
 regular configured CLI command, and every registered MCP tool call. CLI
 `search`, `context`, `get`, and `checkpoint verify-stop` record exact delivered
 bytes; other CLI commands retain their count and monotonic latency while
@@ -86,6 +87,14 @@ and baseline-management commands do not create self-referential events. MCP
 observation is bounded and non-blocking; if its queue is full, the report
 increments `collection.dropped_events` instead of delaying the tool. Missing
 measurements remain visible as unknown counts.
+
+`engram setup status codex [--json]` reads the unexpired aggregate
+`lifecycle/session_start` observation through a separate read-only path. It
+reports event/sample counts, p50/p95 latency, and total/average injected bytes.
+The v1 baseline does not attribute historical events to a treatment, so status
+labels the source as an aggregate instead of implying canary causality. If the
+ledger is absent, status returns `not_observed` without creating a directory,
+database, key, migration, or retention purge.
 
 `engram recall-baseline record` is the stable adapter for a thin integration
 that needs to submit one bounded event. Raw identity flags are accepted only

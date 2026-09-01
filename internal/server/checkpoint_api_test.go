@@ -46,6 +46,22 @@ func TestCheckpointAPIUsesServerOwnedStoreAndStructuredErrors(t *testing.T) {
 	if exactReplay.Idempotency != memoryops.CheckpointIdempotencyAlreadyRecorded {
 		t.Fatalf("replay response = %#v", exactReplay)
 	}
+	malformedReplay := httptest.NewRequest(http.MethodPost, "/checkpoints", strings.NewReader(
+		`{"host":"pi","session_id":"session-http","root_turn_id":"turn-http","disposition":"skipped","memory_ids":["not-an-integer"]}`,
+	))
+	malformedReplayed := httptest.NewRecorder()
+	h.ServeHTTP(malformedReplayed, malformedReplay)
+	if malformedReplayed.Code != http.StatusOK {
+		t.Fatalf("identity-first malformed replay status = %d body=%s", malformedReplayed.Code, malformedReplayed.Body.String())
+	}
+	var originalReplay memoryops.CheckpointRecordResult
+	if err := json.Unmarshal(malformedReplayed.Body.Bytes(), &originalReplay); err != nil {
+		t.Fatalf("decode malformed replay: %v", err)
+	}
+	if originalReplay.Idempotency != memoryops.CheckpointIdempotencyAlreadyRecorded || originalReplay.Checkpoint == nil ||
+		originalReplay.Checkpoint.ReasonCode != "no_durable_knowledge" {
+		t.Fatalf("malformed replay response = %#v", originalReplay)
+	}
 
 	status := httptest.NewRequest(http.MethodGet, "/checkpoints/status?host=pi&session_id=session-http&root_turn_id=turn-http", nil)
 	inspected := httptest.NewRecorder()

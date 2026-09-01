@@ -248,6 +248,86 @@ func TestCheckpointPreflightReusesExactDuplicatesBoundsCandidatesAndDoesNotPersi
 	}
 }
 
+func TestCheckpointPreflightDefaultsToProjectScopeAndKeepsProspectiveInputsRepresented(t *testing.T) {
+	service := newTestService(t)
+	for index := 0; index < 3; index++ {
+		result, err := service.Save(SaveInput{
+			SessionID: "session-preflight-alpha-" + string(rune('a'+index)), CWD: "/work/engram",
+			Project: "engram", Type: "decision", Scope: "project",
+			Title:            "alphaquartz candidate " + string(rune('a'+index)),
+			Content:          "alphaquartz weak relation " + string(rune('a'+index)),
+			CandidateOptions: store.CandidateOptions{SkipInsert: true},
+		})
+		if err != nil || result.Observation == nil {
+			t.Fatalf("seed alpha candidate %d: result=%#v err=%v", index, result, err)
+		}
+	}
+	projectCandidate, err := service.Save(SaveInput{
+		SessionID: "session-preflight-beta-project", CWD: "/work/engram", Project: "engram",
+		Type: "decision", Scope: "project", Title: "betacobalt material conflict",
+		Content: "betacobalt architecture conflict", CandidateOptions: store.CandidateOptions{SkipInsert: true},
+	})
+	if err != nil || projectCandidate.Observation == nil {
+		t.Fatalf("seed project candidate: result=%#v err=%v", projectCandidate, err)
+	}
+	personalCandidate, err := service.Save(SaveInput{
+		SessionID: "session-preflight-beta-personal", CWD: "/work/engram", Project: "engram",
+		Type: "decision", Scope: "personal", Title: "betacobalt private candidate",
+		Content: "betacobalt personal-only content", CandidateOptions: store.CandidateOptions{SkipInsert: true},
+	})
+	if err != nil || personalCandidate.Observation == nil {
+		t.Fatalf("seed personal candidate: result=%#v err=%v", personalCandidate, err)
+	}
+
+	result, err := service.PreflightCheckpoint(CheckpointPreflightInput{
+		Project: "engram",
+		Memories: []CheckpointMemoryInput{
+			{Type: "decision", Title: "alphaquartz prospective", Content: "alphaquartz new outcome"},
+			{Type: "decision", Title: "betacobalt prospective", Content: "betacobalt unresolved architecture"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("preflight multiple inputs: %v", err)
+	}
+	representedSecondInput := false
+	for _, candidate := range result.Candidates {
+		if candidate.Reference.MemoryID == personalCandidate.Observation.ID || candidate.Scope != "project" {
+			t.Fatalf("default project scope exposed personal candidate: %#v", candidate)
+		}
+		if candidate.InputIndex == 1 && candidate.Reference.MemoryID == projectCandidate.Observation.ID {
+			representedSecondInput = true
+		}
+	}
+	if !representedSecondInput {
+		t.Fatalf("global candidate bound starved second prospective Memory: %#v", result.Candidates)
+	}
+}
+
+func TestCheckpointPreflightExactDuplicateIncludesNormalizedTopicKey(t *testing.T) {
+	service := newTestService(t)
+	seed, err := service.Save(SaveInput{
+		SessionID: "session-preflight-topic", CWD: "/work/engram", Project: "engram",
+		Type: "architecture", Title: "Topic-aware duplicate", Content: "The durable content is identical.",
+		TopicKey: "architecture/old", CandidateOptions: store.CandidateOptions{SkipInsert: true},
+	})
+	if err != nil || seed.Observation == nil {
+		t.Fatalf("seed topic Memory: result=%#v err=%v", seed, err)
+	}
+	result, err := service.PreflightCheckpoint(CheckpointPreflightInput{
+		Project: "engram",
+		Memories: []CheckpointMemoryInput{{
+			Type: "architecture", Title: "Topic-aware duplicate", Content: "The durable content is identical.",
+			TopicKey: "architecture/new",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("preflight topic-aware Memory: %v", err)
+	}
+	if len(result.ExactDuplicates) != 0 {
+		t.Fatalf("different topic key was reused as exact duplicate: %#v", result.ExactDuplicates)
+	}
+}
+
 func TestNeedsReviewCheckpointAtomicallyPreservesSettledMemoriesAndOneProposal(t *testing.T) {
 	service := newTestService(t)
 	existing := saveObservation(t, service, "engram", "Settled Memory", "This result is settled and durable.")

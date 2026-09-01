@@ -349,6 +349,51 @@ func TestMixedMemoryCheckpointPersistsAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestProjectRenameAndMergeKeepMixedCheckpointOwnershipCoherent(t *testing.T) {
+	s := newTestStore(t)
+	recordMixed := func(identity CheckpointIdentity, project string) *MemoryCheckpoint {
+		t.Helper()
+		checkpoint, replayed, err := s.RecordNeedsReviewCheckpoint(RecordNeedsReviewCheckpointParams{
+			Identity: identity, Project: project, Directory: "/work/" + project,
+			Memories: []AddObservationParams{{
+				Type: "decision", Title: "Settled " + project, Content: "Preserve settled ownership for " + project,
+			}},
+			Proposal: &MemoryProposalInput{
+				Title: "Unresolved " + project, Content: "Preserve proposal ownership for " + project,
+			},
+		})
+		if err != nil || replayed {
+			t.Fatalf("record Mixed checkpoint for %s: checkpoint=%#v replayed=%v err=%v", project, checkpoint, replayed, err)
+		}
+		return checkpoint
+	}
+	assertProject := func(identity CheckpointIdentity, want string) {
+		t.Helper()
+		checkpoint, err := s.GetMemoryCheckpoint(identity)
+		if err != nil {
+			t.Fatalf("get Mixed checkpoint after project operation: %v", err)
+		}
+		if checkpoint.Proposal == nil || checkpoint.Proposal.Project != want || len(checkpoint.References) != 1 ||
+			checkpoint.References[0].Project != want {
+			t.Fatalf("Mixed checkpoint ownership = %#v, want project %q everywhere", checkpoint, want)
+		}
+	}
+
+	renameIdentity := CheckpointIdentity{Host: "codex", SessionID: "session-mixed-rename", RootTurnID: "turn-mixed-rename"}
+	recordMixed(renameIdentity, "rename-source")
+	if _, err := s.MigrateProject("rename-source", "rename-target"); err != nil {
+		t.Fatalf("rename Mixed project: %v", err)
+	}
+	assertProject(renameIdentity, "rename-target")
+
+	mergeIdentity := CheckpointIdentity{Host: "codex", SessionID: "session-mixed-merge", RootTurnID: "turn-mixed-merge"}
+	recordMixed(mergeIdentity, "merge-source")
+	if _, err := s.MergeProjectsExplicit([]string{"merge-source"}, "merge-target"); err != nil {
+		t.Fatalf("merge Mixed project: %v", err)
+	}
+	assertProject(mergeIdentity, "merge-target")
+}
+
 func TestMemoryProposalTablesHaveNoSyncTriggers(t *testing.T) {
 	s := newTestStore(t)
 	for _, table := range []string{"memory_proposals", "memory_checkpoint_proposal_references"} {

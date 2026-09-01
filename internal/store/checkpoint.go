@@ -53,8 +53,8 @@ type MemoryCheckpoint struct {
 
 const CheckpointReferenceKindMemory = "memory"
 
-// CheckpointReference is an immutable, local-only pointer from a saved
-// checkpoint to one Memory that justified its disposition.
+// CheckpointReference is an immutable, local-only pointer from a saved or
+// needs-review checkpoint to one settled Memory that justified its disposition.
 type CheckpointReference struct {
 	Kind         string `json:"kind"`
 	MemoryID     int64  `json:"memory_id,omitempty"`
@@ -107,10 +107,13 @@ func (s *Store) FindExactCheckpointMemory(p AddObservationParams) (*Observation,
 		  AND scope = ?
 		  AND type = ?
 		  AND title = ?
+		  AND ifnull(tool_name, '') = ?
+		  AND ifnull(topic_key, '') = ?
 		  AND deleted_at IS NULL
 		ORDER BY datetime(updated_at) DESC, id DESC
 		LIMIT 1`,
 		prepared.NormalizedHash, p.Project, prepared.Scope, p.Type, prepared.Title,
+		p.ToolName, prepared.TopicKey,
 	).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -259,9 +262,10 @@ func (s *Store) rebuildLegacyMemoryProposals() error {
 	})
 }
 
-// RecordNeedsReviewCheckpoint creates and attaches one local Memory proposal to
-// a terminal needs_review disposition. The proposal, reference, and checkpoint
-// commit in one transaction.
+// RecordNeedsReviewCheckpoint creates and attaches settled Memories plus one
+// local proposal to a terminal needs_review disposition. Memories, sync
+// mutations, ordered references, proposal, and checkpoint commit in one
+// transaction.
 func (s *Store) RecordNeedsReviewCheckpoint(p RecordNeedsReviewCheckpointParams) (*MemoryCheckpoint, bool, error) {
 	if err := validateCheckpointIdentity(p.Identity); err != nil {
 		return nil, false, err

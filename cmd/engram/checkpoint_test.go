@@ -227,6 +227,10 @@ func TestCheckpointCLIProcessJSONContract(t *testing.T) {
 	if stderr != "" || decodeCLIJSON(t, stdout)["idempotency"] != memoryops.CheckpointIdempotencyAlreadyRecorded {
 		t.Fatalf("replay stdout=%q stderr=%q", stdout, stderr)
 	}
+	stdout, stderr = run(t, "malformed-replay", 0)
+	if stderr != "" || decodeCLIJSON(t, stdout)["idempotency"] != memoryops.CheckpointIdempotencyAlreadyRecorded {
+		t.Fatalf("identity-first malformed replay stdout=%q stderr=%q", stdout, stderr)
+	}
 	stdout, stderr = run(t, "status", 0)
 	if stderr != "" || decodeCLIJSON(t, stdout)["checkpoint"] == nil {
 		t.Fatalf("status stdout=%q stderr=%q", stdout, stderr)
@@ -279,6 +283,8 @@ func TestCheckpointProcessHelper(t *testing.T) {
 	case "processing-failed":
 		os.Args[8] = "turn-process-invalid-reason"
 		os.Args[len(os.Args)-2] = "processing_failed"
+	case "malformed-replay":
+		os.Args = append(os.Args, "--memory-id=not-an-integer")
 	case "leading-dash-identity":
 		os.Args = []string{
 			"engram", "checkpoint", "record",

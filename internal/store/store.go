@@ -5458,6 +5458,9 @@ func (s *Store) MigrateProject(oldName, newName string) (*MigrateResult, error) 
 		}
 		result.SessionsUpdated, _ = res.RowsAffected()
 
+		if _, err := s.execHook(tx, `UPDATE memory_checkpoint_references SET project = ? WHERE project = ?`, newName, oldName); err != nil {
+			return fmt.Errorf("migrate Memory checkpoint references: %w", err)
+		}
 		if _, err := s.execHook(tx, `UPDATE memory_checkpoint_proposal_references SET project = ? WHERE project = ?`, newName, oldName); err != nil {
 			return fmt.Errorf("migrate Memory proposal references: %w", err)
 		}
@@ -5811,6 +5814,9 @@ func (s *Store) mergeProjects(sources []string, canonical string, allowNonEquiva
 			result.SessionsUpdated += n
 			sourceRowsUpdated += n
 
+			if _, err := s.execHook(tx, `UPDATE memory_checkpoint_references SET project = ? WHERE project IN (`+placeholders+`)`, args...); err != nil {
+				return fmt.Errorf("merge Memory checkpoint references %q → %q: %w", srcNormalized, canonical, err)
+			}
 			if _, err := s.execHook(tx, `UPDATE memory_checkpoint_proposal_references SET project = ? WHERE project IN (`+placeholders+`)`, args...); err != nil {
 				return fmt.Errorf("merge Memory proposal references %q → %q: %w", srcNormalized, canonical, err)
 			}
@@ -7947,6 +7953,12 @@ func normalizeScope(scope string) string {
 	default:
 		return "project"
 	}
+}
+
+// NormalizeObservationScope applies the persisted Memory scope default for
+// transport-neutral callers that must make read decisions before a write.
+func NormalizeObservationScope(scope string) string {
+	return normalizeScope(scope)
 }
 
 // NormalizeProject applies canonical project name normalization:

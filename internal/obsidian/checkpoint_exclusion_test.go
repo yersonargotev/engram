@@ -50,7 +50,10 @@ func TestObsidianExportExcludesMemoryCheckpointsFromRealStore(t *testing.T) {
 		Identity: store.CheckpointIdentity{
 			Host: "codex-proposal-canary", SessionID: "session-proposal-canary", RootTurnID: "turn-proposal-canary",
 		},
-		Project: "engram",
+		Project: "engram", Directory: "/work/engram",
+		Memories: []store.AddObservationParams{{
+			Type: "decision", Title: "Settled Obsidian Memory", Content: "settled-obsidian-memory-canary",
+		}},
 		Proposal: &store.MemoryProposalInput{
 			Title: "Proposal Obsidian canary", Content: "proposal-obsidian-canary",
 		},
@@ -68,10 +71,11 @@ func TestObsidianExportExcludesMemoryCheckpointsFromRealStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export to Obsidian: %v", err)
 	}
-	if result.Created != 0 || result.Updated != 0 {
-		t.Fatalf("Obsidian export created checkpoint files: %#v", result)
+	if result.Created != 1 || result.Updated != 0 {
+		t.Fatalf("Obsidian Mixed export = %#v, want only the settled Memory", result)
 	}
 
+	settledMemoryFound := false
 	err = filepath.WalkDir(vault, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -84,6 +88,9 @@ func TestObsidianExportExcludesMemoryCheckpointsFromRealStore(t *testing.T) {
 			return err
 		}
 		text := string(content)
+		if strings.Contains(text, "settled-obsidian-memory-canary") {
+			settledMemoryFound = true
+		}
 		if strings.Contains(text, "checkpoint-canary") ||
 			strings.Contains(text, "proposal-obsidian-canary") ||
 			strings.Contains(text, store.CheckpointSkipReasonNoDurableKnowledge) {
@@ -93,5 +100,8 @@ func TestObsidianExportExcludesMemoryCheckpointsFromRealStore(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("inspect Obsidian vault: %v", err)
+	}
+	if !settledMemoryFound {
+		t.Fatal("Obsidian Mixed export omitted the settled Memory")
 	}
 }

@@ -49,6 +49,23 @@ func TestCheckpointToolsRecordReplayStatusAndRejectFailureReasons(t *testing.T) 
 		!reflect.DeepEqual(replayed.Checkpoint, created.Checkpoint) {
 		t.Fatalf("replayed result = %#v, want checkpoint %#v", replayed, created.Checkpoint)
 	}
+	malformedReplayArguments := make(map[string]any, len(arguments)+1)
+	for key, value := range arguments {
+		malformedReplayArguments[key] = value
+	}
+	malformedReplayArguments["memory_ids"] = []any{"not-an-integer"}
+	malformedReplayResponse, err := record(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: malformedReplayArguments}})
+	if err != nil || malformedReplayResponse.IsError {
+		t.Fatalf("identity-first malformed replay response = %#v, err=%v", malformedReplayResponse, err)
+	}
+	var malformedReplay memoryops.CheckpointRecordResult
+	if err := json.Unmarshal([]byte(callResultText(t, malformedReplayResponse)), &malformedReplay); err != nil {
+		t.Fatalf("decode malformed replay: %v", err)
+	}
+	if malformedReplay.Idempotency != memoryops.CheckpointIdempotencyAlreadyRecorded ||
+		!reflect.DeepEqual(malformedReplay.Checkpoint, created.Checkpoint) {
+		t.Fatalf("malformed replay = %#v, want original %#v", malformedReplay, created.Checkpoint)
+	}
 
 	statusResponse, err := status(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{
 		"host":         arguments["host"],

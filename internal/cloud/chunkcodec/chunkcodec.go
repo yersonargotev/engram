@@ -23,12 +23,10 @@ var ErrLocalOnlyContent = errors.New("cloud payload contains local-only content"
 // evidence rather than replicated Memory.
 func IsLocalOnlyEntity(entity string) bool {
 	switch strings.ToLower(strings.TrimSpace(entity)) {
-	case store.SyncEntityPrompt, "diagnostic_capture", "capture_consent",
-		"memory_checkpoint", "memory_checkpoint_reference",
-		"memory_checkpoint_proposal_reference", "memory_proposal":
+	case store.SyncEntityPrompt, "diagnostic_capture", "capture_consent":
 		return true
 	default:
-		return false
+		return IsCheckpointAuditEntity(entity)
 	}
 }
 

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	mcppkg "github.com/mark3labs/mcp-go/mcp"
@@ -46,6 +47,21 @@ func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointOb
 				observe(observation)
 			}()
 		}
+		service := memoryops.New(s)
+		if operation == "record" {
+			replayed, replayErr := service.ReplayCheckpoint(memoryops.CheckpointReplayInput{
+				Host: observation.Host, SessionID: observation.SessionID, RootTurnID: observation.RootTurnID,
+				Disposition: checkpointStringArg(req, "disposition"),
+			})
+			if replayErr == nil {
+				finish(nil)
+				return checkpointToolJSON(replayed), nil
+			}
+			if !errors.Is(replayErr, store.ErrCheckpointNotFound) && !errors.Is(replayErr, store.ErrCheckpointInvalidIdentity) {
+				finish(replayErr)
+				return checkpointToolError(replayErr), nil
+			}
+		}
 		if _, exists := req.GetArguments()["proposal_id"]; exists {
 			err := fmt.Errorf("%w: proposal_id is not supported", store.ErrCheckpointInvalidReferences)
 			finish(err)
@@ -68,7 +84,7 @@ func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointOb
 				err := fmt.Errorf("%w: preflight accepts only project and memories", store.ErrCheckpointInvalidReferences)
 				return checkpointToolError(err), nil
 			}
-			result, err := memoryops.New(s).PreflightCheckpoint(memoryops.CheckpointPreflightInput{
+			result, err := service.PreflightCheckpoint(memoryops.CheckpointPreflightInput{
 				Project: checkpointStringArg(req, "project"), Memories: memories,
 			})
 			if err != nil {
@@ -86,7 +102,7 @@ func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointOb
 			finish(err)
 			return checkpointToolError(err), nil
 		}
-		result, err := memoryops.New(s).RecordCheckpoint(memoryops.CheckpointRecordInput{
+		result, err := service.RecordCheckpoint(memoryops.CheckpointRecordInput{
 			Host:        observation.Host,
 			SessionID:   observation.SessionID,
 			RootTurnID:  observation.RootTurnID,

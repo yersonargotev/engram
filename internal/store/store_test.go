@@ -11303,9 +11303,9 @@ func TestNormalizeScopeHandlesGlobal(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.input, func(t *testing.T) {
-			got := normalizeScope(tc.input)
+			got := NormalizeObservationScope(tc.input)
 			if got != tc.want {
-				t.Errorf("normalizeScope(%q) = %q, want %q", tc.input, got, tc.want)
+				t.Errorf("NormalizeObservationScope(%q) = %q, want %q", tc.input, got, tc.want)
 			}
 		})
 	}

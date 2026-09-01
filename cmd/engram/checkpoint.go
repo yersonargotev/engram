@@ -172,57 +172,65 @@ func replayedCheckpointCLI(cfg store.Config, args []string) bool {
 	return true
 }
 
+type checkpointCLIArg struct {
+	Name      string
+	Value     string
+	HasValue  bool
+	NextValue string
+}
+
+func tokenizeCheckpointCLIArgs(args []string) (string, []checkpointCLIArg) {
+	if len(args) == 0 {
+		return "", nil
+	}
+	action := strings.ToLower(strings.TrimSpace(args[0]))
+	tokens := make([]checkpointCLIArg, 0, len(args)-1)
+	for index := 1; index < len(args); index++ {
+		raw := args[index]
+		name, value, inline := strings.Cut(raw, "=")
+		token := checkpointCLIArg{Name: name, Value: value, HasValue: inline}
+		if !inline && index+1 < len(args) {
+			token.NextValue = args[index+1]
+			if !strings.HasPrefix(token.NextValue, "-") {
+				token.Value = token.NextValue
+				token.HasValue = true
+				index++
+			}
+		}
+		tokens = append(tokens, token)
+	}
+	return action, tokens
+}
+
 func checkpointReplayProbe(args []string) (memoryops.CheckpointReplayInput, bool, bool) {
 	var input memoryops.CheckpointReplayInput
-	if len(args) == 0 || strings.ToLower(strings.TrimSpace(args[0])) != "record" {
+	action, tokens := tokenizeCheckpointCLIArgs(args)
+	if action != "record" {
 		return input, false, false
 	}
 	jsonMode := false
-	for index := 1; index < len(args); index++ {
-		raw := args[index]
-		if raw == "--json" {
+	for _, token := range tokens {
+		if token.Name == "--json" && !token.HasValue {
 			jsonMode = true
 			continue
 		}
-		if raw == "--help" || raw == "-h" {
+		if (token.Name == "--help" || token.Name == "-h") && !token.HasValue {
 			return input, jsonMode, false
 		}
-		flag, value, inline := strings.Cut(raw, "=")
-		switch flag {
+		switch token.Name {
 		case "--host", "--session-id", "--root-turn-id", "--disposition":
-			if !inline {
-				if index+1 >= len(args) {
-					return input, jsonMode, false
-				}
-				if args[index+1] == "--help" || args[index+1] == "-h" {
-					return input, jsonMode, false
-				}
-				value = args[index+1]
-				index++
+			if !token.HasValue {
+				continue
 			}
-			switch flag {
+			switch token.Name {
 			case "--host":
-				input.Host = value
+				input.Host = token.Value
 			case "--session-id":
-				input.SessionID = value
+				input.SessionID = token.Value
 			case "--root-turn-id":
-				input.RootTurnID = value
+				input.RootTurnID = token.Value
 			case "--disposition":
-				input.Disposition = value
-			}
-		case "--reason", "--project", "--memory-id", "--memory-json", "--proposal-json", "--proposal-id":
-			if !inline && index+1 < len(args) {
-				if args[index+1] == "--help" || args[index+1] == "-h" {
-					return input, jsonMode, false
-				}
-				if strings.HasPrefix(args[index+1], "--") {
-					continue
-				}
-				index++
-			}
-		default:
-			if !inline && index+1 < len(args) && !strings.HasPrefix(args[index+1], "-") {
-				index++
+				input.Disposition = token.Value
 			}
 		}
 	}
@@ -398,10 +406,11 @@ func checkpointStopIntegrationFailure(message string) checkpointStopResponse {
 
 func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgumentError) {
 	opts := checkpointCLIOptions{}
-	if len(args) == 0 {
+	action, tokens := tokenizeCheckpointCLIArgs(args)
+	if action == "" {
 		return opts, &checkpointArgumentError{Message: "usage: engram checkpoint record|status [flags]"}
 	}
-	opts.Action = strings.ToLower(strings.TrimSpace(args[0]))
+	opts.Action = action
 	if opts.Action == "help" || opts.Action == "--help" || opts.Action == "-h" {
 		opts.Help = true
 		return opts, nil
@@ -410,47 +419,40 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 		return opts, &checkpointArgumentError{Message: "checkpoint action must be preflight, record, status, or verify-stop"}
 	}
 
-	for i := 1; i < len(args); i++ {
-		rawArg := args[i]
-		if rawArg == "--json" {
+	for _, token := range tokens {
+		if token.Name == "--json" && !token.HasValue {
 			opts.JSONMode = true
 			continue
 		}
-		if rawArg == "--help" || rawArg == "-h" {
+		if (token.Name == "--help" || token.Name == "-h") && !token.HasValue {
 			opts.Help = true
 			return opts, nil
 		}
-
-		arg, value, hasInlineValue := strings.Cut(rawArg, "=")
-		if !hasInlineValue && i+1 >= len(args) {
-			return opts, &checkpointArgumentError{Message: fmt.Sprintf("%s requires a value", arg)}
-		}
-		if !hasInlineValue {
-			if args[i+1] == "--help" || args[i+1] == "-h" {
+		if !token.HasValue {
+			if token.NextValue == "--help" || token.NextValue == "-h" {
 				opts.Help = true
 				return opts, nil
 			}
-			if strings.HasPrefix(args[i+1], "-") {
-				return opts, &checkpointArgumentError{Message: fmt.Sprintf("%s requires a value; use %s=VALUE for values beginning with '-'", arg, arg)}
+			if strings.HasPrefix(token.NextValue, "-") {
+				return opts, &checkpointArgumentError{Message: fmt.Sprintf("%s requires a value; use %s=VALUE for values beginning with '-'", token.Name, token.Name)}
 			}
-			value = args[i+1]
-			i++
+			return opts, &checkpointArgumentError{Message: fmt.Sprintf("%s requires a value", token.Name)}
 		}
-		switch arg {
+		switch token.Name {
 		case "--host":
-			opts.Host = value
+			opts.Host = token.Value
 		case "--session-id":
-			opts.SessionID = value
+			opts.SessionID = token.Value
 		case "--root-turn-id":
-			opts.RootTurnID = value
+			opts.RootTurnID = token.Value
 		case "--disposition":
-			opts.Disposition = value
+			opts.Disposition = token.Value
 		case "--reason":
-			opts.ReasonCode = value
+			opts.ReasonCode = token.Value
 		case "--project":
-			opts.Project = value
+			opts.Project = token.Value
 		case "--memory-id":
-			memoryID, err := strconv.ParseInt(value, 10, 64)
+			memoryID, err := strconv.ParseInt(token.Value, 10, 64)
 			if err != nil {
 				return opts, &checkpointArgumentError{
 					Code:    memoryops.CheckpointErrorCodeInvalidReferences,
@@ -460,7 +462,7 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 			opts.MemoryIDs = append(opts.MemoryIDs, memoryID)
 		case "--memory-json":
 			var memory memoryops.CheckpointMemoryInput
-			if err := json.Unmarshal([]byte(value), &memory); err != nil {
+			if err := json.Unmarshal([]byte(token.Value), &memory); err != nil {
 				return opts, &checkpointArgumentError{
 					Code:    memoryops.CheckpointErrorCodeInvalidReferences,
 					Message: "invalid checkpoint references: memories must be an array of Memory objects",
@@ -478,7 +480,7 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 				}
 			}
 			var proposal memoryops.CheckpointProposalInput
-			if err := json.Unmarshal([]byte(value), &proposal); err != nil {
+			if err := json.Unmarshal([]byte(token.Value), &proposal); err != nil {
 				return opts, &checkpointArgumentError{
 					Code:    memoryops.CheckpointErrorCodeInvalidReferences,
 					Message: "invalid checkpoint references: proposal must be a Memory proposal object",
@@ -486,7 +488,7 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 			}
 			opts.Proposal = &proposal
 		default:
-			return opts, &checkpointArgumentError{Message: fmt.Sprintf("unknown checkpoint flag %s", arg)}
+			return opts, &checkpointArgumentError{Message: fmt.Sprintf("unknown checkpoint flag %s", token.Name)}
 		}
 	}
 	if opts.Action == "status" && (opts.Disposition != "" || opts.ReasonCode != "" || opts.Project != "" || len(opts.MemoryIDs) > 0 || len(opts.Memories) > 0 || opts.Proposal != nil) {

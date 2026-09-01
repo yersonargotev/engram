@@ -303,28 +303,72 @@ func TestCheckpointPreflightDefaultsToProjectScopeAndKeepsProspectiveInputsRepre
 	}
 }
 
-func TestCheckpointPreflightExactDuplicateIncludesNormalizedTopicKey(t *testing.T) {
-	service := newTestService(t)
-	seed, err := service.Save(SaveInput{
-		SessionID: "session-preflight-topic", CWD: "/work/engram", Project: "engram",
-		Type: "architecture", Title: "Topic-aware duplicate", Content: "The durable content is identical.",
-		TopicKey: "architecture/old", CandidateOptions: store.CandidateOptions{SkipInsert: true},
-	})
-	if err != nil || seed.Observation == nil {
-		t.Fatalf("seed topic Memory: result=%#v err=%v", seed, err)
+func TestCheckpointPreflightAndCommitShareExactMemoryIdentity(t *testing.T) {
+	tests := []struct {
+		name          string
+		seedTool      string
+		seedTopic     string
+		proposedTool  string
+		proposedTopic string
+	}{
+		{name: "topic key", seedTopic: "architecture/old", proposedTopic: "architecture/new"},
+		{name: "tool name", seedTool: "claude", proposedTool: "codex"},
 	}
-	result, err := service.PreflightCheckpoint(CheckpointPreflightInput{
-		Project: "engram",
-		Memories: []CheckpointMemoryInput{{
-			Type: "architecture", Title: "Topic-aware duplicate", Content: "The durable content is identical.",
-			TopicKey: "architecture/new",
-		}},
-	})
-	if err != nil {
-		t.Fatalf("preflight topic-aware Memory: %v", err)
-	}
-	if len(result.ExactDuplicates) != 0 {
-		t.Fatalf("different topic key was reused as exact duplicate: %#v", result.ExactDuplicates)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := newTestService(t)
+			seed, err := service.Save(SaveInput{
+				SessionID: "session-preflight-seed", CWD: "/work/engram", Project: "engram",
+				Type: "architecture", Title: "Identity-aware duplicate", Content: "The durable content is identical.",
+				ToolName: test.seedTool, TopicKey: test.seedTopic,
+				CandidateOptions: store.CandidateOptions{SkipInsert: true},
+			})
+			if err != nil || seed.Observation == nil {
+				t.Fatalf("seed Memory: result=%#v err=%v", seed, err)
+			}
+			prospective := CheckpointMemoryInput{
+				Type: "architecture", Title: "Identity-aware duplicate", Content: "The durable content is identical.",
+				ToolName: test.proposedTool, TopicKey: test.proposedTopic,
+			}
+			preflight, err := service.PreflightCheckpoint(CheckpointPreflightInput{
+				Project: "engram", Memories: []CheckpointMemoryInput{prospective},
+			})
+			if err != nil {
+				t.Fatalf("preflight identity-aware Memory: %v", err)
+			}
+			if len(preflight.ExactDuplicates) != 0 {
+				t.Fatalf("different durable identity was reused by preflight: %#v", preflight.ExactDuplicates)
+			}
+
+			result, err := service.RecordCheckpoint(CheckpointRecordInput{
+				Host: "codex", SessionID: "session-preflight-commit", RootTurnID: "turn-" + strings.ReplaceAll(test.name, " ", "-"),
+				Disposition: store.CheckpointDispositionSaved, Project: "engram", Memories: []CheckpointMemoryInput{prospective},
+			})
+			if err != nil {
+				t.Fatalf("commit identity-aware Memory: %v", err)
+			}
+			if len(result.Checkpoint.References) != 1 || result.Checkpoint.References[0].MemoryID == seed.Observation.ID {
+				t.Fatalf("commit reused Memory rejected by preflight: %#v", result.Checkpoint.References)
+			}
+			created, err := service.store.GetObservation(result.Checkpoint.References[0].MemoryID)
+			if err != nil {
+				t.Fatalf("load committed Memory: %v", err)
+			}
+			createdTool, createdTopic := "", ""
+			if created.ToolName != nil {
+				createdTool = *created.ToolName
+			}
+			if created.TopicKey != nil {
+				createdTopic = *created.TopicKey
+			}
+			if createdTool != test.proposedTool || createdTopic != test.proposedTopic {
+				t.Fatalf("committed durable identity = tool %v topic %v", created.ToolName, created.TopicKey)
+			}
+			seedAfter, err := service.store.GetObservation(seed.Observation.ID)
+			if err != nil || seedAfter.DuplicateCount != seed.Observation.DuplicateCount {
+				t.Fatalf("rejected duplicate mutated: before=%#v after=%#v err=%v", seed.Observation, seedAfter, err)
+			}
+		})
 	}
 }
 

@@ -11,7 +11,8 @@
 | Terminal Memory commit | Root-turn disposition plus atomically attached durable Memories. | `internal/memoryops`, `internal/mcp`, `internal/store` |
 | FTS5 search | Retrieves memories by text, type, project, scope. | `internal/store`, `internal/server`, `internal/mcp` |
 | Recent context | Session summary and context for a new session. | `internal/store`, `internal/mcp` |
-| Prompt capture | Saves user prompts as retrievable context. | `internal/store`, `internal/mcp`, plugins |
+| Diagnostic capture | Explicit, local, project/content-type consent with bounded retention; isolated from Memory and replication. | `internal/memoryops`, `internal/store`, thin adapters |
+| Legacy prompt archive | Frozen historical prompts with explicit inventory/access/export/purge only. | `internal/memoryops`, `internal/store` |
 | Topic upserts | Updates evolving decisions with `topic_key`. | `internal/store`, `internal/mcp` |
 | Conflict surfacing | Detects/judges relationships between memories. | `internal/store/relations.go`, `internal/mcp`, `cmd/engram/conflicts.go` |
 | Doctor/repair | Operational diagnostics and guided repair. | `internal/diagnostic`, `cmd/engram/doctor.go`, `docs/DOCTOR.md` |
@@ -71,6 +72,15 @@
 - Cloud pause controls what the organization allows now.
 - Blocked sync fails with a visible error and reason code; there is no silent drop.
 - If a rule is org-level, it must be enforced server-side.
+- Diagnostic Content and Legacy prompts never enter sync, cloud, ordinary export/import, or Obsidian.
+
+### Content privacy
+
+- Capture is disabled by default on fresh install, upgrade, and setup rerun.
+- Consent is local and scoped by project and content type; an optional session grant must expire.
+- Retention defaults to 7 days and cannot exceed 30 days.
+- Status is content-free. Enable, disable, and purge are separate operations; purge requires separate confirmation.
+- Plugins report exact opaque identity independently of whether capture is enabled.
 
 ### Docs
 

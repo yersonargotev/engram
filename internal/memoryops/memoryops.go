@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/yersonargotev/engram/internal/store"
 )
@@ -23,11 +24,12 @@ var (
 // Service coordinates domain operations without knowing about CLI, MCP, or rendering.
 type Service struct {
 	store *store.Store
+	now   func() time.Time
 }
 
 // New creates a memory operation service backed by the local source-of-truth store.
 func New(s *store.Store) *Service {
-	return &Service{store: s}
+	return &Service{store: s, now: func() time.Time { return time.Now().UTC() }}
 }
 
 // SaveInput is the caller-resolved input for saving an observation. Project is

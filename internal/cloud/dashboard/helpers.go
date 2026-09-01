@@ -203,15 +203,6 @@ func totalStatObservations(stats []cloudstore.DashboardProjectRow) int {
 	return total
 }
 
-// totalStatPrompts returns the sum of Prompts across all project rows.
-func totalStatPrompts(stats []cloudstore.DashboardProjectRow) int {
-	total := 0
-	for _, s := range stats {
-		total += s.Prompts
-	}
-	return total
-}
-
 func browserURL(project, search, obsType string) string {
 	v := url.Values{}
 	if project != "" {

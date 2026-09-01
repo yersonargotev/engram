@@ -47,6 +47,35 @@ A Memory operation reads or changes durable Memory or checkpoint state. An
 agent lifecycle operation reports host activity or captures Content and never
 selects the root turn's disposition.
 
+## Diagnostic capture consent
+
+Prompt capture is disabled by default on fresh setup, upgrade, and setup
+reruns. Setup and read-only status report capability and current consent
+without enabling capture or reading captured content. Manage the local consent
+and content lifecycle explicitly:
+
+```bash
+engram capture status --project <name> --type prompt
+engram capture enable --project <name> --type prompt          # 7 days by default
+engram capture enable --project <name> --type prompt --retention-days 30
+engram capture disable --project <name> --type prompt         # does not purge
+engram capture purge --project <name> --type prompt           # separate confirmation
+```
+
+Consent is scoped to project and content type. A narrower session grant is
+optional and must expire. Retention cannot exceed 30 days. Diagnostic Content
+is local-only and never appears in Memory/FTS/Recall/context, sync/cloud,
+ordinary export/import, Obsidian, or retired candidate/promotion flows.
+
+Prompts stored before this boundary remain a frozen Legacy archive. They are
+not rewritten, reclassified, indexed, synced, or automatically deleted during
+setup or migration. Use `engram legacy-prompts inventory`, `access`, `export`,
+or the separately confirmed `purge` deliberately. `inventory --all` reports a
+content-free total without requiring prior knowledge of archived project names.
+Purge removes exact Engram-owned journal and FTS copies transactionally. It
+fails closed without deleting archive rows when customized FTS ownership could
+leave a content copy behind.
+
 ## Pi
 
 Install Engram's Pi package, the MCP adapter, and Pi MCP config:
@@ -71,7 +100,7 @@ Restart Pi after installation.
 
 The package has two paths:
 
-- **HTTP event capture**: the Pi extension sends prompts, summaries, passive task learnings, and compact Pi-native `mem_*` tool calls to `engram serve`.
+- **HTTP lifecycle events**: the Pi extension reports exact runtime identity, summaries, passive task learnings, and compact Pi-native `mem_*` calls to `engram serve`. Prompt content is persisted only through Core's explicit local Diagnostic consent gate.
 - **MCP gateway**: `pi-mcp-adapter` exposes Engram's MCP surface by launching `engram mcp --tools=agent` and is also used by other Pi MCP integrations such as Notion.
 
 Use an existing Engram HTTP server:
@@ -187,7 +216,11 @@ Additional rules:
 - Exact choices may still fail with `project_name_collision` when two available names collapse to the same normalized storage bucket, such as `foo--bar` and `foo-bar`.
 - Ordinary explicit `mem_save(project=...)` calls may also fail with `project_name_collision` when the raw explicit name collapses into an existing config-backed, session-backed, or store-backed project bucket, such as `foo--bar` versus `foo-bar`.
 
-`mem_save_prompt` keeps the older cwd/default behavior. Its `project` field is only for ambiguous-project recovery together with `project_choice_reason=user_selected_after_ambiguous_project`.
+`mem_save_prompt` keeps the older cwd/default project-resolution behavior, but
+it no longer implies persistence. Its content is written only when explicit
+local Diagnostic consent exists for that project and content type. Its
+`project` field is only for ambiguous-project recovery together with
+`project_choice_reason=user_selected_after_ambiguous_project`.
 
 Mental model:
 
@@ -480,8 +513,10 @@ appearing only as a UI warning.
 
 On every actual user prompt, `UserPromptSubmit` forwards Codex's opaque
 `session_id` and `turn_id` as the checkpoint identity
-`(host=codex, session_id, root_turn_id)`. The hook captures the prompt
-best-effort but never selects a disposition or creates a checkpoint. Tool calls,
+`(host=codex, session_id, root_turn_id)`. This identity path always runs for a
+valid event and never depends on prompt persistence. The hook may offer content
+to Core, but Diagnostic capture is disabled by default and requires explicit
+local project/content-type consent. It never selects a disposition or creates a checkpoint. Tool calls,
 subagents, compaction events, and continuations remain within the original root
 user turn; the root agent applies the canonical skill and finalizes once.
 

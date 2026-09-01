@@ -113,7 +113,6 @@ var (
 
 	storeDeleteObservation = func(s *store.Store, id int64, hard bool) error { return s.DeleteObservation(id, hard) }
 	storeDeleteSession     = func(s *store.Store, id string) error { return s.DeleteSession(id) }
-	storeDeletePrompt      = func(s *store.Store, id int64) error { return s.DeletePrompt(id) }
 	storeDeleteProject     = func(s *store.Store, name string, hard bool) (*store.DeleteProjectResult, error) {
 		return s.DeleteProject(name, hard)
 	}
@@ -691,6 +690,14 @@ func main() {
 			operation = "checkpoint_record"
 		}
 		runRecallBaselineCLI(cfg, operation, func() { cmdCheckpoint(cfg) })
+	case "capture":
+		operation := "capture"
+		if len(os.Args) >= 3 {
+			operation += "_" + strings.ToLower(strings.TrimSpace(os.Args[2]))
+		}
+		runRecallBaselineCLI(cfg, operation, func() { cmdCapture(cfg) })
+	case "legacy-prompts":
+		runRecallBaselineCLI(cfg, "legacy_prompts", func() { cmdLegacyPrompts(cfg) })
 	case "stats":
 		runRecallBaselineCLI(cfg, "stats", func() { cmdStats(cfg) })
 	case "export":
@@ -784,6 +791,22 @@ func handleConfigFreeCommand(args []string) bool {
 		if opts.Help {
 			printCheckpointUsage()
 			return true
+		}
+	case "capture":
+		if len(args) >= 2 {
+			subcommand := strings.ToLower(strings.TrimSpace(args[1]))
+			if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
+				cmdCapture(store.Config{})
+				return true
+			}
+		}
+	case "legacy-prompts":
+		if len(args) >= 2 {
+			subcommand := strings.ToLower(strings.TrimSpace(args[1]))
+			if subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
+				cmdLegacyPrompts(store.Config{})
+				return true
+			}
 		}
 	case "cloud":
 		if len(args) >= 2 {
@@ -1368,7 +1391,6 @@ func cmdDelete(cfg store.Config) {
 		}
 		fmt.Fprintln(os.Stderr, "usage: engram delete <observation_id> [--hard]")
 		fmt.Fprintln(os.Stderr, "       engram delete session  <id>")
-		fmt.Fprintln(os.Stderr, "       engram delete prompt   <id>")
 		fmt.Fprintln(os.Stderr, "       engram delete project  <name> [--hard]")
 		exitFunc(1)
 		return
@@ -1461,31 +1483,7 @@ func cmdDeleteSession(cfg store.Config) {
 }
 
 func cmdDeletePrompt(cfg store.Config) {
-	if len(os.Args) < 4 {
-		fmt.Fprintln(os.Stderr, "usage: engram delete prompt <id>")
-		exitFunc(1)
-		return
-	}
-
-	id, err := strconv.ParseInt(os.Args[3], 10, 64)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: invalid prompt id %q\n", os.Args[3])
-		exitFunc(1)
-		return
-	}
-
-	s, err := storeNew(cfg)
-	if err != nil {
-		fatal(err)
-		return
-	}
-	defer s.Close()
-
-	if err := storeDeletePrompt(s, id); err != nil {
-		fatal(err)
-		return
-	}
-	fmt.Printf("Prompt #%d deleted\n", id)
+	failCLI(hasArg("--json"), "legacy_prompt_archive_frozen", "prompt deletion moved to the separately confirmed engram legacy-prompts purge command", nil)
 }
 
 func cmdDeleteProject(cfg store.Config) {
@@ -1520,8 +1518,8 @@ func cmdDeleteProject(cfg store.Config) {
 	if hard {
 		kind = "hard-deleted"
 	}
-	fmt.Printf("Project %q %s: %d observation(s), %d prompt(s), %d session(s), %d Memory proposal(s), %d checkpoint(s)\n",
-		result.Project, kind, result.ObservationsDeleted, result.PromptsDeleted,
+	fmt.Printf("Project %q %s: %d observation(s), %d session(s), %d Memory proposal(s), %d checkpoint(s); Legacy prompts preserved\n",
+		result.Project, kind, result.ObservationsDeleted,
 		result.SessionsDeleted, result.MemoryProposalsDeleted, result.MemoryCheckpointsDeleted)
 }
 
@@ -1711,7 +1709,6 @@ func cmdStats(cfg store.Config) {
 	fmt.Printf("Engram Memory Stats\n")
 	fmt.Printf("  Sessions:     %d\n", stats.TotalSessions)
 	fmt.Printf("  Observations: %d\n", stats.TotalObservations)
-	fmt.Printf("  Prompts:      %d\n", stats.TotalPrompts)
 	fmt.Printf("  Projects:     %s\n", projects)
 	fmt.Printf("  Database:     %s/engram.db\n", cfg.DataDir)
 }
@@ -1745,7 +1742,6 @@ func cmdExport(cfg store.Config) {
 	fmt.Printf("Exported to %s\n", outFile)
 	fmt.Printf("  Sessions:     %d\n", len(data.Sessions))
 	fmt.Printf("  Observations: %d\n", len(data.Observations))
-	fmt.Printf("  Prompts:      %d\n", len(data.Prompts))
 }
 
 func cmdImport(cfg store.Config) {
@@ -1779,7 +1775,6 @@ func cmdImport(cfg store.Config) {
 	fmt.Printf("Imported from %s\n", inFile)
 	fmt.Printf("  Sessions:     %d\n", result.SessionsImported)
 	fmt.Printf("  Observations: %d\n", result.ObservationsImported)
-	fmt.Printf("  Prompts:      %d\n", result.PromptsImported)
 }
 
 func cmdSync(cfg store.Config) {
@@ -1957,7 +1952,6 @@ func cmdSync(cfg store.Config) {
 		}
 		fmt.Printf("  Sessions:     %d\n", result.SessionsImported)
 		fmt.Printf("  Observations: %d\n", result.ObservationsImported)
-		fmt.Printf("  Prompts:      %d\n", result.PromptsImported)
 		if result.ChunksSkipped > 0 {
 			fmt.Printf("  Skipped:      %d (already imported)\n", result.ChunksSkipped)
 		}
@@ -2002,7 +1996,6 @@ func cmdSync(cfg store.Config) {
 	}
 	fmt.Printf("  Sessions:     %d\n", result.SessionsExported)
 	fmt.Printf("  Observations: %d\n", result.ObservationsExported)
-	fmt.Printf("  Prompts:      %d\n", result.PromptsExported)
 	if result.MutationsExported > 0 {
 		fmt.Printf("  Mutations:    %d\n", result.MutationsExported)
 	}
@@ -2301,7 +2294,7 @@ func cmdProjectsMerge(cfg store.Config) {
 			_ = writeCLIJSON(preview)
 			return
 		}
-		fmt.Printf("Would merge %v into %q: %d observations, %d sessions, %d prompts, %d Memory proposals\n", preview.SourcesMerged, target, preview.ObservationsUpdated, preview.SessionsUpdated, preview.PromptsUpdated, preview.MemoryProposalsUpdated)
+		fmt.Printf("Would merge %v into %q: %d observations, %d sessions, %d Memory proposals\n", preview.SourcesMerged, target, preview.ObservationsUpdated, preview.SessionsUpdated, preview.MemoryProposalsUpdated)
 		return
 	}
 	if !yes {
@@ -2326,7 +2319,7 @@ func cmdProjectsMerge(cfg store.Config) {
 		_ = writeCLIJSON(result)
 		return
 	}
-	fmt.Printf("Merged %v into %q: %d observations, %d sessions, %d prompts, %d Memory proposals\n", result.SourcesMerged, result.Canonical, result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated, result.MemoryProposalsUpdated)
+	fmt.Printf("Merged %v into %q: %d observations, %d sessions, %d Memory proposals\n", result.SourcesMerged, result.Canonical, result.ObservationsUpdated, result.SessionsUpdated, result.MemoryProposalsUpdated)
 
 }
 
@@ -2408,8 +2401,8 @@ func cmdProjectsRescueOwnership(cfg store.Config) {
 		return
 	}
 
-	fmt.Printf("Rescued ownership into %q: %d sessions, %d observations, %d prompts\n",
-		params.TargetProject, result.RescuedSessions, result.RescuedObservations, result.RescuedPrompts)
+	fmt.Printf("Rescued ownership into %q: %d sessions, %d observations\n",
+		params.TargetProject, result.RescuedSessions, result.RescuedObservations)
 	if result.Complete {
 		fmt.Println("Everything selected now belongs to the target project.")
 	} else {
@@ -2450,15 +2443,10 @@ func cmdProjectsList(cfg store.Config) {
 		if p.SessionCount == 1 {
 			sessionWord = "session"
 		}
-		promptWord := "prompts"
-		if p.PromptCount == 1 {
-			promptWord = "prompt"
-		}
-		fmt.Printf("  %-30s %4d obs   %3d %-9s  %3d %s\n",
+		fmt.Printf("  %-30s %4d obs   %3d %s\n",
 			p.Name,
 			p.ObservationCount,
 			p.SessionCount, sessionWord,
-			p.PromptCount, promptWord,
 		)
 	}
 }
@@ -2532,7 +2520,7 @@ func mergedRecordCount(result *store.MergeResult) int64 {
 	if result == nil {
 		return 0
 	}
-	return result.ObservationsUpdated + result.SessionsUpdated + result.PromptsUpdated
+	return result.ObservationsUpdated + result.SessionsUpdated
 }
 
 // reportUnmergedSources names the selected sources the store left untouched, so
@@ -2726,7 +2714,6 @@ func cmdProjectsConsolidate(cfg store.Config) {
 		fmt.Printf("Done! Merged %d project(s) into %q:\n", len(result.SourcesMerged), result.Canonical)
 		fmt.Printf("  Observations: %d\n", result.ObservationsUpdated)
 		fmt.Printf("  Sessions:     %d\n", result.SessionsUpdated)
-		fmt.Printf("  Prompts:      %d\n", result.PromptsUpdated)
 		fmt.Printf("  Proposals:    %d\n", result.MemoryProposalsUpdated)
 		reportUnmergedSources(sources, result)
 		return
@@ -2850,8 +2837,8 @@ func cmdProjectsConsolidate(cfg store.Config) {
 			fmt.Printf("  Nothing merged into %q: the store moved no records for the %d selected project(s).\n",
 				mergeCanonical, len(sources))
 		} else {
-			fmt.Printf("  Merged: %d obs, %d sessions, %d prompts, %d proposals\n",
-				result.ObservationsUpdated, result.SessionsUpdated, result.PromptsUpdated,
+			fmt.Printf("  Merged: %d obs, %d sessions, %d proposals\n",
+				result.ObservationsUpdated, result.SessionsUpdated,
 				result.MemoryProposalsUpdated)
 			reportUnmergedSources(sources, result)
 		}
@@ -2863,9 +2850,9 @@ func cmdProjectsConsolidate(cfg store.Config) {
 				fmt.Println()
 				continue
 			}
-			fmt.Printf("  Renamed %q → %q: %d obs, %d sessions, %d prompts\n",
+			fmt.Printf("  Renamed %q → %q: %d obs, %d sessions\n",
 				mergeCanonical, renameTarget,
-				migrateResult.ObservationsUpdated, migrateResult.SessionsUpdated, migrateResult.PromptsUpdated)
+				migrateResult.ObservationsUpdated, migrateResult.SessionsUpdated)
 		}
 		fmt.Println()
 	}
@@ -2915,7 +2902,7 @@ func cmdProjectsPrune(cfg store.Config) {
 
 	fmt.Printf("Found %d project(s) with 0 observations:\n\n", len(candidates))
 	for i, ps := range candidates {
-		fmt.Printf("  [%d] %-30s %3d sessions  %3d prompts\n", i+1, ps.Name, ps.SessionCount, ps.PromptCount)
+		fmt.Printf("  [%d] %-30s %3d sessions\n", i+1, ps.Name, ps.SessionCount)
 	}
 
 	if dryRun {
@@ -2954,7 +2941,6 @@ func cmdProjectsPrune(cfg store.Config) {
 	}
 
 	totalSessions := int64(0)
-	totalPrompts := int64(0)
 	successful := 0
 	for _, ps := range selected {
 		result, err := storePruneProject(s, ps.Name)
@@ -2964,10 +2950,9 @@ func cmdProjectsPrune(cfg store.Config) {
 		}
 		successful++
 		totalSessions += result.SessionsDeleted
-		totalPrompts += result.PromptsDeleted
 	}
 
-	fmt.Printf("\nPruned %d project(s): %d sessions, %d prompts removed.\n", successful, totalSessions, totalPrompts)
+	fmt.Printf("\nPruned %d project(s): %d sessions removed; Legacy prompts preserved.\n", successful, totalSessions)
 }
 
 func isPathLikeProjectName(name string) bool {
@@ -3427,11 +3412,9 @@ Commands:
   delete <obs_id>    Delete an observation [--hard] (soft-delete by default; --hard removes permanently)
   delete session <id>
                      Delete a session by ID (session must have no observations)
-  delete prompt <id>
-                     Delete a prompt by ID (permanent)
   delete project <name> [--hard]
                      Cascade-delete a project: soft-deletes observations (or hard if --hard),
-                     removes prompts; with --hard also removes sessions
+                     preserves Legacy prompts; with --hard removes only unreferenced sessions
   timeline <obs_id>  Show chronological context around an observation [--before N] [--after N]
   conflicts <sub>   Inspect and manage memory conflict relations
                        list     [--project P]  [--status S]  [--since RFC3339]  [--limit N]
@@ -3457,10 +3440,21 @@ Commands:
   checkpoint verify-stop
                      Verify one Codex Stop event against the checkpoint ledger
                        --host HOST (reads the Stop event from stdin)
+  capture status     Inspect Diagnostic capture consent without reading captured content
+                       [--project PROJECT] [--type TYPE] [--session-id ID] [--json]
+  capture enable     Enable explicit local Diagnostic capture consent
+                       --project PROJECT --type TYPE [--session-id ID --expires-at RFC3339]
+                       [--retention-days 1..30] [--json]
+  capture disable    Revoke consent without purging captured content
+                       --project PROJECT --type TYPE [--session-id ID] [--json]
+  capture purge      Permanently purge Diagnostic captures without changing consent
+                       --project PROJECT --type TYPE [--yes] [--json]
+  legacy-prompts     Explicitly manage the frozen local Legacy prompt archive
+                       inventory|access|export|purge (see legacy-prompts --help)
   stats              Show memory system statistics
   export [file]      Export all memories to JSON (default: engram-export.json)
   import <file>      Import memories from a JSON export file
-  projects list      List all projects with observation, session, and prompt counts
+  projects list      List all projects with Memory and session counts
   projects consolidate [--project NAME | --all] [--dry-run]
                      Merge similar project names into one canonical name
                        --project  Explicit canonical project for single-project mode
@@ -3474,6 +3468,7 @@ Commands:
                        --paths-only  Limit pruning to project names containing / or \
   projects rescue-ownership --project NAME [--session ID] [--observation ID] [--prompt ID]
                      Assign explicit ownership to legacy unowned records
+                     (--prompt is retained only to report legacy_prompt_frozen)
   setup [agent]      Install/setup agent integration (opencode, pi, claude-code,
                      gemini-cli, codex, antigravity-cli, windsurf, qwen, kiro,
                      cursor, vscode-copilot, kilocode)

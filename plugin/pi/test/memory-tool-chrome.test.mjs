@@ -53,10 +53,12 @@ test("compactToolArg prefers short meaningful identifiers", () => {
   assert.equal(compactToolArg("mem_review", { action: "mark_reviewed", id: 43 }), "mark_reviewed #43");
 });
 
-test("compactToolArg truncates long text", () => {
-  const arg = compactToolArg("mem_save_prompt", { content: "a".repeat(120) });
-  assert.ok(arg.length < 60);
-  assert.ok(arg.endsWith("…”"));
+test("prompt capture chrome never renders prompt content", () => {
+  const sentinel = "PROMPT-CONTENT-MUST-NOT-LEAK";
+  assert.equal(compactToolArg("mem_save_prompt", { content: sentinel }), "");
+  assert.equal(renderCallText("mem_save_prompt", { content: sentinel }), "🧠 request prompt capture …");
+  assert.equal(compactResultStatus("mem_save_prompt", { details: { data: { captured: false, reason_code: "consent_disabled" } } }), "✓ capture disabled");
+  assert.equal(compactResultStatus("mem_save_prompt", { details: { data: { captured: true, reason_code: "captured" } } }), "✓ captured");
 });
 
 test("compactResultStatus summarizes common Engram results", () => {

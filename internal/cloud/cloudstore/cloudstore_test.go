@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/yersonargotev/engram/internal/cloud"
 	"github.com/yersonargotev/engram/internal/cloud/chunkcodec"
 	"github.com/yersonargotev/engram/internal/store"
 	engramsync "github.com/yersonargotev/engram/internal/sync"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestNewRequiresDSN(t *testing.T) {
@@ -28,13 +28,59 @@ func TestNewRequiresDSN(t *testing.T) {
 
 func TestSummarizeChunkCountsEntities(t *testing.T) {
 	counts := summarizeChunk([]byte(`{"sessions":[{"id":"s1"}],"observations":[{"id":1},{"id":2}],"prompts":[{"id":3}]}`))
-	if counts.sessions != 1 || counts.observations != 2 || counts.prompts != 1 {
+	if counts.sessions != 1 || counts.observations != 2 || counts.prompts != 0 {
 		t.Fatalf("unexpected counts: %+v", counts)
 	}
 
 	empty := summarizeChunk([]byte(`{`))
 	if empty.sessions != 0 || empty.observations != 0 || empty.prompts != 0 {
 		t.Fatalf("invalid json must return zero counts, got %+v", empty)
+	}
+}
+
+func TestLegacyPromptsAreNotMaterializedIntoCurrentCloudState(t *testing.T) {
+	chunk := parseMustChunk(t, []byte(`{
+		"sessions":[{"id":"s-1","project":"proj-a"}],
+		"prompts":[{"sync_id":"legacy-1","session_id":"s-1","project":"proj-a","content":"legacy secret"}],
+		"mutations":[{"entity":"prompt","entity_key":"legacy-1","op":"delete","payload":"{}"}]
+	}`))
+	entries, err := materializedChunkMutations("proj-a", chunk)
+	if err != nil {
+		t.Fatalf("materializedChunkMutations: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.Entity == store.SyncEntityPrompt {
+			t.Fatalf("legacy prompt unexpectedly materialized: %+v", entry)
+		}
+	}
+	if len(entries) != 1 || entries[0].Entity != store.SyncEntitySession {
+		t.Fatalf("ordinary session materialization changed: %+v", entries)
+	}
+}
+
+func TestMutationBatchRejectsLocalOnlyCaptureEntities(t *testing.T) {
+	for _, entity := range []string{store.SyncEntityPrompt, "diagnostic_capture", "capture_consent"} {
+		_, _, err := materializedMutationBatchChunk([]MutationEntry{{
+			Project: "proj-a", Entity: entity, EntityKey: "private-1", Op: store.SyncOpUpsert, Payload: json.RawMessage(`{}`),
+		}})
+		if !errors.Is(err, chunkcodec.ErrLocalOnlyContent) {
+			t.Fatalf("entity %q error = %v, want ErrLocalOnlyContent", entity, err)
+		}
+	}
+}
+
+func TestManifestAndChunkReadsHideHistoricalPrompts(t *testing.T) {
+	entries := toManifestEntries([]manifestRow{{chunkID: "legacy", prompts: 3}})
+	if len(entries) != 1 || entries[0].Prompts != 0 {
+		t.Fatalf("manifest exposed legacy prompt count: %+v", entries)
+	}
+
+	redacted, err := redactCloudChunk([]byte(`{"sessions":[{"id":"s-1"}],"prompts":[{"content":"legacy secret"}]}`))
+	if err != nil {
+		t.Fatalf("redactCloudChunk: %v", err)
+	}
+	if strings.Contains(string(redacted), "legacy secret") {
+		t.Fatalf("chunk read exposed legacy prompt: %s", redacted)
 	}
 }
 
@@ -96,7 +142,7 @@ func TestMigrateAcceptsModernCloudChunksWithoutLegacyColumns(t *testing.T) {
 	cs.Close()
 }
 
-func TestMaterializedMutationBatchChunkIncludesObservationAlongsidePromptAndSession(t *testing.T) {
+func TestMaterializedMutationBatchChunkIncludesObservationAlongsideSession(t *testing.T) {
 	obsPayload := json.RawMessage(`{
 		"sync_id":"obs-04081be99000bdf5",
 		"session_id":"sess-newer",
@@ -107,27 +153,25 @@ func TestMaterializedMutationBatchChunkIncludesObservationAlongsidePromptAndSess
 		"scope":"project",
 		"created_at":"2026-05-04T01:49:52Z"
 	}`)
-	promptPayload := json.RawMessage(`{"sync_id":"prompt-newer","session_id":"sess-newer","content":"newer prompt","project":"sias-app","created_at":"2026-05-04T01:50:00Z"}`)
 	sessionPayload := json.RawMessage(`{"id":"sess-newer","project":"sias-app","directory":"/work/sias-app","started_at":"2026-05-04T01:45:00Z"}`)
 
 	payload, counts, err := materializedMutationBatchChunk([]MutationEntry{
 		{Project: "sias-app", Entity: store.SyncEntitySession, EntityKey: "sess-newer", Op: store.SyncOpUpsert, Payload: sessionPayload},
-		{Project: "sias-app", Entity: store.SyncEntityPrompt, EntityKey: "prompt-newer", Op: store.SyncOpUpsert, Payload: promptPayload},
 		{Project: "sias-app", Entity: store.SyncEntityObservation, EntityKey: "obs-04081be99000bdf5", Op: store.SyncOpUpsert, Payload: obsPayload},
 	})
 	if err != nil {
 		t.Fatalf("materializedMutationBatchChunk: %v", err)
 	}
-	if counts.sessions != 1 || counts.prompts != 1 || counts.observations != 1 {
-		t.Fatalf("expected one session, prompt, and observation in chunk counts, got %+v", counts)
+	if counts.sessions != 1 || counts.prompts != 0 || counts.observations != 1 {
+		t.Fatalf("expected one session and observation with no prompts in chunk counts, got %+v", counts)
 	}
 
 	var chunk engramsync.ChunkData
 	if err := json.Unmarshal(payload, &chunk); err != nil {
 		t.Fatalf("decode materialized chunk: %v", err)
 	}
-	if len(chunk.Prompts) != 1 || len(chunk.Sessions) != 1 {
-		t.Fatalf("expected prompt/session materialized, got sessions=%d prompts=%d", len(chunk.Sessions), len(chunk.Prompts))
+	if len(chunk.Prompts) != 0 || len(chunk.Sessions) != 1 {
+		t.Fatalf("expected session only materialized, got sessions=%d prompts=%d", len(chunk.Sessions), len(chunk.Prompts))
 	}
 	if len(chunk.Observations) != 1 {
 		t.Fatalf("expected newer observation mutation to be materialized into payload.observations, got %d", len(chunk.Observations))
@@ -135,7 +179,7 @@ func TestMaterializedMutationBatchChunkIncludesObservationAlongsidePromptAndSess
 	if chunk.Observations[0].SyncID != "obs-04081be99000bdf5" {
 		t.Fatalf("expected missing observation sync_id to be present, got %q", chunk.Observations[0].SyncID)
 	}
-	if len(chunk.Mutations) != 3 {
+	if len(chunk.Mutations) != 2 {
 		t.Fatalf("expected mutation journal payloads retained for replay, got %d", len(chunk.Mutations))
 	}
 }
@@ -183,7 +227,7 @@ func TestMaterializedMutationBatchChunkCarriesRelationMutationWithoutTypedRows(t
 
 func TestMaterializedMutationBatchChunksKeepProjectsSeparate(t *testing.T) {
 	chunks, err := materializedMutationBatchChunks([]MutationEntry{
-		{Project: "proj-a", Entity: store.SyncEntityPrompt, EntityKey: "prompt-a", Op: store.SyncOpUpsert, Payload: json.RawMessage(`{"sync_id":"prompt-a","session_id":"sess-a","content":"a"}`)},
+		{Project: "proj-a", Entity: store.SyncEntitySession, EntityKey: "sess-a", Op: store.SyncOpUpsert, Payload: json.RawMessage(`{"id":"sess-a","directory":"/tmp/sess-a"}`)},
 		{Project: "proj-b", Entity: store.SyncEntityObservation, EntityKey: "obs-b", Op: store.SyncOpUpsert, Payload: json.RawMessage(`{"sync_id":"obs-b","session_id":"sess-b","type":"decision","title":"b","content":"b","scope":"project"}`)},
 	})
 	if err != nil {
@@ -430,8 +474,8 @@ func TestMaterializedChunkMutationsBuildsOrderedUpserts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("materializedChunkMutations: %v", err)
 	}
-	if len(entries) != 3 {
-		t.Fatalf("expected 3 entries, got %d", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 ordinary entries, got %d", len(entries))
 	}
 
 	want := []struct {
@@ -440,7 +484,6 @@ func TestMaterializedChunkMutationsBuildsOrderedUpserts(t *testing.T) {
 	}{
 		{store.SyncEntitySession, "s-1"},
 		{store.SyncEntityObservation, "obs-1"},
-		{store.SyncEntityPrompt, "prompt-1"},
 	}
 	for i, entry := range entries {
 		if entry.Project != project || entry.Entity != want[i].entity || entry.EntityKey != want[i].key || entry.Op != store.SyncOpUpsert {
@@ -466,11 +509,6 @@ func TestMaterializedChunkMutationsRejectsMissingSyncIDs(t *testing.T) {
 			name:  "observation missing sync id",
 			chunk: engramsync.ChunkData{Observations: []store.Observation{{SessionID: "s-1"}}},
 			want:  "observations[0].sync_id is required",
-		},
-		{
-			name:  "prompt missing sync id",
-			chunk: engramsync.ChunkData{Prompts: []store.Prompt{{SessionID: "s-1"}}},
-			want:  "prompts[0].sync_id is required",
 		},
 		{
 			name:  "relation missing entity key",
@@ -536,9 +574,7 @@ func TestMaterializedChunkMutationsCarriesRelationFromChunkMutations(t *testing.
 	}
 }
 
-// #837: a prompt is hard-deleted locally, so it cannot ride in chunk.Prompts.
-// Its delete travels only as a chunk.Mutations entry and must still materialize.
-func TestMaterializedChunkMutationsCarriesPromptDeleteFromChunkMutations(t *testing.T) {
+func TestMaterializedChunkMutationsIgnoresLegacyPromptDelete(t *testing.T) {
 	project := "proj-materialize-prompt-delete"
 	deletePayload := `{"sync_id":"prompt-1","session_id":"s-1","project":"proj-materialize-prompt-delete","deleted":true,"hard_delete":true,"deleted_at":"2026-04-29T10:05:00Z"}`
 	chunk := engramsync.ChunkData{
@@ -553,28 +589,8 @@ func TestMaterializedChunkMutationsCarriesPromptDeleteFromChunkMutations(t *test
 		t.Fatalf("materializedChunkMutations: %v", err)
 	}
 
-	if len(entries) != 2 {
-		t.Fatalf("expected session upsert + prompt delete, got %d: %+v", len(entries), entries)
-	}
-
-	var promptDelete *MutationEntry
-	for i := range entries {
-		if entries[i].Entity == store.SyncEntityPrompt {
-			promptDelete = &entries[i]
-		}
-	}
-	if promptDelete == nil {
-		t.Fatalf("expected prompt delete materialized from chunk.Mutations, got %+v", entries)
-	}
-	if promptDelete.EntityKey != "prompt-1" || promptDelete.Op != store.SyncOpDelete || promptDelete.Project != project {
-		t.Fatalf("unexpected prompt delete entry: %+v", *promptDelete)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(promptDelete.Payload, &payload); err != nil {
-		t.Fatalf("prompt delete payload is not object JSON: %v", err)
-	}
-	if payload["sync_id"] != "prompt-1" {
-		t.Fatalf("prompt delete payload not preserved: %+v", payload)
+	if len(entries) != 1 || entries[0].Entity != store.SyncEntitySession {
+		t.Fatalf("legacy prompt delete must not materialize or create a remote tombstone: %+v", entries)
 	}
 }
 
@@ -657,8 +673,8 @@ func TestMaterializedChunkMutationsMaterializesUpsertsExactlyOnce(t *testing.T) 
 	if err != nil {
 		t.Fatalf("materializedChunkMutations: %v", err)
 	}
-	if len(entries) != 3 {
-		t.Fatalf("expected exactly one entry per typed row, got %d: %+v", len(entries), entries)
+	if len(entries) != 2 {
+		t.Fatalf("expected exactly one ordinary entry per typed row, got %d: %+v", len(entries), entries)
 	}
 	seen := make(map[string]int, len(entries))
 	for _, entry := range entries {
@@ -762,8 +778,7 @@ func TestWriteChunkMaterializesMutationsAndIsReplayIdempotent(t *testing.T) {
 	project := "test-chunk-materialize-" + strings.ReplaceAll(time.Now().UTC().Format("20060102150405.000000000"), ".", "-")
 	payload, err := chunkcodec.CanonicalizeForProject([]byte(`{
 		"sessions":[{"id":"s-1","directory":"/tmp/s-1","started_at":"2026-04-29T10:00:00Z"}],
-		"observations":[{"sync_id":"obs-1","session_id":"s-1","type":"decision","title":"Decision","content":"Content","scope":"project","created_at":"2026-04-29T10:01:00Z","updated_at":"2026-04-29T10:01:00Z"}],
-		"prompts":[{"sync_id":"prompt-1","session_id":"s-1","content":"Prompt","created_at":"2026-04-29T10:02:00Z"}]
+		"observations":[{"sync_id":"obs-1","session_id":"s-1","type":"decision","title":"Decision","content":"Content","scope":"project","created_at":"2026-04-29T10:01:00Z","updated_at":"2026-04-29T10:01:00Z"}]
 	}`), project)
 	if err != nil {
 		t.Fatalf("canonicalize chunk: %v", err)
@@ -785,11 +800,11 @@ func TestWriteChunkMaterializesMutationsAndIsReplayIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListMutationsSince: %v", err)
 	}
-	if len(mutations) != 3 {
-		t.Fatalf("expected 3 materialized mutations, got %d: %+v", len(mutations), mutations)
+	if len(mutations) != 2 {
+		t.Fatalf("expected 2 ordinary materialized mutations, got %d: %+v", len(mutations), mutations)
 	}
-	if mutations[0].Entity != store.SyncEntitySession || mutations[1].Entity != store.SyncEntityObservation || mutations[2].Entity != store.SyncEntityPrompt {
-		t.Fatalf("expected session/observation/prompt order, got %+v", mutations)
+	if mutations[0].Entity != store.SyncEntitySession || mutations[1].Entity != store.SyncEntityObservation {
+		t.Fatalf("expected session/observation order, got %+v", mutations)
 	}
 	if mutations[1].EntityKey != "obs-1" || mutations[1].Op != store.SyncOpUpsert || mutations[1].Project != project {
 		t.Fatalf("unexpected observation mutation: %+v", mutations[1])
@@ -802,7 +817,7 @@ func TestWriteChunkMaterializesMutationsAndIsReplayIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListMutationsSince after replay: %v", err)
 	}
-	if len(mutationsAfterReplay) != 3 {
+	if len(mutationsAfterReplay) != 2 {
 		t.Fatalf("expected replay not to duplicate mutations, got %d: %+v", len(mutationsAfterReplay), mutationsAfterReplay)
 	}
 }
@@ -1088,8 +1103,8 @@ func TestBuildDashboardReadModelReplaysMutationsInOrder(t *testing.T) {
 	if detail.Stats.Observations != 0 {
 		t.Fatalf("expected replayed observation delete to remove obs-1, got %d", detail.Stats.Observations)
 	}
-	if detail.Stats.Prompts != 1 {
-		t.Fatalf("expected delete-only + upsert replay to keep one prompt, got %d", detail.Stats.Prompts)
+	if detail.Stats.Prompts != 0 {
+		t.Fatalf("expected frozen prompt count 0, got %d", detail.Stats.Prompts)
 	}
 	if len(detail.Sessions) != 1 || detail.Sessions[0].StartedAt != "2026-04-23T09:30:00Z" {
 		t.Fatalf("expected repeated session upsert to keep newest value, got %+v", detail.Sessions)
@@ -1097,15 +1112,15 @@ func TestBuildDashboardReadModelReplaysMutationsInOrder(t *testing.T) {
 	if len(detail.Observations) != 0 {
 		t.Fatalf("expected no observations after delete-only chunk, got %+v", detail.Observations)
 	}
-	if len(detail.Prompts) != 1 || detail.Prompts[0].Content != "Prompt persisted" {
-		t.Fatalf("expected prompt-2 to remain after replay, got %+v", detail.Prompts)
+	if len(detail.Prompts) != 0 {
+		t.Fatalf("expected no prompt projection after replay, got %+v", detail.Prompts)
 	}
 
 	if got := model.filterObservations("proj-replay", ""); len(got) != 0 {
 		t.Fatalf("expected browser observations to reflect replay deletes, got %+v", got)
 	}
-	if got := model.filterPrompts("proj-replay", "persisted"); len(got) != 1 || got[0].Content != "Prompt persisted" {
-		t.Fatalf("expected browser prompts query to use replayed current state, got %+v", got)
+	if got := model.filterPrompts("proj-replay", "persisted"); len(got) != 0 {
+		t.Fatalf("expected browser prompts query to remain frozen, got %+v", got)
 	}
 }
 
@@ -1327,8 +1342,8 @@ func TestDashboardQuerySurfacesReuseCachedReadModelUntilInvalidated(t *testing.T
 	if rows, err := cs.ListRecentObservations("proj-a", "", 10); err != nil || len(rows) != 1 {
 		t.Fatalf("expected observations from cached model, rows=%+v err=%v", rows, err)
 	}
-	if rows, err := cs.ListRecentPrompts("proj-a", "", 10); err != nil || len(rows) != 1 {
-		t.Fatalf("expected prompts from cached model, rows=%+v err=%v", rows, err)
+	if rows, err := cs.ListRecentPrompts("proj-a", "", 10); err != nil || len(rows) != 0 {
+		t.Fatalf("expected cached Legacy prompts hidden, rows=%+v err=%v", rows, err)
 	}
 	if overview, err := cs.AdminOverview(); err != nil || overview.Projects != 1 {
 		t.Fatalf("expected admin overview from cached model, overview=%+v err=%v", overview, err)

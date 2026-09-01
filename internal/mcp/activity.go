@@ -12,6 +12,8 @@ import (
 
 const ambiguousProjectRecoveryTTL = 5 * time.Minute
 
+const promptContextTTL = 10 * time.Minute
+
 // SessionActivity tracks tool call activity for save reminders and activity scores.
 type SessionActivity struct {
 	mu         sync.Mutex
@@ -30,8 +32,9 @@ type sessionState struct {
 }
 
 type promptContext struct {
-	project string
-	content string
+	project   string
+	content   string
+	expiresAt time.Time
 }
 
 type ambiguousProjectRecovery struct {
@@ -146,14 +149,15 @@ func (a *SessionActivity) RecordSave(sessionID string) {
 	s.lastSaveAt = a.now()
 }
 
-// RecordPrompt stores the latest user prompt observed for a session. MCP does
-// not currently receive user prompts on every tool call, so callers must feed
-// this explicitly when prompt text is available.
+// RecordPrompt keeps the latest user prompt only in the expiring in-memory
+// session activity cache. It does not grant capture consent or persist content.
 func (a *SessionActivity) RecordPrompt(sessionID, project, content string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	s := a.getOrCreate(sessionID)
-	s.currentPrompt = &promptContext{project: project, content: content}
+	s.currentPrompt = &promptContext{
+		project: project, content: content, expiresAt: a.now().Add(promptContextTTL),
+	}
 }
 
 // CurrentPrompt returns the latest prompt for the session when it belongs to the
@@ -163,6 +167,10 @@ func (a *SessionActivity) CurrentPrompt(sessionID, project string) (string, bool
 	defer a.mu.Unlock()
 	s, ok := a.sessions[sessionID]
 	if !ok || s.currentPrompt == nil {
+		return "", false
+	}
+	if !a.now().Before(s.currentPrompt.expiresAt) {
+		s.currentPrompt = nil
 		return "", false
 	}
 	if s.currentPrompt.project != project || s.currentPrompt.content == "" {

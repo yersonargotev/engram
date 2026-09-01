@@ -1676,7 +1676,7 @@ func TestCmdProjectsPrunePathsOnly(t *testing.T) {
 	if strings.Contains(stdout, "ordinary-empty") || strings.Contains(stdout, "active-project") {
 		t.Fatalf("paths-only output included a retained project: %q", stdout)
 	}
-	if !strings.Contains(stdout, "Pruned 2 project(s): 2 sessions, 2 prompts removed.") {
+	if !strings.Contains(stdout, "Pruned 2 project(s): 0 sessions removed; Legacy prompts preserved.") {
 		t.Fatalf("prune result = %q", stdout)
 	}
 
@@ -1686,8 +1686,8 @@ func TestCmdProjectsPrunePathsOnly(t *testing.T) {
 	}
 	defer s.Close()
 	for _, sessionID := range []string{"s-forward-slash", "s-backslash"} {
-		if _, err := s.GetSession(sessionID); err == nil {
-			t.Fatalf("pruned session %q still exists", sessionID)
+		if _, err := s.GetSession(sessionID); err != nil {
+			t.Fatalf("Legacy-bearing session %q was removed: %v", sessionID, err)
 		}
 	}
 	stats, err := s.ListProjectsWithStats()
@@ -1698,11 +1698,11 @@ func TestCmdProjectsPrunePathsOnly(t *testing.T) {
 	for _, ps := range stats {
 		remaining[ps.Name] = ps
 	}
-	if _, ok := remaining[forwardSlashProject]; ok {
-		t.Fatalf("pruned project %q still has data: %+v", forwardSlashProject, remaining[forwardSlashProject])
+	if project, ok := remaining[forwardSlashProject]; !ok || project.SessionCount != 1 {
+		t.Fatalf("Legacy-bearing project %q was not preserved: %+v", forwardSlashProject, project)
 	}
-	if _, ok := remaining[backslashProject]; ok {
-		t.Fatalf("pruned project %q still has data: %+v", backslashProject, remaining[backslashProject])
+	if project, ok := remaining[backslashProject]; !ok || project.SessionCount != 1 {
+		t.Fatalf("Legacy-bearing project %q was not preserved: %+v", backslashProject, project)
 	}
 	if ordinary, ok := remaining["ordinary-empty"]; !ok || ordinary.SessionCount != 1 {
 		t.Fatalf("ordinary empty project = %+v, want one retained session", ordinary)
@@ -1752,7 +1752,7 @@ func TestCmdProjectsPruneReportsOnlySuccessfulProjects(t *testing.T) {
 	if !strings.Contains(stderr, `Error pruning "failure-empty": forced failure`) {
 		t.Fatalf("stderr = %q", stderr)
 	}
-	if !strings.Contains(stdout, "Pruned 1 project(s): 1 sessions, 0 prompts removed.") {
+	if !strings.Contains(stdout, "Pruned 1 project(s): 1 sessions removed; Legacy prompts preserved.") {
 		t.Fatalf("stdout = %q", stdout)
 	}
 }
@@ -1902,7 +1902,6 @@ func TestCmdProjectsConsolidateCaseOnlyVariantReportsMovedRecords(t *testing.T) 
 		`Done! Merged 1 project(s) into "engram"`,
 		"Observations: 1",
 		"Sessions:     1",
-		"Prompts:      1",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("expected %q in merge report, got: %q", want, stdout)
@@ -1913,12 +1912,12 @@ func TestCmdProjectsConsolidateCaseOnlyVariantReportsMovedRecords(t *testing.T) 
 	}
 
 	// The reported counts must match the records that actually moved.
-	if obs, sessions, prompts := projectRecordCounts(t, cfg, "ENGRAM"); obs+sessions+prompts != 0 {
-		t.Fatalf("legacy spelling still holds records: obs=%d sessions=%d prompts=%d", obs, sessions, prompts)
+	if obs, sessions, prompts := projectRecordCounts(t, cfg, "ENGRAM"); obs != 0 || sessions != 0 || prompts != 1 {
+		t.Fatalf("legacy spelling archive preservation: obs=%d sessions=%d prompts=%d", obs, sessions, prompts)
 	}
 	obs, sessions, prompts := projectRecordCounts(t, cfg, "engram")
-	if obs != 2 || sessions != 2 || prompts != 1 {
-		t.Fatalf("canonical records = obs:%d sessions:%d prompts:%d, want 2/2/1", obs, sessions, prompts)
+	if obs != 2 || sessions != 2 || prompts != 0 {
+		t.Fatalf("canonical records = obs:%d sessions:%d prompts:%d, want 2/2/0", obs, sessions, prompts)
 	}
 }
 
@@ -1982,15 +1981,15 @@ func TestCmdProjectsConsolidateAllCaseOnlyVariantReportsMovedRecords(t *testing.
 	if stderr != "" {
 		t.Fatalf("expected no stderr, got: %q", stderr)
 	}
-	if !strings.Contains(stdout, "Merged: 1 obs, 1 sessions, 1 prompts") {
+	if !strings.Contains(stdout, "Merged: 1 obs, 1 sessions, 0 proposals") {
 		t.Fatalf("expected counts matching the moved records, got: %q", stdout)
 	}
-	if obs, sessions, prompts := projectRecordCounts(t, cfg, "ENGRAM"); obs+sessions+prompts != 0 {
-		t.Fatalf("legacy spelling still holds records: obs=%d sessions=%d prompts=%d", obs, sessions, prompts)
+	if obs, sessions, prompts := projectRecordCounts(t, cfg, "ENGRAM"); obs != 0 || sessions != 0 || prompts != 1 {
+		t.Fatalf("legacy spelling archive preservation: obs=%d sessions=%d prompts=%d", obs, sessions, prompts)
 	}
 	obs, sessions, prompts := projectRecordCounts(t, cfg, "engram")
-	if obs != 2 || sessions != 2 || prompts != 1 {
-		t.Fatalf("canonical records = obs:%d sessions:%d prompts:%d, want 2/2/1", obs, sessions, prompts)
+	if obs != 2 || sessions != 2 || prompts != 0 {
+		t.Fatalf("canonical records = obs:%d sessions:%d prompts:%d, want 2/2/0", obs, sessions, prompts)
 	}
 }
 
@@ -2051,7 +2050,7 @@ func TestCmdProjectsConsolidateAllNamesSourcesTheStoreLeftUntouched(t *testing.T
 	if stderr != "" {
 		t.Fatalf("expected no stderr, got: %q", stderr)
 	}
-	if !strings.Contains(stdout, "Merged: 1 obs, 1 sessions, 0 prompts") {
+	if !strings.Contains(stdout, "Merged: 1 obs, 1 sessions, 0 proposals") {
 		t.Fatalf("expected counts for the single moved source, got: %q", stdout)
 	}
 	if !strings.Contains(stdout, "Not merged (no records moved):  engram ") {
@@ -2894,73 +2893,19 @@ func TestCmdDeleteSessionMissingID(t *testing.T) {
 	}
 }
 
-// ─── delete prompt sub-command tests ──────────────────────────────────────────
-
-func TestCmdDeletePromptSuccess(t *testing.T) {
+func TestCmdDeletePromptIsRetiredInFavorOfConfirmedLegacyPurge(t *testing.T) {
 	cfg := testConfig(t)
-	promptID := mustSeedPrompt(t, cfg, "sess-prompt-del", "proj-del-prompt")
-
-	withArgs(t, "engram", "delete", "prompt", strconv.FormatInt(promptID, 10))
-	stdout, stderr := captureOutput(t, func() { cmdDelete(cfg) })
-	if stderr != "" {
-		t.Fatalf("expected no stderr, got: %q", stderr)
-	}
-	if !strings.Contains(stdout, "deleted") {
-		t.Fatalf("expected deletion confirmation in stdout, got: %q", stdout)
-	}
-}
-
-func TestCmdDeletePromptNotFound(t *testing.T) {
-	cfg := testConfig(t)
-
 	exited := false
 	oldExit := exitFunc
 	exitFunc = func(code int) { exited = true }
 	t.Cleanup(func() { exitFunc = oldExit })
-
-	withArgs(t, "engram", "delete", "prompt", "999999")
+	withArgs(t, "engram", "delete", "prompt", "1")
 	_, stderr := captureOutput(t, func() { cmdDelete(cfg) })
 	if !exited {
-		t.Fatal("expected exitFunc to be called for not-found prompt")
+		t.Fatal("expected retired prompt deletion to fail")
 	}
-	if !strings.Contains(stderr, "not found") && !strings.Contains(stderr, "prompt") {
-		t.Fatalf("expected not-found error in stderr, got: %q", stderr)
-	}
-}
-
-func TestCmdDeletePromptMissingID(t *testing.T) {
-	cfg := testConfig(t)
-
-	exited := false
-	oldExit := exitFunc
-	exitFunc = func(code int) { exited = true }
-	t.Cleanup(func() { exitFunc = oldExit })
-
-	withArgs(t, "engram", "delete", "prompt")
-	_, stderr := captureOutput(t, func() { cmdDelete(cfg) })
-	if !exited {
-		t.Fatal("expected exitFunc to be called when prompt id is missing")
-	}
-	if !strings.Contains(stderr, "usage") {
-		t.Fatalf("expected usage message in stderr, got: %q", stderr)
-	}
-}
-
-func TestCmdDeletePromptInvalidID(t *testing.T) {
-	cfg := testConfig(t)
-
-	exited := false
-	oldExit := exitFunc
-	exitFunc = func(code int) { exited = true }
-	t.Cleanup(func() { exitFunc = oldExit })
-
-	withArgs(t, "engram", "delete", "prompt", "not-a-number")
-	_, stderr := captureOutput(t, func() { cmdDelete(cfg) })
-	if !exited {
-		t.Fatal("expected exitFunc to be called for invalid prompt id")
-	}
-	if !strings.Contains(stderr, "invalid") {
-		t.Fatalf("expected invalid id error in stderr, got: %q", stderr)
+	if !strings.Contains(stderr, "legacy-prompts purge") {
+		t.Fatalf("expected explicit Legacy purge guidance, got: %q", stderr)
 	}
 }
 
@@ -3073,7 +3018,7 @@ func TestCmdDeleteObservationBackwardCompat(t *testing.T) {
 
 func TestCmdDeleteSubCommandsInUsage(t *testing.T) {
 	stdout, _ := captureOutput(t, func() { printUsage() })
-	for _, want := range []string{"delete session", "delete prompt", "delete project"} {
+	for _, want := range []string{"delete session", "delete project", "legacy-prompts"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("expected %q in usage output, got:\n%s", want, stdout)
 		}

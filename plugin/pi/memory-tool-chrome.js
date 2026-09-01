@@ -4,7 +4,7 @@ const TOOL_LABELS = {
   mem_update: "update",
   mem_delete: "delete",
   mem_suggest_topic_key: "suggest topic",
-  mem_save_prompt: "save prompt",
+  mem_save_prompt: "request prompt capture",
   mem_session_summary: "session summary",
   mem_context: "context",
   mem_stats: "stats",
@@ -28,7 +28,7 @@ const ARG_KEYS = {
   mem_update: ["id", "title"],
   mem_delete: ["id"],
   mem_suggest_topic_key: ["title", "type"],
-  mem_save_prompt: ["content"],
+  mem_save_prompt: [],
   mem_session_summary: ["content"],
   mem_context: ["project", "scope"],
   mem_stats: ["project"],
@@ -126,7 +126,7 @@ export function compactResultStatus(toolName, result, options = {}) {
   if (toolName === "mem_update") return data?.id ? `✓ updated #${data.id}` : "✓ updated";
   if (toolName === "mem_delete") return data?.id ? `✓ deleted #${data.id}` : "✓ deleted";
   if (toolName === "mem_suggest_topic_key") return data?.topic_key ? `✓ ${data.topic_key}` : "✓ suggested";
-  if (toolName === "mem_save_prompt") return data?.id ? `✓ prompt #${data.id}` : "✓ prompt saved";
+  if (toolName === "mem_save_prompt") return data?.captured ? "✓ captured" : "✓ capture disabled";
   if (toolName === "mem_session_start") return "✓ started";
   if (toolName === "mem_session_end") return "✓ ended";
   if (toolName === "mem_current_project") return data?.project ? `✓ ${data.project}` : "✓ detected";

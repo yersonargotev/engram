@@ -296,9 +296,7 @@ func TestBrowserSessionsAreClickable(t *testing.T) {
 	}
 }
 
-// TestBrowserPromptsAreClickable asserts GET /dashboard/browser/prompts
-// returns HTML with href links to prompt detail pages. Satisfies (c).
-func TestBrowserPromptsAreClickable(t *testing.T) {
+func TestBrowserPromptsRouteIsGone(t *testing.T) {
 	store := parityStoreStub{
 		prompts: []cloudstore.DashboardPromptRow{
 			{Project: "proj-a", SessionID: "s1", SyncID: "sync-prompt-1", ChunkID: "c1", Content: "Test prompt", CreatedAt: "2026-04-23T10:00:00Z"},
@@ -309,12 +307,41 @@ func TestBrowserPromptsAreClickable(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/browser/prompts?auth=ok", nil)
 	req.Header.Set("HX-Request", "true")
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d body=%q", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `href="/dashboard/prompts/`) {
-		t.Errorf("expected clickable prompt links in browser partial, got body=%q", body)
+	if strings.Contains(body, `href="/dashboard/prompts/`) || strings.Contains(body, "Test prompt") {
+		t.Errorf("Legacy prompt route exposed content or detail links: %q", body)
+	}
+}
+
+func TestLegacyPromptRoutesAreGoneWithoutReadingStore(t *testing.T) {
+	stub := parityStoreStub{
+		errListRecentPrompts: fmt.Errorf("prompt store must not be read"),
+		errGetPromptDetail:   fmt.Errorf("prompt store must not be read"),
+	}
+	mux := http.NewServeMux()
+	Mount(mux, MountConfig{
+		Store: stub,
+		RequireSession: func(*http.Request) error {
+			return nil
+		},
+		GetDisplayName: func(*http.Request) string { return "tester" },
+	})
+	for _, path := range []string{
+		"/dashboard/browser/prompts?auth=ok",
+		"/dashboard/projects/proj-a/prompts?auth=ok",
+		"/dashboard/prompts/proj-a/s-1/p-1?auth=ok",
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusGone {
+			t.Fatalf("GET %s status = %d, want 410; body=%q", path, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "prompt store must not be read") {
+			t.Fatalf("GET %s consulted prompt store: %q", path, rec.Body.String())
+		}
 	}
 }
 
@@ -1727,8 +1754,12 @@ func TestFullHTMXEndpointSurface(t *testing.T) {
 		t.Run(route, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, route, nil))
-			if rec.Code != http.StatusOK {
-				t.Fatalf("expected 200 for %s, got %d body=%q", route, rec.Code, rec.Body.String())
+			wantStatus := http.StatusOK
+			if strings.Contains(route, "/prompts") {
+				wantStatus = http.StatusGone
+			}
+			if rec.Code != wantStatus {
+				t.Fatalf("expected %d for %s, got %d body=%q", wantStatus, route, rec.Code, rec.Body.String())
 			}
 			if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
 				t.Errorf("expected text/html Content-Type for %s, got %q", route, ct)
@@ -1942,8 +1973,7 @@ func TestObservationDetailURLUsesSyncID(t *testing.T) {
 	}
 }
 
-// TestPromptDetailURLUsesSyncID (C1 URL scheme for prompts).
-func TestPromptDetailURLUsesSyncID(t *testing.T) {
+func TestPromptBrowserDoesNotRenderLegacyDetailURLs(t *testing.T) {
 	store := parityStoreStub{
 		prompts: []cloudstore.DashboardPromptRow{
 			{
@@ -1965,18 +1995,12 @@ func TestPromptDetailURLUsesSyncID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/browser/prompts?auth=ok", nil)
 	req.Header.Set("HX-Request", "true")
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d body=%q", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "/dashboard/prompts/proj-a/sess-1/sync-prompt-alpha") {
-		t.Errorf("C1: expected href with syncID=sync-prompt-alpha, body=%q", body)
-	}
-	if !strings.Contains(body, "/dashboard/prompts/proj-a/sess-1/sync-prompt-beta") {
-		t.Errorf("C1: expected href with syncID=sync-prompt-beta, body=%q", body)
-	}
-	if strings.Contains(body, "/dashboard/prompts/proj-a/sess-1/shared-chunk-p") {
-		t.Errorf("C1: prompt href still uses ChunkID instead of SyncID, body=%q", body)
+	if strings.Contains(body, "/dashboard/prompts/proj-a/sess-1/") || strings.Contains(body, "Alpha prompt") {
+		t.Errorf("Legacy prompt browser exposed a detail URL or content: %q", body)
 	}
 }
 
@@ -2186,8 +2210,7 @@ func TestBrowserSessionsPartialRendersPaginationBar(t *testing.T) {
 	}
 }
 
-// R3-1c: TestBrowserPromptsPartialRendersPaginationBar — same for prompts.
-func TestBrowserPromptsPartialRendersPaginationBar(t *testing.T) {
+func TestBrowserPromptsPartialIsGone(t *testing.T) {
 	prompts := make([]cloudstore.DashboardPromptRow, 25)
 	for i := range prompts {
 		prompts[i] = cloudstore.DashboardPromptRow{
@@ -2216,12 +2239,12 @@ func TestBrowserPromptsPartialRendersPaginationBar(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/dashboard/browser/prompts?auth=ok&page=1&pageSize=10", nil)
 	req.Header.Set("HX-Request", "true")
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("R3-1c: expected 200, got %d body=%q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d body=%q", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "page-btn") {
-		t.Errorf("R3-1c: expected pagination controls in PromptsPartial, got body=%q", body)
+	if strings.Contains(body, "page-btn") || strings.Contains(body, "prompt content") {
+		t.Errorf("Legacy prompt route rendered pagination or content: %q", body)
 	}
 }
 
@@ -2676,24 +2699,19 @@ func TestObservationDetailNotFoundReturns404(t *testing.T) {
 	}
 }
 
-// TestPromptDetailNotFoundReturns404 (R5-4) asserts that GET /dashboard/prompts/{project}/{sessionID}/{syncID}
-// for a missing prompt returns 404 with "Prompt not found".
-func TestPromptDetailNotFoundReturns404(t *testing.T) {
+func TestPromptDetailAlwaysReturnsGone(t *testing.T) {
 	store := parityStoreStub{
 		errGetPromptDetail: fmt.Errorf("%w: prompt-missing", cloudstore.ErrDashboardPromptNotFound),
 	}
 	mux := newAuthedMux(store, false)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dashboard/prompts/proj-valid/sess-1/prompt-missing?auth=ok", nil))
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("R5-4: expected 404 for missing prompt detail, got %d body=%q", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expected 410 for frozen prompt detail, got %d body=%q", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if strings.Contains(body, "Project not found") {
-		t.Errorf("R5-4: prompt not-found handler says 'Project not found' — must say 'Prompt not found'")
-	}
-	if !strings.Contains(body, "Prompt not found") {
-		t.Errorf("R5-4: expected 'Prompt not found' in 404 body, got body=%q", body[:min(len(body), 500)])
+	if !strings.Contains(body, "Legacy Prompt Archive") || strings.Contains(body, "prompt-missing") {
+		t.Errorf("expected content-free Legacy archive response, got body=%q", body[:min(len(body), 500)])
 	}
 }
 

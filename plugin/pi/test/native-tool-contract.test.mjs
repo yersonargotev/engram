@@ -63,20 +63,16 @@ function recordingFetch(routes) {
   return { calls, fetchStub };
 }
 
-test("registered Pi-native mem_save_prompt persists through the Engram /prompts endpoint", async () => {
+test("registered Pi-native mem_save_prompt returns content-free consent metadata", async () => {
   const originalFetch = globalThis.fetch;
   const originalUrl = process.env.ENGRAM_URL;
   process.env.ENGRAM_URL = "http://127.0.0.1:17437";
 
-  // The server assigns prompt ids from user_prompts, a table whose sequence is independent of
-  // observations. Issue #706 read one of these low ids as an observation id; the response must
-  // therefore name the namespace it belongs to.
-  const serverAssignedPromptID = 213;
   const { calls, fetchStub } = recordingFetch([
     { method: "GET", path: "/health", body: { status: "ok" } },
     { method: "GET", path: "/project/current", body: { project: "paidosdep" } },
     { method: "POST", path: "/sessions", body: { status: "ok" } },
-    { method: "POST", path: "/prompts", status: 201, body: { id: serverAssignedPromptID, status: "saved" } },
+    { method: "POST", path: "/prompts", status: 202, body: { captured: false, reason_code: "consent_disabled" } },
   ]);
   globalThis.fetch = fetchStub;
 
@@ -94,7 +90,7 @@ test("registered Pi-native mem_save_prompt persists through the Engram /prompts 
         runtimeContext("test-session"),
       );
 
-      assert.notEqual(result.isError, true, "a successful prompt save must not surface as a tool error");
+      assert.notEqual(result.isError, true, "an evaluated capture request must not surface as a tool error");
 
       // The prompt must reach POST /prompts carrying the requested project scope, and the session it
       // references must have been created under that same project first.
@@ -113,10 +109,9 @@ test("registered Pi-native mem_save_prompt persists through the Engram /prompts 
         "the session must be created before the prompt that references it",
       );
 
-      // The returned identity is prompt-scoped: it echoes the id the server assigned, and it is not
-      // offered under a name that mem_get_observation would accept.
-      assert.deepEqual(result.details.data, { prompt_id: serverAssignedPromptID, status: "saved" });
-      assert.equal(result.details.data.id, undefined, "an observation-shaped id must not be returned");
+      assert.deepEqual(result.details.data, { captured: false, reason_code: "consent_disabled" });
+      assert.equal(result.details.data.id, undefined, "a Legacy prompt id must not be returned");
+      assert.equal(JSON.stringify(result.details.data).includes("preserve this exact user prompt"), false);
     });
   } finally {
     globalThis.fetch = originalFetch;

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/yersonargotev/engram/internal/diagnostic"
+	"github.com/yersonargotev/engram/internal/memoryops"
 	projectpkg "github.com/yersonargotev/engram/internal/project"
 	"github.com/yersonargotev/engram/internal/store"
 )
@@ -676,13 +677,21 @@ func reviewObservationPayload(obs store.Observation) map[string]any {
 // ─── Prompts ─────────────────────────────────────────────────────────────────
 
 func (s *Server) handleAddPrompt(w http.ResponseWriter, r *http.Request) {
-	var body store.AddPromptParams
+	var body struct {
+		SessionID string `json:"session_id"`
+		Content   string `json:"content"`
+		Project   string `json:"project"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	if body.SessionID == "" || body.Content == "" {
+	if strings.TrimSpace(body.SessionID) == "" {
 		jsonError(w, http.StatusBadRequest, "session_id and content are required")
+		return
+	}
+	if strings.TrimSpace(body.Content) == "" {
+		jsonError(w, http.StatusBadRequest, store.ErrPromptContentRequired.Error())
 		return
 	}
 	if !s.validateSessionProject(w, body.SessionID, body.Project) {
@@ -698,7 +707,12 @@ func (s *Server) handleAddPrompt(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	id, err := s.store.AddPrompt(body)
+	result, err := memoryops.New(s.store).Capture(memoryops.CaptureInput{
+		Project:     body.Project,
+		ContentType: store.CaptureContentTypePrompt,
+		SessionID:   body.SessionID,
+		Content:     body.Content,
+	})
 	if err != nil {
 		switch {
 		case errors.Is(err, store.ErrPromptContentRequired):
@@ -710,41 +724,19 @@ func (s *Server) handleAddPrompt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.notifyWrite()
-	jsonResponse(w, http.StatusCreated, map[string]any{"id": id, "status": "saved"})
+	status := http.StatusAccepted
+	if result.Captured {
+		status = http.StatusCreated
+	}
+	jsonResponse(w, status, result)
 }
 
 func (s *Server) handleRecentPrompts(w http.ResponseWriter, r *http.Request) {
-	project := r.URL.Query().Get("project")
-	limit := queryInt(r, "limit", 20)
-
-	prompts, err := s.store.RecentPrompts(project, limit)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	jsonResponse(w, http.StatusOK, prompts)
+	legacyPromptHTTPGone(w)
 }
 
 func (s *Server) handleSearchPrompts(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query().Get("q")
-	if query == "" {
-		jsonError(w, http.StatusBadRequest, "q parameter is required")
-		return
-	}
-
-	prompts, err := s.store.SearchPrompts(
-		query,
-		r.URL.Query().Get("project"),
-		queryInt(r, "limit", 10),
-	)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	jsonResponse(w, http.StatusOK, prompts)
+	legacyPromptHTTPGone(w)
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
@@ -760,6 +752,8 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, store.ErrSessionHasObservations):
 			jsonError(w, http.StatusConflict, err.Error())
+		case errors.Is(err, store.ErrSessionHasLegacyPrompts):
+			jsonError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, store.ErrSessionNotFound):
 			jsonError(w, http.StatusNotFound, err.Error())
 		default:
@@ -773,24 +767,11 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeletePrompt(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		jsonError(w, http.StatusBadRequest, "invalid prompt id")
-		return
-	}
+	legacyPromptHTTPGone(w)
+}
 
-	if err := s.store.DeletePrompt(id); err != nil {
-		if errors.Is(err, store.ErrPromptNotFound) {
-			jsonError(w, http.StatusNotFound, err.Error())
-			return
-		}
-		jsonError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	s.notifyWrite()
-	jsonResponse(w, http.StatusOK, map[string]any{"id": id, "status": "deleted"})
+func legacyPromptHTTPGone(w http.ResponseWriter) {
+	jsonError(w, http.StatusGone, "Legacy prompt archive is available only through explicit engram legacy-prompts CLI commands")
 }
 
 // ─── Export / Import ─────────────────────────────────────────────────────────

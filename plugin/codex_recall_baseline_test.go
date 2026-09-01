@@ -64,7 +64,7 @@ printf '%s\n' "$*" >> "$BASELINE_ARGS_LOG"
 		time.Sleep(10 * time.Millisecond)
 	}
 	for _, want := range []string{
-		"recall-baseline record --kind capture --surface lifecycle --operation prompt --outcome enabled",
+		"recall-baseline record --kind capture --surface lifecycle --operation prompt --outcome unknown",
 		"recall-baseline record --kind subagent_stop --surface lifecycle --operation subagent_stop --outcome observed",
 		"recall-baseline record --kind capture --surface lifecycle --operation subagent --outcome enabled",
 		"recall-baseline record --kind operation --surface lifecycle --operation session_start --outcome success --delivered-bytes ",

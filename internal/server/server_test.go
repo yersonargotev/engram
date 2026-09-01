@@ -980,8 +980,8 @@ func TestExportHonorsProjectQueryScope(t *testing.T) {
 	if exported.Observations[0].Project == nil || *exported.Observations[0].Project != "proj-a" {
 		t.Fatalf("expected scoped observation project proj-a, got %+v", exported.Observations[0].Project)
 	}
-	if len(exported.Prompts) != 1 || exported.Prompts[0].Project != "proj-a" {
-		t.Fatalf("expected only proj-a prompts in scoped export, got %+v", exported.Prompts)
+	if len(exported.Prompts) != 0 {
+		t.Fatalf("ordinary scoped export exposed Legacy prompts: %+v", exported.Prompts)
 	}
 }
 
@@ -1225,18 +1225,19 @@ func TestOnWriteCalledAfterSuccessfulWrites(t *testing.T) {
 		t.Fatalf("expected 3 onWrite after add observation, got %d", writeCount.Load())
 	}
 
-	// Add prompt → should trigger onWrite.
+	// A default-off prompt capture request is evaluated locally and must not
+	// trigger autosync.
 	promptBody := `{"session_id":"s-test","content":"what did we do?"}`
 	promptReq := httptest.NewRequest(http.MethodPost, "/prompts",
 		strings.NewReader(promptBody))
 	promptReq.Header.Set("Content-Type", "application/json")
 	promptRec := httptest.NewRecorder()
 	h.ServeHTTP(promptRec, promptReq)
-	if promptRec.Code != http.StatusCreated {
-		t.Fatalf("add prompt: expected 201, got %d", promptRec.Code)
+	if promptRec.Code != http.StatusAccepted {
+		t.Fatalf("prompt capture: expected 202, got %d", promptRec.Code)
 	}
-	if writeCount.Load() != 4 {
-		t.Fatalf("expected 4 onWrite after add prompt, got %d", writeCount.Load())
+	if writeCount.Load() != 3 {
+		t.Fatalf("prompt capture notified autosync; got %d writes", writeCount.Load())
 	}
 }
 
@@ -1396,6 +1397,36 @@ func TestHandleDeleteSession_HasObservations(t *testing.T) {
 	}
 }
 
+func TestHandleDeleteSession_HasLegacyPrompts(t *testing.T) {
+	st := newServerTestStore(t)
+	h := New(st, 0).Handler()
+	if err := st.CreateSession("sess-legacy-prompts", "proj", "/tmp"); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := st.AddPrompt(store.AddPromptParams{
+		SessionID: "sess-legacy-prompts", Project: "proj", Content: "frozen Legacy prompt",
+	}); err != nil {
+		t.Fatalf("seed Legacy prompt: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/sessions/sess-legacy-prompts", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 when session has Legacy prompts, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), store.ErrSessionHasLegacyPrompts.Error()) {
+		t.Fatalf("response does not identify Legacy prompt blocker: %s", rec.Body.String())
+	}
+	var remaining int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE session_id = ?`, "sess-legacy-prompts").Scan(&remaining); err != nil {
+		t.Fatalf("count Legacy prompt: %v", err)
+	}
+	if remaining != 1 {
+		t.Fatalf("blocked session delete mutated Legacy prompts, remaining=%d", remaining)
+	}
+}
+
 // TestHandleDeleteSession_PropagatesWhenProjectIsCloudEnrolled verifies the
 // behavior introduced by 71fa9fe: deleting a session whose project is enrolled
 // for cloud sync now succeeds locally AND enqueues a delete mutation so the
@@ -1428,7 +1459,7 @@ func TestHandleDeleteSession_PropagatesWhenProjectIsCloudEnrolled(t *testing.T) 
 
 // ─── DELETE /prompts/{id} tests ───────────────────────────────────────────────
 
-func TestHandleDeletePrompt_Success(t *testing.T) {
+func TestHandleDeletePrompt_GoneWithoutDeletingLegacy(t *testing.T) {
 	st := newServerTestStore(t)
 	srv := New(st, 0)
 	h := srv.Handler()
@@ -1454,15 +1485,22 @@ func TestHandleDeletePrompt_Success(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 deleting prompt, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expected 410 for retired Legacy HTTP delete, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if writeCount.Load() != 1 {
-		t.Fatalf("expected onWrite notification after prompt delete, got %d", writeCount.Load())
+	if writeCount.Load() != 0 {
+		t.Fatalf("retired endpoint notified autosync %d times", writeCount.Load())
+	}
+	var remaining int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE id = ?`, promptID).Scan(&remaining); err != nil {
+		t.Fatalf("count Legacy prompt: %v", err)
+	}
+	if remaining != 1 {
+		t.Fatalf("retired endpoint deleted Legacy prompt, remaining=%d", remaining)
 	}
 }
 
-func TestHandleDeletePrompt_NotFound(t *testing.T) {
+func TestHandleDeletePrompt_GoneForUnknownID(t *testing.T) {
 	srv := New(newServerTestStore(t), 0)
 	h := srv.Handler()
 
@@ -1470,12 +1508,12 @@ func TestHandleDeletePrompt_NotFound(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", rec.Code)
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expected 410, got %d", rec.Code)
 	}
 }
 
-func TestHandleDeletePrompt_BadID(t *testing.T) {
+func TestHandleDeletePrompt_GoneForMalformedID(t *testing.T) {
 	srv := New(newServerTestStore(t), 0)
 	h := srv.Handler()
 
@@ -1483,8 +1521,8 @@ func TestHandleDeletePrompt_BadID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for invalid prompt id, got %d", rec.Code)
+	if rec.Code != http.StatusGone {
+		t.Fatalf("expected 410 for retired endpoint, got %d", rec.Code)
 	}
 }
 

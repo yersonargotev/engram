@@ -316,8 +316,12 @@ func TestInvalidSessionIdentityCheckReportsSourceReferencesAndJournal(t *testing
 	if err := json.Unmarshal(report.Checks[0].Findings[0].Evidence, &evidence); err != nil {
 		t.Fatalf("decode evidence: %v", err)
 	}
-	if evidence.ObservationCount != 1 || evidence.PromptCount != 1 || evidence.InvalidJournalCount != 1 {
+	if evidence.ObservationCount != 1 || evidence.PromptCount != 0 || evidence.InvalidJournalCount != 1 {
 		t.Fatalf("evidence=%+v", evidence)
+	}
+	var legacyPrompts int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE sync_id = 'prompt-empty-session'`).Scan(&legacyPrompts); err != nil || legacyPrompts != 1 {
+		t.Fatalf("Legacy prompt was not preserved: count=%d err=%v", legacyPrompts, err)
 	}
 
 	plan, err := BuildRepairPlan(context.Background(), Scope{Store: s, Project: "engram"}, report, CheckInvalidSessionIdentity, RepairModeApply)

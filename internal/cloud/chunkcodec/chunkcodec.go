@@ -4,11 +4,141 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/yersonargotev/engram/internal/store"
 )
+
+// ErrLocalOnlyContent marks payloads that attempt to cross the cloud boundary
+// with Legacy prompts or Diagnostic capture data. Existing remote blobs may
+// still contain Legacy prompts, but current sync must never accept or expose
+// them through ordinary cloud behavior.
+var ErrLocalOnlyContent = errors.New("cloud payload contains local-only content")
+
+// IsLocalOnlyEntity reports whether an entity is structurally excluded from
+// cloud sync. Prompt is the frozen Legacy archive; diagnostic_capture is the
+// consent-gated, local-only diagnostic store.
+func IsLocalOnlyEntity(entity string) bool {
+	switch strings.ToLower(strings.TrimSpace(entity)) {
+	case store.SyncEntityPrompt, "diagnostic_capture", "capture_consent":
+		return true
+	default:
+		return false
+	}
+}
+
+func localOnlyCollectionKey(key string) string {
+	switch strings.ToLower(key) {
+	case "prompts":
+		return "prompts"
+	case "diagnostic_captures":
+		return "diagnostic_captures"
+	case "capture_consents":
+		return "capture_consents"
+	default:
+		return ""
+	}
+}
+
+func isMutationCollectionKey(key string) bool {
+	return strings.EqualFold(key, "mutations")
+}
+
+func hasLocalOnlyMutationEntity(row map[string]any) bool {
+	for key, value := range row {
+		if !strings.EqualFold(key, "entity") {
+			continue
+		}
+		entity, _ := value.(string)
+		if IsLocalOnlyEntity(entity) {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateCloudPayload rejects local-only typed collections and mutations.
+func ValidateCloudPayload(payload []byte) error {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &doc); err != nil {
+		return fmt.Errorf("decode chunk data: %w", err)
+	}
+	for key, raw := range doc {
+		canonicalKey := localOnlyCollectionKey(key)
+		if canonicalKey == "" || string(raw) == "null" {
+			continue
+		}
+		var entries []json.RawMessage
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return fmt.Errorf("%s must be an array", canonicalKey)
+		}
+		if len(entries) > 0 {
+			return fmt.Errorf("%w: %s", ErrLocalOnlyContent, canonicalKey)
+		}
+	}
+	for key, raw := range doc {
+		if !isMutationCollectionKey(key) || string(raw) == "null" {
+			continue
+		}
+		var entries []struct {
+			Entity string `json:"entity"`
+		}
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return fmt.Errorf("mutations must be an array")
+		}
+		for i, entry := range entries {
+			if IsLocalOnlyEntity(entry.Entity) {
+				return fmt.Errorf("%w: mutations[%d].entity %q", ErrLocalOnlyContent, i, strings.TrimSpace(entry.Entity))
+			}
+		}
+	}
+	return nil
+}
+
+// RedactLocalOnlyContent removes frozen/local-only data from a historical
+// cloud chunk at read time without rewriting or deleting the stored blob.
+func RedactLocalOnlyContent(payload []byte) ([]byte, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(payload, &doc); err != nil {
+		return nil, fmt.Errorf("decode chunk data: %w", err)
+	}
+	for key := range doc {
+		switch localOnlyCollectionKey(key) {
+		case "prompts":
+			doc[key] = []any{}
+		case "diagnostic_captures", "capture_consents":
+			delete(doc, key)
+		}
+	}
+	for key, raw := range doc {
+		if !isMutationCollectionKey(key) || raw == nil {
+			continue
+		}
+		entries, ok := raw.([]any)
+		if !ok {
+			return nil, fmt.Errorf("mutations must be an array")
+		}
+		filtered := make([]any, 0, len(entries))
+		for i, item := range entries {
+			row, ok := item.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("mutations[%d] must be an object", i)
+			}
+			if hasLocalOnlyMutationEntity(row) {
+				continue
+			}
+			filtered = append(filtered, row)
+		}
+		doc[key] = filtered
+	}
+	redacted, err := json.Marshal(doc)
+	if err != nil {
+		return nil, fmt.Errorf("encode redacted chunk data: %w", err)
+	}
+	return redacted, nil
+}
 
 func ChunkID(payload []byte) string {
 	hash := sha256.Sum256(payload)
@@ -16,6 +146,9 @@ func ChunkID(payload []byte) string {
 }
 
 func CanonicalizeForProject(payload []byte, project string) ([]byte, error) {
+	if err := ValidateCloudPayload(payload); err != nil {
+		return nil, err
+	}
 	var doc map[string]any
 	if err := json.Unmarshal(payload, &doc); err != nil {
 		return nil, fmt.Errorf("decode chunk data: %w", err)

@@ -14,7 +14,7 @@ func TestEstimateSessionProjectReclassificationDoesNotMutate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EstimateSessionProjectReclassification: %v", err)
 	}
-	if counts.Sessions != 1 || counts.Observations != 1 || counts.Prompts != 1 {
+	if counts.Sessions != 1 || counts.Observations != 1 || counts.Prompts != 0 {
 		t.Fatalf("counts=%+v", counts)
 	}
 	assertRepairProjects(t, s, "repair-s1", "sias-app", "sias-app", "sias-app")
@@ -42,10 +42,10 @@ func TestApplySessionProjectReclassificationBacksUpAndUpdatesAllowedTables(t *te
 	if filepath.Dir(result.BackupPath) != filepath.Join(s.cfg.DataDir, "backups") {
 		t.Fatalf("backup path outside backups dir: %s", result.BackupPath)
 	}
-	if result.Counts.Sessions != 1 || result.Counts.Observations != 1 || result.Counts.Prompts != 1 {
+	if result.Counts.Sessions != 1 || result.Counts.Observations != 1 || result.Counts.Prompts != 0 {
 		t.Fatalf("counts=%+v", result.Counts)
 	}
-	assertRepairProjects(t, s, "repair-s1", "engram", "engram", "engram")
+	assertRepairProjects(t, s, "repair-s1", "engram", "engram", "sias-app")
 	if got := scalarString(t, s, `SELECT COALESCE(group_concat(target_key || ':' || last_acked_seq || ':' || last_pulled_seq, ','), '') FROM sync_state`); got != beforeSyncState {
 		t.Fatalf("sync_state changed: before=%q after=%q", beforeSyncState, got)
 	}

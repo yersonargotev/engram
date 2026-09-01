@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	mcppkg "github.com/mark3labs/mcp-go/mcp"
 	engrammcp "github.com/yersonargotev/engram/internal/mcp"
 	"github.com/yersonargotev/engram/internal/store"
-	mcppkg "github.com/mark3labs/mcp-go/mcp"
 	_ "modernc.org/sqlite"
 )
 
@@ -185,10 +185,10 @@ func TestCmdDoctorRepairPlanDryRunApplyJSON(t *testing.T) {
 		t.Fatalf("plan=%v", plan)
 	}
 	counts := plan["counts"].(map[string]any)
-	if counts["sessions_planned"] != float64(1) || counts["observations_planned"] != float64(1) || counts["prompts_planned"] != float64(1) {
+	if counts["sessions_planned"] != float64(1) || counts["observations_planned"] != float64(1) || counts["prompts_planned"] != float64(0) {
 		t.Fatalf("plan counts=%v", counts)
 	}
-	assertDoctorRepairProject(t, cfg, "repair-s1", "sias-app")
+	assertDoctorRepairProject(t, cfg, "repair-s1", "sias-app", "sias-app")
 
 	withArgs(t, "engram", "doctor", "repair", "--project", "sias-app", "--check", "session_project_directory_mismatch", "--dry-run")
 	dryOut, dryErr := captureOutput(t, func() { cmdDoctor(cfg) })
@@ -199,7 +199,7 @@ func TestCmdDoctorRepairPlanDryRunApplyJSON(t *testing.T) {
 	if dry["status"] != "dry_run" || dry["mode"] != "dry_run" {
 		t.Fatalf("dry=%v", dry)
 	}
-	assertDoctorRepairProject(t, cfg, "repair-s1", "sias-app")
+	assertDoctorRepairProject(t, cfg, "repair-s1", "sias-app", "sias-app")
 
 	withArgs(t, "engram", "doctor", "repair", "--project", "sias-app", "--check", "session_project_directory_mismatch", "--apply")
 	applyOut, applyErr := captureOutput(t, func() { cmdDoctor(cfg) })
@@ -211,13 +211,13 @@ func TestCmdDoctorRepairPlanDryRunApplyJSON(t *testing.T) {
 		t.Fatalf("applied=%v", applied)
 	}
 	appliedCounts := applied["counts"].(map[string]any)
-	if appliedCounts["sessions_applied"] != float64(1) || appliedCounts["observations_applied"] != float64(1) || appliedCounts["prompts_applied"] != float64(1) {
+	if appliedCounts["sessions_applied"] != float64(1) || appliedCounts["observations_applied"] != float64(1) || appliedCounts["prompts_applied"] != float64(0) {
 		t.Fatalf("applied counts=%v", appliedCounts)
 	}
 	if _, err := os.Stat(applied["backup_path"].(string)); err != nil {
 		t.Fatalf("backup missing: %v", err)
 	}
-	assertDoctorRepairProject(t, cfg, "repair-s1", "engram")
+	assertDoctorRepairProject(t, cfg, "repair-s1", "engram", "sias-app")
 }
 
 func TestCmdDoctorRepairInvalidSessionIdentityReportsExplicitImpossibility(t *testing.T) {
@@ -289,14 +289,14 @@ func decodeRepairPlan(t *testing.T, out string) map[string]any {
 	return plan
 }
 
-func assertDoctorRepairProject(t *testing.T, cfg store.Config, sessionID, wantProject string) {
+func assertDoctorRepairProject(t *testing.T, cfg store.Config, sessionID, wantProject, wantLegacyPromptProject string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", filepath.Join(cfg.DataDir, "engram.db"))
 	if err != nil {
 		t.Fatalf("sql.Open: %v", err)
 	}
 	defer db.Close()
-	for _, query := range []string{`SELECT project FROM sessions WHERE id = ?`, `SELECT project FROM observations WHERE session_id = ?`, `SELECT project FROM user_prompts WHERE session_id = ?`} {
+	for _, query := range []string{`SELECT project FROM sessions WHERE id = ?`, `SELECT project FROM observations WHERE session_id = ?`} {
 		var got string
 		if err := db.QueryRow(query, sessionID).Scan(&got); err != nil {
 			t.Fatalf("query %q: %v", query, err)
@@ -304,6 +304,13 @@ func assertDoctorRepairProject(t *testing.T, cfg store.Config, sessionID, wantPr
 		if got != wantProject {
 			t.Fatalf("project=%q want %q for query %q", got, wantProject, query)
 		}
+	}
+	var promptProject string
+	if err := db.QueryRow(`SELECT project FROM user_prompts WHERE session_id = ?`, sessionID).Scan(&promptProject); err != nil {
+		t.Fatalf("query Legacy prompt project: %v", err)
+	}
+	if promptProject != wantLegacyPromptProject {
+		t.Fatalf("Legacy prompt project=%q want preserved %q", promptProject, wantLegacyPromptProject)
 	}
 }
 

@@ -34,7 +34,7 @@ type DashboardProjectRow struct {
 	Chunks       int
 	Sessions     int
 	Observations int
-	Prompts      int
+	Prompts      int // Legacy wire compatibility; always zero in current dashboard behavior.
 }
 
 type DashboardContributorRow struct {
@@ -83,7 +83,7 @@ type DashboardSystemHealth struct {
 	Contributors int
 	Sessions     int
 	Observations int
-	Prompts      int
+	Prompts      int // Legacy wire compatibility; always zero.
 	Chunks       int
 }
 
@@ -99,7 +99,7 @@ type DashboardProjectDetail struct {
 	Contributors []DashboardContributorRow
 	Sessions     []DashboardSessionRow
 	Observations []DashboardObservationRow
-	Prompts      []DashboardPromptRow
+	Prompts      []DashboardPromptRow // Legacy compatibility; always empty.
 }
 
 type dashboardReadModel struct {
@@ -209,10 +209,6 @@ func buildDashboardReadModelFromRows(chunks []dashboardChunkRow, mutationRows []
 			}
 			upsertDashboardObservation(observations, obs.SyncID, obsProject, obs.SessionID, obs.Type, obs.Title, obs.Content, topicKey, toolName, chunk.chunkID, obs.CreatedAt)
 		}
-		for _, prompt := range chunk.parsed.Prompts {
-			upsertDashboardPrompt(prompts, prompt.SyncID, resolveProjectValue(prompt.Project, project), prompt.SessionID, prompt.Content, chunk.chunkID, prompt.CreatedAt)
-		}
-
 		for _, mutation := range chunk.parsed.Mutations {
 			if err := applyDashboardMutation(project, mutation, sessions, observations, prompts); err != nil {
 				return dashboardReadModel{}, fmt.Errorf("cloudstore: invalid dashboard mutation payload in chunk %q: %w", strings.TrimSpace(chunk.chunkID), err)
@@ -511,22 +507,6 @@ func upsertDashboardObservation(observations map[dashboardEntityKey]DashboardObs
 	}
 }
 
-func upsertDashboardPrompt(prompts map[dashboardEntityKey]DashboardPromptRow, syncID, project, sessionID, content, chunkID, createdAt string) {
-	key := strings.TrimSpace(syncID)
-	if key == "" {
-		return
-	}
-	trimmedProject := strings.TrimSpace(project)
-	prompts[newDashboardEntityKey(trimmedProject, key)] = DashboardPromptRow{
-		SyncID:    key,
-		Project:   trimmedProject,
-		SessionID: strings.TrimSpace(sessionID),
-		ChunkID:   strings.TrimSpace(chunkID),
-		Content:   strings.TrimSpace(content),
-		CreatedAt: strings.TrimSpace(createdAt),
-	}
-}
-
 type dashboardSessionMutationPayload struct {
 	ID         string  `json:"id"`
 	Project    string  `json:"project"`
@@ -547,16 +527,6 @@ type dashboardObservationMutationPayload struct {
 	Content    string  `json:"content,omitempty"`
 	TopicKey   string  `json:"topic_key,omitempty"`
 	ToolName   string  `json:"tool_name,omitempty"`
-	Project    *string `json:"project,omitempty"`
-	CreatedAt  string  `json:"created_at,omitempty"`
-	Deleted    bool    `json:"deleted,omitempty"`
-	HardDelete bool    `json:"hard_delete,omitempty"`
-}
-
-type dashboardPromptMutationPayload struct {
-	SyncID     string  `json:"sync_id"`
-	SessionID  string  `json:"session_id"`
-	Content    string  `json:"content"`
 	Project    *string `json:"project,omitempty"`
 	CreatedAt  string  `json:"created_at,omitempty"`
 	Deleted    bool    `json:"deleted,omitempty"`
@@ -684,51 +654,9 @@ func applyDashboardMutation(
 		}
 		upsertDashboardObservation(observations, key, project, resolvedSessionID, resolvedType, resolvedTitle, resolvedContent, resolvedTopicKey, resolvedToolName, existingChunkID, resolvedCreatedAt)
 	case store.SyncEntityPrompt:
-		var body dashboardPromptMutationPayload
-		if err := chunkcodec.DecodeSyncMutationPayload(mutation.Payload, &body); err != nil {
-			return err
-		}
-		key := resolveProjectValue(entityKey, body.SyncID)
-		project := strings.TrimSpace(chunkProject)
-		if body.Project != nil {
-			project = resolveProjectValue(*body.Project, project)
-		}
-		if project == "" {
-			if session, ok := sessions[newDashboardEntityKey(project, body.SessionID)]; ok {
-				project = strings.TrimSpace(session.Project)
-			}
-		}
-		if op == store.SyncOpDelete || body.Deleted || body.HardDelete {
-			delete(prompts, newDashboardEntityKey(project, key))
-			return nil
-		}
-		// C2: Preserve ChunkID from a prior prompts-array pass — mutations do not
-		// carry which chunk they originated from, so inherit the stored value.
-		// R3-4: Preserve SessionID and CreatedAt when the mutation omits them (same
-		// pattern as observations R2-6).
-		existingPromptChunkID := ""
-		existingPromptContent := ""
-		existingPromptSessionID := ""
-		existingPromptCreatedAt := ""
-		if existing, ok := prompts[newDashboardEntityKey(project, key)]; ok {
-			existingPromptChunkID = existing.ChunkID
-			existingPromptContent = existing.Content
-			existingPromptSessionID = existing.SessionID
-			existingPromptCreatedAt = existing.CreatedAt
-		}
-		resolvedPromptContent := body.Content
-		if resolvedPromptContent == "" {
-			resolvedPromptContent = existingPromptContent
-		}
-		resolvedPromptSessionID := body.SessionID
-		if resolvedPromptSessionID == "" {
-			resolvedPromptSessionID = existingPromptSessionID
-		}
-		resolvedPromptCreatedAt := body.CreatedAt
-		if resolvedPromptCreatedAt == "" {
-			resolvedPromptCreatedAt = existingPromptCreatedAt
-		}
-		upsertDashboardPrompt(prompts, key, project, resolvedPromptSessionID, resolvedPromptContent, existingPromptChunkID, resolvedPromptCreatedAt)
+		// Frozen Legacy prompt mutations remain stored for historical evidence,
+		// but ordinary dashboard projections never materialize them.
+		return nil
 	}
 	return nil
 }
@@ -870,22 +798,7 @@ func (m dashboardReadModel) filterSessions(project, query string) []DashboardSes
 }
 
 func (m dashboardReadModel) filterPrompts(project, query string) []DashboardPromptRow {
-	query = strings.ToLower(strings.TrimSpace(query))
-	project = strings.TrimSpace(project)
-	rows := make([]DashboardPromptRow, 0)
-	for _, detail := range m.projectDetails {
-		if project != "" && detail.Project != project {
-			continue
-		}
-		for _, row := range detail.Prompts {
-			if query != "" && !strings.Contains(strings.ToLower(row.Content), query) {
-				continue
-			}
-			rows = append(rows, row)
-		}
-	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].CreatedAt > rows[j].CreatedAt })
-	return rows
+	return []DashboardPromptRow{}
 }
 
 func (cs *CloudStore) loadDashboardReadModel() (dashboardReadModel, error) {
@@ -947,11 +860,12 @@ func (cs *CloudStore) ListProjects(query string) ([]DashboardProjectRow, error) 
 	}
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {
-		return model.projects, nil
+		return withoutLegacyPromptCounts(model.projects), nil
 	}
 	filtered := make([]DashboardProjectRow, 0)
 	for _, row := range model.projects {
 		if strings.Contains(strings.ToLower(row.Project), query) {
+			row.Prompts = 0
 			filtered = append(filtered, row)
 		}
 	}
@@ -971,6 +885,8 @@ func (cs *CloudStore) ProjectDetail(project string) (DashboardProjectDetail, err
 	if !ok {
 		return DashboardProjectDetail{}, fmt.Errorf("%w: %s", ErrDashboardProjectNotFound, normalized)
 	}
+	detail.Stats.Prompts = 0
+	detail.Prompts = []DashboardPromptRow{}
 	return detail, nil
 }
 
@@ -1025,24 +941,18 @@ func (cs *CloudStore) ListRecentObservations(project string, query string, limit
 }
 
 func (cs *CloudStore) ListRecentPrompts(project string, query string, limit int) ([]DashboardPromptRow, error) {
-	normalizedProject, err := cs.normalizeDashboardProjectFilter(project)
-	if err != nil {
+	if _, err := cs.normalizeDashboardProjectFilter(project); err != nil {
 		return nil, err
 	}
-	model, err := cs.loadDashboardReadModel()
-	if err != nil {
-		return nil, err
+	return []DashboardPromptRow{}, nil
+}
+
+func withoutLegacyPromptCounts(rows []DashboardProjectRow) []DashboardProjectRow {
+	result := append([]DashboardProjectRow(nil), rows...)
+	for i := range result {
+		result[i].Prompts = 0
 	}
-	if normalizedProject != "" {
-		if _, ok := model.projectDetails[normalizedProject]; !ok {
-			return nil, fmt.Errorf("%w: %s", ErrDashboardProjectNotFound, normalizedProject)
-		}
-	}
-	rows := model.filterPrompts(normalizedProject, query)
-	if limit > 0 && len(rows) > limit {
-		rows = rows[:limit]
-	}
-	return rows, nil
+	return result
 }
 
 func (cs *CloudStore) normalizeDashboardProject(project string) (string, error) {
@@ -1223,11 +1133,9 @@ func (cs *CloudStore) SystemHealth() (DashboardSystemHealth, error) {
 
 	totalSessions := 0
 	totalObservations := 0
-	totalPrompts := 0
 	for _, detail := range model.projectDetails {
 		totalSessions += len(detail.Sessions)
 		totalObservations += len(detail.Observations)
-		totalPrompts += len(detail.Prompts)
 	}
 
 	// Ping DB with a short timeout.
@@ -1246,16 +1154,16 @@ func (cs *CloudStore) SystemHealth() (DashboardSystemHealth, error) {
 		Contributors: len(model.contributors),
 		Sessions:     totalSessions,
 		Observations: totalObservations,
-		Prompts:      totalPrompts,
+		Prompts:      0,
 		Chunks:       model.admin.Chunks,
 	}, nil
 }
 
 // ─── Batch 6: Connected Navigation Methods ───────────────────────────────────
 
-// GetContributorDetail returns the contributor row plus all sessions, observations,
-// and prompts that belong to projects the contributor has created chunks in.
-// Purely in-memory scan of dashboardReadModel. Satisfies (h).
+// GetContributorDetail returns the contributor row plus ordinary sessions and
+// observations. The Legacy prompt slice is retained for interface compatibility
+// and is always empty.
 func (cs *CloudStore) GetContributorDetail(name string) (DashboardContributorRow, []DashboardSessionRow, []DashboardObservationRow, []DashboardPromptRow, error) {
 	model, err := cs.loadDashboardReadModel()
 	if err != nil {
@@ -1291,7 +1199,6 @@ func (cs *CloudStore) GetContributorDetail(name string) (DashboardContributorRow
 
 	var sessions []DashboardSessionRow
 	var observations []DashboardObservationRow
-	var prompts []DashboardPromptRow
 	for project := range contributorProjects {
 		detail, ok := model.projectDetails[project]
 		if !ok {
@@ -1299,14 +1206,11 @@ func (cs *CloudStore) GetContributorDetail(name string) (DashboardContributorRow
 		}
 		sessions = append(sessions, detail.Sessions...)
 		observations = append(observations, detail.Observations...)
-		prompts = append(prompts, detail.Prompts...)
 	}
 
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].StartedAt > sessions[j].StartedAt })
 	sort.Slice(observations, func(i, j int) bool { return observations[i].CreatedAt > observations[j].CreatedAt })
-	sort.Slice(prompts, func(i, j int) bool { return prompts[i].CreatedAt > prompts[j].CreatedAt })
-
-	return contributor, sessions, observations, prompts, nil
+	return contributor, sessions, observations, []DashboardPromptRow{}, nil
 }
 
 // ListDistinctTypes returns a sorted list of distinct, non-empty observation types
@@ -1348,6 +1252,7 @@ func (cs *CloudStore) ListProjectsPaginated(query string, limit, offset int) ([]
 	filtered := make([]DashboardProjectRow, 0, len(model.projects))
 	for _, row := range model.projects {
 		if query == "" || strings.Contains(strings.ToLower(row.Project), query) {
+			row.Prompts = 0
 			filtered = append(filtered, row)
 		}
 	}
@@ -1417,26 +1322,12 @@ func (cs *CloudStore) ListRecentSessionsPaginated(project, query string, limit, 
 	return rows[offset:end], total, nil
 }
 
-// ListRecentPromptsPaginated returns a page of prompts.
+// ListRecentPromptsPaginated is the frozen Legacy compatibility seam.
 func (cs *CloudStore) ListRecentPromptsPaginated(project, query string, limit, offset int) ([]DashboardPromptRow, int, error) {
-	normalizedProject, err := cs.normalizeDashboardProjectFilter(project)
-	if err != nil {
+	if _, err := cs.normalizeDashboardProjectFilter(project); err != nil {
 		return nil, 0, err
 	}
-	model, err := cs.loadDashboardReadModel()
-	if err != nil {
-		return nil, 0, err
-	}
-	rows := model.filterPrompts(normalizedProject, query)
-	total := len(rows)
-	if offset > total {
-		return []DashboardPromptRow{}, total, nil
-	}
-	end := offset + limit
-	if end > total || limit <= 0 {
-		end = total
-	}
-	return rows[offset:end], total, nil
+	return []DashboardPromptRow{}, 0, nil
 }
 
 // ListContributorsPaginated returns a page of contributors.
@@ -1459,7 +1350,8 @@ func (cs *CloudStore) ListContributorsPaginated(query string, limit, offset int)
 
 // ─── Detail Query Methods ─────────────────────────────────────────────────────
 
-// GetSessionDetail returns session detail with its observations and prompts.
+// GetSessionDetail returns session detail with ordinary observations. The
+// Legacy prompt slice is always empty.
 func (cs *CloudStore) GetSessionDetail(project, sessionID string) (DashboardSessionRow, []DashboardObservationRow, []DashboardPromptRow, error) {
 	normalizedProject, err := cs.normalizeDashboardProject(project)
 	if err != nil {
@@ -1488,20 +1380,14 @@ func (cs *CloudStore) GetSessionDetail(project, sessionID string) (DashboardSess
 		// the project exists but the specific session is missing.
 		return DashboardSessionRow{}, nil, nil, fmt.Errorf("%w: session %s in project %s", ErrDashboardSessionNotFound, sessionID, normalizedProject)
 	}
-	// Collect observations and prompts for this session.
+	// Collect ordinary observations for this session. Legacy prompts are frozen.
 	var obs []DashboardObservationRow
 	for _, o := range detail.Observations {
 		if o.SessionID == sessionID {
 			obs = append(obs, o)
 		}
 	}
-	var prompts []DashboardPromptRow
-	for _, p := range detail.Prompts {
-		if p.SessionID == sessionID {
-			prompts = append(prompts, p)
-		}
-	}
-	return sess, obs, prompts, nil
+	return sess, obs, []DashboardPromptRow{}, nil
 }
 
 // GetObservationDetail returns an observation with its parent session and related observations.
@@ -1551,48 +1437,14 @@ func (cs *CloudStore) GetObservationDetail(project, sessionID, syncID string) (D
 	return obs, sess, related, nil
 }
 
-// GetPromptDetail returns a prompt with its parent session and related prompts.
-// The third parameter is syncID — the unique per-prompt identifier (map key).
+// GetPromptDetail is retained for internal interface compatibility. Ordinary
+// cloud behavior never returns Legacy prompt content.
 func (cs *CloudStore) GetPromptDetail(project, sessionID, syncID string) (DashboardPromptRow, DashboardSessionRow, []DashboardPromptRow, error) {
 	normalizedProject, err := cs.normalizeDashboardProject(project)
 	if err != nil {
 		return DashboardPromptRow{}, DashboardSessionRow{}, nil, err
 	}
-	model, err := cs.loadDashboardReadModel()
-	if err != nil {
-		return DashboardPromptRow{}, DashboardSessionRow{}, nil, err
-	}
-	detail, ok := model.projectDetails[normalizedProject]
-	if !ok {
-		return DashboardPromptRow{}, DashboardSessionRow{}, nil, fmt.Errorf("%w: %s", ErrDashboardProjectNotFound, normalizedProject)
-	}
 	syncID = strings.TrimSpace(syncID)
 	sessionID = strings.TrimSpace(sessionID)
-	var prompt DashboardPromptRow
-	found := false
-	for _, p := range detail.Prompts {
-		if p.SyncID == syncID && p.SessionID == sessionID {
-			prompt = p
-			found = true
-			break
-		}
-	}
-	if !found {
-		// R5-4: return ErrDashboardPromptNotFound when the project exists but the prompt is missing.
-		return DashboardPromptRow{}, DashboardSessionRow{}, nil, fmt.Errorf("%w: prompt %s/%s in project %s", ErrDashboardPromptNotFound, sessionID, syncID, normalizedProject)
-	}
-	var sess DashboardSessionRow
-	for _, s := range detail.Sessions {
-		if s.SessionID == sessionID {
-			sess = s
-			break
-		}
-	}
-	var related []DashboardPromptRow
-	for _, p := range detail.Prompts {
-		if p.SessionID == sessionID && p.SyncID != syncID {
-			related = append(related, p)
-		}
-	}
-	return prompt, sess, related, nil
+	return DashboardPromptRow{}, DashboardSessionRow{}, nil, fmt.Errorf("%w: frozen Legacy prompt %s/%s in project %s", ErrDashboardPromptNotFound, sessionID, syncID, normalizedProject)
 }

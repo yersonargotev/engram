@@ -1,9 +1,9 @@
 #!/bin/bash
 # Engram — UserPromptSubmit hook for Codex
 #
-# Captures the user prompt best-effort and forwards Codex's opaque root-turn
-# identity as model-visible developer context. Memory semantics live in the
-# canonical skill, not in this adapter.
+# Requests consent-gated Diagnostic capture best-effort and forwards Codex's
+# opaque root-turn identity as model-visible developer context. Memory and
+# capture semantics live in Core, not in this adapter.
 
 ENGRAM_PORT="${ENGRAM_PORT:-7437}"
 ENGRAM_URL="http://127.0.0.1:${ENGRAM_PORT}"
@@ -27,12 +27,12 @@ PROMPT=$(json_string "prompt")
 
 if [ -n "$PROMPT" ] && [ -n "$SESSION_ID" ]; then
   record_baseline \
-    --kind capture --surface lifecycle --operation prompt --outcome enabled
+    --kind capture --surface lifecycle --operation prompt --outcome unknown
 fi
 
-# Prompt capture remains lifecycle telemetry. It never creates a Memory or a
-# checkpoint and cannot block prompt submission. Project policy stays in the
-# server; detached standard streams keep the foreground hook prompt.
+# The hook requests prompt capture but cannot observe current consent. It never
+# creates a Memory or checkpoint and cannot block prompt submission. Core owns
+# consent and persistence; detached standard streams keep the foreground hook prompt.
 if [ -n "$PROMPT" ] && [ -n "$SESSION_ID" ]; then
   (
     PROJECT=$(resolve_project "$CWD") || exit 0

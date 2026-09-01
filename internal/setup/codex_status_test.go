@@ -11,8 +11,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yersonargotev/engram/internal/protocolcontract"
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 func TestInspectCodexStatusEmptyProfileIsConservativeAndReadOnly(t *testing.T) {
@@ -60,6 +62,7 @@ func TestInspectCodexStatusEmptyProfileIsConservativeAndReadOnly(t *testing.T) {
 		{"session_hook", CodexCheckMissing, "plugin_missing"},
 		{"activation_cue", CodexCheckMissing, "plugin_missing"},
 		{"stop_verifier", CodexCheckMissing, "plugin_missing"},
+		{"prompt_capture", CodexCheckReady, "prompt_capture_available"},
 	}
 	if len(status.Checks) != len(want) {
 		t.Fatalf("checks = %#v, want %d", status.Checks, len(want))
@@ -75,6 +78,14 @@ func TestInspectCodexStatusEmptyProfileIsConservativeAndReadOnly(t *testing.T) {
 	}
 	if got := status.Checks[0].Evidence; !reflect.DeepEqual(got, []CodexIntegrationEvidence{{Name: "path", Value: "/opt/engram/bin/engram"}, {Name: "version", Value: "2.2.1"}}) {
 		t.Fatalf("Engram CLI evidence = %#v", got)
+	}
+	if status.PromptCapture.Capability != CodexCheckReady ||
+		status.PromptCapture.Identity != CodexCheckMissing ||
+		status.PromptCapture.DefaultConsent != CodexCaptureConsentDisabled ||
+		status.PromptCapture.CurrentConsent != CodexCaptureConsentDisabled ||
+		status.PromptCapture.Scope != CodexCaptureScopeNone ||
+		status.PromptCapture.RetentionDays != store.DefaultDiagnosticRetentionDays {
+		t.Fatalf("default prompt capture status = %#v", status.PromptCapture)
 	}
 
 	after := snapshotStatusTestTree(t, home)
@@ -224,12 +235,15 @@ args = ["mcp", "--tools=agent"]
 	if status.Mode != CodexModeCheckpointReady {
 		t.Fatalf("mode = %q, checks=%#v", status.Mode, status.Checks)
 	}
+	if status.PromptCapture.Identity != CodexCheckReady || status.PromptCapture.CurrentConsent != CodexCaptureConsentDisabled {
+		t.Fatalf("prompt capture status = %#v, want identity ready with independent default-off consent", status.PromptCapture)
+	}
 	if status.Compatibility.Status != protocolcontract.CompatibilityReady ||
 		status.Compatibility.ReasonCode != protocolcontract.ReasonLegacyCompatible ||
 		status.Compatibility.Intersection == nil || len(status.Compatibility.Axes) != 4 {
 		t.Fatalf("Protocol compatibility = %#v", status.Compatibility)
 	}
-	for _, capability := range []string{"marketplace", "plugin", "mcp_configuration", "mcp_readiness", "prompt_hook", "session_hook", "activation_cue", "stop_verifier"} {
+	for _, capability := range []string{"marketplace", "plugin", "mcp_configuration", "mcp_readiness", "prompt_hook", "session_hook", "activation_cue", "stop_verifier", "prompt_capture"} {
 		matches := statusChecksByCapability(status.Checks, capability)
 		if len(matches) != 1 || matches[0].Status != CodexCheckReady {
 			t.Fatalf("%s check = %#v", capability, matches)
@@ -252,6 +266,67 @@ args = ["mcp", "--tools=agent"]
 	after := snapshotStatusTestTree(t, home)
 	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("complete status inspection mutated profile:\nbefore=%#v\nafter=%#v", before, after)
+	}
+}
+
+func TestInspectCodexStatusReportsCurrentProjectCaptureConsentWithoutReadingContent(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	cwd := filepath.Join(home, "engram")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	dataDir := filepath.Join(home, "capture-store")
+	t.Setenv("ENGRAM_DATA_DIR", dataDir)
+
+	cfg := store.FallbackConfig(dataDir)
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("new capture store: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := s.UpsertCaptureConsent(store.CaptureConsent{
+		Project:       "engram",
+		ContentType:   store.CaptureContentTypePrompt,
+		RetentionDays: store.DefaultDiagnosticRetentionDays,
+		UpdatedAt:     now,
+	}); err != nil {
+		t.Fatalf("seed prompt capture consent: %v", err)
+	}
+	if _, err := s.DB().Exec(`INSERT INTO diagnostic_captures (
+		project, content_type, session_id, content, created_at, expires_at
+	) VALUES ('engram', 'prompt', 'synthetic-session', 'synthetic private prompt', ?, ?)`,
+		now.Format(time.RFC3339Nano), now.Add(24*time.Hour).Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("seed Diagnostic capture: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close capture store: %v", err)
+	}
+
+	osExecutable = func() (string, error) { return "/opt/engram/bin/engram", nil }
+	lookPathFn = func(string) (string, error) { return "", errors.New("not found") }
+	runCommand = func(string, ...string) ([]byte, error) {
+		t.Fatal("status must not execute Codex commands when Codex is unavailable")
+		return nil, nil
+	}
+
+	before := snapshotStatusTestTree(t, dataDir)
+	status, err := InspectCodexStatus("2.2.1", cwd)
+	if err != nil {
+		t.Fatalf("inspect Codex status with capture consent: %v", err)
+	}
+	after := snapshotStatusTestTree(t, dataDir)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("status inspection mutated capture state:\nbefore=%#v\nafter=%#v", before, after)
+	}
+	if status.PromptCapture.Capability != CodexCheckReady ||
+		status.PromptCapture.DefaultConsent != CodexCaptureConsentDisabled ||
+		status.PromptCapture.CurrentConsent != CodexCaptureConsentEnabled ||
+		status.PromptCapture.Project != "engram" ||
+		status.PromptCapture.ContentType != store.CaptureContentTypePrompt ||
+		status.PromptCapture.Scope != CodexCaptureScopeProject ||
+		status.PromptCapture.RetentionDays != store.DefaultDiagnosticRetentionDays {
+		t.Fatalf("prompt capture status = %#v", status.PromptCapture)
 	}
 }
 

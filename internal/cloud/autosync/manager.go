@@ -87,6 +87,7 @@ type LocalStore interface {
 	AcquireSyncLease(targetKey, owner string, ttl time.Duration, now time.Time) (bool, error)
 	ReleaseSyncLease(targetKey, owner string) error
 	ApplyPulledMutation(targetKey string, mutation store.SyncMutation) error
+	AdvancePulledCursor(targetKey string, seq int64) error
 	MarkSyncFailure(targetKey, message string, backoffUntil time.Time) error
 	MarkSyncBlocked(targetKey, reasonCode, message string) error
 	MarkSyncHealthy(targetKey string) error
@@ -591,6 +592,7 @@ func (m *Manager) pull(ctx context.Context) error {
 			return ctx.Err()
 		}
 
+		pageStartSeq := sinceSeq
 		resp, err := m.transport.PullMutations(sinceSeq, m.cfg.PullBatchSize)
 		if err != nil {
 			return fmt.Errorf("transport pull: %w", err)
@@ -626,9 +628,18 @@ func (m *Manager) pull(ctx context.Context) error {
 				sinceSeq = rm.Seq
 			}
 		}
+		if resp.LatestSeq > sinceSeq {
+			if err := m.store.AdvancePulledCursor(m.cfg.TargetKey, resp.LatestSeq); err != nil {
+				return fmt.Errorf("advance pulled cursor to seq=%d: %w", resp.LatestSeq, err)
+			}
+			sinceSeq = resp.LatestSeq
+		}
 
 		if !resp.HasMore {
 			break
+		}
+		if sinceSeq <= pageStartSeq {
+			return fmt.Errorf("transport pull did not advance beyond seq=%d while has_more=true", pageStartSeq)
 		}
 	}
 

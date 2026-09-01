@@ -334,7 +334,38 @@ func (s *autosyncFakeStore) AcquireSyncLease(_, _ string, _ time.Duration, _ tim
 
 func (s *autosyncFakeStore) ReleaseSyncLease(_, _ string) error { return nil }
 
-func (s *autosyncFakeStore) ApplyPulledMutation(_ string, _ store.SyncMutation) error { return nil }
+func (s *autosyncFakeStore) ApplyPulledMutation(_ string, mutation store.SyncMutation) error {
+	return s.AdvancePulledCursor("", mutation.Seq)
+}
+
+func (s *autosyncFakeStore) AdvancePulledCursor(_ string, seq int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if seq > s.pullSeq {
+		s.pullSeq = seq
+	}
+	return nil
+}
+
+func TestAutosyncFakeStorePullCursorIsMonotonic(t *testing.T) {
+	s := newAutosyncFakeStore()
+	if err := s.ApplyPulledMutation("cloud", store.SyncMutation{Seq: 21}); err != nil {
+		t.Fatalf("ApplyPulledMutation: %v", err)
+	}
+	if err := s.AdvancePulledCursor("cloud", 34); err != nil {
+		t.Fatalf("AdvancePulledCursor: %v", err)
+	}
+	if err := s.AdvancePulledCursor("cloud", 13); err != nil {
+		t.Fatalf("AdvancePulledCursor older seq: %v", err)
+	}
+	state, err := s.GetSyncState("cloud")
+	if err != nil {
+		t.Fatalf("GetSyncState: %v", err)
+	}
+	if state.LastPulledSeq != 34 {
+		t.Fatalf("LastPulledSeq = %d, want monotonic cursor 34", state.LastPulledSeq)
+	}
+}
 
 func (s *autosyncFakeStore) MarkSyncFailure(_, _ string, _ time.Time) error { return nil }
 

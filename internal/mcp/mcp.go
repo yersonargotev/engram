@@ -100,8 +100,8 @@ type CheckpointObservation struct {
 
 var suggestTopicKey = store.SuggestTopicKey
 
-var addPromptIfMissing = func(s *store.Store, params store.AddPromptParams) (int64, bool, error) {
-	return s.AddPromptIfMissing(params)
+var captureDiagnostic = func(s *store.Store, input memoryops.CaptureInput) (*memoryops.CaptureResult, error) {
+	return memoryops.New(s).Capture(input)
 }
 
 var loadMCPStats = func(s *store.Store) (*store.Stats, error) {
@@ -481,7 +481,7 @@ FORMAT for content — use this structured format:
 					mcp.Description("Short-lived token returned by an ambiguous_project error. Required with project_choice_reason=user_selected_after_ambiguous_project."),
 				),
 				mcp.WithBoolean("capture_prompt",
-					mcp.Description("Automatically capture the current user prompt when available (default: true). Set false for SDD artifacts or automated saves."),
+					mcp.Description("Request Diagnostic capture of the current user prompt when available and separately consented (default: false)."),
 				),
 			),
 			queuedWriteHandler(writeQueue, handleSave(s, cfg, activity)),
@@ -597,8 +597,8 @@ FORMAT for content — use this structured format:
 		srv.AddTool(
 			mcp.NewTool("mem_save_prompt",
 				mcp.WithDeferLoading(true),
-				mcp.WithDescription("Persist one raw user prompt as Content capture in an explicitly selected lifecycle workflow. This is an agent lifecycle operation, not a Memory operation or terminal checkpoint."),
-				mcp.WithTitleAnnotation("Save User Prompt"),
+				mcp.WithDescription("Request local Diagnostic Content capture of one raw user prompt. Persistence requires separate project or session consent; this is an agent lifecycle operation, not a Memory operation or terminal checkpoint."),
+				mcp.WithTitleAnnotation("Request Prompt Capture"),
 				mcp.WithReadOnlyHintAnnotation(false),
 				mcp.WithDestructiveHintAnnotation(false),
 				mcp.WithIdempotentHintAnnotation(false),
@@ -1327,7 +1327,7 @@ func handleSave(s *store.Store, cfg MCPConfig, activity *SessionActivity) server
 		_, explicitProjectProvided := req.GetArguments()["project"]
 		projectChoiceReason, _ := req.GetArguments()["project_choice_reason"].(string)
 		recoveryToken, _ := req.GetArguments()["recovery_token"].(string)
-		capturePrompt := boolArg(req, "capture_prompt", true)
+		capturePrompt := boolArg(req, "capture_prompt", false)
 		recoverySessionID := sessionID
 		if strings.TrimSpace(recoverySessionID) == "" {
 			recoverySessionID = defaultSessionID("")
@@ -1407,10 +1407,11 @@ func handleSave(s *store.Store, cfg MCPConfig, activity *SessionActivity) server
 
 		if capturePrompt && activity != nil {
 			if prompt, ok := activity.CurrentPrompt(sessionID, project); ok {
-				if _, _, promptErr := addPromptIfMissing(s, store.AddPromptParams{
-					SessionID: sessionID,
-					Content:   prompt,
-					Project:   project,
+				if _, promptErr := captureDiagnostic(s, memoryops.CaptureInput{
+					Project:     project,
+					ContentType: store.CaptureContentTypePrompt,
+					SessionID:   sessionID,
+					Content:     prompt,
 				}); promptErr != nil {
 					fmt.Fprintf(os.Stderr, "engram: auto prompt capture error (non-fatal): %v\n", promptErr)
 				}
@@ -1688,6 +1689,9 @@ func handleDelete(s *store.Store) server.ToolHandlerFunc {
 func handleSavePrompt(s *store.Store, cfg MCPConfig, activity *SessionActivity) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		content, _ := req.GetArguments()["content"].(string)
+		if strings.TrimSpace(content) == "" {
+			return mcp.NewToolResultError("Failed to save prompt: " + store.ErrPromptContentRequired.Error()), nil
+		}
 		sessionID, _ := req.GetArguments()["session_id"].(string)
 		projectChoice, _ := req.GetArguments()["project"].(string)
 		projectChoiceReason, _ := req.GetArguments()["project_choice_reason"].(string)
@@ -1716,23 +1720,28 @@ func handleSavePrompt(s *store.Store, cfg MCPConfig, activity *SessionActivity) 
 		// Ensure the implicit MCP session exists with the current working directory.
 		_ = ensureImplicitSessionWithCWD(s, sessionID, project)
 
-		truncation := s.ContentTruncation(content)
-		_, err = s.AddPrompt(store.AddPromptParams{
-			SessionID: sessionID,
-			Content:   content,
-			Project:   project,
+		capture, err := captureDiagnostic(s, memoryops.CaptureInput{
+			Project:     project,
+			ContentType: store.CaptureContentTypePrompt,
+			SessionID:   sessionID,
+			Content:     content,
 		})
 		if err != nil {
 			return mcp.NewToolResultError("Failed to save prompt: " + err.Error()), nil
 		}
-
-		if activity != nil {
+		if activity != nil && !capture.Captured {
 			activity.RecordPrompt(sessionID, project, content)
 		}
 
 		detRes.Project = project
-		msg := fmt.Sprintf("Prompt saved: %q", truncate(content, 80)) + truncationWarning(truncation)
-		return respondWithProject(detRes, msg, map[string]any{"truncation": truncation}), nil
+		extra := map[string]any{
+			"captured":    capture.Captured,
+			"reason_code": capture.ReasonCode,
+		}
+		if capture.ExpiresAt != nil {
+			extra["expires_at"] = capture.ExpiresAt
+		}
+		return respondWithProject(detRes, "Prompt capture request evaluated", extra), nil
 	}
 }
 

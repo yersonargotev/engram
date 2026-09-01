@@ -517,39 +517,42 @@ func TestRescueNullProjectOwnershipRescuesOnlyNullRecordsAndJournalsOnce(t *test
 	if err != nil {
 		t.Fatalf("RescueNullProjectOwnership: %v", err)
 	}
-	// The unowned session moves with its two records; the owned record stays put
-	// because its own session belongs to another project.
-	if result.Rescued() != 3 || result.RescuedSessions != 1 || result.ConflictingRecords != 1 || !result.Journaled {
+	// The unowned session moves with its observation; the Legacy prompt stays
+	// byte-for-byte frozen and the owned observation stays put.
+	if result.Rescued() != 2 || result.RescuedSessions != 1 || result.RescuedPrompts != 0 || result.ConflictingRecords != 2 || !result.Journaled || result.Complete {
 		t.Fatalf("unexpected rescue result: %#v", result)
 	}
 	for _, query := range []string{
 		`SELECT project FROM sessions WHERE id = 'legacy-session'`,
 		`SELECT project FROM observations WHERE id = ` + fmt.Sprint(observationID),
-		`SELECT project FROM user_prompts WHERE id = ` + fmt.Sprint(promptID),
 	} {
 		var project string
 		if err := s.DB().QueryRow(query).Scan(&project); err != nil || project != "target" {
 			t.Fatalf("rescued project query %q = %q, %v", query, project, err)
 		}
 	}
+	var legacyPromptProject sql.NullString
+	if err := s.DB().QueryRow(`SELECT project FROM user_prompts WHERE id = ?`, promptID).Scan(&legacyPromptProject); err != nil || legacyPromptProject.Valid {
+		t.Fatalf("Legacy prompt project was rewritten: %+v, err=%v", legacyPromptProject, err)
+	}
 	var ownedProject string
 	if err := s.DB().QueryRow(`SELECT project FROM observations WHERE id = ?`, ownedID).Scan(&ownedProject); err != nil || ownedProject != "other" {
 		t.Fatalf("owned record changed to %q, err=%v", ownedProject, err)
 	}
 	var mutations int
-	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM sync_mutations WHERE project = 'target'`).Scan(&mutations); err != nil || mutations != 3 {
-		t.Fatalf("target mutations = %d, err=%v, want 3", mutations, err)
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM sync_mutations WHERE project = 'target'`).Scan(&mutations); err != nil || mutations != 2 {
+		t.Fatalf("target mutations = %d, err=%v, want 2", mutations, err)
 	}
 
 	again, err := s.RescueNullProjectOwnership(params)
 	if err != nil {
 		t.Fatalf("repeat rescue: %v", err)
 	}
-	if again.Rescued() != 0 || again.ConflictingRecords != 1 || again.SkippedRecords != 2 || !again.Journaled {
+	if again.Rescued() != 0 || again.ConflictingRecords != 2 || again.SkippedRecords != 1 || !again.Journaled {
 		t.Fatalf("repeat rescue result = %#v", again)
 	}
-	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM sync_mutations WHERE project = 'target'`).Scan(&mutations); err != nil || mutations != 3 {
-		t.Fatalf("repeat target mutations = %d, err=%v, want 3", mutations, err)
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM sync_mutations WHERE project = 'target'`).Scan(&mutations); err != nil || mutations != 2 {
+		t.Fatalf("repeat target mutations = %d, err=%v, want 2", mutations, err)
 	}
 }
 
@@ -855,11 +858,11 @@ func TestPersistenceRoutesTruncateContentAtUTF8Boundary(t *testing.T) {
 				if _, err := s.AddPrompt(AddPromptParams{SessionID: "s1", Content: content, Project: "engram"}); err != nil {
 					return "", err
 				}
-				prompts, err := s.RecentPrompts("engram", 1)
-				if err != nil {
+				var stored string
+				if err := s.db.QueryRow(`SELECT content FROM user_prompts WHERE project = 'engram' ORDER BY id DESC LIMIT 1`).Scan(&stored); err != nil {
 					return "", err
 				}
-				return prompts[0].Content, nil
+				return stored, nil
 			},
 		},
 		{
@@ -868,11 +871,11 @@ func TestPersistenceRoutesTruncateContentAtUTF8Boundary(t *testing.T) {
 				if _, _, err := s.AddPromptIfMissing(AddPromptParams{SessionID: "s1", Content: content, Project: "engram"}); err != nil {
 					return "", err
 				}
-				prompts, err := s.RecentPrompts("engram", 1)
-				if err != nil {
+				var stored string
+				if err := s.db.QueryRow(`SELECT content FROM user_prompts WHERE project = 'engram' ORDER BY id DESC LIMIT 1`).Scan(&stored); err != nil {
 					return "", err
 				}
-				return prompts[0].Content, nil
+				return stored, nil
 			},
 		},
 		{
@@ -1594,8 +1597,8 @@ func TestFormatCompactionContextIsSessionScoped(t *testing.T) {
 		included  []string
 		excluded  []string
 	}{
-		{"session-a", []string{"session-a", "summary-a", "pinned-a", "recent-a", "prompt-a"}, []string{"session-b", "summary-b", "pinned-b", "recent-b", "prompt-b", "foreign-project-observation", "foreign-project-prompt"}},
-		{"session-b", []string{"session-b", "summary-b", "pinned-b", "recent-b", "prompt-b"}, []string{"session-a", "summary-a", "pinned-a", "recent-a", "prompt-a"}},
+		{"session-a", []string{"session-a", "summary-a", "pinned-a", "recent-a"}, []string{"session-b", "summary-b", "pinned-b", "recent-b", "prompt-a", "prompt-b", "foreign-project-observation", "foreign-project-prompt"}},
+		{"session-b", []string{"session-b", "summary-b", "pinned-b", "recent-b"}, []string{"session-a", "summary-a", "pinned-a", "recent-a", "prompt-a", "prompt-b"}},
 	} {
 		t.Run(tc.sessionID, func(t *testing.T) {
 			context, err := s.FormatCompactionContext(tc.sessionID)
@@ -1925,12 +1928,12 @@ func TestNewMigratesLegacyUserPromptsSyncIDSchema(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 
-	var syncID string
+	var syncID sql.NullString
 	if err := s.db.QueryRow("SELECT sync_id FROM user_prompts WHERE content = ?", "legacy prompt").Scan(&syncID); err != nil {
 		t.Fatalf("query migrated prompt sync_id: %v", err)
 	}
-	if syncID == "" {
-		t.Fatalf("expected migrated prompt sync_id to be backfilled")
+	if syncID.Valid {
+		t.Fatalf("legacy prompt sync_id was rewritten: %+v", syncID)
 	}
 
 	var hasSyncIDColumn bool
@@ -2062,22 +2065,29 @@ func TestPromptProjectNullScan(t *testing.T) {
 		t.Fatalf("manual insert: %v", err)
 	}
 
-	// 1. Test RecentPrompts
+	// 1. Historical ordinary reads remain inert.
 	prompts, err := s.RecentPrompts("", 10)
 	if err != nil {
 		t.Fatalf("RecentPrompts failed with null project: %v", err)
 	}
-	if len(prompts) != 1 || prompts[0].Project != "" {
-		t.Errorf("expected empty string for null project, got %q", prompts[0].Project)
+	if len(prompts) != 0 {
+		t.Errorf("ordinary recent read exposed Legacy prompts: %+v", prompts)
+	}
+	page, err := s.AccessLegacyPrompts(LegacyPromptScope{Unowned: true}, 0, 10)
+	if err != nil {
+		t.Fatalf("explicit Legacy access failed with null project: %v", err)
+	}
+	if len(page.Prompts) != 1 || page.Prompts[0].Project != "" {
+		t.Fatalf("expected explicit Legacy access to normalize null project, got %+v", page.Prompts)
 	}
 
-	// 2. Test SearchPrompts
+	// 2. Historical ordinary search remains inert.
 	searchResult, err := s.SearchPrompts("null", "", 10)
 	if err != nil {
 		t.Fatalf("SearchPrompts failed with null project: %v", err)
 	}
-	if len(searchResult) != 1 || searchResult[0].Project != "" {
-		t.Errorf("expected empty string for null project in search, got %q", searchResult[0].Project)
+	if len(searchResult) != 0 {
+		t.Errorf("ordinary search exposed Legacy prompts: %+v", searchResult)
 	}
 
 	// 3. Test Export
@@ -2085,17 +2095,8 @@ func TestPromptProjectNullScan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Export failed with null project: %v", err)
 	}
-	found := false
-	for _, p := range data.Prompts {
-		if p.Content == "prompt with null project" {
-			found = true
-			if p.Project != "" {
-				t.Errorf("expected empty string for null project in export, got %q", p.Project)
-			}
-		}
-	}
-	if !found {
-		t.Error("exported prompts missing the test prompt")
+	if len(data.Prompts) != 0 {
+		t.Errorf("ordinary export exposed Legacy prompts: %+v", data.Prompts)
 	}
 }
 
@@ -2131,8 +2132,8 @@ func TestExportProjectScopesRowsWithoutGlobalDumpFiltering(t *testing.T) {
 	if len(data.Observations) != 1 || data.Observations[0].SessionID != "sess-a" {
 		t.Fatalf("expected only proj-a observations, got %+v", data.Observations)
 	}
-	if len(data.Prompts) != 1 || data.Prompts[0].SessionID != "sess-a" {
-		t.Fatalf("expected only proj-a prompts, got %+v", data.Prompts)
+	if len(data.Prompts) != 0 {
+		t.Fatalf("ordinary project export exposed Legacy prompts: %+v", data.Prompts)
 	}
 }
 
@@ -2167,8 +2168,8 @@ func TestExportProjectPreservesSessionReferentialClosure(t *testing.T) {
 		t.Fatalf("ExportProject: %v", err)
 	}
 
-	if len(exported.Observations) != 1 || len(exported.Prompts) != 1 {
-		t.Fatalf("expected one cross-project observation and prompt, got obs=%d prompts=%d", len(exported.Observations), len(exported.Prompts))
+	if len(exported.Observations) != 1 || len(exported.Prompts) != 0 {
+		t.Fatalf("expected one cross-project observation and no Legacy prompts, got obs=%d prompts=%d", len(exported.Observations), len(exported.Prompts))
 	}
 
 	foundReferencedSession := false
@@ -2250,11 +2251,8 @@ func TestExportProjectDoesNotLeakRowsOwnedByOtherProjectsViaSessionMembership(t 
 		t.Fatalf("expected only projectless-derived observation, got %+v", exported.Observations[0])
 	}
 
-	if len(exported.Prompts) != 1 {
-		t.Fatalf("expected only project-owned/projectless-derived prompts, got %+v", exported.Prompts)
-	}
-	if exported.Prompts[0].Content != "projectless prompt" {
-		t.Fatalf("expected only projectless-derived prompt, got %+v", exported.Prompts[0])
+	if len(exported.Prompts) != 0 {
+		t.Fatalf("ordinary project export exposed Legacy prompts: %+v", exported.Prompts)
 	}
 }
 
@@ -2653,7 +2651,7 @@ func TestSessionObservationsAddPromptImportAndSyncChunks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	if imported.SessionsImported < 1 || imported.ObservationsImported < 1 || imported.PromptsImported < 1 {
+	if imported.SessionsImported < 1 || imported.ObservationsImported < 1 || imported.PromptsImported != 0 {
 		t.Fatalf("expected non-zero import counts, got %+v", imported)
 	}
 
@@ -2747,16 +2745,16 @@ func TestStoreLocalSyncFoundationEnqueuesCoreMutations(t *testing.T) {
 	if state.Lifecycle != SyncLifecyclePending {
 		t.Fatalf("expected pending lifecycle after local writes, got %q", state.Lifecycle)
 	}
-	if state.LastEnqueuedSeq != 6 {
-		t.Fatalf("expected 6 enqueued mutations, got %d", state.LastEnqueuedSeq)
+	if state.LastEnqueuedSeq != 5 {
+		t.Fatalf("expected 5 enqueued mutations, got %d", state.LastEnqueuedSeq)
 	}
 
 	mutations, err := s.ListPendingSyncMutations(DefaultSyncTargetKey, 10)
 	if err != nil {
 		t.Fatalf("list pending sync mutations: %v", err)
 	}
-	if len(mutations) != 6 {
-		t.Fatalf("expected 6 pending mutations, got %d", len(mutations))
+	if len(mutations) != 5 {
+		t.Fatalf("expected 5 ordinary pending mutations with Legacy prompts excluded, got %d", len(mutations))
 	}
 
 	var observationSyncID string
@@ -2787,11 +2785,8 @@ func TestStoreLocalSyncFoundationEnqueuesCoreMutations(t *testing.T) {
 	if mutations[3].Entity != SyncEntityObservation || mutations[3].EntityKey != observationSyncID || mutations[3].Op != SyncOpDelete {
 		t.Fatalf("unexpected observation delete mutation: %+v", mutations[3])
 	}
-	if mutations[4].Entity != SyncEntityPrompt || mutations[4].EntityKey != promptSyncID || mutations[4].Op != SyncOpUpsert {
-		t.Fatalf("unexpected prompt mutation: %+v", mutations[4])
-	}
-	if mutations[5].Entity != SyncEntitySession || mutations[5].EntityKey != "sync-session" || mutations[5].Op != SyncOpUpsert {
-		t.Fatalf("unexpected end session mutation: %+v", mutations[5])
+	if mutations[4].Entity != SyncEntitySession || mutations[4].EntityKey != "sync-session" || mutations[4].Op != SyncOpUpsert {
+		t.Fatalf("unexpected end session mutation: %+v", mutations[4])
 	}
 
 	var deletedPayload map[string]any
@@ -2812,8 +2807,8 @@ func TestStoreLocalSyncFoundationEnqueuesCoreMutations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list remaining sync mutations: %v", err)
 	}
-	if len(remaining) != 2 || remaining[0].Entity != SyncEntityPrompt || remaining[1].Entity != SyncEntitySession {
-		t.Fatalf("expected prompt and end-session mutations to remain pending, got %+v", remaining)
+	if len(remaining) != 1 || remaining[0].Entity != SyncEntitySession {
+		t.Fatalf("expected only end-session mutation to remain pending, got %+v", remaining)
 	}
 }
 
@@ -4039,7 +4034,7 @@ func TestApplyPulledMutationAcceptsStringifiedSessionPayload(t *testing.T) {
 	}
 }
 
-func TestApplyPulledSessionDeleteRemovesSessionAndPrompts(t *testing.T) {
+func TestApplyPulledSessionDeletePreservesFrozenLegacyPromptsAndOwner(t *testing.T) {
 	s := newTestStore(t)
 
 	if _, err := s.db.Exec(`INSERT INTO sessions (id, project, directory) VALUES (?, ?, ?)`, "remote-delete", "engram", "/tmp/engram"); err != nil {
@@ -4061,15 +4056,15 @@ func TestApplyPulledSessionDeleteRemovesSessionAndPrompts(t *testing.T) {
 		t.Fatalf("apply pulled session delete: %v", err)
 	}
 
-	if _, err := s.GetSession("remote-delete"); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("expected session to be deleted by pulled mutation, got err=%v", err)
+	if _, err := s.GetSession("remote-delete"); err != nil {
+		t.Fatalf("expected Legacy prompt owner to survive pulled deletion, got err=%v", err)
 	}
 	var promptCount int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE session_id = ?`, "remote-delete").Scan(&promptCount); err != nil {
 		t.Fatalf("count prompts: %v", err)
 	}
-	if promptCount != 0 {
-		t.Fatalf("expected pulled session delete to remove prompts, got %d", promptCount)
+	if promptCount != 1 {
+		t.Fatalf("expected pulled session delete to preserve one Legacy prompt, got %d", promptCount)
 	}
 
 	pending, err := s.ListPendingSyncMutations(DefaultSyncTargetKey, 10)
@@ -4081,7 +4076,7 @@ func TestApplyPulledSessionDeleteRemovesSessionAndPrompts(t *testing.T) {
 	}
 }
 
-func TestApplyPulledSessionUpsertTombstoneRemovesSessionAndPrompts(t *testing.T) {
+func TestApplyPulledSessionUpsertTombstonePreservesFrozenLegacyPromptsAndOwner(t *testing.T) {
 	s := newTestStore(t)
 
 	if _, err := s.db.Exec(`INSERT INTO sessions (id, project, directory) VALUES (?, ?, ?)`, "remote-tombstone", "engram", "/tmp/engram"); err != nil {
@@ -4103,15 +4098,15 @@ func TestApplyPulledSessionUpsertTombstoneRemovesSessionAndPrompts(t *testing.T)
 		t.Fatalf("apply pulled upsert tombstone: %v", err)
 	}
 
-	if _, err := s.GetSession("remote-tombstone"); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("expected session removed by upsert tombstone, got err=%v", err)
+	if _, err := s.GetSession("remote-tombstone"); err != nil {
+		t.Fatalf("expected Legacy prompt owner to survive upsert tombstone, got err=%v", err)
 	}
 	var promptCount int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE session_id = ?`, "remote-tombstone").Scan(&promptCount); err != nil {
 		t.Fatalf("count prompts: %v", err)
 	}
-	if promptCount != 0 {
-		t.Fatalf("expected upsert tombstone to remove prompts, got %d", promptCount)
+	if promptCount != 1 {
+		t.Fatalf("expected upsert tombstone to preserve one Legacy prompt, got %d", promptCount)
 	}
 }
 
@@ -4267,7 +4262,7 @@ func TestApplyPulledChunkIsAtomicAndRetrySafe(t *testing.T) {
 	}
 }
 
-func TestApplyPulledPromptDeleteCreatesTombstoneAndRemovesPrompt(t *testing.T) {
+func TestApplyPulledPromptDeletePreservesLegacyArchive(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.CreateSession("s-prompt", "engram", "/tmp/engram"); err != nil {
 		t.Fatalf("create session: %v", err)
@@ -4297,20 +4292,20 @@ func TestApplyPulledPromptDeleteCreatesTombstoneAndRemovesPrompt(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE sync_id = ?`, syncID).Scan(&remaining); err != nil {
 		t.Fatalf("count prompts by sync id: %v", err)
 	}
-	if remaining != 0 {
-		t.Fatalf("expected prompt row removed by pulled delete, got %d", remaining)
+	if remaining != 1 {
+		t.Fatalf("pulled delete changed Legacy prompt rows, got %d", remaining)
 	}
 
 	var tombstones int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM prompt_tombstones WHERE sync_id = ?`, syncID).Scan(&tombstones); err != nil {
 		t.Fatalf("count prompt tombstones: %v", err)
 	}
-	if tombstones != 1 {
-		t.Fatalf("expected prompt tombstone row, got %d", tombstones)
+	if tombstones != 0 {
+		t.Fatalf("pulled delete created %d Legacy prompt tombstones", tombstones)
 	}
 }
 
-func TestApplyPulledPromptUpsertUpdatesCreatedAtOnExistingPrompt(t *testing.T) {
+func TestApplyPulledPromptUpsertPreservesLegacyArchive(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.CreateSession("s-prompt-upsert", "engram", "/tmp/engram"); err != nil {
 		t.Fatalf("create session: %v", err)
@@ -4323,6 +4318,10 @@ func TestApplyPulledPromptUpsertUpdatesCreatedAtOnExistingPrompt(t *testing.T) {
 	var syncID string
 	if err := s.db.QueryRow(`SELECT sync_id FROM user_prompts WHERE id = ?`, promptID).Scan(&syncID); err != nil {
 		t.Fatalf("lookup prompt sync id: %v", err)
+	}
+	var beforeCreatedAt, beforeContent string
+	if err := s.db.QueryRow(`SELECT created_at, content FROM user_prompts WHERE sync_id = ?`, syncID).Scan(&beforeCreatedAt, &beforeContent); err != nil {
+		t.Fatalf("query original prompt: %v", err)
 	}
 
 	mutation := SyncMutation{
@@ -4342,15 +4341,15 @@ func TestApplyPulledPromptUpsertUpdatesCreatedAtOnExistingPrompt(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT created_at, content FROM user_prompts WHERE sync_id = ?`, syncID).Scan(&createdAt, &content); err != nil {
 		t.Fatalf("query updated prompt: %v", err)
 	}
-	if createdAt != "2024-01-02 03:04:05" {
-		t.Fatalf("expected prompt created_at to be overwritten by incoming payload, got %q", createdAt)
+	if createdAt != beforeCreatedAt {
+		t.Fatalf("pulled upsert rewrote prompt created_at: before=%q after=%q", beforeCreatedAt, createdAt)
 	}
-	if content != "remote overwrite" {
-		t.Fatalf("expected prompt content updated, got %q", content)
+	if content != beforeContent {
+		t.Fatalf("pulled upsert rewrote prompt content: before=%q after=%q", beforeContent, content)
 	}
 }
 
-func TestDeletePromptEnqueuesDeleteMutationAndTombstone(t *testing.T) {
+func TestDeletePromptIsLocalOnlyLegacyPurge(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.CreateSession("s-del-prompt", "engram", "/tmp/engram"); err != nil {
 		t.Fatalf("create session: %v", err)
@@ -4372,16 +4371,15 @@ func TestDeletePromptEnqueuesDeleteMutationAndTombstone(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM prompt_tombstones WHERE sync_id = ?`, syncID).Scan(&tombstones); err != nil {
 		t.Fatalf("count prompt tombstones: %v", err)
 	}
-	if tombstones != 1 {
-		t.Fatalf("expected one prompt tombstone after delete, got %d", tombstones)
+	if tombstones != 0 {
+		t.Fatalf("Legacy purge created %d prompt tombstones", tombstones)
 	}
-
-	var op string
-	if err := s.db.QueryRow(`SELECT op FROM sync_mutations WHERE entity = ? AND entity_key = ? ORDER BY seq DESC LIMIT 1`, SyncEntityPrompt, syncID).Scan(&op); err != nil {
-		t.Fatalf("query latest prompt mutation: %v", err)
+	var deletes int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sync_mutations WHERE entity = ? AND entity_key = ? AND op = ?`, SyncEntityPrompt, syncID, SyncOpDelete).Scan(&deletes); err != nil {
+		t.Fatalf("count prompt delete mutations: %v", err)
 	}
-	if op != SyncOpDelete {
-		t.Fatalf("expected latest prompt mutation op=%q, got %q", SyncOpDelete, op)
+	if deletes != 0 {
+		t.Fatalf("Legacy purge created %d prompt delete mutations", deletes)
 	}
 }
 
@@ -4660,16 +4658,16 @@ func TestStoreAdditionalQueryAndMutationBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recent prompts with project filter: %v", err)
 	}
-	if len(recentPrompts) != 1 || recentPrompts[0].Project != "beta" {
-		t.Fatalf("expected one beta prompt, got %+v", recentPrompts)
+	if len(recentPrompts) != 0 {
+		t.Fatalf("ordinary recent read exposed Legacy prompts: %+v", recentPrompts)
 	}
 
 	searchPrompts, err := s.SearchPrompts("prompt", "alpha", 0)
 	if err != nil {
 		t.Fatalf("search prompts with project filter/default limit: %v", err)
 	}
-	if len(searchPrompts) != 1 || searchPrompts[0].Project != "alpha" {
-		t.Fatalf("expected one alpha prompt search result, got %+v", searchPrompts)
+	if len(searchPrompts) != 0 {
+		t.Fatalf("ordinary prompt search exposed Legacy content: %+v", searchPrompts)
 	}
 
 	searchResults, err := s.Search("title", SearchOptions{Scope: "project", Limit: 9999})
@@ -4684,8 +4682,8 @@ func TestStoreAdditionalQueryAndMutationBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("format context: %v", err)
 	}
-	if !strings.Contains(ctx, "Recent User Prompts") {
-		t.Fatalf("expected prompts section in context output")
+	if strings.Contains(ctx, "Recent User Prompts") {
+		t.Fatalf("ordinary context exposed Legacy prompt section")
 	}
 }
 
@@ -4705,8 +4703,8 @@ func TestStoreErrorBranchesWithClosedDatabase(t *testing.T) {
 	if _, err := s.RecentSessions("", 1); err == nil {
 		t.Fatalf("expected RecentSessions error when db is closed")
 	}
-	if _, err := s.SearchPrompts("x", "", 1); err == nil {
-		t.Fatalf("expected SearchPrompts error when db is closed")
+	if got, err := s.SearchPrompts("x", "", 1); err != nil || len(got) != 0 {
+		t.Fatalf("inert SearchPrompts = %+v, %v", got, err)
 	}
 	if _, err := s.Search("x", SearchOptions{}); err == nil {
 		t.Fatalf("expected Search error when db is closed")
@@ -4930,7 +4928,7 @@ func TestExportImportEdgeBranches(t *testing.T) {
 		}
 	})
 
-	t.Run("export fails when prompts query fails", func(t *testing.T) {
+	t.Run("export does not query Legacy prompts", func(t *testing.T) {
 		s := newTestStore(t)
 
 		if _, err := s.db.Exec(`
@@ -4943,9 +4941,9 @@ func TestExportImportEdgeBranches(t *testing.T) {
 			t.Fatalf("drop prompts: %v", err)
 		}
 
-		_, err := s.Export()
-		if err == nil || !strings.Contains(err.Error(), "export prompts") {
-			t.Fatalf("expected prompts export error, got %v", err)
+		data, err := s.Export()
+		if err != nil || len(data.Prompts) != 0 {
+			t.Fatalf("export queried or exposed Legacy prompts: data=%+v err=%v", data, err)
 		}
 	})
 
@@ -4980,9 +4978,9 @@ func TestExportImportEdgeBranches(t *testing.T) {
 		}
 	})
 
-	t.Run("import fails on prompt fk error", func(t *testing.T) {
+	t.Run("import ignores Legacy prompts", func(t *testing.T) {
 		s := newTestStore(t)
-		_, err := s.Import(&ExportData{
+		result, err := s.Import(&ExportData{
 			Prompts: []Prompt{{
 				ID:        1,
 				SessionID: "missing-session",
@@ -4991,8 +4989,8 @@ func TestExportImportEdgeBranches(t *testing.T) {
 				CreatedAt: Now(),
 			}},
 		})
-		if err == nil || !strings.Contains(err.Error(), "import prompt") {
-			t.Fatalf("expected prompt import error, got %v", err)
+		if err != nil || result.PromptsImported != 0 {
+			t.Fatalf("ordinary import handled Legacy prompt: result=%+v err=%v", result, err)
 		}
 	})
 }
@@ -5255,15 +5253,6 @@ func TestImportExportSeamErrors(t *testing.T) {
 			t.Fatalf("expected observations export error, got %v", err)
 		}
 
-		s.hooks.queryIt = func(db queryer, query string, args ...any) (rowScanner, error) {
-			if strings.Contains(query, "FROM user_prompts") {
-				return nil, errors.New("forced prompts export query error")
-			}
-			return origQueryIt(db, query, args...)
-		}
-		if _, err := s.Export(); err == nil || !strings.Contains(err.Error(), "export prompts") {
-			t.Fatalf("expected prompts export error, got %v", err)
-		}
 	})
 
 	t.Run("import tx and exec hooks", func(t *testing.T) {
@@ -5459,7 +5448,7 @@ func TestHookFallbacksAndAdditionalBranches(t *testing.T) {
 			}
 		})
 
-		t.Run("recent prompts error", func(t *testing.T) {
+		t.Run("Legacy prompt table is not consulted", func(t *testing.T) {
 			s := newTestStore(t)
 			if err := s.CreateSession("s-ctx2", "engram", "/tmp/engram"); err != nil {
 				t.Fatalf("create session: %v", err)
@@ -5467,8 +5456,8 @@ func TestHookFallbacksAndAdditionalBranches(t *testing.T) {
 			if _, err := s.db.Exec("DROP TABLE user_prompts"); err != nil {
 				t.Fatalf("drop prompts: %v", err)
 			}
-			if _, err := s.FormatContext("", ""); err == nil {
-				t.Fatalf("expected format context to fail from recent prompts")
+			if _, err := s.FormatContext("", ""); err != nil {
+				t.Fatalf("format context consulted Legacy prompts: %v", err)
 			}
 		})
 	})
@@ -5556,21 +5545,10 @@ func TestStoreUncoveredBranchesPushToHundred(t *testing.T) {
 			"UPDATE observations SET revision_count = 1",
 			"UPDATE observations SET duplicate_count = 1",
 			"UPDATE observations SET updated_at = created_at",
-			"UPDATE user_prompts SET project = ''",
-			"CREATE TRIGGER prompt_fts_insert",
 		}
 		for _, needle := range failCases {
 			t.Run(needle, func(t *testing.T) {
 				s := newTestStore(t)
-				if strings.Contains(needle, "CREATE TRIGGER prompt_fts_insert") {
-					if _, err := s.db.Exec(`
-						DROP TRIGGER IF EXISTS prompt_fts_insert;
-						DROP TRIGGER IF EXISTS prompt_fts_update;
-						DROP TRIGGER IF EXISTS prompt_fts_delete;
-					`); err != nil {
-						t.Fatalf("drop prompt triggers: %v", err)
-					}
-				}
 				origExec := s.hooks.exec
 				s.hooks.exec = func(db execer, query string, args ...any) (sql.Result, error) {
 					if strings.Contains(query, needle) {
@@ -5760,13 +5738,13 @@ func TestStoreUncoveredBranchesPushToHundred(t *testing.T) {
 		}
 
 		setScanErr("FROM user_prompts")
-		if _, err := s.RecentPrompts("", 10); err == nil {
-			t.Fatalf("expected recent prompts scan error")
+		if got, err := s.RecentPrompts("", 10); err != nil || len(got) != 0 {
+			t.Fatalf("inert RecentPrompts = %+v, %v", got, err)
 		}
 
 		setScanErr("FROM prompts_fts")
-		if _, err := s.SearchPrompts("prompt", "", 10); err == nil {
-			t.Fatalf("expected search prompts scan error")
+		if got, err := s.SearchPrompts("prompt", "", 10); err != nil || len(got) != 0 {
+			t.Fatalf("inert SearchPrompts = %+v, %v", got, err)
 		}
 
 		setScanErr("FROM observations_fts")
@@ -5797,16 +5775,6 @@ func TestStoreUncoveredBranchesPushToHundred(t *testing.T) {
 		setRowsErr("FROM observations ORDER BY id")
 		if _, err := s.Export(); err == nil {
 			t.Fatalf("expected export observations rows err")
-		}
-
-		setScanErr("FROM user_prompts ORDER BY id")
-		if _, err := s.Export(); err == nil {
-			t.Fatalf("expected export prompts scan error")
-		}
-
-		setRowsErr("FROM user_prompts ORDER BY id")
-		if _, err := s.Export(); err == nil {
-			t.Fatalf("expected export prompts rows err")
 		}
 
 		setScanErr("FROM sync_chunks")
@@ -7051,14 +7019,13 @@ func TestEnrollProjectBackfillsHistoricalMutations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list pending: %v", err)
 	}
-	if len(mutations) != 3 {
-		t.Fatalf("expected 3 backfilled mutations, got %d", len(mutations))
+	if len(mutations) != 2 {
+		t.Fatalf("expected 2 backfilled mutations with Legacy prompts excluded, got %d", len(mutations))
 	}
 
 	expected := map[string]string{
 		SyncEntitySession:     "legacy-session",
 		SyncEntityObservation: "obs-legacy",
-		SyncEntityPrompt:      "prompt-legacy",
 	}
 	for _, mutation := range mutations {
 		entityKey, ok := expected[mutation.Entity]
@@ -7076,8 +7043,8 @@ func TestEnrollProjectBackfillsHistoricalMutations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get sync state: %v", err)
 	}
-	if state.LastEnqueuedSeq != 3 {
-		t.Fatalf("expected last_enqueued_seq 3 after backfill, got %d", state.LastEnqueuedSeq)
+	if state.LastEnqueuedSeq != 2 {
+		t.Fatalf("expected last_enqueued_seq 2 after backfill, got %d", state.LastEnqueuedSeq)
 	}
 }
 
@@ -7122,8 +7089,8 @@ func TestEnrollProjectBackfillIsIdempotentAndSkipsExistingMutations(t *testing.T
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sync_mutations`).Scan(&afterFirst); err != nil {
 		t.Fatalf("count after first enroll: %v", err)
 	}
-	if afterFirst != 3 {
-		t.Fatalf("expected 3 total mutations after first enroll, got %d", afterFirst)
+	if afterFirst != 2 {
+		t.Fatalf("expected 2 total mutations after first enroll, got %d", afterFirst)
 	}
 
 	var observationMutations int
@@ -7180,8 +7147,8 @@ func TestEnrollProjectBackfillsSessionOwnedEntitiesWithEmptyProject(t *testing.T
 	if err != nil {
 		t.Fatalf("list pending: %v", err)
 	}
-	if len(mutations) != 3 {
-		t.Fatalf("expected session + observation + prompt backfilled, got %d", len(mutations))
+	if len(mutations) != 2 {
+		t.Fatalf("expected session + observation backfilled, got %d", len(mutations))
 	}
 
 	byEntity := map[string]string{}
@@ -7197,8 +7164,8 @@ func TestEnrollProjectBackfillsSessionOwnedEntitiesWithEmptyProject(t *testing.T
 	if byEntity[SyncEntityObservation] != "obs-empty-project" {
 		t.Fatalf("expected observation backfill for empty-project entity, got %q", byEntity[SyncEntityObservation])
 	}
-	if byEntity[SyncEntityPrompt] != "prompt-empty-project" {
-		t.Fatalf("expected prompt backfill for empty-project entity, got %q", byEntity[SyncEntityPrompt])
+	if _, exists := byEntity[SyncEntityPrompt]; exists {
+		t.Fatalf("Legacy prompt was backfilled: %+v", byEntity)
 	}
 
 	var obsPayloadRaw string
@@ -7266,7 +7233,7 @@ func TestEnrollProjectBackfillsSoftDeletedObservationDeleteMutations(t *testing.
 	}
 }
 
-func TestEnrollProjectBackfillsPromptDeleteTombstonesWithDerivedProject(t *testing.T) {
+func TestEnrollProjectDoesNotBackfillLegacyPromptTombstones(t *testing.T) {
 	s := newTestStore(t)
 
 	if _, err := s.db.Exec(
@@ -7292,20 +7259,10 @@ func TestEnrollProjectBackfillsPromptDeleteTombstonesWithDerivedProject(t *testi
 		t.Fatalf("list pending: %v", err)
 	}
 
-	var foundDelete bool
 	for _, mutation := range mutations {
 		if mutation.Entity == SyncEntityPrompt && mutation.EntityKey == "prompt-soft-delete" {
-			if mutation.Op != SyncOpDelete {
-				t.Fatalf("expected prompt tombstone backfill op=delete, got %q", mutation.Op)
-			}
-			if mutation.Project != "legacy-proj" {
-				t.Fatalf("expected project derived from session to be legacy-proj, got %q", mutation.Project)
-			}
-			foundDelete = true
+			t.Fatalf("Legacy prompt tombstone was backfilled: %+v", mutation)
 		}
-	}
-	if !foundDelete {
-		t.Fatalf("expected prompt tombstone delete mutation to be backfilled")
 	}
 }
 
@@ -7545,9 +7502,9 @@ func TestStoreNewDefersRepairUntilSynchronization(t *testing.T) {
 		_ = s.Close()
 		t.Fatalf("list pending after repair: %v", err)
 	}
-	if len(mutations) != 3 {
+	if len(mutations) != 2 {
 		_ = s.Close()
-		t.Fatalf("expected 3 repaired mutations, got %d", len(mutations))
+		t.Fatalf("expected 2 repaired mutations, got %d", len(mutations))
 	}
 
 	state, err := s.GetSyncState(DefaultSyncTargetKey)
@@ -7555,9 +7512,9 @@ func TestStoreNewDefersRepairUntilSynchronization(t *testing.T) {
 		_ = s.Close()
 		t.Fatalf("get sync state after repair: %v", err)
 	}
-	if state.LastEnqueuedSeq != 3 {
+	if state.LastEnqueuedSeq != 2 {
 		_ = s.Close()
-		t.Fatalf("expected last_enqueued_seq 3 after deferred repair, got %d", state.LastEnqueuedSeq)
+		t.Fatalf("expected last_enqueued_seq 2 after deferred repair, got %d", state.LastEnqueuedSeq)
 	}
 
 	if err := s.Close(); err != nil {
@@ -7574,7 +7531,7 @@ func TestStoreNewDefersRepairUntilSynchronization(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sync_mutations`).Scan(&count); err != nil {
 		t.Fatalf("count repaired mutations after reopen: %v", err)
 	}
-	if count != 3 {
+	if count != 2 {
 		t.Fatalf("expected repair to stay idempotent across reopen, got %d sync mutations", count)
 	}
 }
@@ -8005,7 +7962,7 @@ func TestEnqueueSyncMutationPopulatesProjectFromObservationPayload(t *testing.T)
 	}
 }
 
-func TestEnqueueSyncMutationPopulatesProjectFromPromptPayload(t *testing.T) {
+func TestAddPromptDoesNotEnqueueLegacyPromptMutation(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.CreateSession("prompt-enq", "prompt-proj", "/tmp"); err != nil {
 		t.Fatalf("create session: %v", err)
@@ -8020,16 +7977,12 @@ func TestEnqueueSyncMutationPopulatesProjectFromPromptPayload(t *testing.T) {
 		t.Fatalf("add prompt: %v", err)
 	}
 
-	var project string
-	err = s.db.QueryRow(
-		`SELECT project FROM sync_mutations WHERE entity = ? ORDER BY seq DESC LIMIT 1`,
-		SyncEntityPrompt,
-	).Scan(&project)
-	if err != nil {
-		t.Fatalf("query: %v", err)
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sync_mutations WHERE entity = ?`, SyncEntityPrompt).Scan(&count); err != nil {
+		t.Fatalf("count prompt mutations: %v", err)
 	}
-	if project != "prompt-proj" {
-		t.Fatalf("expected project='prompt-proj', got %q", project)
+	if count != 0 {
+		t.Fatalf("Legacy prompt write enqueued %d sync mutations", count)
 	}
 }
 
@@ -8287,8 +8240,12 @@ func TestMigrateProject(t *testing.T) {
 	if result.SessionsUpdated != 1 {
 		t.Fatalf("expected 1 session migrated, got %d", result.SessionsUpdated)
 	}
-	if result.PromptsUpdated != 1 {
-		t.Fatalf("expected 1 prompt migrated, got %d", result.PromptsUpdated)
+	if result.PromptsUpdated != 0 {
+		t.Fatalf("Legacy prompt was migrated: %d", result.PromptsUpdated)
+	}
+	var legacyPromptProject string
+	if err := s.db.QueryRow(`SELECT project FROM user_prompts WHERE content = 'test prompt'`).Scan(&legacyPromptProject); err != nil || legacyPromptProject != old {
+		t.Fatalf("Legacy prompt project = %q, err=%v, want %q", legacyPromptProject, err, old)
 	}
 
 	// Verify old project has no records
@@ -8750,14 +8707,14 @@ func TestMergeProjectsReportsTrimmedLegacySourceWithoutLosingRows(t *testing.T) 
 	if err != nil {
 		t.Fatalf("MergeProjects: %v", err)
 	}
-	if result.ObservationsUpdated != 1 || result.SessionsUpdated != 1 || result.PromptsUpdated != 1 {
+	if result.ObservationsUpdated != 1 || result.SessionsUpdated != 1 || result.PromptsUpdated != 0 {
 		t.Fatalf("unexpected merge result: %+v", result)
 	}
 	if len(result.SourcesMerged) != 1 || result.SourcesMerged[0] != "Engram Memory" {
 		t.Fatalf("SourcesMerged = %v, want [Engram Memory]", result.SourcesMerged)
 	}
 
-	for _, table := range []string{"sessions", "observations", "user_prompts"} {
+	for _, table := range []string{"sessions", "observations"} {
 		var count int
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE project = ?`, "Engram Memory").Scan(&count); err != nil {
 			t.Fatalf("count legacy rows in %s: %v", table, err)
@@ -8765,6 +8722,10 @@ func TestMergeProjectsReportsTrimmedLegacySourceWithoutLosingRows(t *testing.T) 
 		if count != 0 {
 			t.Fatalf("%s still has %d legacy project rows", table, count)
 		}
+	}
+	var legacyPromptRows int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE project = ?`, "Engram Memory").Scan(&legacyPromptRows); err != nil || legacyPromptRows != 1 {
+		t.Fatalf("Legacy prompts were rewritten: rows=%d err=%v", legacyPromptRows, err)
 	}
 }
 
@@ -8788,7 +8749,7 @@ func TestMergeProjectsConsolidatesDeterministicAliasSpellings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MergeProjects: %v", err)
 	}
-	if result.ObservationsUpdated != 1 || result.SessionsUpdated != 1 || result.PromptsUpdated != 1 {
+	if result.ObservationsUpdated != 1 || result.SessionsUpdated != 1 || result.PromptsUpdated != 0 {
 		t.Fatalf("unexpected merge result: %+v", result)
 	}
 }
@@ -9416,8 +9377,8 @@ func TestPruneProjectPreservesSoftDeletedObservationSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PruneProject: %v", err)
 	}
-	if result.PromptsDeleted != 1 || result.SessionsDeleted != 0 {
-		t.Fatalf("PruneResult = %+v, want one prompt and no sessions", result)
+	if result.PromptsDeleted != 0 || result.SessionsDeleted != 0 {
+		t.Fatalf("PruneResult = %+v, want Legacy prompt and its session preserved", result)
 	}
 	var sessions, observations, prompts int
 	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = 'referenced'`).Scan(&sessions); err != nil {
@@ -9429,7 +9390,7 @@ func TestPruneProjectPreservesSoftDeletedObservationSession(t *testing.T) {
 	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE project = 'empty-project'`).Scan(&prompts); err != nil {
 		t.Fatalf("count prompts: %v", err)
 	}
-	if sessions != 1 || observations != 1 || prompts != 0 {
+	if sessions != 1 || observations != 1 || prompts != 1 {
 		t.Fatalf("rows after prune: sessions=%d observations=%d prompts=%d", sessions, observations, prompts)
 	}
 }
@@ -9581,7 +9542,7 @@ func TestDeleteSession_EmptySession(t *testing.T) {
 	}
 }
 
-func TestDeleteSession_EnrolledProjectEnqueuesSyncDeleteMutation(t *testing.T) {
+func TestDeleteSession_EnrolledProjectPreservesLegacyPromptAndSession(t *testing.T) {
 	s := newTestStore(t)
 
 	if err := s.CreateSession("sess-enrolled", "proj", "/tmp"); err != nil {
@@ -9598,8 +9559,8 @@ func TestDeleteSession_EnrolledProjectEnqueuesSyncDeleteMutation(t *testing.T) {
 		t.Fatalf("enroll project: %v", err)
 	}
 
-	if err := s.DeleteSession("sess-enrolled"); err != nil {
-		t.Fatalf("delete session: %v", err)
+	if err := s.DeleteSession("sess-enrolled"); !errors.Is(err, ErrSessionHasLegacyPrompts) {
+		t.Fatalf("delete session error = %v, want ErrSessionHasLegacyPrompts", err)
 	}
 
 	sessions, err := s.RecentSessions("proj", 10)
@@ -9613,41 +9574,26 @@ func TestDeleteSession_EnrolledProjectEnqueuesSyncDeleteMutation(t *testing.T) {
 			break
 		}
 	}
-	if found {
-		t.Fatal("expected enrolled session to be deleted")
+	if !found {
+		t.Fatal("Legacy prompt parent session was deleted")
 	}
 
-	prompts, err := s.RecentPrompts("proj", 10)
+	prompts, err := s.AccessLegacyPrompts(LegacyPromptScope{Project: "proj"}, 0, 10)
 	if err != nil {
-		t.Fatalf("recent prompts: %v", err)
+		t.Fatalf("access Legacy prompts: %v", err)
 	}
-	if len(prompts) != 0 {
-		t.Fatalf("expected prompt rows to be removed with enrolled delete, got %d", len(prompts))
+	if len(prompts.Prompts) != 1 {
+		t.Fatalf("expected Legacy prompt row preserved, got %d", len(prompts.Prompts))
 	}
 
 	mutations, err := s.ListPendingSyncMutations(DefaultSyncTargetKey, 10)
 	if err != nil {
 		t.Fatalf("list pending mutations: %v", err)
 	}
-	if len(mutations) == 0 {
-		t.Fatal("expected session delete mutation to be enqueued")
-	}
-	last := mutations[len(mutations)-1]
-	if last.Entity != SyncEntitySession || last.EntityKey != "sess-enrolled" || last.Op != SyncOpDelete {
-		t.Fatalf("expected final mutation session/delete for sess-enrolled, got %+v", last)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(last.Payload), &payload); err != nil {
-		t.Fatalf("decode session delete payload: %v", err)
-	}
-	if payload["id"] != "sess-enrolled" {
-		t.Fatalf("expected delete payload id sess-enrolled, got %#v", payload["id"])
-	}
-	if payload["project"] != "proj" {
-		t.Fatalf("expected delete payload project proj, got %#v", payload["project"])
-	}
-	if _, ok := payload["deleted_at"]; !ok {
-		t.Fatalf("expected delete payload to include deleted_at, got %#v", payload)
+	for _, mutation := range mutations {
+		if mutation.Entity == SyncEntitySession && mutation.EntityKey == "sess-enrolled" && mutation.Op == SyncOpDelete {
+			t.Fatalf("blocked session delete was journaled: %+v", mutation)
+		}
 	}
 }
 
@@ -9993,7 +9939,7 @@ func TestDeleteSession_HasSoftDeletedObservations(t *testing.T) {
 	}
 }
 
-func TestDeleteSession_DeletesPromptsAlso(t *testing.T) {
+func TestDeleteSession_BlockedByLegacyPrompts(t *testing.T) {
 	s := newTestStore(t)
 
 	if err := s.CreateSession("sess-with-prompts", "proj", "/tmp"); err != nil {
@@ -10007,16 +9953,16 @@ func TestDeleteSession_DeletesPromptsAlso(t *testing.T) {
 		t.Fatalf("add prompt: %v", err)
 	}
 
-	if err := s.DeleteSession("sess-with-prompts"); err != nil {
-		t.Fatalf("delete session: %v", err)
+	if err := s.DeleteSession("sess-with-prompts"); !errors.Is(err, ErrSessionHasLegacyPrompts) {
+		t.Fatalf("delete session error = %v, want ErrSessionHasLegacyPrompts", err)
 	}
 
-	prompts, err := s.RecentPrompts("proj", 10)
+	prompts, err := s.AccessLegacyPrompts(LegacyPromptScope{Project: "proj"}, 0, 10)
 	if err != nil {
-		t.Fatalf("recent prompts: %v", err)
+		t.Fatalf("access Legacy prompts: %v", err)
 	}
-	if len(prompts) != 0 {
-		t.Fatalf("expected prompts to be deleted with session, got %d", len(prompts))
+	if len(prompts.Prompts) != 1 {
+		t.Fatalf("expected Legacy prompt preserved, got %d", len(prompts.Prompts))
 	}
 }
 
@@ -10670,7 +10616,7 @@ func TestRepairBackfillsMissingMutations(t *testing.T) {
 		t.Fatalf("expected observation mutation to be backfilled, got 0")
 	}
 
-	// Prompt mutation must exist.
+	// Legacy prompt mutations must not be repaired into the ordinary journal.
 	var promptMutCount int
 	if err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM sync_mutations WHERE entity = ? AND entity_key = ? AND source = ?`,
@@ -10678,8 +10624,8 @@ func TestRepairBackfillsMissingMutations(t *testing.T) {
 	).Scan(&promptMutCount); err != nil {
 		t.Fatalf("count prompt mutations: %v", err)
 	}
-	if promptMutCount == 0 {
-		t.Fatalf("expected prompt mutation to be backfilled, got 0")
+	if promptMutCount != 0 {
+		t.Fatalf("Legacy prompt mutation was backfilled: %d", promptMutCount)
 	}
 }
 
@@ -11461,11 +11407,11 @@ func TestDeleteProjectCascadesAllEntities(t *testing.T) {
 	if result.ObservationsDeleted != 2 {
 		t.Errorf("ObservationsDeleted = %d, want 2", result.ObservationsDeleted)
 	}
-	if result.PromptsDeleted != 1 {
-		t.Errorf("PromptsDeleted = %d, want 1", result.PromptsDeleted)
+	if result.PromptsDeleted != 0 {
+		t.Errorf("PromptsDeleted = %d, want 0", result.PromptsDeleted)
 	}
-	if result.SessionsDeleted != 1 {
-		t.Errorf("SessionsDeleted = %d, want 1", result.SessionsDeleted)
+	if result.SessionsDeleted != 0 {
+		t.Errorf("SessionsDeleted = %d, want 0 while Legacy prompt retains its parent", result.SessionsDeleted)
 	}
 
 	// Verify rows are gone.
@@ -11481,16 +11427,16 @@ func TestDeleteProjectCascadesAllEntities(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE project = ?`, "alpha").Scan(&sessionCount); err != nil {
 		t.Fatalf("count sessions: %v", err)
 	}
-	if sessionCount != 0 {
-		t.Errorf("expected 0 sessions after DeleteProject, got %d", sessionCount)
+	if sessionCount != 1 {
+		t.Errorf("expected Legacy prompt parent session preserved, got %d", sessionCount)
 	}
 
 	var promptCount int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE project = ?`, "alpha").Scan(&promptCount); err != nil {
 		t.Fatalf("count prompts: %v", err)
 	}
-	if promptCount != 0 {
-		t.Errorf("expected 0 prompts after DeleteProject, got %d", promptCount)
+	if promptCount != 1 {
+		t.Errorf("expected Legacy prompt preserved after DeleteProject, got %d", promptCount)
 	}
 
 	// Hard-deleted obs must also be gone from the table itself.
@@ -11531,8 +11477,8 @@ func TestDeleteProjectSoftDeleteObservations(t *testing.T) {
 	if result.ObservationsDeleted != 1 {
 		t.Errorf("ObservationsDeleted = %d, want 1", result.ObservationsDeleted)
 	}
-	if result.PromptsDeleted != 1 {
-		t.Errorf("PromptsDeleted = %d, want 1", result.PromptsDeleted)
+	if result.PromptsDeleted != 0 {
+		t.Errorf("PromptsDeleted = %d, want 0", result.PromptsDeleted)
 	}
 
 	// Observation row must still exist but have deleted_at set.
@@ -11544,13 +11490,13 @@ func TestDeleteProjectSoftDeleteObservations(t *testing.T) {
 		t.Errorf("expected deleted_at to be set after soft-delete, got nil")
 	}
 
-	// Prompts must be removed.
+	// Legacy prompts must remain for explicit archive handling.
 	var promptCount int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE project = ?`, "beta").Scan(&promptCount); err != nil {
 		t.Fatalf("count prompts: %v", err)
 	}
-	if promptCount != 0 {
-		t.Errorf("expected 0 prompts after soft DeleteProject, got %d", promptCount)
+	if promptCount != 1 {
+		t.Errorf("expected Legacy prompt preserved after soft DeleteProject, got %d", promptCount)
 	}
 
 	// Sessions must NOT be removed in soft-delete mode (FK constraint from soft-deleted obs).

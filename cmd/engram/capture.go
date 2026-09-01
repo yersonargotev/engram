@@ -188,7 +188,7 @@ func startCodexPromptCapturePersistence(raw []byte) {
 
 func captureCodexPromptDiagnostic(cfg store.Config, event promptHookEvent, sessionID string, observedAt time.Time) {
 	outcome := recallbaseline.OutcomeUnknown
-	defer func() { recordSubagentCaptureBaselineOperation(cfg, "prompt", outcome) }()
+	defer func() { recordCaptureBaselineOperation(cfg, "prompt", outcome) }()
 	cwd := currentCWD()
 	if event.CWD != nil && strings.TrimSpace(*event.CWD) != "" {
 		cwd = *event.CWD
@@ -223,7 +223,7 @@ func captureCodexPromptDiagnostic(cfg store.Config, event promptHookEvent, sessi
 	}
 }
 
-func recordSubagentCaptureBaselineOperation(cfg store.Config, operation string, outcome recallbaseline.Outcome) {
+func recordCaptureBaselineOperation(cfg store.Config, operation string, outcome recallbaseline.Outcome) {
 	recordRecallBaselineEvents(cfg, recallbaseline.Event{
 		Kind: recallbaseline.EventCapture, Surface: recallbaseline.SurfaceLifecycle,
 		Operation: operation, Outcome: outcome,
@@ -333,7 +333,7 @@ func resolveSubagentHookProject(cwd *string) (string, error) {
 }
 
 func recordSubagentCaptureBaseline(cfg store.Config, outcome recallbaseline.Outcome) {
-	recordSubagentCaptureBaselineOperation(cfg, "subagent", outcome)
+	recordCaptureBaselineOperation(cfg, "subagent", outcome)
 }
 
 func writeSubagentHookResponse(response subagentHookResponse) {

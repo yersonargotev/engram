@@ -241,18 +241,31 @@ func (s *Store) stopDiagnosticCaptureRetention() {
 }
 
 func (s *Store) effectiveCaptureConsent(db rowQueryer, project, contentType, sessionID string, now time.Time) (*CaptureConsent, error) {
+	if sessionID != "" {
+		consent, err := captureConsentForScope(db, project, contentType, sessionID)
+		if err != nil {
+			return nil, err
+		}
+		if consent != nil && !consent.UpdatedAt.After(now) && consent.ExpiresAt != nil && consent.ExpiresAt.After(now) {
+			return consent, nil
+		}
+	}
+	consent, err := captureConsentForScope(db, project, contentType, "")
+	if err != nil || consent == nil {
+		return consent, err
+	}
+	if consent.UpdatedAt.After(now) {
+		return nil, nil
+	}
+	return consent, nil
+}
+
+func captureConsentForScope(db rowQueryer, project, contentType, sessionID string) (*CaptureConsent, error) {
 	row := db.QueryRow(`
 		SELECT project, content_type, session_id, retention_days, expires_at, updated_at
 		FROM capture_consents
-		WHERE project = ? AND content_type = ?
-		  AND updated_at <= ?
-		  AND (
-			(session_id = ? AND session_id <> '' AND expires_at > ?)
-			OR session_id = ''
-		  )
-		ORDER BY CASE WHEN session_id = ? AND session_id <> '' THEN 0 ELSE 1 END
-		LIMIT 1`,
-		project, contentType, now.Format(time.RFC3339Nano), sessionID, now.Format(time.RFC3339Nano), sessionID,
+		WHERE project = ? AND content_type = ? AND session_id = ?`,
+		project, contentType, sessionID,
 	)
 	var consent CaptureConsent
 	var expiresAt sql.NullString

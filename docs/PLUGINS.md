@@ -197,8 +197,6 @@ plugin/codex/
 ├── .mcp.json
 ├── hooks/hooks.json               # Direct Core commands on Unix and Windows
 ├── scripts/
-│   ├── session-end.sh             # Bounded Unix session closure
-│   ├── session-end.ps1            # Bounded Windows session closure
 │   └── stop.sh                    # Unix exact-checkpoint verifier
 └── skills/memory/SKILL.md         # Canonical cue and complete rubric
 ```
@@ -257,9 +255,10 @@ second continuation. Invalid input and store failures are surfaced as
 integration messages. Executable failures, malformed command output, and
 Codex's three-second hook timeout remain visible and never become `skipped`.
 
-`SessionEnd` only closes the exact session through the bounded Unix or Windows
-transport adapter. It creates no Memory, proposal, checkpoint, summary,
-feedback, or additional model context.
+`SessionEnd` delegates directly to
+`engram lifecycle session-end --host=codex` on Unix and Windows. Core closes
+only the exact existing session and creates no Memory, proposal, checkpoint,
+summary, feedback, or additional model context.
 
 `engram setup codex` verifies the immutable plugin tree, MCP manifest, canonical
 skill, cue, lifecycle coverage, exact synchronous `Stop` command, timeout, and

@@ -81,8 +81,8 @@ func TestCaptureConsentDefaultsOffAndProjectGrantControlsDiagnosticPromptCapture
 
 func TestCaptureUsesObservedTimeSoLaterConsentCannotCaptureEarlierContent(t *testing.T) {
 	service := newTestService(t)
-	observedAt := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
-	grantedAt := observedAt.Add(time.Minute)
+	observedAt := time.Date(2026, time.September, 1, 12, 0, 0, 100_000_000, time.UTC)
+	grantedAt := observedAt.Add(100 * time.Microsecond)
 	if err := service.store.UpsertCaptureConsent(store.CaptureConsent{
 		Project: "engram", ContentType: store.CaptureContentTypePrompt,
 		RetentionDays: store.DefaultDiagnosticRetentionDays, UpdatedAt: grantedAt,

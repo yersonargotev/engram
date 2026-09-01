@@ -554,9 +554,10 @@ original root user turn; the root agent applies the canonical skill and
 finalizes once.
 
 The Unix and Windows manifests use the same direct Core commands for
-`SessionStart` and `UserPromptSubmit`; no Git Bash lifecycle wrapper is needed.
-`SessionEnd` remains a bounded transport-only close and never creates Memory,
-a proposal, checkpoint, summary, feedback, or model context.
+`SessionStart`, `UserPromptSubmit`, and `SessionEnd`; no Git Bash lifecycle
+wrapper is needed. `SessionEnd` closes only the exact existing session and
+never creates Memory, a proposal, checkpoint, summary, feedback, or model
+context.
 
 `Stop` delegates the complete event to
 `engram checkpoint verify-stop --host=codex`. The Go core queries the exact identity in the local checkpoint

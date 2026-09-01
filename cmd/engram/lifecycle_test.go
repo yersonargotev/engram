@@ -192,6 +192,60 @@ func TestCodexLifecyclePreservesNonblankOpaqueSessionIdentity(t *testing.T) {
 	}
 }
 
+func TestCodexLifecycleSessionEndPreservesOpaqueIdentityAndOnlyClosesExistingState(t *testing.T) {
+	stubRuntimeHooks(t)
+	cfg := store.FallbackConfig(t.TempDir())
+	const sessionID = " session:end/opaque "
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("open SessionEnd seed store: %v", err)
+	}
+	if err := s.CreateSession(sessionID, "engram", "/work/engram"); err != nil {
+		t.Fatalf("seed SessionEnd session: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close SessionEnd seed store: %v", err)
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		cmdLifecycleSessionEnd(cfg, []string{"--host=codex"}, strings.NewReader(`{"session_id":" session:end/opaque ","reason":"user"}`))
+	})
+	if stdout != "" || stderr != "" {
+		t.Fatalf("SessionEnd output stdout=%q stderr=%q, want silent", stdout, stderr)
+	}
+	s, err = store.New(cfg)
+	if err != nil {
+		t.Fatalf("reopen SessionEnd store: %v", err)
+	}
+	defer s.Close()
+	session, err := s.GetSession(sessionID)
+	if err != nil || session.EndedAt == nil || session.Summary != nil {
+		t.Fatalf("SessionEnd session = %+v err=%v, want exact session ended without summary", session, err)
+	}
+}
+
+func TestCodexLifecycleSessionEndInvalidOrUnknownInputCreatesNoStore(t *testing.T) {
+	stubRuntimeHooks(t)
+	cfg := store.FallbackConfig(t.TempDir())
+	for _, input := range []string{
+		"{",
+		`{}`,
+		`{"session_id":42}`,
+		`{"session_id":""}`,
+		`{"session_id":"unknown-session"}`,
+	} {
+		stdout, stderr := captureOutput(t, func() {
+			cmdLifecycleSessionEnd(cfg, []string{"--host=codex"}, strings.NewReader(input))
+		})
+		if stdout != "" || stderr != "" {
+			t.Errorf("SessionEnd input %q output stdout=%q stderr=%q, want silent", input, stdout, stderr)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); !os.IsNotExist(err) {
+		t.Fatalf("SessionEnd without existing state created a store: %v", err)
+	}
+}
+
 type lifecycleHookResponse struct {
 	HookSpecificOutput struct {
 		HookEventName     string `json:"hookEventName"`

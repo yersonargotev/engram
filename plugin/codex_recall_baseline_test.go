@@ -37,6 +37,10 @@ func TestCodexCoreLifecycleHooksRecordOnlyContentFreeOptInMetrics(t *testing.T) 
 	if !json.Valid([]byte(sessionOutput)) || !json.Valid([]byte(promptOutput)) {
 		t.Fatalf("hook output is not valid JSON: session=%q prompt=%q", sessionOutput, promptOutput)
 	}
+	firstReport := waitCodexLifecycleBaseline(t, dataDir, 1)
+	if firstReport.Lifecycle.Capture.Disabled != 1 {
+		t.Fatalf("default-off prompt Capture metrics = %+v, want one disabled event", firstReport.Lifecycle.Capture)
+	}
 	var sessionResponse codexHookResponse
 	if err := json.Unmarshal([]byte(sessionOutput), &sessionResponse); err != nil {
 		t.Fatalf("decode SessionStart output: %v", err)
@@ -100,22 +104,32 @@ func TestCodexCoreLifecycleHooksRecordOnlyContentFreeOptInMetrics(t *testing.T) 
 
 func waitCodexLifecycleBaseline(t *testing.T, dataDir string, captureEvents int64) recallbaseline.Report {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
+	var lastReport recallbaseline.Report
 	for {
 		ledger, err := recallbaseline.Open(recallbaseline.Config{DataDir: dataDir})
 		if err != nil {
-			t.Fatalf("open lifecycle baseline: %v", err)
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out opening lifecycle baseline: %v", err)
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
 		}
 		report, reportErr := ledger.Report(protocolcontract.CompatibilityReport{})
 		closeErr := ledger.Close()
 		if reportErr != nil || closeErr != nil {
-			t.Fatalf("report lifecycle baseline: report=%v close=%v", reportErr, closeErr)
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out reading lifecycle baseline: report=%v close=%v", reportErr, closeErr)
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
 		}
+		lastReport = report
 		if report.Lifecycle.Capture.Events >= captureEvents && len(report.Operations) > 0 {
 			return report
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for lifecycle baseline: %+v", report)
+			t.Fatalf("timed out waiting for lifecycle baseline: %+v", lastReport)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

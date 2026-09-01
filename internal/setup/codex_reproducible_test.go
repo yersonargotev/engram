@@ -776,8 +776,6 @@ func writeCanonicalCodexActivationFixture(t *testing.T, destination string) {
 		".codex-plugin/plugin.json",
 		".mcp.json",
 		"hooks/hooks.json",
-		"scripts/session-end.sh",
-		"scripts/session-end.ps1",
 		"scripts/stop.sh",
 		"skills/memory/SKILL.md",
 	}

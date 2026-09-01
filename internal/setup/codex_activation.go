@@ -53,15 +53,10 @@ func verifyInstalledCodexSessionHooks(installedPath string, hooksRaw []byte) boo
 		return false
 	}
 	end := groups[0].Hooks[0]
-	if end.Type != "command" || end.Command != `"${PLUGIN_ROOT}/scripts/session-end.sh"` ||
-		end.CommandWindows != `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${PLUGIN_ROOT}\scripts\session-end.ps1"` ||
+	const command = "engram lifecycle session-end --host=codex"
+	if end.Type != "command" || end.Command != command || end.CommandWindows != command ||
 		end.Timeout != 3 || end.Async {
 		return false
-	}
-	for _, relative := range []string{"scripts/session-end.sh", "scripts/session-end.ps1"} {
-		if _, err := readFileFn(filepath.Join(installedPath, filepath.FromSlash(relative))); err != nil {
-			return false
-		}
 	}
 	return true
 }

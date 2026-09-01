@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -43,8 +44,50 @@ func cmdLifecycle(cfg store.Config) {
 	switch strings.ToLower(strings.TrimSpace(os.Args[2])) {
 	case "session-start":
 		cmdLifecycleSessionStart(cfg, os.Args[3:], os.Stdin)
+	case "session-end":
+		cmdLifecycleSessionEnd(cfg, os.Args[3:], os.Stdin)
 	default:
 		writeEmptyHookResponse()
+	}
+}
+
+func cmdLifecycleSessionEnd(cfg store.Config, args []string, input io.Reader) {
+	set := flag.NewFlagSet("lifecycle session-end", flag.ContinueOnError)
+	set.SetOutput(io.Discard)
+	host := ""
+	set.StringVar(&host, "host", "", "hook host")
+	if err := set.Parse(args); err != nil || set.NArg() != 0 || strings.ToLower(strings.TrimSpace(host)) != "codex" {
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(input, maxCodexLifecycleInputBytes+1))
+	if err != nil || len(raw) > maxCodexLifecycleInputBytes || !utf8.Valid(raw) {
+		return
+	}
+	var event struct {
+		SessionID *string `json:"session_id"`
+	}
+	if err := json.Unmarshal(raw, &event); err != nil || event.SessionID == nil || strings.TrimSpace(*event.SessionID) == "" {
+		return
+	}
+	if _, err := os.Stat(filepath.Join(cfg.DataDir, "engram.db")); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		fatal(fmt.Errorf("inspect Codex lifecycle store: %w", err))
+		return
+	}
+	s, err := storeNew(cfg)
+	if err != nil {
+		fatal(fmt.Errorf("open Codex lifecycle store: %w", err))
+		return
+	}
+	if err := s.EndSession(*event.SessionID, ""); err != nil {
+		_ = s.Close()
+		fatal(fmt.Errorf("close Codex lifecycle session: %w", err))
+		return
+	}
+	if err := s.Close(); err != nil {
+		fatal(fmt.Errorf("close Codex lifecycle store: %w", err))
 	}
 }
 

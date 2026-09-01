@@ -67,13 +67,17 @@ func TestCodexWindowsLifecycleManifestRuntime(t *testing.T) {
 		t.Fatalf("Windows prompt hook leaked prompt content: %s", promptOutput)
 	}
 
+	sessionEndCommand := singleCodexHook(t, manifest, "SessionEnd").CommandWindows
+	runWindowsLifecycleManifest(t, sessionEndCommand, `{"session_id":"windows-session","reason":"user"}`, env)
+
 	s, err := store.New(store.FallbackConfig(dataDir))
 	if err != nil {
 		t.Fatalf("open Windows lifecycle store: %v", err)
 	}
 	defer s.Close()
-	if _, err := s.GetSession("windows-session"); err != nil {
-		t.Fatalf("Windows lifecycle did not register exact session: %v", err)
+	session, err := s.GetSession("windows-session")
+	if err != nil || session.EndedAt == nil || session.Summary != nil {
+		t.Fatalf("Windows lifecycle session = %+v err=%v, want registered and ended without summary", session, err)
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/yersonargotev/engram/internal/store"
 )
 
 const (
@@ -139,11 +141,50 @@ func TestCodexUserPromptSubmitDoesNotInventCheckpointIdentity(t *testing.T) {
 	}
 }
 
+func TestCodexSessionEndClosesTheCoreRegisteredSessionWithoutDurableArtifacts(t *testing.T) {
+	root := repoRoot(t)
+	pluginRoot := filepath.Join(root, "plugin", "codex")
+	manifest := readCodexHooksManifest(t, filepath.Join(pluginRoot, "hooks", "hooks.json"))
+	binDir := buildCodexActivationCLI(t, root)
+	dataDir := t.TempDir()
+	t.Setenv("ENGRAM_DATA_DIR", dataDir)
+	t.Setenv("ENGRAM_PROJECT", "engram")
+	t.Setenv("ENGRAM_CODEX_RECALL_CANARY", "targeted-recall")
+
+	const sessionID = "session-end-core-acceptance"
+	runCodexHook(t, matchingSessionStartCommand(t, manifest, "startup"),
+		`{"session_id":"`+sessionID+`","cwd":`+quoteJSON(t, root)+`,"source":"startup"}`,
+		pluginRoot, binDir)
+	runCodexHook(t, singleCodexHookCommand(t, manifest, "SessionEnd"),
+		`{"session_id":"`+sessionID+`","cwd":`+quoteJSON(t, root)+`,"reason":"user"}`,
+		pluginRoot, binDir)
+
+	s, err := store.New(store.FallbackConfig(dataDir))
+	if err != nil {
+		t.Fatalf("open SessionEnd acceptance store: %v", err)
+	}
+	defer s.Close()
+	session, err := s.GetSession(sessionID)
+	if err != nil || session.EndedAt == nil || session.Summary != nil {
+		t.Fatalf("SessionEnd session = %+v err=%v, want ended without summary", session, err)
+	}
+	for _, table := range []string{
+		"observations", "memory_proposals", "memory_checkpoints", "diagnostic_captures",
+		"recall_feedback_runs", "recall_feedback_exposures", "recall_feedback_labels", "recall_false_empty_reviews",
+	} {
+		var count int
+		if err := s.DB().QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+			t.Errorf("SessionEnd %s count=%d err=%v, want zero", table, count, err)
+		}
+	}
+}
+
 func TestCodexLifecycleManifestUsesTheSameBoundedCoreCommandsOnUnixAndWindows(t *testing.T) {
 	root := repoRoot(t)
 	manifest := readCodexHooksManifest(t, filepath.Join(root, "plugin", "codex", "hooks", "hooks.json"))
 	const sessionCommand = `engram lifecycle session-start --host=codex --plugin-root="${PLUGIN_ROOT}"`
 	const promptCommand = "engram capture prompt-hook --host=codex"
+	const sessionEndCommand = "engram lifecycle session-end --host=codex"
 	for _, duplicateCompactEvent := range []string{"PreCompact", "PostCompact"} {
 		if len(manifest.Hooks[duplicateCompactEvent]) != 0 {
 			t.Fatalf("%s must not introduce a second compact-recovery path", duplicateCompactEvent)
@@ -165,6 +206,15 @@ func TestCodexLifecycleManifestUsesTheSameBoundedCoreCommandsOnUnixAndWindows(t 
 	}
 	if prompt.Timeout != 2 || prompt.AdditionalContextLimit != 1024 {
 		t.Fatalf("UserPromptSubmit timeout/limit = %d/%d, want 2/1024", prompt.Timeout, prompt.AdditionalContextLimit)
+	}
+	sessionEnd := singleCodexHook(t, manifest, "SessionEnd")
+	if sessionEnd.Command != sessionEndCommand || sessionEnd.CommandWindows != sessionEndCommand || sessionEnd.Timeout != 3 {
+		t.Fatalf("SessionEnd command/Windows/timeout = %q / %q / %d, want exact shared core command and timeout 3",
+			sessionEnd.Command, sessionEnd.CommandWindows, sessionEnd.Timeout)
+	}
+	stop := singleCodexHook(t, manifest, "Stop")
+	if strings.Contains(stop.Command, "session-end") || strings.Contains(stop.CommandWindows, "session-end") {
+		t.Fatalf("Stop must not close sessions: command=%q commandWindows=%q", stop.Command, stop.CommandWindows)
 	}
 }
 

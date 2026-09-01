@@ -17,7 +17,7 @@ The current repository already establishes several strong foundations:
 - the plugin skill is explicitly canonical, and its cue is extracted rather than duplicated ([skill](../../plugin/codex/skills/memory/SKILL.md#L8-L13), [snapshot helper](https://github.com/yersonargotev/engram/blob/79a90fbc3a68b053f8260e1d16d84e15606fc5ef/plugin/codex/scripts/_checkpoint.sh#L1-L31));
 - `(host, session_id, root_turn_id)` is an opaque, unique, local checkpoint key ([store](../../internal/store/checkpoint.go#L32-L42), [schema](../../internal/store/checkpoint.go#L96-L112));
 - `Stop` is already a four-line adapter into the core verifier ([stop.sh](../../plugin/codex/scripts/stop.sh#L1-L4)); and
-- `SessionEnd` only closes the session today; it does not create a Memory or summary ([session-end.sh](../../plugin/codex/scripts/session-end.sh#L1-L40)).
+- `SessionEnd` only closes the session today; it does not create a Memory or summary ([snapshot session-end.sh](https://github.com/yersonargotev/engram/blob/79a90fbc3a68b053f8260e1d16d84e15606fc5ef/plugin/codex/scripts/session-end.sh#L1-L40)).
 
 However, four exact policy conflicts should be fixed before calling the architecture unified:
 
@@ -183,7 +183,7 @@ Current lifecycle behavior is heavier than the target:
 - prompt submission saves the full prompt and separately emits opaque identity ([snapshot user-prompt-submit.sh](https://github.com/yersonargotev/engram/blob/79a90fbc3a68b053f8260e1d16d84e15606fc5ef/plugin/codex/scripts/user-prompt-submit.sh#L23-L55)).
 - subagent stop sends the whole last assistant message to passive capture ([snapshot subagent-stop.sh](https://github.com/yersonargotev/engram/blob/79a90fbc3a68b053f8260e1d16d84e15606fc5ef/plugin/codex/scripts/subagent-stop.sh#L18-L39)).
 - Stop delegates to the binary verifier ([stop.sh](../../plugin/codex/scripts/stop.sh#L1-L4)).
-- SessionEnd only marks the existing session ended ([session-end.sh](../../plugin/codex/scripts/session-end.sh#L26-L40)).
+- SessionEnd only marks the existing session ended ([snapshot session-end.sh](https://github.com/yersonargotev/engram/blob/79a90fbc3a68b053f8260e1d16d84e15606fc5ef/plugin/codex/scripts/session-end.sh#L26-L40)).
 
 The MCP `agent` profile exposes 20 tools, including session summary, prompt save, passive capture, checkpoint, and curation operations ([mcp.go](../../internal/mcp/mcp.go#L91-L145)). Server guidance independently mandates a session summary and proactive saves ([mcp.go](../../internal/mcp/mcp.go#L186-L215)). The repository `engram-memory-protocol` skill repeats the older immediate-save/session-summary policy. Together these are the main semantic drift.
 

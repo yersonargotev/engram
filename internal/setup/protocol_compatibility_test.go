@@ -37,47 +37,71 @@ func TestProtocolFixtureMatchesSetupCompatibilityCoordinates(t *testing.T) {
 	assertFileSHA256(t, filepath.Join("..", "..", "skills", "engram-memory-cli", "SKILL.md"), currentManagedPackSkillSHA256)
 	assertFileSHA256(t, filepath.Join("..", "..", "assets", "protocol-contract-v1.json"), currentManagedPackFixtureSHA256)
 	assertFileSHA256(t, filepath.Join("..", "..", "plugin", "codex", ".codex-plugin", "plugin.json"), currentCodexPluginManifestSHA256)
-	assertFileSHA256(t, filepath.Join("testdata", "managed-pack-3.2.0.json"), previousManagedPackManifestSHA256)
-	assertFileSHA256(t, filepath.Join("testdata", "protocol-contract-v1-pack-3.2.0.json"), previousManagedPackFixtureSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "managed-pack-3.3.0.json"), previousManagedPackManifestSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "protocol-contract-v1-pack-3.3.0.json"), previousManagedPackFixtureSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "managed-pack-3.2.0.json"), earlierManagedPackManifestSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "protocol-contract-v1-pack-3.2.0.json"), earlierManagedPackFixtureSHA256)
 	assertFileSHA256(t, filepath.Join("testdata", "managed-pack-3.1.2.json"), legacyManagedPackManifestSHA256)
 }
 
 func TestProtocolCompatibilityAcceptsVerifiedPreviousTupleDuringExpand(t *testing.T) {
-	resetSetupSeams(t)
-	bundleRoot := t.TempDir()
-	manifestPath := filepath.Join(bundleRoot, "packs", "engram", "pack.json")
-	previousManifest, err := os.ReadFile(filepath.Join("testdata", "managed-pack-3.2.0.json"))
-	if err != nil {
-		t.Fatalf("read previous Pack manifest: %v", err)
-	}
-	writeStatusTestFile(t, manifestPath, string(previousManifest))
-	previousFixture, err := os.ReadFile(filepath.Join("testdata", "protocol-contract-v1-pack-3.2.0.json"))
-	if err != nil {
-		t.Fatalf("read previous Protocol fixture: %v", err)
-	}
-	writeStatusTestFile(t, filepath.Join(bundleRoot, "assets", "protocol-contract-v1.json"), string(previousFixture))
-	skillPath := filepath.Join(bundleRoot, "skills", "engram-memory-cli", "SKILL.md")
-	packCheck := codexStatusCheck("skill", CodexCheckReady, "engram_skill_discovered", "ready",
-		codexEvidence("source", "standalone"),
-		codexEvidence("path", skillPath),
-		codexEvidence("sha256", previousManagedPackSkillSHA256),
-		codexEvidence("version", previousManagedPackVersion),
-	)
-	plugin := codexPluginInspection{
-		Check:    codexStatusCheck("plugin", CodexCheckReady, "plugin_ready", "ready"),
-		Revision: testReleaseCommit,
-		Capabilities: installedCodexPlugin{
-			Version:        previousCodexPluginVersion,
-			ManifestSHA256: previousCodexPluginManifestSHA256,
+	tests := []struct {
+		name        string
+		version     string
+		manifest    string
+		fixture     string
+		skillSHA256 string
+	}{
+		{
+			name: "pack 3.3.0", version: previousManagedPackVersion,
+			manifest: "managed-pack-3.3.0.json", fixture: "protocol-contract-v1-pack-3.3.0.json",
+			skillSHA256: previousManagedPackSkillSHA256,
+		},
+		{
+			name: "pack 3.2.0", version: earlierManagedPackVersion,
+			manifest: "managed-pack-3.2.0.json", fixture: "protocol-contract-v1-pack-3.2.0.json",
+			skillSHA256: earlierManagedPackSkillSHA256,
 		},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetSetupSeams(t)
+			bundleRoot := t.TempDir()
+			manifestPath := filepath.Join(bundleRoot, "packs", "engram", "pack.json")
+			manifest, err := os.ReadFile(filepath.Join("testdata", tt.manifest))
+			if err != nil {
+				t.Fatalf("read previous Pack manifest: %v", err)
+			}
+			writeStatusTestFile(t, manifestPath, string(manifest))
+			fixture, err := os.ReadFile(filepath.Join("testdata", tt.fixture))
+			if err != nil {
+				t.Fatalf("read previous Protocol fixture: %v", err)
+			}
+			writeStatusTestFile(t, filepath.Join(bundleRoot, "assets", "protocol-contract-v1.json"), string(fixture))
+			skillPath := filepath.Join(bundleRoot, "skills", "engram-memory-cli", "SKILL.md")
+			packCheck := codexStatusCheck("skill", CodexCheckReady, "engram_skill_discovered", "ready",
+				codexEvidence("source", "standalone"),
+				codexEvidence("path", skillPath),
+				codexEvidence("sha256", tt.skillSHA256),
+				codexEvidence("version", tt.version),
+			)
+			plugin := codexPluginInspection{
+				Check:    codexStatusCheck("plugin", CodexCheckReady, "plugin_ready", "ready"),
+				Revision: testReleaseCommit,
+				Capabilities: installedCodexPlugin{
+					Version:        previousCodexPluginVersion,
+					ManifestSHA256: previousCodexPluginManifestSHA256,
+				},
+			}
 
-	report := inspectCodexProtocolCompatibility("3.0.1", testReleaseCommit, "/opt/engram/bin/engram", []CodexIntegrationCheck{packCheck}, plugin)
-	if report.Status != protocolcontract.CompatibilityReady || report.ReasonCode != protocolcontract.ReasonLegacyCompatible || !report.Legacy {
-		t.Fatalf("previous compatibility = %#v", report)
-	}
-	if report.Intersection == nil || *report.Intersection != (protocolcontract.VersionRange{Minimum: 1, Maximum: 1}) {
-		t.Fatalf("previous intersection = %#v", report.Intersection)
+			report := inspectCodexProtocolCompatibility("3.0.1", testReleaseCommit, "/opt/engram/bin/engram", []CodexIntegrationCheck{packCheck}, plugin)
+			if report.Status != protocolcontract.CompatibilityReady || report.ReasonCode != protocolcontract.ReasonLegacyCompatible || !report.Legacy {
+				t.Fatalf("previous compatibility = %#v", report)
+			}
+			if report.Intersection == nil || *report.Intersection != (protocolcontract.VersionRange{Minimum: 1, Maximum: 1}) {
+				t.Fatalf("previous intersection = %#v", report.Intersection)
+			}
+		})
 	}
 }
 

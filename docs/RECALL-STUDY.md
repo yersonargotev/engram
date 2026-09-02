@@ -241,6 +241,10 @@ gates. It pins the exact verified canary tuple from source revision
 `105778d820029a2326043739fd676647e5c037f6`: Managed Pack `3.3.0`, binary
 `3.0.0`, Codex plugin `0.1.7`, and Protocol `1`, all with an inclusive Protocol
 range of `1..1`. The four pinned source artifacts carry exact SHA-256 digests.
+Their historical bytes are preserved under
+[`evals/recall-study/v1/source-snapshot/`](../evals/recall-study/v1/source-snapshot/)
+so the frozen outcome remains independently verifiable while the current
+Managed Pack and skill continue to evolve.
 
 This outcome is deliberately not a release or a general-availability
 qualification. It preserves the legacy-compatible expand path, all old owned
@@ -253,9 +257,10 @@ Verify the publication binding, the outcome trust anchor, the four-axis tuple,
 the exact Git revision, and regular-file membership at that revision without
 reading private evidence or mutating installation state. The outcome embeds the
 exact commit and the minimal Git tree bodies needed to reconstruct each path;
-the verifier recomputes commit, tree, and blob object IDs plus the independent
-SHA-256 file digests. This works from a shallow checkout or extracted source
-without fetching history:
+the verifier checks the preserved historical snapshot and recomputes commit,
+tree, and blob object IDs plus the independent SHA-256 file digests. It does not
+reinterpret the current checkout as the evaluated source. This works from a
+shallow checkout or extracted source without fetching history:
 
 ```bash
 engram recall-study verify-distribution \

@@ -2,6 +2,7 @@ package recallstudy
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,25 +10,27 @@ import (
 )
 
 type fakeCohortRunner struct {
-	study    *Study
-	manifest *Manifest
-	calls    int
+	study      *Study
+	manifest   *Manifest
+	calls      int
+	cleanups   int
+	cleanupErr error
 }
 
 type invalidCohortRunner struct{}
 
 func (*invalidCohortRunner) Close() error { return nil }
 
-func (*invalidCohortRunner) Run(context.Context, PlannedRun, TaskInput) (RunRow, error) {
-	return RunRow{}, &invalidExecutionError{reasonCode: "targeted_recall_not_observed"}
+func (*invalidCohortRunner) Run(context.Context, PlannedRun, TaskInput) (cohortRun, error) {
+	return cohortRun{Cleanup: func() error { return nil }}, &invalidExecutionError{reasonCode: "targeted_recall_not_observed"}
 }
 
 func (runner *fakeCohortRunner) Close() error { return nil }
 
-func (runner *fakeCohortRunner) Run(_ context.Context, planned PlannedRun, input TaskInput) (RunRow, error) {
+func (runner *fakeCohortRunner) Run(_ context.Context, planned PlannedRun, input TaskInput) (cohortRun, error) {
 	runner.calls++
 	if err := runner.study.VerifyTaskInput(runner.manifest, input); err != nil {
-		return RunRow{}, err
+		return cohortRun{}, err
 	}
 	row := RunRow{
 		RunID: planned.RunID, SamplingUnitID: planned.SamplingUnitID, TaskClass: planned.TaskClass,
@@ -42,7 +45,10 @@ func (runner *fakeCohortRunner) Run(_ context.Context, planned PlannedRun, input
 	if planned.Treatment == "targeted-recall" {
 		row.RecallLatencyMillis = 1
 	}
-	return row, nil
+	return cohortRun{Row: row, Cleanup: func() error {
+		runner.cleanups++
+		return runner.cleanupErr
+	}}, nil
 }
 
 func TestExecuteRejectsHeldOutBeforeSuccessfulCalibrationWithoutMaterializingEvidence(t *testing.T) {
@@ -111,8 +117,8 @@ func TestExecutePersistsVerifiedCalibrationRowsAndResumes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.PlannedRuns != 180 || result.ObservedRuns != 180 || !result.Complete || !result.NextStageReady || runner.calls != 180 {
-		t.Fatalf("first execution result=%#v calls=%d", result, runner.calls)
+	if result.PlannedRuns != 180 || result.ObservedRuns != 180 || !result.Complete || !result.NextStageReady || runner.calls != 180 || runner.cleanups != 180 {
+		t.Fatalf("first execution result=%#v calls=%d cleanups=%d", result, runner.calls, runner.cleanups)
 	}
 	info, err := os.Stat(output)
 	if err != nil || info.Mode().Perm() != 0o600 {
@@ -136,6 +142,41 @@ func TestExecutePersistsVerifiedCalibrationRowsAndResumes(t *testing.T) {
 	if result.ObservedRuns != 180 || resumed.calls != 0 {
 		t.Fatalf("resumed execution result=%#v calls=%d", result, resumed.calls)
 	}
+}
+
+func TestExecuteCleansCellOnlyAfterPrivateProgressIsDurable(t *testing.T) {
+	study, calibration, heldOut := verifiedStudy(t)
+	verification := VerificationInput{
+		Calibration: calibration, HeldOut: heldOut,
+		Compatibility: compatibleEvidence(study), Consent: consentEvidence(study, calibration, heldOut),
+	}
+	t.Run("persistence failure retains cell", func(t *testing.T) {
+		runner := &fakeCohortRunner{study: study, manifest: calibration}
+		_, err := study.Execute(context.Background(), ExecutionRequest{
+			Verification: verification, Cohort: calibration, OutputPath: filepath.Join(t.TempDir(), "rows.json"), runner: runner,
+			writeRows: func(string, any) error { return errors.New("persistence failed") },
+		})
+		if err == nil || !strings.Contains(err.Error(), "persist Recall study progress") {
+			t.Fatalf("Execute error = %v", err)
+		}
+		if runner.calls != 1 || runner.cleanups != 0 {
+			t.Fatalf("calls=%d cleanups=%d, want cell retained", runner.calls, runner.cleanups)
+		}
+	})
+	t.Run("cleanup failure follows persistence", func(t *testing.T) {
+		output := filepath.Join(t.TempDir(), "private", "rows.json")
+		runner := &fakeCohortRunner{study: study, manifest: calibration, cleanupErr: errors.New("cleanup failed")}
+		_, err := study.Execute(context.Background(), ExecutionRequest{
+			Verification: verification, Cohort: calibration, OutputPath: output, runner: runner,
+		})
+		if err == nil || !strings.Contains(err.Error(), "clean persisted Recall study cell") {
+			t.Fatalf("Execute error = %v", err)
+		}
+		rows, readErr := ReadRowSet(output)
+		if readErr != nil || len(rows.Rows) != 1 || runner.cleanups != 1 {
+			t.Fatalf("durable rows=%d readErr=%v cleanups=%d", len(rows.Rows), readErr, runner.cleanups)
+		}
+	})
 }
 
 func TestExecutePublishesContinueCanaryWithoutFabricatingRowsWhenTreatmentEvidenceIsInvalid(t *testing.T) {

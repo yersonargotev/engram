@@ -60,21 +60,28 @@ func TestProcessCohortRunnerExecutesOneFrozenMatchedBlock(t *testing.T) {
 			continue
 		}
 		input := frozenTaskInput(study.Contract, &calibration.Manifest, planned.SamplingUnitID, planned.TaskClass)
-		row, err := runner.Run(ctx, planned, input)
+		run, err := runner.Run(ctx, planned, input)
 		if err != nil {
 			var invalid *invalidExecutionError
 			if planned.Treatment == "targeted-recall" && errors.As(err, &invalid) && invalid.reasonCode == "targeted_recall_not_observed" {
+				if cleanupErr := run.Cleanup(); cleanupErr != nil {
+					t.Fatal(cleanupErr)
+				}
 				seen[planned.Treatment] = true
 				t.Log("targeted-recall: agent did not initiate Recall; calibration must continue-canary without opening held-out")
 				continue
 			}
 			t.Fatalf("%s treatment: %v", planned.Treatment, err)
 		}
+		row := run.Row
 		if row.Outcome != "completed" {
 			t.Fatalf("%s treatment outcome=%s omission=%s", planned.Treatment, row.Outcome, row.OmissionCode)
 		}
 		seen[planned.Treatment] = true
 		t.Logf("%s: task=%s results=%d checkpoint=%t stop_conflict_or_loop=%t", row.Treatment, row.TaskOutcome, row.RecallResultCount, row.CheckpointSucceeded, row.StopConflictOrLoop)
+		if err := run.Cleanup(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	wantTreatments := len(study.Contract.Treatments)
 	if treatmentFilter != "" {

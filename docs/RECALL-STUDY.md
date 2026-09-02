@@ -135,8 +135,12 @@ HOME/data/XDG/temp directories, the exact synthetic task input, the frozen
 model and reasoning effort, and a 900-second timeout. Only the fixture may
 change. Harness failures use frozen operational-failure codes and cannot carry
 residual metric or quality evidence. Private progress is rewritten atomically
-after every cell, so either cohort can resume from its strict `0600`
-`recall-study-rows-v1` file.
+after every cell; the disposable checkout and local agent state are removed
+only after that row is durable. A failed write retains the isolated cell for
+diagnosis. Recall result keys, explicit label sources, disagreements, unknown
+label dimensions, and false-empty reviews come from the content-free Store
+snapshot rather than from synthesized row evidence. Either cohort can resume
+from its strict `0600` `recall-study-rows-v1` file.
 
 ```bash
 RUNTIME=(

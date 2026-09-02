@@ -15,9 +15,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/yersonargotev/engram/internal/codexlifecycle"
 	"github.com/yersonargotev/engram/internal/protocolcontract"
 	"github.com/yersonargotev/engram/internal/recallbaseline"
 	"github.com/yersonargotev/engram/internal/store"
@@ -37,6 +39,20 @@ type processCohortRunner struct {
 	snapshot      string
 	binary        string
 	baseHome      string
+	activeCell    string
+}
+
+type studyInjectionEvidence struct {
+	expectedUTF8Bytes int64
+	broadResultKey    string
+}
+
+type studyRecallEvidence struct {
+	searchObserved   bool
+	resultKeys       []string
+	assessments      []Assessment
+	latencyMillis    float64
+	falseEmptyReview string
 }
 
 func newProcessCohortRunner(
@@ -101,73 +117,92 @@ func (runner *processCohortRunner) Close() error {
 	if runner == nil || runner.root == "" {
 		return nil
 	}
+	if runner.activeCell != "" {
+		return fmt.Errorf("Recall study retained unpersisted cell evidence at %s", runner.activeCell)
+	}
 	err := os.RemoveAll(runner.root)
 	runner.root = ""
 	return err
 }
 
-func (runner *processCohortRunner) Run(ctx context.Context, planned PlannedRun, input TaskInput) (RunRow, error) {
+func (runner *processCohortRunner) Run(ctx context.Context, planned PlannedRun, input TaskInput) (cohortRun, error) {
+	if runner.activeCell != "" {
+		return cohortRun{}, fmt.Errorf("Recall study runner still owns an unpersisted cell")
+	}
 	cellRoot, err := os.MkdirTemp(runner.root, "cell-")
 	if err != nil {
-		return RunRow{}, err
+		return cohortRun{}, err
 	}
-	defer os.RemoveAll(cellRoot)
+	runner.activeCell = cellRoot
+	cleanup := func() error {
+		if err := os.RemoveAll(cellRoot); err != nil {
+			return err
+		}
+		if runner.activeCell == cellRoot {
+			runner.activeCell = ""
+		}
+		return nil
+	}
+	failSetup := func(runErr error) (cohortRun, error) {
+		return cohortRun{}, errors.Join(runErr, cleanup())
+	}
+	completed := func(row RunRow) (cohortRun, error) {
+		return cohortRun{Row: row, Cleanup: cleanup}, nil
+	}
 	workspace := filepath.Join(cellRoot, "workspace")
 	if err := copyStudyTree(runner.snapshot, workspace); err != nil {
-		return RunRow{}, fmt.Errorf("copy Recall study source snapshot: %w", err)
+		return failSetup(fmt.Errorf("copy Recall study source snapshot: %w", err))
 	}
 	if err := initializeStudyWorkspace(ctx, workspace, runner.study.Contract.Repository.URL); err != nil {
-		return RunRow{}, err
+		return failSetup(err)
 	}
 	fixture := filepath.Join(workspace, filepath.FromSlash(input.FixturePath))
 	if err := os.MkdirAll(filepath.Dir(fixture), 0o755); err != nil {
-		return RunRow{}, err
+		return failSetup(err)
 	}
 	if err := os.WriteFile(fixture, []byte(input.FixtureUTF8), 0o600); err != nil {
-		return RunRow{}, err
+		return failSetup(err)
 	}
 	fixtureBytes, err := os.ReadFile(fixture)
 	if err != nil || !bytes.Equal(fixtureBytes, []byte(input.FixtureUTF8)) {
-		return operationalFailureRow(planned, "fixture_integrity_mismatch"), nil
+		return completed(operationalFailureRow(planned, "fixture_integrity_mismatch"))
 	}
 	if err := runner.study.VerifyTaskInput(runner.manifest, input); err != nil {
-		return operationalFailureRow(planned, "fixture_integrity_mismatch"), nil
+		return completed(operationalFailureRow(planned, "fixture_integrity_mismatch"))
 	}
 
-	state := filepath.Join(cellRoot, "state")
-	home := filepath.Join(state, "home")
-	dataDir := filepath.Join(state, "engram-data")
-	toolsDir := filepath.Join(state, "tools")
-	for _, path := range []string{home, dataDir, toolsDir, filepath.Join(state, "tmp"), filepath.Join(state, "xdg-config"), filepath.Join(state, "xdg-cache"), filepath.Join(state, "xdg-data")} {
+	harnessState := filepath.Join(cellRoot, "harness")
+	modelState := filepath.Join(cellRoot, "model")
+	home := filepath.Join(harnessState, "home")
+	dataDir := filepath.Join(harnessState, "engram-data")
+	toolsDir := filepath.Join(harnessState, "tools")
+	for _, path := range []string{home, dataDir, toolsDir, filepath.Join(modelState, "tmp"), filepath.Join(modelState, "xdg-config"), filepath.Join(modelState, "xdg-cache"), filepath.Join(modelState, "xdg-data")} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
-			return RunRow{}, err
+			return failSetup(err)
 		}
 	}
 	if err := copyStudyTree(runner.baseHome, home); err != nil {
-		return RunRow{}, fmt.Errorf("copy Recall study Codex home: %w", err)
+		return failSetup(fmt.Errorf("copy Recall study Codex home: %w", err))
 	}
-	if err := runner.seedSyntheticMemory(ctx, workspace, dataDir, input); err != nil {
-		return RunRow{}, err
+	broadContext, err := runner.seedSyntheticMemory(ctx, workspace, dataDir, input)
+	if err != nil {
+		return failSetup(err)
+	}
+	injection, err := runner.injectionEvidence(planned, broadContext)
+	if err != nil {
+		return failSetup(err)
 	}
 	if err := writeStudyEngramWrapper(filepath.Join(toolsDir, "engram"), runner.binary, dataDir, planned.Treatment); err != nil {
-		return RunRow{}, err
+		return failSetup(err)
 	}
 
-	finalMessagePath := filepath.Join(state, "final-message.txt")
-	arguments := []string{
-		"exec", "--ephemeral", "--ignore-rules", "--json",
-		"--model", runner.study.Contract.Model.Name,
-		"--sandbox", "workspace-write", "--cd", workspace, "--add-dir", state,
-		"--output-last-message", finalMessagePath, "--dangerously-bypass-hook-trust",
-		"--config", `approval_policy="never"`,
-		"--config", fmt.Sprintf(`model_reasoning_effort=%q`, runner.study.Contract.Model.ReasoningEffort),
-		"--config", `shell_environment_policy.inherit="all"`, "-",
-	}
+	finalMessagePath := filepath.Join(harnessState, "final-message.txt")
+	arguments := runner.codexArguments(workspace, finalMessagePath)
 	cellContext, cancel := context.WithTimeout(ctx, studyRunTimeout)
 	defer cancel()
 	command := exec.CommandContext(cellContext, runner.runtime.CodexBinary, arguments...)
 	command.Dir = workspace
-	command.Env = studyProcessEnvironment(home, toolsDir, state)
+	command.Env = studyProcessEnvironment(home, toolsDir, modelState)
 	command.Stdin = strings.NewReader(input.InstructionUTF8)
 	stdout := &studyBoundedBuffer{maximum: maxStudyProcessBytes}
 	stderr := &studyBoundedBuffer{maximum: maxStudyProcessBytes}
@@ -176,24 +211,36 @@ func (runner *processCohortRunner) Run(ctx context.Context, planned PlannedRun, 
 	commandErr := command.Run()
 	elapsed := time.Since(started)
 	if errors.Is(cellContext.Err(), context.DeadlineExceeded) {
-		return operationalFailureRow(planned, "runner_timeout"), nil
+		return completed(operationalFailureRow(planned, "runner_timeout"))
 	}
 	if commandErr != nil || stdout.exceeded || stderr.exceeded {
-		return operationalFailureRow(planned, "runner_process_failed"), nil
+		return completed(operationalFailureRow(planned, "runner_process_failed"))
 	}
 	finalMessage, err := os.ReadFile(finalMessagePath)
 	if err != nil || len(finalMessage) > maxStudyProcessBytes {
-		return operationalFailureRow(planned, "runner_process_failed"), nil
+		return completed(operationalFailureRow(planned, "runner_process_failed"))
 	}
 	passed, err := verifyStudyTaskResult(workspace, input, finalMessage, stdout.Bytes())
 	if err != nil {
-		return RunRow{}, err
+		return cohortRun{Cleanup: cleanup}, err
 	}
-	row, err := runner.collectRow(planned, dataDir, elapsed, passed)
+	row, err := runner.collectRow(planned, dataDir, elapsed, passed, injection)
 	if err != nil {
-		return RunRow{}, fmt.Errorf("collect Recall study evidence: %w", err)
+		return cohortRun{Cleanup: cleanup}, fmt.Errorf("collect Recall study evidence: %w", err)
 	}
-	return row, nil
+	return completed(row)
+}
+
+func (runner *processCohortRunner) codexArguments(workspace, finalMessagePath string) []string {
+	return []string{
+		"exec", "--ephemeral", "--ignore-rules", "--json",
+		"--model", runner.study.Contract.Model.Name,
+		"--sandbox", "workspace-write", "--cd", workspace,
+		"--output-last-message", finalMessagePath, "--dangerously-bypass-hook-trust",
+		"--config", `approval_policy="never"`,
+		"--config", fmt.Sprintf(`model_reasoning_effort=%q`, runner.study.Contract.Model.ReasoningEffort),
+		"--config", `shell_environment_policy.inherit="all"`, "-",
+	}
 }
 
 func (runner *processCohortRunner) prepareCodexHome(ctx context.Context) error {
@@ -229,19 +276,53 @@ func (runner *processCohortRunner) prepareCodexHome(ctx context.Context) error {
 	return nil
 }
 
-func (runner *processCohortRunner) seedSyntheticMemory(ctx context.Context, workspace, dataDir string, input TaskInput) error {
+func (runner *processCohortRunner) seedSyntheticMemory(ctx context.Context, workspace, dataDir string, input TaskInput) (string, error) {
 	content := "What: Synthetic Recall study evidence for " + input.SamplingUnitID + " is " + strings.TrimSpace(input.ExpectedResultUTF8) +
 		".\nWhy: It measures a consented disposable treatment without user or session content.\nWhere: recall study fixture " + input.FixturePath + ".\nLearned: This Memory is synthetic and must be deleted with the cell."
 	command := exec.CommandContext(ctx, runner.binary, "save", "--title", "Synthetic Recall study "+input.SamplingUnitID, "--content", content, "--project", "engram", "--json")
 	command.Dir = workspace
 	command.Env = append(studyProcessEnvironment(filepath.Join(filepath.Dir(dataDir), "seed-home"), "", filepath.Dir(dataDir)), "ENGRAM_DATA_DIR="+dataDir, "ENGRAM_PROJECT=engram")
 	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("seed Recall study Memory: %w: %s", err, strings.TrimSpace(string(output)))
+		return "", fmt.Errorf("seed Recall study Memory: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	return nil
+	localStore, err := store.New(store.FallbackConfig(dataDir))
+	if err != nil {
+		return "", err
+	}
+	context, contextErr := localStore.FormatContext("engram", "")
+	closeErr := localStore.Close()
+	if contextErr != nil || closeErr != nil {
+		return "", errors.Join(contextErr, closeErr)
+	}
+	if strings.TrimSpace(context) == "" {
+		return "", fmt.Errorf("synthetic Recall study Memory did not produce broad context")
+	}
+	return context, nil
 }
 
-func (runner *processCohortRunner) collectRow(planned PlannedRun, dataDir string, elapsed time.Duration, taskPassed bool) (RunRow, error) {
+func (runner *processCohortRunner) injectionEvidence(planned PlannedRun, broadContext string) (studyInjectionEvidence, error) {
+	cue, err := codexlifecycle.ReadCanonicalCue(filepath.Join(runner.snapshot, "plugin", "codex"))
+	if err != nil {
+		return studyInjectionEvidence{}, err
+	}
+	if strings.TrimSpace(broadContext) == "" {
+		return studyInjectionEvidence{}, fmt.Errorf("Recall study broad context evidence is unavailable")
+	}
+	extra := ""
+	if planned.Treatment == "broad-chronological" {
+		extra = broadContext
+	}
+	modelContext, truncated := codexlifecycle.BuildModelContext(cue, extra, codexlifecycle.MaxInjectedUTF8Bytes)
+	if planned.Treatment == "broad-chronological" && truncated {
+		return studyInjectionEvidence{}, fmt.Errorf("Recall study broad context exceeds the frozen injection budget")
+	}
+	return studyInjectionEvidence{
+		expectedUTF8Bytes: int64(len(modelContext)),
+		broadResultKey:    studyFileDigest("recall-study-broad-exposure-v1\x00" + broadContext),
+	}, nil
+}
+
+func (runner *processCohortRunner) collectRow(planned PlannedRun, dataDir string, elapsed time.Duration, taskPassed bool, injection studyInjectionEvidence) (RunRow, error) {
 	var lifecycle recallbaseline.LifecycleReport
 	var start recallbaseline.OperationReport
 	deadline := time.Now().Add(2 * time.Second)
@@ -269,6 +350,9 @@ func (runner *processCohortRunner) collectRow(planned PlannedRun, dataDir string
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
+	if start.TotalUTF8Bytes != injection.expectedUTF8Bytes {
+		return RunRow{}, &invalidExecutionError{reasonCode: "session_start_treatment_mismatch"}
+	}
 
 	cfg := store.FallbackConfig(dataDir)
 	localStore, err := store.New(cfg)
@@ -280,17 +364,9 @@ func (runner *processCohortRunner) collectRow(planned PlannedRun, dataDir string
 	if snapshotErr != nil || closeErr != nil {
 		return RunRow{}, errors.Join(snapshotErr, closeErr)
 	}
-	resultCount, recallLatency, searchObserved := 0, float64(0), false
-	for _, operation := range snapshot.Operations {
-		if operation.Operation != "search" {
-			continue
-		}
-		searchObserved = true
-		resultCount += operation.ExposedResults
-		if operation.ElapsedMonotonicMS == nil {
-			return RunRow{}, fmt.Errorf("Recall study search latency is unavailable")
-		}
-		recallLatency += float64(*operation.ElapsedMonotonicMS)
+	recall, err := deriveStudyRecallEvidence(snapshot)
+	if err != nil {
+		return RunRow{}, err
 	}
 
 	row := RunRow{
@@ -306,31 +382,121 @@ func (runner *processCohortRunner) collectRow(planned PlannedRun, dataDir string
 	}
 	switch planned.Treatment {
 	case "broad-chronological":
-		if searchObserved {
+		if recall.searchObserved {
 			return RunRow{}, &invalidExecutionError{reasonCode: "broad_targeted_recall_observed"}
 		}
 		row.RecallResultCount = 1
-		row.Assessments = []Assessment{{ResultKey: studyResultKey(planned.RunID, 0), Utility: "duplicate", Quality: "current", Source: "evaluator"}}
+		row.Assessments = []Assessment{{ResultKey: injection.broadResultKey, Utility: "duplicate", Quality: "current", Source: "evaluator"}}
 	case "targeted-recall":
-		if !searchObserved || recallLatency <= 0 {
+		if !recall.searchObserved || recall.latencyMillis <= 0 {
 			return RunRow{}, &invalidExecutionError{reasonCode: "targeted_recall_not_observed"}
 		}
-		row.RecallResultCount = resultCount
-		row.RecallLatencyMillis = recallLatency
-		if resultCount == 0 {
-			row.FalseEmptyReview = "unknown"
-		}
-		for index := 0; index < resultCount; index++ {
-			row.Assessments = append(row.Assessments, Assessment{ResultKey: studyResultKey(planned.RunID, index), Utility: "duplicate", Quality: "current", Source: "evaluator"})
-		}
+		row.RecallResultCount = len(recall.resultKeys)
+		row.RecallLatencyMillis = recall.latencyMillis
+		row.Assessments = recall.assessments
+		row.FalseEmptyReview = recall.falseEmptyReview
 	case "no-recall":
-		if searchObserved {
+		if recall.searchObserved {
 			return RunRow{}, &invalidExecutionError{reasonCode: "no_recall_treatment_contaminated"}
 		}
 	default:
 		return RunRow{}, fmt.Errorf("Recall study treatment is unknown")
 	}
 	return row, validateRunRow(row)
+}
+
+func deriveStudyRecallEvidence(snapshot *store.RecallFeedbackReportSnapshot) (studyRecallEvidence, error) {
+	evidence := studyRecallEvidence{falseEmptyReview: "not_applicable"}
+	var searchOperations []store.RecallFeedbackOperationalMetric
+	for _, operation := range snapshot.Operations {
+		if operation.Operation == "search" {
+			evidence.searchObserved = true
+			searchOperations = append(searchOperations, operation)
+		}
+	}
+	if !evidence.searchObserved {
+		return evidence, nil
+	}
+	if len(snapshot.Runs) == 0 || len(snapshot.Runs) != len(searchOperations) {
+		return studyRecallEvidence{}, &invalidExecutionError{reasonCode: "targeted_recall_attribution_unavailable"}
+	}
+	runKeys := make(map[string]bool, len(snapshot.Runs))
+	exposuresByRun := make(map[string]int, len(snapshot.Runs))
+	wantExposures := 0
+	for index, run := range snapshot.Runs {
+		operation := searchOperations[index]
+		if run.RunKey == "" || run.ResultCount < 0 || run.ElapsedMonotonicMS == nil || *run.ElapsedMonotonicMS <= 0 ||
+			runKeys[run.RunKey] || operation.ExposedResults != run.ResultCount || operation.ElapsedMonotonicMS == nil ||
+			*operation.ElapsedMonotonicMS != *run.ElapsedMonotonicMS {
+			return studyRecallEvidence{}, fmt.Errorf("Recall study search evidence is invalid")
+		}
+		runKeys[run.RunKey] = true
+		wantExposures += run.ResultCount
+		evidence.latencyMillis += float64(*run.ElapsedMonotonicMS)
+	}
+	exposureKeys := make(map[string]bool)
+	observedExposures := 0
+	for _, exposure := range snapshot.Exposures {
+		if !runKeys[exposure.RunKey] || exposure.MemoryKey == "" {
+			continue
+		}
+		observedExposures++
+		exposuresByRun[exposure.RunKey]++
+		exposureKeys[exposure.MemoryKey] = true
+	}
+	if observedExposures != wantExposures {
+		return studyRecallEvidence{}, fmt.Errorf("Recall study exposure evidence is incomplete")
+	}
+	for _, run := range snapshot.Runs {
+		if exposuresByRun[run.RunKey] != run.ResultCount {
+			return studyRecallEvidence{}, fmt.Errorf("Recall study exposure attribution is inconsistent")
+		}
+	}
+	for key := range exposureKeys {
+		evidence.resultKeys = append(evidence.resultKeys, key)
+	}
+	sort.Strings(evidence.resultKeys)
+	for _, label := range snapshot.Labels {
+		if !runKeys[label.RunKey] || !exposureKeys[label.MemoryKey] {
+			continue
+		}
+		utility, quality := label.Utility, label.Quality
+		if utility == "" {
+			utility = "unknown"
+		}
+		if quality == "" {
+			quality = "unknown"
+		}
+		evidence.assessments = append(evidence.assessments, Assessment{
+			ResultKey: label.MemoryKey, Utility: utility, Quality: quality, Source: label.Source,
+		})
+	}
+	sort.Slice(evidence.assessments, func(i, j int) bool {
+		left, right := evidence.assessments[i], evidence.assessments[j]
+		return left.ResultKey+"\x00"+left.Source+"\x00"+left.Utility+"\x00"+left.Quality <
+			right.ResultKey+"\x00"+right.Source+"\x00"+right.Utility+"\x00"+right.Quality
+	})
+	if len(evidence.resultKeys) == 0 {
+		evidence.falseEmptyReview = "unknown"
+		confirmed, rejected := false, false
+		for _, review := range snapshot.EmptyReviews {
+			if !runKeys[review.RunKey] {
+				continue
+			}
+			if review.Value {
+				confirmed = true
+			} else {
+				rejected = true
+			}
+		}
+		switch {
+		case confirmed && !rejected:
+			evidence.falseEmptyReview = "confirmed"
+		case rejected && !confirmed:
+			evidence.falseEmptyReview = "rejected"
+		}
+	}
+	return evidence, nil
 }
 
 func operationalFailureRow(planned PlannedRun, code string) RunRow {
@@ -373,9 +539,11 @@ func verifyStudyTaskResult(workspace string, input TaskInput, finalMessage, even
 }
 
 func studyTaskOutputMatches(finalMessage, eventStream, expected []byte) bool {
-	if equalStudyJSON(finalMessage, expected) {
-		return true
+	var expectedValue any
+	if decodeStrictJSON(expected, &expectedValue) != nil {
+		return false
 	}
+	var observed []any
 	for _, line := range bytes.Split(eventStream, []byte{'\n'}) {
 		var event struct {
 			Type string `json:"type"`
@@ -387,11 +555,16 @@ func studyTaskOutputMatches(finalMessage, eventStream, expected []byte) bool {
 		if json.Unmarshal(line, &event) != nil || event.Type != "item.completed" || event.Item.Type != "agent_message" {
 			continue
 		}
-		if equalStudyJSON([]byte(event.Item.Text), expected) {
-			return true
+		var value any
+		if decodeStrictJSON([]byte(event.Item.Text), &value) == nil {
+			observed = append(observed, value)
 		}
 	}
-	return false
+	var finalValue any
+	if decodeStrictJSON(finalMessage, &finalValue) == nil && (len(observed) == 0 || !reflect.DeepEqual(finalValue, observed[len(observed)-1])) {
+		observed = append(observed, finalValue)
+	}
+	return len(observed) == 1 && reflect.DeepEqual(observed[0], expectedValue)
 }
 
 func equalStudyJSON(actual, expected []byte) bool {
@@ -618,10 +791,6 @@ func shellStudyQuote(value string) string {
 func studyFileDigest(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])
-}
-
-func studyResultKey(runID string, index int) string {
-	return studyFileDigest(fmt.Sprintf("recall-study-result-v1\x00%s\x00%d", runID, index))
 }
 
 type studyBoundedBuffer struct {

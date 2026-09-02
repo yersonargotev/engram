@@ -9,8 +9,13 @@ import (
 )
 
 type cohortRunner interface {
-	Run(context.Context, PlannedRun, TaskInput) (RunRow, error)
+	Run(context.Context, PlannedRun, TaskInput) (cohortRun, error)
 	Close() error
+}
+
+type cohortRun struct {
+	Row     RunRow
+	Cleanup func() error
 }
 
 type invalidExecutionError struct {
@@ -39,7 +44,8 @@ type ExecutionRequest struct {
 	OutputPath      string
 	Runtime         ExecutionRuntime
 
-	runner cohortRunner
+	runner    cohortRunner
+	writeRows func(string, any) error
 }
 
 // ExecutionResult reports private progress without exposing task or row content.
@@ -118,6 +124,10 @@ func (study *Study) Execute(ctx context.Context, request ExecutionRequest) (resu
 	defer func() {
 		err = errors.Join(err, runner.Close())
 	}()
+	writeRows := request.writeRows
+	if writeRows == nil {
+		writeRows = WritePrivateJSON
+	}
 	for _, planned := range plan {
 		if _, complete := observed[planned.RunID]; complete {
 			continue
@@ -126,10 +136,15 @@ func (study *Study) Execute(ctx context.Context, request ExecutionRequest) (resu
 		if err := study.VerifyTaskInput(request.Cohort, input); err != nil {
 			return ExecutionResult{}, err
 		}
-		row, err := runner.Run(ctx, planned, input)
+		run, err := runner.Run(ctx, planned, input)
 		if err != nil {
 			var invalid *invalidExecutionError
 			if errors.As(err, &invalid) {
+				if run.Cleanup != nil {
+					if cleanupErr := run.Cleanup(); cleanupErr != nil {
+						return ExecutionResult{}, errors.Join(err, cleanupErr)
+					}
+				}
 				return ExecutionResult{
 					CohortID: request.Cohort.CohortID, PlannedRuns: len(plan), ObservedRuns: len(rows.Rows),
 					Disposition: DispositionContinueCanary, ReasonCode: invalid.reasonCode,
@@ -137,14 +152,20 @@ func (study *Study) Execute(ctx context.Context, request ExecutionRequest) (resu
 			}
 			return ExecutionResult{}, err
 		}
-		if err := validateExecutedRow(planned, row); err != nil {
+		if run.Cleanup == nil {
+			return ExecutionResult{}, fmt.Errorf("Recall study runner did not transfer cell cleanup ownership")
+		}
+		if err := validateExecutedRow(planned, run.Row); err != nil {
 			return ExecutionResult{}, err
 		}
-		rows.Rows = append(rows.Rows, row)
-		observed[planned.RunID] = row
+		rows.Rows = append(rows.Rows, run.Row)
+		observed[planned.RunID] = run.Row
 		rows.Rows = orderedExecutionRows(plan, observed)
-		if err := WritePrivateJSON(request.OutputPath, rows); err != nil {
+		if err := writeRows(request.OutputPath, rows); err != nil {
 			return ExecutionResult{}, fmt.Errorf("persist Recall study progress: %w", err)
+		}
+		if err := run.Cleanup(); err != nil {
+			return ExecutionResult{}, fmt.Errorf("clean persisted Recall study cell: %w", err)
 		}
 	}
 	return study.executionResult(rows, plan)

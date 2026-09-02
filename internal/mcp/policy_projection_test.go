@@ -105,6 +105,38 @@ func TestCanonicalAndRepositorySkillsShareTerminalMemoryAuthority(t *testing.T) 
 	}
 }
 
+func TestCLISkillUsesRecordResultAsNormalCheckpointCompletionSignal(t *testing.T) {
+	content := readPolicyProjection(t, filepath.Join("..", ".."), "skills/engram-memory-cli/SKILL.md")
+	normalized := strings.Join(strings.Fields(content), " ")
+	for _, required := range []string{
+		"Normal finalization ends on the `checkpoint record` result.",
+		"`created` or a same-disposition `already_recorded` proves completion.",
+		"Reserve `checkpoint status` for explicit inspection or an ambiguous process or transport outcome",
+		"the record result is the routine completion signal.",
+	} {
+		if !strings.Contains(normalized, required) {
+			t.Errorf("CLI skill missing checkpoint completion guidance %q", required)
+		}
+	}
+
+	skippedStart := strings.Index(content, "4. When the rubric finds no durable result")
+	skippedEnd := strings.Index(content, "5. Use `needs_review`")
+	if skippedStart == -1 || skippedEnd <= skippedStart {
+		t.Fatal("CLI skill is missing the bounded skipped-checkpoint branch")
+	}
+	skipped := content[skippedStart:skippedEnd]
+	for _, required := range []string{"--disposition skipped", "--reason no_durable_knowledge"} {
+		if !strings.Contains(skipped, required) {
+			t.Errorf("skipped-checkpoint branch missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"--project", "--memory-id", "--memory-json", "--proposal-json"} {
+		if strings.Contains(skipped, forbidden) {
+			t.Errorf("skipped-checkpoint branch contains unsupported flag %q", forbidden)
+		}
+	}
+}
+
 func TestAgentPolicyProjectionsPublishBoundedAuthorityAwareRecall(t *testing.T) {
 	root := filepath.Join("..", "..")
 	paths := []string{

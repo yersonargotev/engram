@@ -12,16 +12,20 @@ import (
 )
 
 const (
-	currentManagedPackVersion         = "3.3.0"
-	currentManagedPackManifestSHA256  = "9bed746986c705191d806c4a298e480becf251bd12189a5b191a8c9862169a74"
-	currentManagedPackSkillSHA256     = "5e8e94eeea4dc6fb2d389999f0de92b1182784f6700bb89332f1040295c0b3a9"
-	currentManagedPackFixtureSHA256   = "d6998bc1e053878410487dddae05de39839590f0bd9335c73fcbdd7f5aff2c54"
+	currentManagedPackVersion         = "3.3.1"
+	currentManagedPackManifestSHA256  = "fa6732a12ce2de5e00b1e905e129aa079cb0e4ac51029ffe5499af9aaf2eb8a7"
+	currentManagedPackSkillSHA256     = "e37b45dbfa8c26c398d7cdbf996354433f1505f6054a1129122c48a2b830009f"
+	currentManagedPackFixtureSHA256   = "f07359a3a85176e760aab858bf14e2f9a914ed86a3c7bdd4526385bd49862ace"
 	currentCodexPluginVersion         = "0.1.7"
 	currentCodexPluginManifestSHA256  = "8fd6699d834beab9a8188ee51e273156f5db02aec4694bc3458db382a17a23b1"
-	previousManagedPackVersion        = "3.2.0"
-	previousManagedPackManifestSHA256 = "eea49916d97af47f8cf61ab7d40c7b11b1858c65d740dd663ee756766e064a6c"
-	previousManagedPackSkillSHA256    = "817248be55234f3c7dbb31f4890886e251c1e430cc61d35dd60ef5215e8ec6a6"
-	previousManagedPackFixtureSHA256  = "ee15977473bff7af95b92c68da61eb2bc6e9aafeb277a29421ecb48d166981e7"
+	previousManagedPackVersion        = "3.3.0"
+	previousManagedPackManifestSHA256 = "9bed746986c705191d806c4a298e480becf251bd12189a5b191a8c9862169a74"
+	previousManagedPackSkillSHA256    = "5e8e94eeea4dc6fb2d389999f0de92b1182784f6700bb89332f1040295c0b3a9"
+	previousManagedPackFixtureSHA256  = "d6998bc1e053878410487dddae05de39839590f0bd9335c73fcbdd7f5aff2c54"
+	earlierManagedPackVersion         = "3.2.0"
+	earlierManagedPackManifestSHA256  = "eea49916d97af47f8cf61ab7d40c7b11b1858c65d740dd663ee756766e064a6c"
+	earlierManagedPackSkillSHA256     = "817248be55234f3c7dbb31f4890886e251c1e430cc61d35dd60ef5215e8ec6a6"
+	earlierManagedPackFixtureSHA256   = "ee15977473bff7af95b92c68da61eb2bc6e9aafeb277a29421ecb48d166981e7"
 	previousCodexPluginVersion        = "0.1.6"
 	previousCodexPluginManifestSHA256 = "865cb2032025ca958d99f4adb073aa1d8e89081ffef53ed8cf736fb569ff3302"
 	legacyManagedPackVersion          = "3.1.2"
@@ -53,6 +57,12 @@ func trustedManagedPack(version string) (trustedManagedPackCoordinate, bool) {
 			manifestSHA256: previousManagedPackManifestSHA256,
 			skillSHA256:    previousManagedPackSkillSHA256,
 			fixtureSHA256:  previousManagedPackFixtureSHA256,
+		}, true
+	case earlierManagedPackVersion:
+		return trustedManagedPackCoordinate{
+			manifestSHA256: earlierManagedPackManifestSHA256,
+			skillSHA256:    earlierManagedPackSkillSHA256,
+			fixtureSHA256:  earlierManagedPackFixtureSHA256,
 		}, true
 	case legacyManagedPackVersion:
 		return trustedManagedPackCoordinate{

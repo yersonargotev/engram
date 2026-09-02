@@ -2,6 +2,7 @@ package recallstudy
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -257,6 +258,74 @@ func TestGitRevisionProofParsersRejectMalformedObjects(t *testing.T) {
 		if _, err := parseGitTree(body); err == nil {
 			t.Fatalf("malformed tree parsed: %q", body)
 		}
+	}
+}
+
+func TestVerifyDistributionRevisionProofRejectsSemanticTreeDrift(t *testing.T) {
+	fileBody := []byte("verified source artifact\n")
+	blobID := gitObjectID("blob", fileBody)
+	tests := []struct {
+		name         string
+		artifactPath string
+		rootEntries  []syntheticGitTreeEntry
+		want         string
+	}{
+		{name: "intermediate blob", artifactPath: "dir/file", rootEntries: []syntheticGitTreeEntry{{Mode: "100644", Name: "dir", ObjectID: blobID}}, want: "is not a tree"},
+		{name: "terminal symlink", artifactPath: "file", rootEntries: []syntheticGitTreeEntry{{Mode: "120000", Name: "file", ObjectID: blobID}}, want: "is not a regular file"},
+		{name: "terminal gitlink", artifactPath: "file", rootEntries: []syntheticGitTreeEntry{{Mode: "160000", Name: "file", ObjectID: strings.Repeat("1", 40)}}, want: "is not a regular file"},
+		{name: "absent path", artifactPath: "file", rootEntries: []syntheticGitTreeEntry{{Mode: "100644", Name: "other", ObjectID: blobID}}, want: "omits file"},
+		{name: "duplicate name", artifactPath: "file", rootEntries: []syntheticGitTreeEntry{{Mode: "100644", Name: "file", ObjectID: blobID}, {Mode: "100644", Name: "file", ObjectID: blobID}}, want: "entry is duplicated"},
+		{name: "missing working file", artifactPath: "file", rootEntries: []syntheticGitTreeEntry{{Mode: "100644", Name: "file", ObjectID: blobID}}, want: "read Recall distribution source artifact"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			revision, proof := syntheticRevisionProof(t, test.rootEntries)
+			artifacts := []DistributionArtifact{{Name: "synthetic", Path: test.artifactPath, SHA256: digestForTest(fileBody)}}
+			if err := verifyDistributionRevisionProof(root, revision, artifacts, proof); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("semantic tree drift error = %v, want %q", err, test.want)
+			}
+		})
+	}
+
+	t.Run("regular file", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "file"), fileBody, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		revision, proof := syntheticRevisionProof(t, []syntheticGitTreeEntry{{Mode: "100644", Name: "file", ObjectID: blobID}})
+		artifacts := []DistributionArtifact{{Name: "synthetic", Path: "file", SHA256: digestForTest(fileBody)}}
+		if err := verifyDistributionRevisionProof(root, revision, artifacts, proof); err != nil {
+			t.Fatalf("synthetic regular file proof = %v", err)
+		}
+	})
+}
+
+type syntheticGitTreeEntry struct {
+	Mode, Name, ObjectID string
+}
+
+func syntheticRevisionProof(t *testing.T, entries []syntheticGitTreeEntry) (string, DistributionRevisionProof) {
+	t.Helper()
+	var treeBody []byte
+	for _, entry := range entries {
+		objectID, err := hex.DecodeString(entry.ObjectID)
+		if err != nil || len(objectID) != 20 {
+			t.Fatalf("synthetic object ID %q: %v", entry.ObjectID, err)
+		}
+		treeBody = append(treeBody, []byte(entry.Mode+" "+entry.Name)...)
+		treeBody = append(treeBody, 0)
+		treeBody = append(treeBody, objectID...)
+	}
+	treeID := gitObjectID("tree", treeBody)
+	commitBody := []byte("tree " + treeID + "\n\nsynthetic revision proof\n")
+	return gitObjectID("commit", commitBody), DistributionRevisionProof{
+		SchemaVersion: DistributionRevisionProofSchema,
+		ObjectFormat:  "sha1",
+		CommitBase64:  base64.StdEncoding.EncodeToString(commitBody),
+		Trees: []DistributionRevisionProofTree{{
+			ObjectID: treeID, BodyBase64: base64.StdEncoding.EncodeToString(treeBody),
+		}},
 	}
 }
 

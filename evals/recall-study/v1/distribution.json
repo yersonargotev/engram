@@ -1,0 +1,61 @@
+{
+  "schema_version": "recall-distribution-outcome-v1",
+  "study_id": "codex-useful-recall",
+  "study_version": "v1",
+  "contract_sha256": "66c9911ce50bcab491d62662e41b2c7f73ffc872f45559aa27acccd09a3ef723",
+  "publication_sha256": "f928da2da8603765f87a6161179a9f07b152b4886ea651a224cf94e34c44b8cf",
+  "disposition": "continue_canary",
+  "action": "preserve_verified_tuple",
+  "rollout_enabled": false,
+  "release_required": false,
+  "legacy_contraction_allowed": false,
+  "legacy_prompt_archive_action": "preserve",
+  "local_schemas_participating_by_default": false,
+  "selected_compatibility": {
+    "revisions": {
+      "managed_pack": {"version": "3.3.0", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+      "engram_binary": {"version": "3.0.0", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+      "codex_plugin": {"version": "0.1.7", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+      "protocol_contract": {"version": "1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+      "telemetry_schema": {"version": "recall-baseline-events-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+      "capture_schema": {"version": "diagnostic-capture-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+      "policy": {"version": "recall-policy-v1", "revision": "sha256:a5e3aa9c438e2efc3d4bd11e9e636ef231a3e9dc0468af9062e15426f93b9af1"},
+      "metric": {"version": "recall-study-metrics-v1", "revision": "sha256:78a701966e15a5bc6fb00ade131f95c49b2ca6af4ce17e06fbef185202c20eaa"},
+      "source": {"version": "105778d820029a2326043739fd676647e5c037f6", "revision": "105778d820029a2326043739fd676647e5c037f6"}
+    },
+    "compatibility": {
+      "schema_version": "protocol-compatibility-v1",
+      "status": "ready",
+      "reason_code": "legacy_compatible",
+      "reason": "The tuple is compatible through a verified legacy expand path.",
+      "axes": [
+        {"name": "managed_pack", "version": "3.3.0", "provenance": "repository:https://github.com/yersonargotev/engram.git#revision:105778d820029a2326043739fd676647e5c037f6", "supported_protocol": {"minimum": 1, "maximum": 1}, "status": "ready", "reason_code": "managed_pack_ready", "legacy": true},
+        {"name": "engram_binary", "version": "3.0.0", "provenance": "repository:https://github.com/yersonargotev/engram.git#revision:105778d820029a2326043739fd676647e5c037f6", "supported_protocol": {"minimum": 1, "maximum": 1}, "status": "ready", "reason_code": "engram_binary_ready", "legacy": true},
+        {"name": "codex_plugin", "version": "0.1.7", "provenance": "repository:https://github.com/yersonargotev/engram.git#revision:105778d820029a2326043739fd676647e5c037f6", "supported_protocol": {"minimum": 1, "maximum": 1}, "status": "ready", "reason_code": "codex_plugin_ready", "legacy": true},
+        {"name": "protocol_contract", "version": "1", "provenance": "engram-core", "supported_protocol": {"minimum": 1, "maximum": 1}, "status": "ready", "reason_code": "protocol_contract_ready"}
+      ],
+      "protocol_intersection": {"minimum": 1, "maximum": 1},
+      "legacy": true
+    }
+  },
+  "source_revision_proof": {
+    "schema_version": "git-object-membership-proof-v1",
+    "object_format": "sha1",
+    "commit_base64": "dHJlZSBkM2MyZGM2NzNmNzc3OTcyM2Y5YTY3MTFlMjBjOWMyYjM2ZDAwOTlmCnBhcmVudCBiYWUxMGE0ODI1MWMxYmVhNTFiMDYyNjI4NWNjNTJmZDE0ODc2Mzc3CmF1dGhvciBZZXJzb24gQXJnb3RlIDwxMzE1NDA4OTUreWVyc29uYXJnb3RldkB1c2Vycy5ub3JlcGx5LmdpdGh1Yi5jb20+IDE3ODgyOTM1MjMgLTA1MDAKY29tbWl0dGVyIEdpdEh1YiA8bm9yZXBseUBnaXRodWIuY29tPiAxNzg4MjkzNTIzIC0wNTAwCmdwZ3NpZyAtLS0tLUJFR0lOIFBHUCBTSUdOQVRVUkUtLS0tLQogCiB3c0ZjQkFBQkNBQVFCUUpxbHpHVENSQzFhUTd1dTVVaGxBQUFubFFRQUJ2SEVsZDJpTnh0RUhzTEh0Y2s1TERLCiAySCt1bmYvS05JQzRyUVVsZmp2U25xa29pbnp2WStBcjVHemgrKzRYSkFTdUhteE84aE9HSEF1SEMxelIwMmdMCiBHd21JNXdYMnZGdlFsTmp3MkUwM21GY2tRRFljNGlHVyt4Y2xDL0ZLRGhwNFIyTzUvTFZ1elJkZGhMaFloNkhUCiBWdGVMdW92aTF4bTVKeTUyeUxYL1NMT3NrVmxmVjBHWkhkVmNOdDU3ZnRHN2Jha2U5ZXl2QUt6SzJqUTNTRUtNCiBjcGN6aGs5L3ZkYWt1Zzh5MG5RYThRZzh3Vk0vNVF1bzRRbnJKdEZZQUU1ZXc5RjlzUDdqNytkV3Z6eUU4Rk1oCiBvU3dZSU9jL3ZEL2Y0QytoalN2ZzFPNWhtaUc4WlR6ZEJzQzloUm45cmQwc0VoUkk0MStPSkxkZ3JuUDdGMmdMCiBKS3pMcHVRZWpXR2tsdTdRbytnV3ArT1V1MTA4WFhCTFZaSkRQQ0VJNEZRa1k3UVltVjc4VERYRjRWOGtMYXRRCiAra1NPM1hiM0xRTHljdG9ZT1ZnNjI2aFNQV1lQeVJKM2NSaEh5ZXZZTnk4MkcyQWtoSC9JeDRDNk9rQU9NdFJ0CiA0OE0rb1RRNWdyZGwrdEVrZzU5MEwzTHZXbU43UzgyVzE0ZWlsT0g2U3BzK1o0cFgxWmlWMWhjZlRvWUxDRHdICiBLQWtDenRYUUc4REFkRTlzNGcwaUxmSUUyQkl5WXk2bWVoYjdpaXFpVU4rWFJwaFZlaGNuWXJBeHpQWlo5QWxVCiBSNWlHZE9lVkNFRWxaZkhDbEkzTmZzYzFrT29Oc3gvMEoxbEQvQi91WG5rQ1M1ZzZTdTc4ZXNDeXlhNnlTa2ZGCiAyWWpRcGVON253ckc0R0lRUE9YZwogPUdtTUkKIC0tLS0tRU5EIFBHUCBTSUdOQVRVUkUtLS0tLQogCgpmZWF0KGNvZGV4KTogY2FuYXJ5IGN1ZS1vbmx5IGxpZmVjeWNsZSB3aXRoIHRhcmdldGVkIFJlY2FsbCAoIzEyMykKCkNsb3NlcyAjMTA4Lg==",
+    "trees": [
+      {"object_id": "d3c2dc673f7779723f9a6711e20c9c2b36d0099f", "body_base64": "NDAwMDAgLmFnZW50cwAw7GDtek7llyeQ46FJBggOYhm4QDQwMDAwIC5jbGF1ZGUtcGx1Z2luAPrYu1oNMEKxeYjlGLqLVYsDHbZpNDAwMDAgLmNvZGVncmFwaAD16PnxYvJoOAnn/XhJJrxsFCJxDzQwMDAwIC5kZXZjb250YWluZXIAw8SJZet/kiwaOLj3hG3zZ0bZkls0MDAwMCAuZW5ncmFtALSO6atYuLDFuUuT3QH/3eydHw8YNDAwMDAgLmdpdGh1YgBtPYrj6wpDSk7/s4wqAAztnSNL8zEwMDY0NCAuZ2l0aWdub3JlADHxTtKlY0WyYZFTIg5/cjoRbmCGMTAwNjQ0IC5nb3JlbGVhc2VyLnlhbWwABgRotc19Lh2cFFDCugXe0w3XKR8xMDA2NDQgLm5wbXJjAFc/NgxvcxE0IwEFYMLK9zONC7NlNDAwMDAgLndpbmRzdXJmAI0hPCid2eJdYND//beJl+qs4S+ZMTAwNjQ0IEFHRU5UUy5tZAA22PAvWSOKXrhKXVS8FX7daymvZTEwMDY0NCBDSEFOR0VMT0cubWQAGct5imAQPYUe1h6owGAEy+Hlx+MxMDA2NDQgQ09ERU9XTkVSUwBV/MB6rK06cLkn/xLkEPngE7An9TEwMDY0NCBDT05URVhULm1kAHOpjnqhgyyxgUTOKgfbrlZE17OZMTAwNjQ0IENPTlRSSUJVVElORy5tZAAgu8HfScgJnrbXJeVRG5Y9BSC1OzEwMDY0NCBET0NTLm1kAK4wQDclCC0DLQGDa8HeroC5NED4MTAwNjQ0IExJQ0VOU0UAX6ydhvNBuLFs0rv292pQPZzyasgxMDA2NDQgTWFrZWZpbGUA725gqW6/d0ElGW/KaDZQqiwg2+QxMDA2NDQgUkVBRE1FLm1kAGjh7YZV5oLb9PBJXn3b1nPTUfPsMTAwNjQ0IFNFQ1VSSVRZLm1kAPbuqg9tf3UUaEuTV5lLelH/k8qcMTAwNjQ0IFRSQURFTUFSS1MubWQAzswxs7ByJWw9RdQaXeoQZ19OqvU0MDAwMCBhc3NldHMAjM5DsOlSnAYgaFCCdUXXpy8EwUo0MDAwMCBjbWQA7hgx90d/UFgQp+6XE5nAWv9GAPQxMDA2NDQgZG9ja2VyLWNvbXBvc2UuYmV0YS55bWwACTtATkXgEWpFGCXD6NDW2fnsTe4xMDA2NDQgZG9ja2VyLWNvbXBvc2UuY2xvdWQueW1sAKUWuEmTVf+tqSlKkcXTSxk8glNSNDAwMDAgZG9ja2VyAFOBdh7OOYiDS5L6E3BrB/e/83SHNDAwMDAgZG9jcwAw9GwhhTugVx3mZKras/6OvJ6kJjQwMDAwIGV2YWxzAEnaVFEFlFXfb3JQswKA+Pv7JSp7MTAwNjQ0IGdvLm1vZAACICOI+FSaIHZsNvUV5Vt0MKzxCzEwMDY0NCBnby5zdW0A0vl9hq+zWvUKyH79J/MxxG7MTQM0MDAwMCBpbnRlcm5hbADf51WSiQ5u5H+o7l46uq7FH34WCjQwMDAwIG5vdGljZXMAn1YKurHFSF1THWHolrGotQH68ks0MDAwMCBvcGVuc3BlYwDqzA05zRDGXmNGHD+kMxhkCT1TBjEwMDY0NCBwYWNrLmpzb24A3EQB+/FL8IHlconq/eu/lSeCv7Q0MDAwMCBwbHVnaW4AeXHOKAtcXWRZ2YFPh6nzWXEKfE0xMDA3NTUgc2V0dXAuc2gAydQizEiurpVhi7eYZugnBDmJfbI0MDAwMCBza2lsbHMAd9yUPrx3pKOR3OoUruZ/E3wJkG80MDAwMCB0b29scwBv/rdwdmGKIttGLVjYMSncwsNByA=="},
+      {"object_id": "77dc943ebc77a4a391dcea14aee67f137c09906f", "body_base64": "NDAwMDAgYXJjaGl0ZWN0dXJlLWd1YXJkcmFpbHMAcH6XQ160wKw4unl4C87TXEXtItQ0MDAwMCBiYWNrbG9nLXRyaWFnZQBpW0Skp5lhygmny4EQzHL6iYi7TDQwMDAwIGJyYW5jaC1wcgC0A3MR0EqqYgHYMLhCWBAxQEz16jQwMDAwIGJ1c2luZXNzLXJ1bGVzADM/ah5sP+CMRfb1I+Yc6DKsCceUMTAwNjQ0IGNhdGFsb2cubWQAFvdsKUUbnkJp7tjie1dI6tFBfzA0MDAwMCBjb21taXQtaHlnaWVuZQBrqFBBbDbI/VIADRuKWMCbaAVOUzQwMDAwIGN1bHR1cmFsLW5vcm1zAFbky0fhKK1DyPtA7UbGgcu455GiNDAwMDAgZGFzaGJvYXJkLWh0bXgA/23/CjjNDJ2xU8mSG2wafjdKu5s0MDAwMCBkb2NzLWFsaWdubWVudABpCSpxAsYdeH1tBfxNg3df+3klzTQwMDAwIGVuZ3JhbS1tZW1vcnktY2xpAMr1SRoNxo3DNbpvhVC/880kqjDCNDAwMDAgZ2VudGxlbWFuLWJ1YmJsZXRlYQAOS4DLpvaTGn/MaDSr3JQrmAlKDTQwMDAwIGlzc3VlLWNyZWF0aW9uACBbc2lgbShmJkFkl6Wm6TbgewQqNDAwMDAgbWVtb3J5LXByb3RvY29sACG88WfLLM6+m/J2Mv9K/N4coEM6NDAwMDAgcGx1Z2luLXRoaW4AA7Tq+QMA+7fqOUGbl3mI2I1332M0MDAwMCBwci1yZXZpZXctZGVlcAAYFjGpE97LutCzE1+OB1FPI/RDdDQwMDAwIHByb2plY3Qtc3RydWN0dXJlAPkNfc6UcR33FvbQTWklx3MlTwqdNDAwMDAgc2RkLWZsb3cAgrg722igQ6r9I7VizvGF+zxVwOU0MDAwMCBzZXJ2ZXItYXBpAFGE1Ds3mwkdjg2pLiuXjS9gIMCDNDAwMDAgdGVzdGluZy1jb3ZlcmFnZQAfzKdLlSSMHtvTlNSGzDNy7OriWzQwMDAwIHR1aS1xdWFsaXR5AApSJ5I5m3zc6emrlt9nM0c23lDINDAwMDAgdWktZWxlbWVudHMAzFfVIsvxF7/HFUrRZGcvCA9uQ2s0MDAwMCB2aXN1YWwtbGFuZ3VhZ2UAMjFhcZzYDClKo0lrw832BhaH7xY="},
+      {"object_id": "caf5491a0dc68dc335ba6f8550bff3cd24aa30c2", "body_base64": "MTAwNjQ0IFNLSUxMLm1kAOMp5I+cpP86c5oRfTW3lSyS8AQ/NDAwMDAgYWdlbnRzACJqcYqX43kNPo8ZRljaRfWgoOXZNDAwMDAgcmVmZXJlbmNlcwCrleAQIhno61tJOr52Op4wFp14nA=="},
+      {"object_id": "8cce43b0e9529c06206850827545d7a72f04c14a", "body_base64": "MTAwNjQ0IGFnZW50LXNhdmUucG5nAPU0kACbwo9VdSeQoF5x5MgEtBhXNDAwMDAgYnJhbmRpbmcAGN1WyDe2PUsaC1fHNmJs2NFu7KwxMDA2NDQgcHJvdG9jb2wtY29udHJhY3QtdjEuanNvbgANKq3Ij7JTZBUVgHPVFBBZ5XRY+DEwMDY0NCB0dWktZGFzaGJvYXJkLnBuZwBU46/F5UMiZ8ZJmJt45Y5V3KLxPjEwMDY0NCB0dWktZGV0YWlsLnBuZwDfoc6oJ5w/CQ6gL7E4HiJp4/wnXzEwMDY0NCB0dWktcmVjZW50LnBuZwBCQlik8kj9aTAuquoJwc28MhEsEDEwMDY0NCB0dWktc2VhcmNoLnBuZwDT1t0w4uNB3Xa4JSKnoJ3RO/aZ7A=="},
+      {"object_id": "7971ce280b5c5d6459d9814f87a9f359710a7c4d", "body_base64": "MTAwNjQ0IGFzc2V0c190ZXN0LmdvANzlfV9YfGttIMGBLo0p/QpXupL1MTAwNjQ0IGNhbm9uaWNhbF9wcm9qZWN0X3Jlc29sdXRpb25fdGVzdC5nbwC907SRds2Xlk3Y46UDFfM3HscVRDQwMDAwIGNsYXVkZS1jb2RlAALjv6UF8Kqo7V+JPQAvGEqEOEzaMTAwNjQ0IGNsYXVkZV9jb2RlX3dpbmRvd3NfdXNlcl9wcm9tcHRfdGVzdC5nbwAtjOpGgvWL26/lb0ysl9Jy5+3ByTQwMDAwIGNvZGV4AB19bhatIfAomDMCNqNFDlAMXBkpMTAwNjQ0IGNvZGV4X2NoZWNrcG9pbnRfYWN0aXZhdGlvbl90ZXN0LmdvAArBkrXt4yv68AP08jcaZ97JtSI1MTAwNjQ0IGNvZGV4X2NoZWNrcG9pbnRfc3RvcF90ZXN0LmdvAF7J+wORKAh26XUA91WsAxQscx5QMTAwNjQ0IGNvZGV4X2NoZWNrcG9pbnRfc3RvcF93aW5kb3dzX3Rlc3QuZ28AZu14OuilIUPkLHi6gD7tnGYs5AUxMDA2NDQgY29kZXhfbGlmZWN5Y2xlX3dpbmRvd3NfdGVzdC5nbwAOq10LeHMTrFcJft6aI0ynli5BujEwMDY0NCBjb2RleF9yZWNhbGxfYmFzZWxpbmVfdGVzdC5nbwAFTm0q5RFplm9RTF0KMqRCSchgNTEwMDY0NCBjb2RleF90ZXN0X2hlbHBlcnNfdGVzdC5nbwCxcGLeyJDtTTOT+rNmfGLZJh4iGjEwMDY0NCBob29rc19xdW90aW5nX3Rlc3QuZ28ATQ19ZqGUgFRZgD9CnpSPQfPYIb80MDAwMCBvYnNpZGlhbgAV6O/SWK/4gcWnIEJwtrsSeMci9jQwMDAwIG9wZW5jb2RlAHaRncHC6lVWcIFIRKuXwCrqiV0eNDAwMDAgcGkA404Vn4jEtThjgMrM5SdrQp5gSxIxMDA2NDQgc3ViYWdlbnRfY2FwdHVyZV91bml4X3Rlc3QuZ28Auo5w/am03O8VSd/CXBoQ/WCa4L0xMDA2NDQgc3ViYWdlbnRfY2FwdHVyZV93aW5kb3dzX3Rlc3QuZ28Aka5BVZNosnLGKKEy41lKlbDYEAM="},
+      {"object_id": "1d7d6e16ad21f02898330236a3450e500c5c1929", "body_base64": "NDAwMDAgLmNvZGV4LXBsdWdpbgD2q1jf/um/sbD4z8Qr+EWKCRHdnzEwMDY0NCAubWNwLmpzb24Adl/wD6M9zN6L8Bo5GePuRuO2/kI0MDAwMCBob29rcwCeX10NirWj7c8EABEsDdd/jQdzXTQwMDAwIHNjcmlwdHMAsaqg7Xzd5xvuSwuhXaLgIEnQf4g0MDAwMCBza2lsbHMAGa+5KgIBY/dP+B8z0CkRRl+Cyw4="},
+      {"object_id": "f6ab58dffee9bfb1b0f8cfc42bf8458a0911dd9f", "body_base64": "MTAwNjQ0IHBsdWdpbi5qc29uALC8yLqIqPsqyqIxg2e9Jr8ouZi3"}
+    ]
+  },
+  "source_artifacts": [
+    {"name": "managed_pack_manifest", "path": "pack.json", "sha256": "9bed746986c705191d806c4a298e480becf251bd12189a5b191a8c9862169a74"},
+    {"name": "managed_pack_skill", "path": "skills/engram-memory-cli/SKILL.md", "sha256": "5e8e94eeea4dc6fb2d389999f0de92b1182784f6700bb89332f1040295c0b3a9"},
+    {"name": "protocol_fixture", "path": "assets/protocol-contract-v1.json", "sha256": "d6998bc1e053878410487dddae05de39839590f0bd9335c73fcbdd7f5aff2c54"},
+    {"name": "codex_plugin_manifest", "path": "plugin/codex/.codex-plugin/plugin.json", "sha256": "8fd6699d834beab9a8188ee51e273156f5db02aec4694bc3458db382a17a23b1"}
+  ]
+}

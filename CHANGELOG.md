@@ -41,6 +41,7 @@ Breaking changes are always marked with a `type:breaking-change` label and docum
 - **feat(codex):** enforce terminal root-turn checkpoints on Unix and Windows with one synchronous `Stop` verifier, one identity-preserving recovery continuation, loop prevention, visible integration failures, and exact installed-asset verification.
 - **chore(codex):** retire exact-owned legacy instruction and compaction activation through recoverable staging only after the canonical skill, cue, checkpoint CLI/MCP adapters, and Stop verifier are ready; preserve customized or ambiguous state and keep failed upgrades on the prior working path.
 - **feat(protocol):** expose Core-owned Protocol contract v1, distribute one parity fixture, declare Managed Pack and Codex plugin support ranges, and gate read-only Codex readiness on the attributable four-axis range intersection. The current and exact prior tuples report `legacy_compatible` because this slice does not change Recall, Capture, MCP-profile, or checkpoint defaults.
+- **feat(distribution):** apply the frozen `continue_canary` Recall disposition as a content-addressed, read-only-verifiable outcome that pins the exact evaluated four-axis tuple without release, rollout, legacy contraction, or local-schema participation. A self-contained Git commit/tree membership proof binds the declared source revision to the exact files even in shallow or extracted source, while post-install readiness remains a separate, explicit check.
 
 ### Memory core
 

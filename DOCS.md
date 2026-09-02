@@ -95,7 +95,15 @@ fixture, instruction, verifier, and expected-result commitments prevent task
 substitution. Operational failures require frozen codes and reject residual
 metric or quality evidence; zero-success arms remain reportable with unavailable
 value populations marked explicitly. See [Paired Recall
-study](docs/RECALL-STUDY.md).
+study](docs/RECALL-STUDY.md). `verify-distribution` is the separate read-only
+terminal mode: it binds the immutable publication to one content-addressed
+outcome, verifies the pinned four-axis Compatibility tuple, reconstructs its
+exact Git commit/tree membership from embedded object bodies, and checks that
+the supplied source artifacts are the blobs committed at that revision. The
+self-contained proof works in shallow or extracted source without network or
+repository mutation. The result reports post-install readiness as `not_verified`;
+use `engram setup status codex --json` for that independent installed-state
+check.
 
 Core curated-memory operations:
 

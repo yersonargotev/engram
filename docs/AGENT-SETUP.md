@@ -513,6 +513,16 @@ JSON output uses the additive schema `codex-integration-status-v1`. Its `compati
 
 The expand path recognizes the exact legacy Managed Pack `3.1.2` and Codex plugin `0.1.5` fingerprints as Protocol v1 declarations. It also preserves the verified previous Pack `3.2.0` and plugin `0.1.6` coordinates. The current Managed Pack `3.3.0`, binary contract, and Codex plugin `0.1.7` project the terminal Memory policy and five-tool agent profile while still declaring `legacy_compatible`; later Capture and lifecycle slices remain independently staged. A mixed upgrade remains ready while every attributable range still intersects. Status does not rewrite that installation, and an unknown artifact with the same version is not admitted by version alone. Remove the legacy flag only after every remaining projection satisfies the target contract.
 
+The frozen v1 evaluation selected `continue_canary`, so the applied distribution
+outcome pins that current legacy-compatible tuple as a unit and authorizes no
+release, rollout, downgrade, or legacy-path contraction. Use the read-only
+`engram recall-study verify-distribution` command described in
+[`RECALL-STUDY.md`](RECALL-STUDY.md) to verify its exact Git revision and source
+hashes. Its embedded Git object membership proof requires neither full local
+history nor network access. That source-outcome check does not claim anything
+about the current installation: verify post-install readiness independently with
+`engram setup status codex --json`.
+
 Status describes installed capability only. It is not evidence that Codex loaded or invoked a skill, that hooks ran in the current session, or that the model created a Memory. Use session and checkpoint evidence for those claims.
 
 ### Checkpoint activation contract

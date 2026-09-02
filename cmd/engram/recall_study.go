@@ -24,6 +24,18 @@ type recallStudyFlags struct {
 	JSONMode                                     bool
 }
 
+type recallStudyDistributionFlags struct {
+	ContractPath, ContractHashPath         string
+	PublicationPath                        string
+	DistributionPath, DistributionHashPath string
+	SourceRepo                             string
+	JSONMode                               bool
+}
+
+type recallStudyRequiredFlag struct {
+	Name, Value string
+}
+
 type recallStudyInputs struct {
 	study             *recallstudy.Study
 	calibration       *recallstudy.Manifest
@@ -45,13 +57,16 @@ type recallStudyRunPlan struct {
 func cmdRecallStudy() {
 	jsonMode := hasArg("--json")
 	if len(os.Args) < 3 {
-		failCLI(jsonMode, "invalid_arguments", "recall-study requires verify, dry-run, plan-calibration, report, run-calibration, run-held-out, or publish", nil)
+		failCLI(jsonMode, "invalid_arguments", "recall-study requires verify, dry-run, plan-calibration, report, run-calibration, run-held-out, publish, or verify-distribution", nil)
 		return
 	}
 	subcommand := strings.ToLower(strings.TrimSpace(os.Args[2]))
 	switch subcommand {
 	case "help", "--help", "-h":
 		printRecallStudyUsage()
+		return
+	case "verify-distribution":
+		cmdRecallStudyVerifyDistribution(os.Args[3:])
 		return
 	case "verify", "dry-run", "plan-calibration", "report", "run-calibration", "run-held-out", "publish":
 	default:
@@ -185,6 +200,52 @@ func cmdRecallStudy() {
 	}
 }
 
+func cmdRecallStudyVerifyDistribution(args []string) {
+	flags := recallStudyDistributionFlags{}
+	set := flag.NewFlagSet("recall-study verify-distribution", flag.ContinueOnError)
+	set.SetOutput(io.Discard)
+	set.StringVar(&flags.ContractPath, "contract", "", "frozen contract JSON")
+	set.StringVar(&flags.ContractHashPath, "contract-hash", "", "frozen contract SHA-256 sidecar")
+	set.StringVar(&flags.PublicationPath, "publication", "", "immutable study publication JSON")
+	set.StringVar(&flags.DistributionPath, "distribution", "", "content-addressed distribution outcome JSON")
+	set.StringVar(&flags.DistributionHashPath, "distribution-hash", "", "distribution outcome SHA-256 sidecar")
+	set.StringVar(&flags.SourceRepo, "source-repo", "", "source repository containing the pinned artifacts")
+	set.BoolVar(&flags.JSONMode, "json", false, "emit JSON")
+	if !parseRecallStudyFlagSet(set, args, &flags.JSONMode) {
+		return
+	}
+	required := []recallStudyRequiredFlag{
+		{Name: "--contract", Value: flags.ContractPath}, {Name: "--contract-hash", Value: flags.ContractHashPath},
+		{Name: "--publication", Value: flags.PublicationPath}, {Name: "--distribution", Value: flags.DistributionPath},
+		{Name: "--distribution-hash", Value: flags.DistributionHashPath}, {Name: "--source-repo", Value: flags.SourceRepo},
+	}
+	if !requireRecallStudyFlags(flags.JSONMode, "verify-distribution", required) {
+		return
+	}
+
+	study, err := recallstudy.Load(flags.ContractPath, flags.ContractHashPath)
+	if err != nil {
+		failCLI(flags.JSONMode, "invalid_recall_study_contract", err.Error(), nil)
+		return
+	}
+	publication, err := recallstudy.LoadPublication(flags.PublicationPath)
+	if err != nil {
+		failCLI(flags.JSONMode, "invalid_recall_study_publication", err.Error(), nil)
+		return
+	}
+	outcome, err := recallstudy.LoadDistributionOutcome(flags.DistributionPath, flags.DistributionHashPath)
+	if err != nil {
+		failCLI(flags.JSONMode, "invalid_recall_distribution", err.Error(), nil)
+		return
+	}
+	verification, err := study.VerifyDistributionOutcome(publication, outcome, flags.SourceRepo)
+	if err != nil {
+		failCLI(flags.JSONMode, "recall_distribution_verification_failed", err.Error(), nil)
+		return
+	}
+	writeRecallStudyResult(flags.JSONMode, verification)
+}
+
 func parseRecallStudyFlags(subcommand string, args []string) (recallStudyFlags, bool) {
 	flags := recallStudyFlags{}
 	set := flag.NewFlagSet("recall-study "+subcommand, flag.ContinueOnError)
@@ -218,10 +279,49 @@ func parseRecallStudyFlags(subcommand string, args []string) (recallStudyFlags, 
 	if subcommand == "publish" {
 		set.StringVar(&flags.HeldOutRowsPath, "held-out-rows", "", "private held-out rows JSON")
 	}
+	if !parseRecallStudyFlagSet(set, args, &flags.JSONMode) {
+		return flags, false
+	}
+	required := []recallStudyRequiredFlag{
+		{Name: "--contract", Value: flags.ContractPath}, {Name: "--contract-hash", Value: flags.ContractHashPath},
+		{Name: "--calibration-manifest", Value: flags.CalibrationManifestPath}, {Name: "--calibration-hash", Value: flags.CalibrationHashPath},
+		{Name: "--held-out-manifest", Value: flags.HeldOutManifestPath}, {Name: "--held-out-hash", Value: flags.HeldOutHashPath},
+		{Name: "--environment", Value: flags.EnvironmentPath}, {Name: "--consent", Value: flags.ConsentPath},
+	}
+	if subcommand == "plan-calibration" {
+		required = append(required, recallStudyRequiredFlag{Name: "--output", Value: flags.OutputPath})
+	}
+	if subcommand == "report" {
+		required = append(required, recallStudyRequiredFlag{Name: "--rows", Value: flags.RowsPath})
+	}
+	if subcommand == "run-calibration" || subcommand == "run-held-out" {
+		required = append(required,
+			recallStudyRequiredFlag{Name: "--source-repo", Value: flags.SourceRepo},
+			recallStudyRequiredFlag{Name: "--codex-binary", Value: flags.CodexBinary},
+			recallStudyRequiredFlag{Name: "--auth-file", Value: flags.AuthFile},
+			recallStudyRequiredFlag{Name: "--output", Value: flags.OutputPath},
+		)
+	}
+	if subcommand == "run-held-out" || subcommand == "publish" {
+		required = append(required, recallStudyRequiredFlag{Name: "--calibration-rows", Value: flags.CalibrationRowsPath})
+	}
+	if subcommand == "publish" {
+		required = append(required,
+			recallStudyRequiredFlag{Name: "--held-out-rows", Value: flags.HeldOutRowsPath},
+			recallStudyRequiredFlag{Name: "--output", Value: flags.OutputPath},
+		)
+	}
+	if !requireRecallStudyFlags(flags.JSONMode, subcommand, required) {
+		return flags, false
+	}
+	return flags, true
+}
+
+func parseRecallStudyFlagSet(set *flag.FlagSet, args []string, jsonMode *bool) bool {
 	if err := set.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			printRecallStudyUsage()
-			return flags, false
+			return false
 		}
 		code := "invalid_arguments"
 		message := err.Error()
@@ -230,45 +330,24 @@ func parseRecallStudyFlags(subcommand string, args []string) (recallStudyFlags, 
 			name := strings.TrimSpace(strings.TrimPrefix(message, "flag provided but not defined:"))
 			message = "unknown recall-study flag -" + name
 		}
-		failCLI(hasArg("--json"), code, message, nil)
-		return flags, false
+		failCLI(*jsonMode || hasArg("--json"), code, message, nil)
+		return false
 	}
 	if set.NArg() != 0 {
-		failCLI(flags.JSONMode, "invalid_arguments", fmt.Sprintf("unexpected recall-study argument %q", set.Arg(0)), nil)
-		return flags, false
+		failCLI(*jsonMode, "invalid_arguments", fmt.Sprintf("unexpected recall-study argument %q", set.Arg(0)), nil)
+		return false
 	}
-	required := map[string]string{
-		"--contract": flags.ContractPath, "--contract-hash": flags.ContractHashPath,
-		"--calibration-manifest": flags.CalibrationManifestPath, "--calibration-hash": flags.CalibrationHashPath,
-		"--held-out-manifest": flags.HeldOutManifestPath, "--held-out-hash": flags.HeldOutHashPath,
-		"--environment": flags.EnvironmentPath, "--consent": flags.ConsentPath,
-	}
-	if subcommand == "plan-calibration" {
-		required["--output"] = flags.OutputPath
-	}
-	if subcommand == "report" {
-		required["--rows"] = flags.RowsPath
-	}
-	if subcommand == "run-calibration" || subcommand == "run-held-out" {
-		required["--source-repo"] = flags.SourceRepo
-		required["--codex-binary"] = flags.CodexBinary
-		required["--auth-file"] = flags.AuthFile
-		required["--output"] = flags.OutputPath
-	}
-	if subcommand == "run-held-out" || subcommand == "publish" {
-		required["--calibration-rows"] = flags.CalibrationRowsPath
-	}
-	if subcommand == "publish" {
-		required["--held-out-rows"] = flags.HeldOutRowsPath
-		required["--output"] = flags.OutputPath
-	}
-	for name, value := range required {
-		if strings.TrimSpace(value) == "" {
-			failCLI(flags.JSONMode, "invalid_arguments", "recall-study "+subcommand+" requires "+name, nil)
-			return flags, false
+	return true
+}
+
+func requireRecallStudyFlags(jsonMode bool, subcommand string, required []recallStudyRequiredFlag) bool {
+	for _, requiredFlag := range required {
+		if strings.TrimSpace(requiredFlag.Value) == "" {
+			failCLI(jsonMode, "invalid_arguments", "recall-study "+subcommand+" requires "+requiredFlag.Name, nil)
+			return false
 		}
 	}
-	return flags, true
+	return true
 }
 
 func loadRecallStudyInputs(flags recallStudyFlags) (recallStudyInputs, bool) {
@@ -343,10 +422,12 @@ func writeRecallStudyResult(jsonMode bool, value any) {
 }
 
 func printRecallStudyUsage() {
-	fmt.Println(`usage: engram recall-study verify|dry-run|plan-calibration|report|run-calibration|run-held-out|publish [options]
+	fmt.Println(`usage: engram recall-study verify|dry-run|plan-calibration|report|run-calibration|run-held-out|publish|verify-distribution [options]
 
-All commands require the frozen contract, both manifest metadata files and their
-SHA-256 sidecars, a verified Compatibility tuple, and explicit consent evidence.
+Execution, planning, report, and publication commands require the frozen
+contract, both manifest metadata files and their SHA-256 sidecars, a verified
+Compatibility tuple, and explicit consent evidence. verify-distribution uses
+only the public contract, publication, applied outcome, and pinned source tree.
 
   verify         Validate frozen metadata without opening held-out inputs
   dry-run        Return aggregate plan counts without opening held-out inputs
@@ -354,5 +435,6 @@ SHA-256 sidecars, a verified Compatibility tuple, and explicit consent evidence.
   report            Derive aggregate evidence from calibration --rows
   run-calibration   Execute or resume the frozen private calibration cohort
   run-held-out      Execute or resume held-out after successful --calibration-rows
-  publish           Write one aggregate-only disposition from both private row sets`)
+  publish           Write one aggregate-only disposition from both private row sets
+  verify-distribution  Verify the frozen applied disposition and pinned source artifacts without mutation`)
 }

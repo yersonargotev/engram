@@ -232,6 +232,49 @@ gates listed as evidence gaps, and disposition `continue_canary`. No held-out
 task input was materialized, and no rollout was enabled. The bound result is
 [`evals/recall-study/v1/publication.json`](../evals/recall-study/v1/publication.json).
 
+## Applied distribution outcome
+
+The content-addressed
+[`distribution.json`](../evals/recall-study/v1/distribution.json) applies the
+immutable `continue_canary` publication without reinterpreting its unavailable
+gates. It pins the exact verified canary tuple from source revision
+`105778d820029a2326043739fd676647e5c037f6`: Managed Pack `3.3.0`, binary
+`3.0.0`, Codex plugin `0.1.7`, and Protocol `1`, all with an inclusive Protocol
+range of `1..1`. The four pinned source artifacts carry exact SHA-256 digests.
+
+This outcome is deliberately not a release or a general-availability
+qualification. It preserves the legacy-compatible expand path, all old owned
+and customized paths, and the Legacy prompt archive. It enables no rollout or
+cleanup, and the Recall telemetry and Diagnostic capture schemas remain local,
+backward-compatible, and non-participating by default. Held-out inputs remain
+unopened.
+
+Verify the publication binding, the outcome trust anchor, the four-axis tuple,
+the exact Git revision, and regular-file membership at that revision without
+reading private evidence or mutating installation state. The outcome embeds the
+exact commit and the minimal Git tree bodies needed to reconstruct each path;
+the verifier recomputes commit, tree, and blob object IDs plus the independent
+SHA-256 file digests. This works from a shallow checkout or extracted source
+without fetching history:
+
+```bash
+engram recall-study verify-distribution \
+  --contract evals/recall-study/v1/contract.json \
+  --contract-hash evals/recall-study/v1/contract.sha256 \
+  --publication evals/recall-study/v1/publication.json \
+  --distribution evals/recall-study/v1/distribution.json \
+  --distribution-hash evals/recall-study/v1/distribution.sha256 \
+  --source-repo "$PWD" --json
+```
+
+Successful output proves only the frozen source outcome. It reports
+`source_revision_verified: true`, `source_artifacts_verified: true`, and
+`post_install_readiness: not_verified`; it never emits a top-level `ready`
+claim. The disposition requires no release, so there is no new release binary
+or binary checksum to verify. Run `engram setup status codex --json` separately
+to verify the installed binary, Managed Pack, Codex plugin, Protocol ranges,
+and post-install capability state.
+
 ## Frozen gates
 
 The report evaluator applies the preregistered point or confidence-interval

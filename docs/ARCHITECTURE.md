@@ -319,8 +319,8 @@ engram checkpoint record Record a saved, needs_review, or skipped root-turn chec
 engram checkpoint status Inspect one exact root-turn checkpoint [--json]
 engram recall-feedback report
                           Report aggregate-only Recall utility and quality [--json]
-engram recall-study verify|dry-run|plan-calibration|report
-                          Verify, plan, and analyze the frozen paired Recall study [--json]
+engram recall-study verify|dry-run|plan-calibration|report|run-calibration|run-held-out|publish
+                          Verify, execute, and publish the frozen paired Recall study [--json]
 engram delete <obs_id>    Delete an observation [--hard] (soft-delete by default; --hard removes permanently)
 engram delete session <id>
                           Delete a session by ID (session must have no observations)

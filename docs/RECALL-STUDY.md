@@ -42,7 +42,7 @@ Managed Pack 3.3.0, binary 3.0.0, Codex plugin 0.1.7, Protocol 1,
 `recall-baseline-events-v1`, and `diagnostic-capture-v1` at that revision.
 Policy, metric, and task-protocol v1 are separately bound by their exact
 SHA-256 revisions.
-The future execution stage uses Codex
+The execution stage uses Codex
 0.152.0 with `gpt-5.6-luna` at low reasoning effort against fresh ephemeral
 checkouts.
 
@@ -124,16 +124,59 @@ engram recall-study plan-calibration "${COMMON[@]}" \
 ```
 
 `verify` and `dry-run` read only frozen metadata. `plan-calibration` writes a
-private `0600` plan for the 180 calibration cells. No #109 command accepts a
-task-input path, opens held-out inputs, authorizes a held-out run, or executes
-Codex. Calibration execution, held-out authorization and execution, and the
-immutable disposition belong exclusively to issue #110.
+private `0600` plan for the 180 calibration cells. These metadata modes do not
+accept a task-input path, open held-out inputs, authorize a held-out run, or
+execute Codex.
 
-The contract nevertheless freezes the execution boundary in advance: the
-runner must consume `recall-study-run-plan-v1`, produce private
-`recall-study-rows-v1`, keep task inputs outside this command surface, and leave
-default Recall and automatic rollout disabled. Issue #110 must implement that
-shape rather than revising it after results are visible.
+The executor builds binary 3.0.0 and Codex plugin 0.1.7 from the frozen source
+revision, installs them into an isolated Codex home, and copies only the named
+authentication file. Each cell gets a fresh ephemeral checkout, isolated
+HOME/data/XDG/temp directories, the exact synthetic task input, the frozen
+model and reasoning effort, and a 900-second timeout. Only the fixture may
+change. Harness failures use frozen operational-failure codes and cannot carry
+residual metric or quality evidence. Private progress is rewritten atomically
+after every cell; the disposable checkout and local agent state are removed
+only after that row is durable. A failed write retains the isolated cell for
+diagnosis. Targeted Recall result keys, explicit label sources, disagreements,
+unknown label dimensions, and false-empty reviews come from the content-free
+Store snapshot. The broad arm separately binds its one deterministic evaluator
+assessment to the exact verified synthetic SessionStart context. Global temp
+roots are excluded from the model sandbox. A trusted pre-tool guard removes
+only the cell's copied authentication file before the first model-requested
+tool runs, while the named original remains untouched. The committed project
+Memory manifest remains byte- and mode-identical and readable to the model in
+every arm. The trusted SessionStart adapter uniformly substitutes a separate
+content-free working directory, preventing background import without changing
+the model-visible repository. Either cohort can resume from its strict `0600`
+`recall-study-rows-v1` file.
+
+```bash
+RUNTIME=(
+  --source-repo "$PWD"
+  --codex-binary "$(command -v codex)"
+  --auth-file "$CODEX_AUTH_FILE"
+)
+
+engram recall-study run-calibration "${COMMON[@]}" "${RUNTIME[@]}" \
+  --output evals/recall-study/v1/private/calibration/rows.json \
+  --publication-output evals/recall-study/v1/publication.json --json
+
+engram recall-study run-held-out "${COMMON[@]}" "${RUNTIME[@]}" \
+  --calibration-rows evals/recall-study/v1/private/calibration/rows.json \
+  --output evals/recall-study/v1/private/held-out/rows.json --json
+```
+
+`run-held-out` validates the complete calibration row set before it creates a
+runner or materializes held-out task bytes. Operational failures or omissions
+in calibration keep held-out execution closed. The runner never reads
+unrelated sessions or uses the operator's normal Engram store.
+
+`--publication-output` is used only when calibration cannot validly complete.
+In that case the command writes a shared invalid-stage publication with
+`continue_canary`, the reason code, every unavailable gate as an evidence gap,
+and no fabricated row or report. A missing required targeted Recall operation
+is an invalid treatment observation, not a process failure and not an invented
+zero-latency Recall.
 
 `report` accepts a private strict calibration `recall-study-rows-v1` file. It
 rejects unknown JSON fields, incomplete plans, held-out rows, and treatment
@@ -141,10 +184,10 @@ contradictions. Points, raw denominators, unknowns, Wilson intervals, and the
 frozen deterministic bootstrap intervals are derived from those validated rows;
 callers cannot provide metric values or confidence intervals.
 
-The same frozen domain analyzer accepts held-out and `combined-v1` row sets for
-issue #110, but this #109 CLI rejects them before analysis so it cannot become a
-held-out access path. Its aggregate output includes per-treatment intervals for
-all three arms, including distinct duplicate and time-to-useful results; the GA
+The same frozen domain analyzer accepts held-out and `combined-v1` row sets,
+but the standalone `report` CLI still rejects them so it cannot become a
+held-out access path. Aggregate output includes per-treatment intervals for all
+three arms, including distinct duplicate and time-to-useful results; the GA
 clauses remain the preregistered paired broad-versus-targeted comparisons.
 Completed attempts record a separate `task_outcome`: verifier failures remain
 in the paired quality population and in each arm's task-success rate. Harness
@@ -161,11 +204,33 @@ engram recall-study report "${COMMON[@]}" \
   --output evals/recall-study/v1/private/calibration/report.json --json
 ```
 
-Every local artifact is placed under `evals/recall-study/v1/private/`; Git
-ignores that directory as a whole. Run plans, task inputs, row-level results,
-label keys, Compatibility evidence, and consent evidence remain local. Shared
-reports contain no prompt, query, Memory content, assistant text, transcript
-path, raw identifier, or repository diff.
+Run plans, task inputs, row-level results, label keys, Compatibility evidence,
+and consent evidence are placed under `evals/recall-study/v1/private/`; Git
+ignores that directory as a whole. The final shared publication is derived only
+from complete calibration and held-out row sets:
+
+```bash
+engram recall-study publish "${COMMON[@]}" \
+  --calibration-rows evals/recall-study/v1/private/calibration/rows.json \
+  --held-out-rows evals/recall-study/v1/private/held-out/rows.json \
+  --output evals/recall-study/v1/publication.json --json
+```
+
+The publication contains aggregate labels, treatment metrics, raw
+denominators, unknown counts, confidence intervals, gate clauses, evidence-gap
+gate IDs, and exactly one Codex-scoped disposition. It contains no prompt,
+query, Memory content, assistant text, transcript path, raw identifier,
+repository diff, or row-level material.
+
+## Published v1 result
+
+The consented v1 calibration stopped before accepting its first row because
+Codex 0.152.0 did not initiate Recall in the first frozen targeted-treatment
+cell. The published result is therefore `valid: false` with reason
+`targeted_recall_not_observed`, 0 of 180 calibration rows observed, all ten
+gates listed as evidence gaps, and disposition `continue_canary`. No held-out
+task input was materialized, and no rollout was enabled. The bound result is
+[`evals/recall-study/v1/publication.json`](../evals/recall-study/v1/publication.json).
 
 ## Frozen gates
 
@@ -177,5 +242,8 @@ with a non-negative lower bound; noise upper bound < 20% with positive
 improvement; harm upper bound ≤ 2% and no worse than baseline; false-empty upper
 bound ≤ 5%; and explicit label coverage lower bound ≥ 80%.
 
-Passing gates does not enable rollout. Applying the eventual disposition is a
-separate protected delivery stage.
+The disposition is `qualify_general_availability` only when every gate passes.
+A checkpoint non-inferiority, Stop-growth, or harm failure selects
+`rollback_prior_verified_tuple`; other failed gates select `continue_canary`
+and are listed as evidence gaps. Every publication keeps `rollout_enabled`
+false. Applying any disposition remains a separate protected delivery stage.

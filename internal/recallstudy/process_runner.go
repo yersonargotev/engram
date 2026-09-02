@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -179,7 +180,8 @@ func (runner *processCohortRunner) Run(ctx context.Context, planned PlannedRun, 
 	home := filepath.Join(harnessState, "home")
 	dataDir := filepath.Join(harnessState, "engram-data")
 	toolsDir := filepath.Join(harnessState, "tools")
-	for _, path := range []string{home, dataDir, toolsDir, filepath.Join(modelState, "tmp"), filepath.Join(modelState, "xdg-config"), filepath.Join(modelState, "xdg-cache"), filepath.Join(modelState, "xdg-data")} {
+	lifecycleCWD := filepath.Join(harnessState, "lifecycle-cwd")
+	for _, path := range []string{home, dataDir, toolsDir, lifecycleCWD, filepath.Join(modelState, "tmp"), filepath.Join(modelState, "xdg-config"), filepath.Join(modelState, "xdg-cache"), filepath.Join(modelState, "xdg-data")} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			return failSetup(err)
 		}
@@ -204,15 +206,8 @@ func (runner *processCohortRunner) Run(ctx context.Context, planned PlannedRun, 
 	if err != nil {
 		return failSetup(err)
 	}
-	if err := writeStudyEngramWrapper(filepath.Join(toolsDir, "engram"), runner.binary, dataDir, planned.Treatment); err != nil {
+	if err := writeStudyEngramWrapper(filepath.Join(toolsDir, "engram"), runner.binary, dataDir, planned.Treatment, workspace, lifecycleCWD); err != nil {
 		return failSetup(err)
-	}
-	restoreManifest := func() error { return nil }
-	if planned.Treatment == "broad-chronological" {
-		restoreManifest, err = blockStudyManifestImport(workspace)
-		if err != nil {
-			return failSetup(err)
-		}
 	}
 
 	finalMessagePath := filepath.Join(harnessState, "final-message.txt")
@@ -229,9 +224,6 @@ func (runner *processCohortRunner) Run(ctx context.Context, planned PlannedRun, 
 	started := time.Now()
 	commandErr := command.Run()
 	elapsed := time.Since(started)
-	if err := restoreManifest(); err != nil {
-		return cohortRun{Cleanup: cleanup}, err
-	}
 	if err := verifySyntheticStudyStore(dataDir, 1, 2); err != nil {
 		return cohortRun{Cleanup: cleanup}, err
 	}
@@ -300,29 +292,6 @@ func writeStudyAuthGuard(codexHome string) error {
 		return fmt.Errorf("write Recall study auth guard: %w", err)
 	}
 	return nil
-}
-
-func blockStudyManifestImport(workspace string) (func() error, error) {
-	manifest := filepath.Join(workspace, ".engram", "manifest.json")
-	info, err := os.Stat(manifest)
-	if err != nil || !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("frozen Recall study manifest is unavailable")
-	}
-	originalMode := info.Mode().Perm()
-	if err := os.Chmod(manifest, 0); err != nil {
-		return nil, fmt.Errorf("block Recall study background import: %w", err)
-	}
-	restored := false
-	return func() error {
-		if restored {
-			return nil
-		}
-		restored = true
-		if err := os.Chmod(manifest, originalMode); err != nil {
-			return fmt.Errorf("restore frozen Recall study manifest mode: %w", err)
-		}
-		return nil
-	}, nil
 }
 
 func (runner *processCohortRunner) prepareCodexHome(ctx context.Context) error {
@@ -808,7 +777,7 @@ func initializeStudyWorkspace(ctx context.Context, workspace, remote string) err
 	return nil
 }
 
-func writeStudyEngramWrapper(path, binary, dataDir, treatment string) error {
+func writeStudyEngramWrapper(path, binary, dataDir, treatment, workspace, lifecycleCWD string) error {
 	canary := ""
 	restrictRecall := treatment == "broad-chronological" || treatment == "no-recall"
 	if treatment == "targeted-recall" || treatment == "no-recall" {
@@ -821,6 +790,21 @@ func writeStudyEngramWrapper(path, binary, dataDir, treatment string) error {
 	if canary != "" {
 		script += "export ENGRAM_CODEX_RECALL_CANARY=" + shellStudyQuote(canary) + "\n"
 	}
+	// SessionStart's asynchronous sync import is not part of any treatment. Give
+	// that trusted hook a content-free directory for every arm while leaving the
+	// model's repository byte- and mode-identical. ENGRAM_PROJECT preserves the
+	// frozen project authority and FormatContext reads the same synthetic store.
+	workspaceJSON, _ := json.Marshal(workspace)
+	lifecycleJSON, _ := json.Marshal(lifecycleCWD)
+	if bytes.ContainsRune(workspaceJSON, '|') || bytes.ContainsRune(lifecycleJSON, '|') {
+		return fmt.Errorf("Recall study lifecycle paths cannot be rewritten safely")
+	}
+	sedPattern := `"cwd"[[:space:]]*:[[:space:]]*` + regexp.QuoteMeta(string(workspaceJSON))
+	sedReplacement := `"cwd":` + strings.NewReplacer(`\`, `\\`, `&`, `\&`).Replace(string(lifecycleJSON))
+	script += "if [ \"$1\" = lifecycle ] && [ \"$2\" = session-start ]; then\n" +
+		"  sed -E " + shellStudyQuote("s|"+sedPattern+"|"+sedReplacement+"|") + " | " + shellStudyQuote(binary) + " \"$@\"\n" +
+		"  exit $?\n" +
+		"fi\n"
 	if restrictRecall {
 		script += "case \"$1\" in\n" +
 			"  search|get|context) printf '%s\\n' '{\"code\":\"recall_disabled_by_study_treatment\",\"message\":\"Recall is disabled for this frozen treatment\"}' >&2; exit 2 ;;\n" +

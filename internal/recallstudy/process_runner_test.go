@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -102,34 +103,58 @@ func TestStudyCodexLaunchDoesNotGrantModelWriteAccessToHarnessState(t *testing.T
 	}
 }
 
-func TestStudyManifestImportIsBlockedOnlyForTheCellLifetime(t *testing.T) {
-	workspace := t.TempDir()
+func TestStudyLifecycleWrapperKeepsRepositoryVisibleAndRedirectsEveryTreatment(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	lifecycleCWD := filepath.Join(root, "lifecycle-cwd")
+	dataDir := filepath.Join(root, "data")
 	manifest := filepath.Join(workspace, ".engram", "manifest.json")
-	if err := os.MkdirAll(filepath.Dir(manifest), 0o700); err != nil {
-		t.Fatal(err)
+	for _, directory := range []string{filepath.Dir(manifest), lifecycleCWD, dataDir} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
 	want := []byte("frozen manifest\n")
 	if err := os.WriteFile(manifest, want, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	restore, err := blockStudyManifestImport(workspace)
-	if err != nil {
+	fake := filepath.Join(root, "fake-engram")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf 'canary=%s\\n' \"${ENGRAM_CODEX_RECALL_CANARY-}\"\n/bin/cat\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(manifest)
-	if err != nil || info.Mode().Perm() != 0 {
-		t.Fatalf("blocked manifest mode=%v err=%v", info.Mode().Perm(), err)
+
+	for _, treatment := range []string{"broad-chronological", "targeted-recall", "no-recall"} {
+		wrapper := filepath.Join(root, treatment, "engram")
+		if err := writeStudyEngramWrapper(wrapper, fake, dataDir, treatment, workspace, lifecycleCWD); err != nil {
+			t.Fatal(err)
+		}
+		command := exec.Command(wrapper, "lifecycle", "session-start")
+		command.Env = []string{"PATH=/usr/bin:/bin"}
+		command.Stdin = strings.NewReader(`{"session_id":"cell","cwd":"` + workspace + `","source":"startup"}`)
+		output, err := command.Output()
+		if err != nil {
+			t.Fatalf("%s lifecycle wrapper: %v", treatment, err)
+		}
+		text := string(output)
+		if strings.Contains(text, workspace) || !strings.Contains(text, lifecycleCWD) {
+			t.Fatalf("%s lifecycle cwd was not redirected: %s", treatment, text)
+		}
+		wantCanary := "canary=\n"
+		if treatment != "broad-chronological" {
+			wantCanary = "canary=targeted-recall\n"
+		}
+		if !strings.HasPrefix(text, wantCanary) {
+			t.Fatalf("%s lifecycle canary = %q, want prefix %q", treatment, text, wantCanary)
+		}
 	}
-	if err := restore(); err != nil {
-		t.Fatal(err)
-	}
+
 	got, err := os.ReadFile(manifest)
 	if err != nil || string(got) != string(want) {
-		t.Fatalf("restored manifest=%q err=%v", got, err)
+		t.Fatalf("model-visible manifest=%q err=%v", got, err)
 	}
-	info, err = os.Stat(manifest)
+	info, err := os.Stat(manifest)
 	if err != nil || info.Mode().Perm() != 0o640 {
-		t.Fatalf("restored manifest mode=%v err=%v", info.Mode().Perm(), err)
+		t.Fatalf("model-visible manifest mode=%v err=%v", info.Mode().Perm(), err)
 	}
 }
 

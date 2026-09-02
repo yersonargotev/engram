@@ -144,9 +144,11 @@ assessment to the exact verified synthetic SessionStart context. Global temp
 roots are excluded from the model sandbox. A trusted pre-tool guard removes
 only the cell's copied authentication file before the first model-requested
 tool runs, while the named original remains untouched. The committed project
-Memory manifest is unreadable only while the cell runs so background import
-cannot contaminate its synthetic store. Either cohort can resume from its
-strict `0600` `recall-study-rows-v1` file.
+Memory manifest remains byte- and mode-identical and readable to the model in
+every arm. The trusted SessionStart adapter uniformly substitutes a separate
+content-free working directory, preventing background import without changing
+the model-visible repository. Either cohort can resume from its strict `0600`
+`recall-study-rows-v1` file.
 
 ```bash
 RUNTIME=(

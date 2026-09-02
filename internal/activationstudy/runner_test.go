@@ -3,6 +3,8 @@ package activationstudy
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +13,57 @@ import (
 	"testing"
 	"time"
 )
+
+func TestRemoveAllWithRetryToleratesTransientDirectoryNotEmpty(t *testing.T) {
+	root := t.TempDir()
+	calls := 0
+	remove := func(path string) error {
+		calls++
+		if calls == 1 {
+			return &os.PathError{Op: "unlinkat", Path: filepath.Join(path, ".git", "objects"), Err: fs.ErrExist}
+		}
+		return os.RemoveAll(path)
+	}
+
+	if err := removeAllWithRetry(root, remove); err != nil {
+		t.Fatalf("removeAllWithRetry() error = %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("remove calls = %d, want 2", calls)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("workspace still exists after retry: %v", err)
+	}
+}
+
+func TestRemoveAllWithRetryDoesNotRetryPermanentError(t *testing.T) {
+	want := errors.New("permission denied")
+	calls := 0
+	err := removeAllWithRetry(t.TempDir(), func(string) error {
+		calls++
+		return want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("removeAllWithRetry() error = %v, want %v", err, want)
+	}
+	if calls != 1 {
+		t.Fatalf("remove calls = %d, want 1", calls)
+	}
+}
+
+func TestRemoveAllWithRetryBoundsTransientRetries(t *testing.T) {
+	calls := 0
+	err := removeAllWithRetry(t.TempDir(), func(string) error {
+		calls++
+		return fs.ErrExist
+	})
+	if !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("removeAllWithRetry() error = %v, want %v", err, fs.ErrExist)
+	}
+	if calls != workspaceCleanupAttempts {
+		t.Fatalf("remove calls = %d, want %d", calls, workspaceCleanupAttempts)
+	}
+}
 
 func TestRunUsesDisposableStateAndReturnsOnlyBoundedEvents(t *testing.T) {
 	rootCommand := exec.Command("git", "rev-parse", "--show-toplevel")

@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 )
@@ -155,6 +157,158 @@ func (s *Store) migrateRecallOperations() error {
 		if err := s.addColumnIfNotExists(column.table, column.name, column.definition); err != nil {
 			return err
 		}
+	}
+	return s.migrateLegacyRecallResults()
+}
+
+// migrateLegacyRecallResults upgrades the short-lived pre-release schema that
+// identified selected content by SHA-256. Only selections whose content still
+// matches that hash can be mapped safely to the current revision snapshot.
+func (s *Store) migrateLegacyRecallResults() error {
+	rows, err := s.queryItHook(s.db, `PRAGMA table_info(recall_results)`)
+	if err != nil {
+		return fmt.Errorf("inspect legacy recall_results schema: %w", err)
+	}
+	hasContentHash := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return closeRowsWithError(rows, fmt.Errorf("inspect legacy recall_results schema: %w", err))
+		}
+		if name == "content_hash" {
+			hasContentHash = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return closeRowsWithError(rows, fmt.Errorf("inspect legacy recall_results schema: %w", err))
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("inspect legacy recall_results schema: %w", err)
+	}
+	if !hasContentHash {
+		return nil
+	}
+
+	tx, err := s.beginTxHook()
+	if err != nil {
+		return fmt.Errorf("migrate legacy recall_results: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := s.execHook(tx, `
+		CREATE TABLE recall_results_migrated (
+			recall_id      TEXT    NOT NULL,
+			result_id      TEXT    NOT NULL,
+			observation_id INTEGER NOT NULL,
+			revision_count INTEGER NOT NULL,
+			local_revision_count INTEGER NOT NULL,
+			result_rank    INTEGER NOT NULL,
+			created_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+			PRIMARY KEY (recall_id, result_id),
+			UNIQUE (recall_id, observation_id),
+			FOREIGN KEY (recall_id) REFERENCES recall_runs(recall_id) ON DELETE CASCADE,
+			FOREIGN KEY (observation_id) REFERENCES observations(id) ON DELETE CASCADE
+		);
+		CREATE TABLE recall_segments_migrated (
+			recall_id             TEXT    NOT NULL,
+			result_id             TEXT    NOT NULL,
+			position              INTEGER NOT NULL,
+			original_bytes        INTEGER NOT NULL,
+			delivered_bytes       INTEGER NOT NULL,
+			limit_bytes           INTEGER NOT NULL,
+			truncated             BOOLEAN NOT NULL,
+			continuation_position INTEGER,
+			elapsed_monotonic_ms   INTEGER,
+			protocol_version       INTEGER,
+			binary_version         TEXT,
+			binary_revision        TEXT,
+			created_at             TEXT    NOT NULL DEFAULT (datetime('now')),
+			PRIMARY KEY (recall_id, result_id, position),
+			FOREIGN KEY (recall_id, result_id) REFERENCES recall_results_migrated(recall_id, result_id) ON DELETE CASCADE
+		);
+	`); err != nil {
+		return fmt.Errorf("migrate legacy recall_results: create replacement tables: %w", err)
+	}
+
+	legacyRows, err := s.queryItHook(tx, `
+		SELECT result.recall_id, result.result_id, result.observation_id,
+		       result.content_hash, result.result_rank, result.created_at,
+		       observation.content, observation.revision_count, observation.local_revision_count
+		FROM recall_results result
+		JOIN recall_runs run ON run.recall_id = result.recall_id
+		JOIN observations observation ON observation.id = result.observation_id
+		ORDER BY result.recall_id, result.result_rank
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate legacy recall_results: load selections: %w", err)
+	}
+	type validLegacyResult struct {
+		recallID, resultID, createdAt string
+		observationID                 int64
+		resultRank                    int
+		revisionCount                 int
+		localRevisionCount            int
+	}
+	validResults := make([]validLegacyResult, 0)
+	for legacyRows.Next() {
+		var result validLegacyResult
+		var contentHash, content string
+		if err := legacyRows.Scan(
+			&result.recallID, &result.resultID, &result.observationID,
+			&contentHash, &result.resultRank, &result.createdAt,
+			&content, &result.revisionCount, &result.localRevisionCount,
+		); err != nil {
+			return closeRowsWithError(legacyRows, fmt.Errorf("migrate legacy recall_results: scan selection: %w", err))
+		}
+		digest := sha256.Sum256([]byte(content))
+		if contentHash == hex.EncodeToString(digest[:]) {
+			validResults = append(validResults, result)
+		}
+	}
+	if err := legacyRows.Err(); err != nil {
+		return closeRowsWithError(legacyRows, fmt.Errorf("migrate legacy recall_results: load selections: %w", err))
+	}
+	if err := legacyRows.Close(); err != nil {
+		return fmt.Errorf("migrate legacy recall_results: load selections: %w", err)
+	}
+
+	for _, result := range validResults {
+		if _, err := s.execHook(tx, `
+			INSERT INTO recall_results_migrated (
+				recall_id, result_id, observation_id, revision_count,
+				local_revision_count, result_rank, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, result.recallID, result.resultID, result.observationID, result.revisionCount,
+			result.localRevisionCount, result.resultRank, result.createdAt); err != nil {
+			return fmt.Errorf("migrate legacy recall_results: preserve selection: %w", err)
+		}
+	}
+	if _, err := s.execHook(tx, `
+		INSERT INTO recall_segments_migrated (
+			recall_id, result_id, position, original_bytes, delivered_bytes,
+			limit_bytes, truncated, continuation_position, elapsed_monotonic_ms,
+			protocol_version, binary_version, binary_revision, created_at
+		)
+		SELECT segment.recall_id, segment.result_id, segment.position,
+		       segment.original_bytes, segment.delivered_bytes, segment.limit_bytes,
+		       segment.truncated, segment.continuation_position, segment.elapsed_monotonic_ms,
+		       segment.protocol_version, segment.binary_version, segment.binary_revision,
+		       segment.created_at
+		FROM recall_segments segment
+		JOIN recall_results_migrated result
+		  ON result.recall_id = segment.recall_id AND result.result_id = segment.result_id;
+		DROP TABLE recall_segments;
+		DROP TABLE recall_results;
+		ALTER TABLE recall_results_migrated RENAME TO recall_results;
+		ALTER TABLE recall_segments_migrated RENAME TO recall_segments;
+		CREATE INDEX idx_recall_results_observation ON recall_results(observation_id);
+	`); err != nil {
+		return fmt.Errorf("migrate legacy recall_results: replace tables: %w", err)
+	}
+	if err := s.commitHook(tx); err != nil {
+		return fmt.Errorf("migrate legacy recall_results: commit: %w", err)
 	}
 	return nil
 }

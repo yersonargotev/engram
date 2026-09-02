@@ -95,8 +95,7 @@ func newProcessCohortRunner(
 		binary: filepath.Join(root, "bin", "engram"), baseHome: filepath.Join(root, "base-home"),
 	}
 	cleanup := func(runErr error) (*processCohortRunner, error) {
-		_ = runner.Close()
-		return nil, runErr
+		return nil, errors.Join(runErr, runner.Close())
 	}
 	if err := extractStudyRevision(ctx, runtime.SourceRepo, study.Contract.SourceRevision, runner.snapshot); err != nil {
 		return cleanup(err)
@@ -120,9 +119,13 @@ func (runner *processCohortRunner) Close() error {
 	if runner.activeCell != "" {
 		return fmt.Errorf("Recall study retained unpersisted cell evidence at %s", runner.activeCell)
 	}
-	err := os.RemoveAll(runner.root)
+	root := runner.root
+	err := os.RemoveAll(root)
+	if err != nil {
+		return fmt.Errorf("clean Recall study runtime %s: %w", root, err)
+	}
 	runner.root = ""
-	return err
+	return nil
 }
 
 func (runner *processCohortRunner) Run(ctx context.Context, planned PlannedRun, input TaskInput) (cohortRun, error) {
@@ -172,7 +175,7 @@ func (runner *processCohortRunner) Run(ctx context.Context, planned PlannedRun, 
 	}
 
 	harnessState := filepath.Join(cellRoot, "harness")
-	modelState := filepath.Join(cellRoot, "model")
+	modelState := filepath.Join(workspace, ".recall-study-model")
 	home := filepath.Join(harnessState, "home")
 	dataDir := filepath.Join(harnessState, "engram-data")
 	toolsDir := filepath.Join(harnessState, "tools")
@@ -184,6 +187,15 @@ func (runner *processCohortRunner) Run(ctx context.Context, planned PlannedRun, 
 	if err := copyStudyTree(runner.baseHome, home); err != nil {
 		return failSetup(fmt.Errorf("copy Recall study Codex home: %w", err))
 	}
+	if err := copyStudyFile(runner.runtime.AuthFile, filepath.Join(home, ".codex", "auth.json"), 0o600); err != nil {
+		return failSetup(fmt.Errorf("copy Recall study cell auth: %w", err))
+	}
+	if err := writeStudyAuthGuard(filepath.Join(home, ".codex")); err != nil {
+		return failSetup(err)
+	}
+	if err := excludeStudyModelState(workspace); err != nil {
+		return failSetup(err)
+	}
 	broadContext, err := runner.seedSyntheticMemory(ctx, workspace, dataDir, input)
 	if err != nil {
 		return failSetup(err)
@@ -194,6 +206,13 @@ func (runner *processCohortRunner) Run(ctx context.Context, planned PlannedRun, 
 	}
 	if err := writeStudyEngramWrapper(filepath.Join(toolsDir, "engram"), runner.binary, dataDir, planned.Treatment); err != nil {
 		return failSetup(err)
+	}
+	restoreManifest := func() error { return nil }
+	if planned.Treatment == "broad-chronological" {
+		restoreManifest, err = blockStudyManifestImport(workspace)
+		if err != nil {
+			return failSetup(err)
+		}
 	}
 
 	finalMessagePath := filepath.Join(harnessState, "final-message.txt")
@@ -210,6 +229,12 @@ func (runner *processCohortRunner) Run(ctx context.Context, planned PlannedRun, 
 	started := time.Now()
 	commandErr := command.Run()
 	elapsed := time.Since(started)
+	if err := restoreManifest(); err != nil {
+		return cohortRun{Cleanup: cleanup}, err
+	}
+	if err := verifySyntheticStudyStore(dataDir, 1, 2); err != nil {
+		return cohortRun{Cleanup: cleanup}, err
+	}
 	if errors.Is(cellContext.Err(), context.DeadlineExceeded) {
 		return completed(operationalFailureRow(planned, "runner_timeout"))
 	}
@@ -239,8 +264,65 @@ func (runner *processCohortRunner) codexArguments(workspace, finalMessagePath st
 		"--output-last-message", finalMessagePath, "--dangerously-bypass-hook-trust",
 		"--config", `approval_policy="never"`,
 		"--config", fmt.Sprintf(`model_reasoning_effort=%q`, runner.study.Contract.Model.ReasoningEffort),
-		"--config", `shell_environment_policy.inherit="all"`, "-",
+		"--config", `sandbox_workspace_write.exclude_tmpdir_env_var=true`,
+		"--config", `sandbox_workspace_write.exclude_slash_tmp=true`,
+		"--config", `shell_environment_policy.inherit="all"`,
+		"-",
 	}
+}
+
+func excludeStudyModelState(workspace string) error {
+	excludePath := filepath.Join(workspace, ".git", "info", "exclude")
+	file, err := os.OpenFile(excludePath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		return fmt.Errorf("open Recall study Git exclude: %w", err)
+	}
+	_, writeErr := io.WriteString(file, "\n/.recall-study-model/\n")
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		return errors.Join(writeErr, closeErr)
+	}
+	return nil
+}
+
+func writeStudyAuthGuard(codexHome string) error {
+	guard := map[string]any{"hooks": map[string]any{
+		"PreToolUse": []any{map[string]any{"hooks": []any{map[string]any{
+			"type": "command", "command": `/bin/rm -f "${HOME}/.codex/auth.json"`, "timeout": 1,
+		}}}},
+	}}
+	raw, err := json.MarshalIndent(guard, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	if err := os.WriteFile(filepath.Join(codexHome, "hooks.json"), raw, 0o600); err != nil {
+		return fmt.Errorf("write Recall study auth guard: %w", err)
+	}
+	return nil
+}
+
+func blockStudyManifestImport(workspace string) (func() error, error) {
+	manifest := filepath.Join(workspace, ".engram", "manifest.json")
+	info, err := os.Stat(manifest)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("frozen Recall study manifest is unavailable")
+	}
+	originalMode := info.Mode().Perm()
+	if err := os.Chmod(manifest, 0); err != nil {
+		return nil, fmt.Errorf("block Recall study background import: %w", err)
+	}
+	restored := false
+	return func() error {
+		if restored {
+			return nil
+		}
+		restored = true
+		if err := os.Chmod(manifest, originalMode); err != nil {
+			return fmt.Errorf("restore frozen Recall study manifest mode: %w", err)
+		}
+		return nil
+	}, nil
 }
 
 func (runner *processCohortRunner) prepareCodexHome(ctx context.Context) error {
@@ -273,6 +355,9 @@ func (runner *processCohortRunner) prepareCodexHome(ctx context.Context) error {
 			return fmt.Errorf("prepare Recall study Codex plugin: %w: %s", err, strings.TrimSpace(string(output)))
 		}
 	}
+	if err := os.Remove(filepath.Join(codexHome, "auth.json")); err != nil {
+		return fmt.Errorf("remove Recall study setup auth copy: %w", err)
+	}
 	return nil
 }
 
@@ -297,7 +382,30 @@ func (runner *processCohortRunner) seedSyntheticMemory(ctx context.Context, work
 	if strings.TrimSpace(context) == "" {
 		return "", fmt.Errorf("synthetic Recall study Memory did not produce broad context")
 	}
+	if err := verifySyntheticStudyStore(dataDir, 1, 1); err != nil {
+		return "", err
+	}
 	return context, nil
+}
+
+func verifySyntheticStudyStore(dataDir string, minimum, maximum int) error {
+	localStore, err := store.New(store.FallbackConfig(dataDir))
+	if err != nil {
+		return err
+	}
+	projects, listErr := localStore.ListProjectsWithStats()
+	closeErr := localStore.Close()
+	if listErr != nil || closeErr != nil {
+		return errors.Join(listErr, closeErr)
+	}
+	observations := 0
+	for _, project := range projects {
+		observations += project.ObservationCount
+	}
+	if observations < minimum || observations > maximum {
+		return &invalidExecutionError{reasonCode: "study_store_contaminated"}
+	}
+	return nil
 }
 
 func (runner *processCohortRunner) injectionEvidence(planned PlannedRun, broadContext string) (studyInjectionEvidence, error) {
@@ -316,8 +424,18 @@ func (runner *processCohortRunner) injectionEvidence(planned PlannedRun, broadCo
 	if planned.Treatment == "broad-chronological" && truncated {
 		return studyInjectionEvidence{}, fmt.Errorf("Recall study broad context exceeds the frozen injection budget")
 	}
+	expectedUTF8Bytes := int64(len(modelContext))
+	if planned.Treatment == "broad-chronological" {
+		if strings.Count(broadContext, "### Recent Sessions\n") != 1 || !strings.Contains(broadContext, "[1 observations]\n") {
+			return studyInjectionEvidence{}, fmt.Errorf("Recall study synthetic broad context has an unexpected session envelope")
+		}
+		// The frozen save command owns one synthetic session. SessionStart creates
+		// one more empty session before FormatContext, adding exactly one stable
+		// timestamp-width line to the injected broad context.
+		expectedUTF8Bytes += int64(len("- **engram** (0000-00-00 00:00:00) [0 observations]\n"))
+	}
 	return studyInjectionEvidence{
-		expectedUTF8Bytes: int64(len(modelContext)),
+		expectedUTF8Bytes: expectedUTF8Bytes,
 		broadResultKey:    studyFileDigest("recall-study-broad-exposure-v1\x00" + broadContext),
 	}, nil
 }

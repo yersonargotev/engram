@@ -137,10 +137,16 @@ change. Harness failures use frozen operational-failure codes and cannot carry
 residual metric or quality evidence. Private progress is rewritten atomically
 after every cell; the disposable checkout and local agent state are removed
 only after that row is durable. A failed write retains the isolated cell for
-diagnosis. Recall result keys, explicit label sources, disagreements, unknown
-label dimensions, and false-empty reviews come from the content-free Store
-snapshot rather than from synthesized row evidence. Either cohort can resume
-from its strict `0600` `recall-study-rows-v1` file.
+diagnosis. Targeted Recall result keys, explicit label sources, disagreements,
+unknown label dimensions, and false-empty reviews come from the content-free
+Store snapshot. The broad arm separately binds its one deterministic evaluator
+assessment to the exact verified synthetic SessionStart context. Global temp
+roots are excluded from the model sandbox. A trusted pre-tool guard removes
+only the cell's copied authentication file before the first model-requested
+tool runs, while the named original remains untouched. The committed project
+Memory manifest is unreadable only while the cell runs so background import
+cannot contaminate its synthetic store. Either cohort can resume from its
+strict `0600` `recall-study-rows-v1` file.
 
 ```bash
 RUNTIME=(

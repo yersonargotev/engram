@@ -1,6 +1,7 @@
 package recallstudy
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -86,9 +87,95 @@ func TestStudyCodexLaunchDoesNotGrantModelWriteAccessToHarnessState(t *testing.T
 	if strings.Contains(strings.Join(arguments, "\x00"), "--add-dir") {
 		t.Fatalf("Codex arguments grant an extra writable directory: %v", arguments)
 	}
+	joinedArguments := strings.Join(arguments, "\x00")
+	for _, setting := range []string{
+		"sandbox_workspace_write.exclude_tmpdir_env_var=true",
+		"sandbox_workspace_write.exclude_slash_tmp=true",
+	} {
+		if !strings.Contains(joinedArguments, setting) {
+			t.Fatalf("Codex arguments do not disable global temp root %q: %v", setting, arguments)
+		}
+	}
 	environment := studyProcessEnvironment("/cell/harness/home", "/cell/harness/tools", "/cell/model")
 	if len(environment) != 6 || strings.Contains(strings.Join(environment, "\x00"), "ENGRAM_DATA_DIR") {
 		t.Fatalf("Codex environment escapes the frozen allowlist: %v", environment)
+	}
+}
+
+func TestStudyManifestImportIsBlockedOnlyForTheCellLifetime(t *testing.T) {
+	workspace := t.TempDir()
+	manifest := filepath.Join(workspace, ".engram", "manifest.json")
+	if err := os.MkdirAll(filepath.Dir(manifest), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	want := []byte("frozen manifest\n")
+	if err := os.WriteFile(manifest, want, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	restore, err := blockStudyManifestImport(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(manifest)
+	if err != nil || info.Mode().Perm() != 0 {
+		t.Fatalf("blocked manifest mode=%v err=%v", info.Mode().Perm(), err)
+	}
+	if err := restore(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(manifest)
+	if err != nil || string(got) != string(want) {
+		t.Fatalf("restored manifest=%q err=%v", got, err)
+	}
+	info, err = os.Stat(manifest)
+	if err != nil || info.Mode().Perm() != 0o640 {
+		t.Fatalf("restored manifest mode=%v err=%v", info.Mode().Perm(), err)
+	}
+}
+
+func TestStudyAuthGuardRemovesOnlyTheDisposableCopy(t *testing.T) {
+	codexHome := t.TempDir()
+	if err := writeStudyAuthGuard(codexHome); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(codexHome, "hooks.json")
+	raw, err := os.ReadFile(path)
+	if err != nil || !json.Valid(raw) {
+		t.Fatalf("auth guard is invalid: %q err=%v", raw, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("auth guard mode=%v err=%v", info.Mode().Perm(), err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, "PreToolUse") || !strings.Contains(text, `${HOME}/.codex/auth.json`) || strings.Contains(text, "CODEX_HOME") {
+		t.Fatalf("auth guard does not target the isolated HOME copy: %s", text)
+	}
+}
+
+func TestSyntheticStudyStoreRejectsImportedObservations(t *testing.T) {
+	dataDir := t.TempDir()
+	localStore, err := store.New(store.FallbackConfig(dataDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := localStore.CreateSession("study-session", "engram", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"one", "two", "three"} {
+		if _, err := localStore.AddObservation(store.AddObservationParams{
+			SessionID: "study-session", Type: "manual", Title: value, Content: value, Project: "engram", Scope: "project",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := localStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err = verifySyntheticStudyStore(dataDir, 1, 2)
+	var invalid *invalidExecutionError
+	if !errors.As(err, &invalid) || invalid.reasonCode != "study_store_contaminated" {
+		t.Fatalf("contaminated store error = %v", err)
 	}
 }
 
@@ -102,7 +189,7 @@ func TestStudyInjectionEvidenceBindsExactTreatmentContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := &processCohortRunner{snapshot: root}
-	broadContext := "synthetic broad context"
+	broadContext := "## Memory from Previous Sessions\n\n### Recent Sessions\n- **engram** (2026-09-01 20:24:36) [1 observations]\n\n### Recent Observations\n- synthetic\n"
 	broad, err := runner.injectionEvidence(PlannedRun{Treatment: "broad-chronological"}, broadContext)
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +200,8 @@ func TestStudyInjectionEvidenceBindsExactTreatmentContext(t *testing.T) {
 	}
 	wantBroad, _ := codexlifecycle.BuildModelContext("recall cue", broadContext, codexlifecycle.MaxInjectedUTF8Bytes)
 	wantTargeted, _ := codexlifecycle.BuildModelContext("recall cue", "", codexlifecycle.MaxInjectedUTF8Bytes)
-	if broad.expectedUTF8Bytes != int64(len(wantBroad)) || targeted.expectedUTF8Bytes != int64(len(wantTargeted)) ||
+	wantBroadBytes := int64(len(wantBroad) + len("- **engram** (0000-00-00 00:00:00) [0 observations]\n"))
+	if broad.expectedUTF8Bytes != wantBroadBytes || targeted.expectedUTF8Bytes != int64(len(wantTargeted)) ||
 		broad.broadResultKey != studyFileDigest("recall-study-broad-exposure-v1\x00"+broadContext) {
 		t.Fatalf("broad=%#v targeted=%#v", broad, targeted)
 	}

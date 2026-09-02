@@ -18,11 +18,13 @@ import (
 )
 
 const (
-	maxCodexEventBytes   = 16 << 20
-	maxFinalMessageBytes = 256 << 10
-	maxShimLogBytes      = 1 << 20
-	studyProject         = "activation-study-fixture"
-	preservationCanary   = "EVAL-PRESERVE-731"
+	maxCodexEventBytes         = 16 << 20
+	maxFinalMessageBytes       = 256 << 10
+	maxShimLogBytes            = 1 << 20
+	workspaceCleanupAttempts   = 5
+	workspaceCleanupRetryDelay = 10 * time.Millisecond
+	studyProject               = "activation-study-fixture"
+	preservationCanary         = "EVAL-PRESERVE-731"
 )
 
 type RunOptions struct {
@@ -51,25 +53,25 @@ func (study *Study) Verify(ctx context.Context, options RunOptions) (Verificatio
 	}
 	fixtures, err := study.PrepareFixtures(ctx, FixtureOptions{SourceRepo: options.SourceRepo, Root: filepath.Join(root, "fixtures"), UserSkill: options.UserSkill})
 	if err != nil {
-		_ = os.RemoveAll(root)
+		_ = removeAllWithRetry(root, os.RemoveAll)
 		return VerificationReport{}, err
 	}
 	for _, treatment := range []string{"engram-normal", "engram-ablated", "neutral"} {
 		probeRoot := filepath.Join(root, "probes", treatment)
 		inventory, probeErr := study.verifyCodexPromptInput(ctx, options.CodexBinary, fixtures.Path(treatment), treatment, probeRoot, options.AuthFile, options.UserSkill)
 		if probeErr != nil {
-			_ = os.RemoveAll(root)
+			_ = removeAllWithRetry(root, os.RemoveAll)
 			return VerificationReport{}, fmt.Errorf("verify %s Codex prompt input: %w", treatment, probeErr)
 		}
 		if len(fixtures.Report.CodexSkillInventory) == 0 {
 			fixtures.Report.CodexSkillInventory = inventory
 		} else if strings.Join(fixtures.Report.CodexSkillInventory, "\x00") != strings.Join(inventory, "\x00") {
-			_ = os.RemoveAll(root)
+			_ = removeAllWithRetry(root, os.RemoveAll)
 			return VerificationReport{}, fmt.Errorf("verify %s Codex prompt input: skill inventory changed across treatments", treatment)
 		}
 	}
 	fixtures.Report.CodexPromptInputVerified = true
-	if err := os.RemoveAll(root); err != nil {
+	if err := removeAllWithRetry(root, os.RemoveAll); err != nil {
 		return VerificationReport{}, fmt.Errorf("clean activation verification workspace: %w", err)
 	}
 	fixtures.Report.CleanupVerified = true
@@ -91,7 +93,7 @@ func (study *Study) Run(ctx context.Context, options RunOptions) (EventSet, erro
 	if err != nil {
 		return EventSet{}, fmt.Errorf("create activation study workspace: %w", err)
 	}
-	cleanup := func() error { return os.RemoveAll(root) }
+	cleanup := func() error { return removeAllWithRetry(root, os.RemoveAll) }
 	defer cleanup()
 
 	fixtures, err := study.PrepareFixtures(ctx, FixtureOptions{
@@ -241,7 +243,7 @@ func (study *Study) runCell(
 	if err != nil {
 		return RunRecord{}, nil, err
 	}
-	defer os.RemoveAll(cellRoot)
+	defer func() { _ = removeAllWithRetry(cellRoot, os.RemoveAll) }()
 	workspace := filepath.Join(cellRoot, "workspace")
 	if err := copyTree(templatePath, workspace); err != nil {
 		return RunRecord{}, nil, fmt.Errorf("copy fixture: %w", err)
@@ -356,6 +358,23 @@ func (study *Study) runCell(
 	record.Omissions = sortedUnique(record.Omissions)
 	record.Deviations = sortedUnique(record.Deviations)
 	return record, inventory, nil
+}
+
+func removeAllWithRetry(path string, removeAll func(string) error) error {
+	var err error
+	for attempt := 0; attempt < workspaceCleanupAttempts; attempt++ {
+		err = removeAll(path)
+		if err == nil {
+			return nil
+		}
+		// RemoveAll reports a concurrently repopulated directory as ErrExist
+		// (ENOTEMPTY on Unix). Give short-lived writers a bounded chance to exit.
+		if !errors.Is(err, fs.ErrExist) || attempt == workspaceCleanupAttempts-1 {
+			return err
+		}
+		time.Sleep(time.Duration(1<<attempt) * workspaceCleanupRetryDelay)
+	}
+	return err
 }
 
 func (study *Study) verifyCodexPromptInput(ctx context.Context, codexBinary, workspace, treatment, root, authFile, userSkill string) ([]string, error) {

@@ -16,6 +16,21 @@ first targeted cell did not initiate Recall; held-out remained unopened. The
 shared artifact always leaves rollout disabled and does not change any frozen
 v1 input or sidecar.
 
+`distribution.json` and its SHA-256 sidecar apply that immutable disposition as
+one content-addressed distribution outcome. They pin the verified canary tuple
+at source revision `105778d820029a2326043739fd676647e5c037f6`: Managed Pack
+`3.3.0`, binary `3.0.0`, Codex plugin `0.1.7`, and Protocol `1`. The selected
+action preserves the tuple, every legacy path, and the Legacy prompt archive;
+it requires no release, enables no rollout, and keeps the Recall telemetry and
+Diagnostic capture schemas non-participating by default.
+
+`engram recall-study verify-distribution` resolves the pinned Git revision and
+checks each digest both there and in the supplied working tree. This source
+verification deliberately reports installed readiness as `not_verified`; use
+`engram setup status codex --json` for the separate post-install check. Because
+the disposition requires no release, it does not invent a new release artifact
+or checksum.
+
 The content-addressed `policy.json` and `metrics.json` define treatment and
 analysis semantics. Operator Compatibility, consent, run plans, task inputs,
 rows, labels, and other work files live only under `private/`, which is ignored

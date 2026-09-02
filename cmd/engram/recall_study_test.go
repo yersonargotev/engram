@@ -76,6 +76,86 @@ func TestRecallStudyRestrictedCommandsRejectHeldOutInput(t *testing.T) {
 	}
 }
 
+func TestRecallStudyCLIVerifiesFrozenDistributionWithoutMutation(t *testing.T) {
+	stubExitWithPanic(t)
+	dataDir := filepath.Join(t.TempDir(), "must-not-exist")
+	t.Setenv("ENGRAM_DATA_DIR", dataDir)
+	root := filepath.Join("..", "..")
+	studyRoot := filepath.Join(root, "evals", "recall-study", "v1")
+	withArgs(t, "engram", "recall-study", "verify-distribution",
+		"--contract", filepath.Join(studyRoot, "contract.json"),
+		"--contract-hash", filepath.Join(studyRoot, "contract.sha256"),
+		"--publication", filepath.Join(studyRoot, "publication.json"),
+		"--distribution", filepath.Join(studyRoot, "distribution.json"),
+		"--distribution-hash", filepath.Join(studyRoot, "distribution.sha256"),
+		"--source-repo", root,
+		"--json",
+	)
+
+	stdout, stderr, recovered := captureOutputAndRecover(t, cmdRecallStudy)
+	if recovered != nil || stderr != "" || strings.Contains(stdout, `"ready":`) ||
+		!strings.Contains(stdout, `"source_revision_verified": true`) ||
+		!strings.Contains(stdout, `"source_artifacts_verified": true`) ||
+		!strings.Contains(stdout, `"post_install_readiness": "not_verified"`) ||
+		!strings.Contains(stdout, `"post_install_verification_command": "engram setup status codex --json"`) ||
+		!strings.Contains(stdout, `"disposition": "continue_canary"`) ||
+		!strings.Contains(stdout, `"action": "preserve_verified_tuple"`) ||
+		!strings.Contains(stdout, `"legacy_contraction_allowed": false`) ||
+		!strings.Contains(stdout, `"release_required": false`) {
+		t.Fatalf("verify-distribution recovered=%v stdout=%q stderr=%q", recovered, stdout, stderr)
+	}
+	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
+		t.Fatalf("verify-distribution created product state: %v", err)
+	}
+}
+
+func TestRecallStudyDistributionCLIRejectsInvalidFlagsAndInputs(t *testing.T) {
+	stubExitWithPanic(t)
+	root := filepath.Join("..", "..")
+	studyRoot := filepath.Join(root, "evals", "recall-study", "v1")
+	valid := []string{
+		"--contract", filepath.Join(studyRoot, "contract.json"),
+		"--contract-hash", filepath.Join(studyRoot, "contract.sha256"),
+		"--publication", filepath.Join(studyRoot, "publication.json"),
+		"--distribution", filepath.Join(studyRoot, "distribution.json"),
+		"--distribution-hash", filepath.Join(studyRoot, "distribution.sha256"),
+		"--source-repo", root, "--json",
+	}
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "unknown flag", args: []string{"--unknown", "value", "--json"}, want: "unknown recall-study flag --unknown"},
+		{name: "positional", args: append(append([]string(nil), valid...), "unexpected"), want: "unexpected recall-study argument"},
+		{name: "required", args: []string{"--json"}, want: "requires --contract"},
+		{name: "contract", args: replaceFlagValue(valid, "--contract", filepath.Join(t.TempDir(), "missing.json")), want: "invalid_recall_study_contract"},
+		{name: "publication", args: replaceFlagValue(valid, "--publication", filepath.Join(t.TempDir(), "missing.json")), want: "invalid_recall_study_publication"},
+		{name: "distribution", args: replaceFlagValue(valid, "--distribution", filepath.Join(t.TempDir(), "missing.json")), want: "invalid_recall_distribution"},
+		{name: "verification", args: replaceFlagValue(valid, "--source-repo", t.TempDir()), want: "recall_distribution_verification_failed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			withArgs(t, append([]string{"engram", "recall-study", "verify-distribution"}, test.args...)...)
+			_, stderr, recovered := captureOutputAndRecover(t, cmdRecallStudy)
+			if recovered == nil || !strings.Contains(stderr, test.want) {
+				t.Fatalf("recovered=%v stderr=%q, want %q", recovered, stderr, test.want)
+			}
+		})
+	}
+}
+
+func replaceFlagValue(args []string, name, value string) []string {
+	changed := append([]string(nil), args...)
+	for index := range changed {
+		if changed[index] == name && index+1 < len(changed) {
+			changed[index+1] = value
+			return changed
+		}
+	}
+	return changed
+}
+
 func TestRecallStudyCLIValidatesAndPlansCommittedStudyWithoutHeldOutAccess(t *testing.T) {
 	root := filepath.Join("..", "..", "evals", "recall-study", "v1")
 	study, err := recallstudy.Load(filepath.Join(root, "contract.json"), filepath.Join(root, "contract.sha256"))

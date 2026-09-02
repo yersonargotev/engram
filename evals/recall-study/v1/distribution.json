@@ -1,0 +1,47 @@
+{
+  "schema_version": "recall-distribution-outcome-v1",
+  "study_id": "codex-useful-recall",
+  "study_version": "v1",
+  "contract_sha256": "66c9911ce50bcab491d62662e41b2c7f73ffc872f45559aa27acccd09a3ef723",
+  "publication_sha256": "f928da2da8603765f87a6161179a9f07b152b4886ea651a224cf94e34c44b8cf",
+  "disposition": "continue_canary",
+  "action": "preserve_verified_tuple",
+  "rollout_enabled": false,
+  "release_required": false,
+  "legacy_contraction_allowed": false,
+  "legacy_prompt_archive_action": "preserve",
+  "local_schemas_participating_by_default": false,
+  "selected_compatibility": {
+    "revisions": {
+      "managed_pack": {"version": "3.3.0", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+      "engram_binary": {"version": "3.0.0", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+      "codex_plugin": {"version": "0.1.7", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+      "protocol_contract": {"version": "1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+      "telemetry_schema": {"version": "recall-baseline-events-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+      "capture_schema": {"version": "diagnostic-capture-v1", "revision": "105778d820029a2326043739fd676647e5c037f6"},
+      "policy": {"version": "recall-policy-v1", "revision": "sha256:a5e3aa9c438e2efc3d4bd11e9e636ef231a3e9dc0468af9062e15426f93b9af1"},
+      "metric": {"version": "recall-study-metrics-v1", "revision": "sha256:78a701966e15a5bc6fb00ade131f95c49b2ca6af4ce17e06fbef185202c20eaa"},
+      "source": {"version": "105778d820029a2326043739fd676647e5c037f6", "revision": "105778d820029a2326043739fd676647e5c037f6"}
+    },
+    "compatibility": {
+      "schema_version": "protocol-compatibility-v1",
+      "status": "ready",
+      "reason_code": "legacy_compatible",
+      "reason": "The tuple is compatible through a verified legacy expand path.",
+      "axes": [
+        {"name": "managed_pack", "version": "3.3.0", "provenance": "repository:https://github.com/yersonargotev/engram.git#revision:105778d820029a2326043739fd676647e5c037f6", "supported_protocol": {"minimum": 1, "maximum": 1}, "status": "ready", "reason_code": "managed_pack_ready", "legacy": true},
+        {"name": "engram_binary", "version": "3.0.0", "provenance": "repository:https://github.com/yersonargotev/engram.git#revision:105778d820029a2326043739fd676647e5c037f6", "supported_protocol": {"minimum": 1, "maximum": 1}, "status": "ready", "reason_code": "engram_binary_ready", "legacy": true},
+        {"name": "codex_plugin", "version": "0.1.7", "provenance": "repository:https://github.com/yersonargotev/engram.git#revision:105778d820029a2326043739fd676647e5c037f6", "supported_protocol": {"minimum": 1, "maximum": 1}, "status": "ready", "reason_code": "codex_plugin_ready", "legacy": true},
+        {"name": "protocol_contract", "version": "1", "provenance": "engram-core", "supported_protocol": {"minimum": 1, "maximum": 1}, "status": "ready", "reason_code": "protocol_contract_ready"}
+      ],
+      "protocol_intersection": {"minimum": 1, "maximum": 1},
+      "legacy": true
+    }
+  },
+  "source_artifacts": [
+    {"name": "managed_pack_manifest", "path": "pack.json", "sha256": "9bed746986c705191d806c4a298e480becf251bd12189a5b191a8c9862169a74"},
+    {"name": "managed_pack_skill", "path": "skills/engram-memory-cli/SKILL.md", "sha256": "5e8e94eeea4dc6fb2d389999f0de92b1182784f6700bb89332f1040295c0b3a9"},
+    {"name": "protocol_fixture", "path": "assets/protocol-contract-v1.json", "sha256": "d6998bc1e053878410487dddae05de39839590f0bd9335c73fcbdd7f5aff2c54"},
+    {"name": "codex_plugin_manifest", "path": "plugin/codex/.codex-plugin/plugin.json", "sha256": "8fd6699d834beab9a8188ee51e273156f5db02aec4694bc3458db382a17a23b1"}
+  ]
+}

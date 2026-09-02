@@ -430,7 +430,7 @@ Your production engram is fully untouched throughout.
 | `engram timeline <obs_id>`                 | Chronological context                                           |
 | `engram context [project]`                 | Recent session context                                           |
 | `engram activation-study verify\|run\|analyze` | Verify, execute, or analyze a frozen disposable Codex activation cohort |
-| `engram recall-study verify\|dry-run\|plan-calibration\|report` | Verify, plan, and analyze the frozen paired Recall study without enabling rollout |
+| `engram recall-study verify\|dry-run\|plan-calibration\|report\|run-calibration\|run-held-out\|publish` | Verify, execute, and publish the frozen paired Recall study without enabling rollout |
 | `engram recall-baseline record\|report\|power\|purge` | Collect and reproduce the opt-in content-free local Recall baseline |
 | `engram checkpoint preflight [flags]`      | Inspect prospective Memories without writing local or replicated state |
 | `engram checkpoint record [flags]`         | Record an idempotent local `saved`, `needs_review`, or `skipped` root-turn checkpoint |
@@ -502,14 +502,17 @@ contract](docs/RECALL-BASELINE.md).
 `engram recall-study` validates the compiled immutable v1 trust anchor,
 content-addressed policy and metric specifications, cohort manifests, consent
 proof, task-protocol specification, and Compatibility tuple before it can
-create a private calibration plan or derive an aggregate report from disposable
-calibration rows. Cohort manifests bind each fixture, instruction, verifier,
-expected result, and complete canonical task input. The frozen analyzer covers
-all three arms, task success, duplicate rate, and time-to-useful while keeping
-task-verifier failures distinct from operational failures. No
-#109 command
-accepts task-input paths, authorizes held-out execution, changes default Recall,
-enables rollout, or publishes row-level state.
+create a private calibration plan, execute or resume isolated Codex cells, or
+derive an aggregate report. Held-out task bytes remain closed until complete
+calibration evidence passes its execution prerequisites. Cohort manifests bind
+each fixture, instruction, verifier, expected result, and complete canonical
+task input. The frozen analyzer covers all three arms, task success, duplicate
+rate, and time-to-useful while keeping task-verifier failures distinct from
+operational failures. Publication selects exactly one Codex-scoped disposition
+from frozen gates, exposes no row-level state, and never enables rollout.
+The published v1 calibration result is `continue_canary`: targeted Recall was
+not observed in the first planned cell, so no row was accepted and held-out
+remained unopened.
 See the [frozen study contract and operator workflow](docs/RECALL-STUDY.md).
 
 ### Key Environment Variables

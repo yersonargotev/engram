@@ -21,7 +21,7 @@ func TestRecallStudyHelpIsConfigFreeAndSkipsUpdateChecks(t *testing.T) {
 			t.Fatal("recall-study was not handled before configuration")
 		}
 	})
-	if stderr != "" || !strings.Contains(stdout, "recall-study verify|dry-run|plan-calibration|report") {
+	if stderr != "" || !strings.Contains(stdout, "run-calibration|run-held-out|publish") {
 		t.Fatalf("help stdout=%q stderr=%q", stdout, stderr)
 	}
 	if shouldCheckForUpdates(os.Args[1:]) {
@@ -29,6 +29,37 @@ func TestRecallStudyHelpIsConfigFreeAndSkipsUpdateChecks(t *testing.T) {
 	}
 	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
 		t.Fatalf("config-free help created product state: %v", err)
+	}
+}
+
+func TestRecallStudyExecutionCommandsRequireRuntimeAndPrivateInputs(t *testing.T) {
+	stubExitWithPanic(t)
+	common := []string{
+		"--contract", "contract.json", "--contract-hash", "contract.sha256",
+		"--calibration-manifest", "calibration.json", "--calibration-hash", "calibration.sha256",
+		"--held-out-manifest", "held-out.json", "--held-out-hash", "held-out.sha256",
+		"--environment", "environment.json", "--consent", "consent.json",
+	}
+	tests := []struct {
+		command string
+		extra   []string
+		want    string
+	}{
+		{command: "run-calibration", extra: []string{"--codex-binary", "codex", "--auth-file", "auth.json", "--output", "rows.json"}, want: "--source-repo"},
+		{command: "run-held-out", extra: []string{"--source-repo", "repo", "--codex-binary", "codex", "--auth-file", "auth.json", "--output", "rows.json"}, want: "--calibration-rows"},
+		{command: "publish", extra: []string{"--held-out-rows", "held-out-rows.json", "--output", "publication.json"}, want: "--calibration-rows"},
+	}
+	for _, test := range tests {
+		t.Run(test.command, func(t *testing.T) {
+			args := append([]string{"engram", "recall-study", test.command}, common...)
+			args = append(args, test.extra...)
+			args = append(args, "--json")
+			withArgs(t, args...)
+			_, stderr, recovered := captureOutputAndRecover(t, cmdRecallStudy)
+			if recovered == nil || !strings.Contains(stderr, test.want) {
+				t.Fatalf("%s recovered=%v stderr=%q", test.command, recovered, stderr)
+			}
+		})
 	}
 }
 
@@ -212,6 +243,60 @@ func TestRecallStudyCLIReportDerivesAndWritesAggregateEvidence(t *testing.T) {
 	}
 }
 
+func TestRecallStudyCLIPublishesOneAggregateOnlyDisposition(t *testing.T) {
+	root := filepath.Join("..", "..", "evals", "recall-study", "v1")
+	study, err := recallstudy.Load(filepath.Join(root, "contract.json"), filepath.Join(root, "contract.sha256"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	calibration, err := recallstudy.LoadManifest(filepath.Join(root, "calibration", "manifest.json"), filepath.Join(root, "calibration", "manifest.sha256"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	heldOut, err := recallstudy.LoadManifest(filepath.Join(root, "held-out", "manifest.json"), filepath.Join(root, "held-out", "manifest.sha256"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	environmentPath := filepath.Join(dir, "environment.json")
+	consentPath := filepath.Join(dir, "consent.json")
+	calibrationRowsPath := filepath.Join(dir, "calibration-rows.json")
+	heldOutRowsPath := filepath.Join(dir, "held-out-rows.json")
+	publicationPath := filepath.Join(dir, "shared", "publication.json")
+	writeRecallStudyTestJSON(t, environmentPath, recallStudyCompatibilityEvidence(study))
+	writeRecallStudyTestJSON(t, consentPath, recallstudy.ConsentEvidence{
+		StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
+		CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: study.ConsentCommitment(&calibration.Manifest, &heldOut.Manifest),
+	})
+	calibrationRows := recallStudyCompleteRows(t, study, &calibration.Manifest)
+	heldOutRows := recallStudyCompleteRows(t, study, &heldOut.Manifest)
+	writeRecallStudyTestJSON(t, calibrationRowsPath, calibrationRows)
+	writeRecallStudyTestJSON(t, heldOutRowsPath, heldOutRows)
+
+	withArgs(t, "engram", "recall-study", "publish",
+		"--contract", filepath.Join(root, "contract.json"), "--contract-hash", filepath.Join(root, "contract.sha256"),
+		"--calibration-manifest", filepath.Join(root, "calibration", "manifest.json"), "--calibration-hash", filepath.Join(root, "calibration", "manifest.sha256"),
+		"--held-out-manifest", filepath.Join(root, "held-out", "manifest.json"), "--held-out-hash", filepath.Join(root, "held-out", "manifest.sha256"),
+		"--environment", environmentPath, "--consent", consentPath,
+		"--calibration-rows", calibrationRowsPath, "--held-out-rows", heldOutRowsPath,
+		"--output", publicationPath, "--json")
+	stdout, stderr := captureOutput(t, cmdRecallStudy)
+	if stderr != "" || !strings.Contains(stdout, `"disposition": "continue_canary"`) || !strings.Contains(stdout, `"rollout_enabled": false`) {
+		t.Fatalf("publish stdout=%q stderr=%q", stdout, stderr)
+	}
+	info, err := os.Stat(publicationPath)
+	if err != nil || info.Mode().Perm() != 0o644 {
+		t.Fatalf("publication mode=%v err=%v", info, err)
+	}
+	raw, err := os.ReadFile(publicationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), calibrationRows.Rows[0].RunID) || strings.Contains(string(raw), "salted-") || !strings.Contains(string(raw), `"shared_output": "aggregate-only"`) {
+		t.Fatalf("publication is not aggregate-only: %s", raw)
+	}
+}
+
 func writeRecallStudyTestJSON(t *testing.T, path string, value any) {
 	t.Helper()
 	raw, err := json.Marshal(value)
@@ -234,4 +319,35 @@ func recallStudyCompatibilityEvidence(study *recallstudy.Study) recallstudy.Comp
 			protocolcontract.Declaration{Version: study.Contract.Revisions.CodexPlugin.Version, Provenance: provenance, Supported: rangeV1},
 		),
 	}
+}
+
+func recallStudyCompleteRows(t *testing.T, study *recallstudy.Study, manifest *recallstudy.Manifest) recallstudy.RowSet {
+	t.Helper()
+	plan, err := study.Plan(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := recallstudy.RowSet{
+		SchemaVersion: recallstudy.RowSetSchemaVersion, StudyID: study.Contract.StudyID,
+		StudyVersion: study.Contract.StudyVersion, ContractSHA256: study.Hash, CohortID: manifest.CohortID,
+	}
+	for _, run := range plan {
+		row := recallstudy.RunRow{
+			RunID: run.RunID, SamplingUnitID: run.SamplingUnitID, TaskClass: run.TaskClass, Treatment: run.Treatment,
+			Outcome: "completed", TaskOutcome: "succeeded", FalseEmptyReview: "not_applicable", CheckpointSucceeded: true,
+			AutomaticInjectedUTF8Bytes: 1000, StartupCompactLatencyMillis: 100, TimeToUsefulMillis: 200,
+		}
+		if run.Treatment == "targeted-recall" {
+			row.AutomaticInjectedUTF8Bytes = 500
+			row.StartupCompactLatencyMillis = 60
+			row.RecallLatencyMillis = 100
+			row.TimeToUsefulMillis = 120
+		}
+		if run.Treatment != "no-recall" {
+			row.RecallResultCount = 1
+			row.Assessments = []recallstudy.Assessment{{ResultKey: "salted-" + run.RunID, Utility: "orienting", Quality: "current", Source: "evaluator"}}
+		}
+		rows.Rows = append(rows.Rows, row)
+	}
+	return rows
 }

@@ -1,0 +1,28 @@
+{
+  "schema_version": "recall-study-publication-v1",
+  "study_id": "codex-useful-recall",
+  "study_version": "v1",
+  "contract_sha256": "66c9911ce50bcab491d62662e41b2c7f73ffc872f45559aa27acccd09a3ef723",
+  "calibration_manifest_sha256": "6bc2cd8ca1c0967290c21721722d2bc503fdea5d8d04302d1b33ff833e34e4cd",
+  "held_out_manifest_sha256": "df5adf10d653ff7357ac41c9421a692494d67b84113179881d8f44b2516a9046",
+  "scope": "codex",
+  "stage": "calibration-v1",
+  "valid": false,
+  "disposition": "continue_canary",
+  "reason_code": "targeted_recall_not_observed",
+  "evidence_gaps": [
+    "checkpoint-non-inferiority",
+    "stop-growth",
+    "injected-bytes",
+    "startup-compact-latency",
+    "recall-latency",
+    "utility",
+    "noise",
+    "harm",
+    "false-empty",
+    "label-coverage"
+  ],
+  "planned_runs": 180,
+  "observed_runs": 0,
+  "rollout_enabled": false
+}

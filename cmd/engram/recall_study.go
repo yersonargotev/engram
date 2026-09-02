@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,15 +18,18 @@ type recallStudyFlags struct {
 	CalibrationManifestPath, CalibrationHashPath string
 	HeldOutManifestPath, HeldOutHashPath         string
 	EnvironmentPath, ConsentPath, RowsPath       string
-	OutputPath                                   string
+	CalibrationRowsPath, HeldOutRowsPath         string
+	SourceRepo, CodexBinary, AuthFile            string
+	OutputPath, PublicationOutputPath            string
 	JSONMode                                     bool
 }
 
 type recallStudyInputs struct {
-	study        *recallstudy.Study
-	calibration  *recallstudy.Manifest
-	heldOut      *recallstudy.Manifest
-	verification recallstudy.VerificationReport
+	study             *recallstudy.Study
+	calibration       *recallstudy.Manifest
+	heldOut           *recallstudy.Manifest
+	verificationInput recallstudy.VerificationInput
+	verification      recallstudy.VerificationReport
 }
 
 type recallStudyRunPlan struct {
@@ -41,7 +45,7 @@ type recallStudyRunPlan struct {
 func cmdRecallStudy() {
 	jsonMode := hasArg("--json")
 	if len(os.Args) < 3 {
-		failCLI(jsonMode, "invalid_arguments", "recall-study requires verify, dry-run, plan-calibration, or report", nil)
+		failCLI(jsonMode, "invalid_arguments", "recall-study requires verify, dry-run, plan-calibration, report, run-calibration, run-held-out, or publish", nil)
 		return
 	}
 	subcommand := strings.ToLower(strings.TrimSpace(os.Args[2]))
@@ -49,7 +53,7 @@ func cmdRecallStudy() {
 	case "help", "--help", "-h":
 		printRecallStudyUsage()
 		return
-	case "verify", "dry-run", "plan-calibration", "report":
+	case "verify", "dry-run", "plan-calibration", "report", "run-calibration", "run-held-out", "publish":
 	default:
 		failCLI(jsonMode, "invalid_arguments", fmt.Sprintf("unknown recall-study command %q", os.Args[2]), nil)
 		return
@@ -106,6 +110,78 @@ func cmdRecallStudy() {
 			}
 		}
 		writeRecallStudyResult(flags.JSONMode, report)
+	case "run-calibration":
+		result, err := inputs.study.Execute(context.Background(), recallstudy.ExecutionRequest{
+			Verification: inputs.verificationInput,
+			Cohort:       inputs.calibration,
+			OutputPath:   flags.OutputPath,
+			Runtime: recallstudy.ExecutionRuntime{
+				SourceRepo: flags.SourceRepo, CodexBinary: flags.CodexBinary, AuthFile: flags.AuthFile,
+			},
+		})
+		if err != nil {
+			failCLI(flags.JSONMode, "recall_study_execution_failed", err.Error(), nil)
+			return
+		}
+		if result.Disposition != "" && flags.PublicationOutputPath != "" {
+			publication, publishErr := inputs.study.PublishCalibrationStatus(result)
+			if publishErr != nil {
+				failCLI(flags.JSONMode, "recall_study_publication_failed", publishErr.Error(), nil)
+				return
+			}
+			if writeErr := recallstudy.WriteSharedJSON(flags.PublicationOutputPath, publication); writeErr != nil {
+				failCLI(flags.JSONMode, "output_error", writeErr.Error(), nil)
+				return
+			}
+		}
+		writeRecallStudyResult(flags.JSONMode, result)
+	case "run-held-out":
+		calibrationRows, err := recallstudy.ReadRowSet(flags.CalibrationRowsPath)
+		if err != nil {
+			failCLI(flags.JSONMode, "invalid_recall_study_rows", err.Error(), nil)
+			return
+		}
+		result, err := inputs.study.Execute(context.Background(), recallstudy.ExecutionRequest{
+			Verification:    inputs.verificationInput,
+			Cohort:          inputs.heldOut,
+			CalibrationRows: &calibrationRows,
+			OutputPath:      flags.OutputPath,
+			Runtime: recallstudy.ExecutionRuntime{
+				SourceRepo: flags.SourceRepo, CodexBinary: flags.CodexBinary, AuthFile: flags.AuthFile,
+			},
+		})
+		if err != nil {
+			failCLI(flags.JSONMode, "recall_study_execution_failed", err.Error(), nil)
+			return
+		}
+		writeRecallStudyResult(flags.JSONMode, result)
+	case "publish":
+		calibrationRows, err := recallstudy.ReadRowSet(flags.CalibrationRowsPath)
+		if err != nil {
+			failCLI(flags.JSONMode, "invalid_recall_study_rows", err.Error(), nil)
+			return
+		}
+		heldOutRows, err := recallstudy.ReadRowSet(flags.HeldOutRowsPath)
+		if err != nil {
+			failCLI(flags.JSONMode, "invalid_recall_study_rows", err.Error(), nil)
+			return
+		}
+		publication, err := inputs.study.Publish(calibrationRows, heldOutRows)
+		if err != nil {
+			failCLI(flags.JSONMode, "recall_study_publication_failed", err.Error(), nil)
+			return
+		}
+		if err := recallstudy.WriteSharedJSON(flags.OutputPath, publication); err != nil {
+			failCLI(flags.JSONMode, "output_error", err.Error(), nil)
+			return
+		}
+		writeRecallStudyResult(flags.JSONMode, map[string]any{
+			"schema_version":  publication.SchemaVersion,
+			"scope":           publication.Scope,
+			"disposition":     publication.Disposition,
+			"evidence_gaps":   publication.EvidenceGaps,
+			"rollout_enabled": false,
+		})
 	}
 }
 
@@ -122,11 +198,25 @@ func parseRecallStudyFlags(subcommand string, args []string) (recallStudyFlags, 
 	set.StringVar(&flags.EnvironmentPath, "environment", "", "verified Compatibility tuple JSON")
 	set.StringVar(&flags.ConsentPath, "consent", "", "explicit consent evidence JSON")
 	set.BoolVar(&flags.JSONMode, "json", false, "emit JSON")
-	if subcommand == "plan-calibration" || subcommand == "report" {
+	if subcommand == "plan-calibration" || subcommand == "report" || subcommand == "run-calibration" || subcommand == "run-held-out" || subcommand == "publish" {
 		set.StringVar(&flags.OutputPath, "output", "", "output JSON path")
 	}
 	if subcommand == "report" {
 		set.StringVar(&flags.RowsPath, "rows", "", "private row-level results JSON")
+	}
+	if subcommand == "run-calibration" || subcommand == "run-held-out" {
+		set.StringVar(&flags.SourceRepo, "source-repo", "", "source repository containing the frozen revision")
+		set.StringVar(&flags.CodexBinary, "codex-binary", "", "frozen Codex executable")
+		set.StringVar(&flags.AuthFile, "auth-file", "", "Codex authentication file")
+	}
+	if subcommand == "run-calibration" {
+		set.StringVar(&flags.PublicationOutputPath, "publication-output", "", "aggregate-only output for an invalid calibration disposition")
+	}
+	if subcommand == "run-held-out" || subcommand == "publish" {
+		set.StringVar(&flags.CalibrationRowsPath, "calibration-rows", "", "private calibration rows JSON")
+	}
+	if subcommand == "publish" {
+		set.StringVar(&flags.HeldOutRowsPath, "held-out-rows", "", "private held-out rows JSON")
 	}
 	if err := set.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -158,6 +248,19 @@ func parseRecallStudyFlags(subcommand string, args []string) (recallStudyFlags, 
 	}
 	if subcommand == "report" {
 		required["--rows"] = flags.RowsPath
+	}
+	if subcommand == "run-calibration" || subcommand == "run-held-out" {
+		required["--source-repo"] = flags.SourceRepo
+		required["--codex-binary"] = flags.CodexBinary
+		required["--auth-file"] = flags.AuthFile
+		required["--output"] = flags.OutputPath
+	}
+	if subcommand == "run-held-out" || subcommand == "publish" {
+		required["--calibration-rows"] = flags.CalibrationRowsPath
+	}
+	if subcommand == "publish" {
+		required["--held-out-rows"] = flags.HeldOutRowsPath
+		required["--output"] = flags.OutputPath
 	}
 	for name, value := range required {
 		if strings.TrimSpace(value) == "" {
@@ -194,12 +297,13 @@ func loadRecallStudyInputs(flags recallStudyFlags) (recallStudyInputs, bool) {
 		failCLI(flags.JSONMode, "invalid_recall_study_consent", err.Error(), nil)
 		return recallStudyInputs{}, false
 	}
-	verification, err := study.Verify(recallstudy.VerificationInput{Calibration: &calibration.Manifest, HeldOut: &heldOut.Manifest, Compatibility: compatibility, Consent: consent})
+	verificationInput := recallstudy.VerificationInput{Calibration: &calibration.Manifest, HeldOut: &heldOut.Manifest, Compatibility: compatibility, Consent: consent}
+	verification, err := study.Verify(verificationInput)
 	if err != nil {
 		failCLI(flags.JSONMode, "recall_study_verification_failed", err.Error(), nil)
 		return recallStudyInputs{}, false
 	}
-	return recallStudyInputs{study: study, calibration: &calibration.Manifest, heldOut: &heldOut.Manifest, verification: verification}, true
+	return recallStudyInputs{study: study, calibration: &calibration.Manifest, heldOut: &heldOut.Manifest, verificationInput: verificationInput, verification: verification}, true
 }
 
 func writeRecallStudyPlan(flags recallStudyFlags, inputs recallStudyInputs, manifest *recallstudy.Manifest) {
@@ -239,7 +343,7 @@ func writeRecallStudyResult(jsonMode bool, value any) {
 }
 
 func printRecallStudyUsage() {
-	fmt.Println(`usage: engram recall-study verify|dry-run|plan-calibration|report [options]
+	fmt.Println(`usage: engram recall-study verify|dry-run|plan-calibration|report|run-calibration|run-held-out|publish [options]
 
 All commands require the frozen contract, both manifest metadata files and their
 SHA-256 sidecars, a verified Compatibility tuple, and explicit consent evidence.
@@ -247,5 +351,8 @@ SHA-256 sidecars, a verified Compatibility tuple, and explicit consent evidence.
   verify         Validate frozen metadata without opening held-out inputs
   dry-run        Return aggregate plan counts without opening held-out inputs
   plan-calibration  Write a private calibration run plan with --output FILE
-  report            Derive aggregate evidence from --rows; optionally write --output FILE`)
+  report            Derive aggregate evidence from calibration --rows
+  run-calibration   Execute or resume the frozen private calibration cohort
+  run-held-out      Execute or resume held-out after successful --calibration-rows
+  publish           Write one aggregate-only disposition from both private row sets`)
 }

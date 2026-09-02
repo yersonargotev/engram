@@ -14,6 +14,13 @@ import (
 
 func TestFrozenV1ContinueCanaryDistributionPinsTupleWithoutContracting(t *testing.T) {
 	root, _, study, publication, outcome := frozenDistributionFixture(t)
+	currentPack, err := os.ReadFile(filepath.Join(root, "pack.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digestForTest(currentPack) == outcome.Outcome.SourceArtifacts[0].SHA256 {
+		t.Fatal("test requires the current Managed Pack to differ from the frozen v1 source snapshot")
+	}
 	verification, err := study.VerifyDistributionOutcome(publication, outcome, root)
 	if err != nil {
 		t.Fatal(err)
@@ -149,14 +156,33 @@ func TestVerifyDistributionOutcomeRejectsPublicationDriftAndMissingStudy(t *test
 			}
 		})
 	}
-	verification, err := study.VerifyDistributionOutcome(publication, frozen, copyDistributionArtifacts(t, root, frozen.Outcome.SourceArtifacts))
+	standaloneRoot := t.TempDir()
+	standaloneSnapshotRoot := distributionSourceSnapshotRoot(standaloneRoot, frozen.Outcome.StudyVersion)
+	copyDistributionArtifacts(t, distributionSourceSnapshotRoot(root, frozen.Outcome.StudyVersion), standaloneSnapshotRoot, frozen.Outcome.SourceArtifacts)
+	verification, err := study.VerifyDistributionOutcome(publication, frozen, standaloneRoot)
 	if err != nil || !verification.SourceRevisionVerified {
 		t.Fatalf("self-contained source revision proof failed outside a full Git clone: verification=%#v err=%v", verification, err)
 	}
 }
 
+func TestVerifyDistributionOutcomeRejectsFrozenSnapshotDrift(t *testing.T) {
+	root, _, study, publication, frozen := frozenDistributionFixture(t)
+	temporaryRoot := t.TempDir()
+	snapshotRoot := distributionSourceSnapshotRoot(temporaryRoot, frozen.Outcome.StudyVersion)
+	copyDistributionArtifacts(t, distributionSourceSnapshotRoot(root, frozen.Outcome.StudyVersion), snapshotRoot, frozen.Outcome.SourceArtifacts)
+
+	packPath := filepath.Join(snapshotRoot, "pack.json")
+	if err := os.WriteFile(packPath, []byte("changed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := study.VerifyDistributionOutcome(publication, frozen, temporaryRoot); err == nil || !strings.Contains(err.Error(), "hash mismatch") {
+		t.Fatalf("frozen snapshot drift error = %v", err)
+	}
+}
+
 func TestVerifyDistributionArtifactsRejectsIncompleteOrInvalidIdentity(t *testing.T) {
 	root, _, _, _, frozen := frozenDistributionFixture(t)
+	snapshotRoot := distributionSourceSnapshotRoot(root, frozen.Outcome.StudyVersion)
 	artifacts := frozen.Outcome.SourceArtifacts
 	tests := []struct {
 		name   string
@@ -164,11 +190,11 @@ func TestVerifyDistributionArtifactsRejectsIncompleteOrInvalidIdentity(t *testin
 		mutate func([]DistributionArtifact) []DistributionArtifact
 	}{
 		{name: "blank root", root: " "},
-		{name: "missing", root: root, mutate: func(items []DistributionArtifact) []DistributionArtifact { return items[:len(items)-1] }},
-		{name: "unknown name", root: root, mutate: mutateArtifact(0, func(item *DistributionArtifact) { item.Name = "unknown" })},
-		{name: "wrong path", root: root, mutate: mutateArtifact(0, func(item *DistributionArtifact) { item.Path = "README.md" })},
-		{name: "duplicate", root: root, mutate: mutateArtifact(1, func(item *DistributionArtifact) { *item = artifacts[0] })},
-		{name: "invalid digest", root: root, mutate: mutateArtifact(0, func(item *DistributionArtifact) { item.SHA256 = "invalid" })},
+		{name: "missing", root: snapshotRoot, mutate: func(items []DistributionArtifact) []DistributionArtifact { return items[:len(items)-1] }},
+		{name: "unknown name", root: snapshotRoot, mutate: mutateArtifact(0, func(item *DistributionArtifact) { item.Name = "unknown" })},
+		{name: "wrong path", root: snapshotRoot, mutate: mutateArtifact(0, func(item *DistributionArtifact) { item.Path = "README.md" })},
+		{name: "duplicate", root: snapshotRoot, mutate: mutateArtifact(1, func(item *DistributionArtifact) { *item = artifacts[0] })},
+		{name: "invalid digest", root: snapshotRoot, mutate: mutateArtifact(0, func(item *DistributionArtifact) { item.SHA256 = "invalid" })},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -182,7 +208,8 @@ func TestVerifyDistributionArtifactsRejectsIncompleteOrInvalidIdentity(t *testin
 		})
 	}
 
-	temporaryRoot := copyDistributionArtifacts(t, root, artifacts)
+	temporaryRoot := t.TempDir()
+	copyDistributionArtifacts(t, snapshotRoot, temporaryRoot, artifacts)
 	changed := append([]DistributionArtifact(nil), artifacts...)
 	changed[0].SHA256 = strings.Repeat("0", 64)
 	if err := verifyDistributionArtifacts(temporaryRoot, changed); err == nil || !strings.Contains(err.Error(), "hash mismatch") {
@@ -201,7 +228,8 @@ func TestVerifyDistributionRevisionProofWorksWithoutGitAndRejectsDrift(t *testin
 	root, _, study, _, frozen := frozenDistributionFixture(t)
 	artifacts := frozen.Outcome.SourceArtifacts
 	proof := frozen.Outcome.SourceRevisionProof
-	standaloneRoot := copyDistributionArtifacts(t, root, artifacts)
+	standaloneRoot := t.TempDir()
+	copyDistributionArtifacts(t, distributionSourceSnapshotRoot(root, frozen.Outcome.StudyVersion), standaloneRoot, artifacts)
 	if err := verifyDistributionRevisionProof(standaloneRoot, study.Contract.SourceRevision, artifacts, proof); err != nil {
 		t.Fatalf("self-contained revision proof = %v", err)
 	}
@@ -334,12 +362,14 @@ func TestVerifyDistributionOutcomeRejectsSymlinkedSourceArtifactWithoutChangingI
 		t.Skip("creating an unprivileged symlink is not portable on Windows")
 	}
 	root, _, _, _, frozen := frozenDistributionFixture(t)
-	temporaryRoot := copyDistributionArtifacts(t, root, frozen.Outcome.SourceArtifacts)
+	snapshotRoot := distributionSourceSnapshotRoot(root, frozen.Outcome.StudyVersion)
+	temporaryRoot := t.TempDir()
+	copyDistributionArtifacts(t, snapshotRoot, temporaryRoot, frozen.Outcome.SourceArtifacts)
 	pluginPath := filepath.Join(temporaryRoot, "plugin", "codex", ".codex-plugin", "plugin.json")
 	if err := os.Remove(pluginPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(root, "plugin", "codex", ".codex-plugin", "plugin.json"), pluginPath); err != nil {
+	if err := os.Symlink(filepath.Join(snapshotRoot, "plugin", "codex", ".codex-plugin", "plugin.json"), pluginPath); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifyDistributionArtifacts(temporaryRoot, frozen.Outcome.SourceArtifacts); err == nil {
@@ -370,12 +400,11 @@ func frozenDistributionFixture(t *testing.T) (string, string, *Study, FrozenPubl
 	return root, studyRoot, study, publication, frozen
 }
 
-func copyDistributionArtifacts(t *testing.T, root string, artifacts []DistributionArtifact) string {
+func copyDistributionArtifacts(t *testing.T, sourceRoot, destinationRoot string, artifacts []DistributionArtifact) {
 	t.Helper()
-	temporaryRoot := t.TempDir()
 	for _, artifact := range artifacts {
-		source := filepath.Join(root, filepath.FromSlash(artifact.Path))
-		destination := filepath.Join(temporaryRoot, filepath.FromSlash(artifact.Path))
+		source := filepath.Join(sourceRoot, filepath.FromSlash(artifact.Path))
+		destination := filepath.Join(destinationRoot, filepath.FromSlash(artifact.Path))
 		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -387,7 +416,6 @@ func copyDistributionArtifacts(t *testing.T, root string, artifacts []Distributi
 			t.Fatal(err)
 		}
 	}
-	return temporaryRoot
 }
 
 func mutateArtifact(index int, mutate func(*DistributionArtifact)) func([]DistributionArtifact) []DistributionArtifact {

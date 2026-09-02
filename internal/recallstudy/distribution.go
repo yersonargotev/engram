@@ -20,6 +20,7 @@ const (
 	DistributionActionPreserve         = "preserve_verified_tuple"
 	DistributionPostInstallNotVerified = "not_verified"
 	DistributionRevisionProofSchema    = "git-object-membership-proof-v1"
+	DistributionSourceSnapshotDir      = "source-snapshot"
 	FrozenV1DistributionSHA256         = "44970ac08d15030cb0df16b5e909e9db75cec94465980f82751f238c588a7417"
 	maxDistributionOutcomeBytes        = 1 << 20
 )
@@ -167,10 +168,11 @@ func (study *Study) VerifyDistributionOutcome(publication FrozenPublication, fro
 		!outcome.SelectedCompatibility.Compatibility.Legacy {
 		return DistributionVerification{}, fmt.Errorf("Recall distribution selected Compatibility tuple is unsupported or changed")
 	}
-	if err := verifyDistributionArtifacts(sourceRoot, outcome.SourceArtifacts); err != nil {
+	snapshotRoot := distributionSourceSnapshotRoot(sourceRoot, outcome.StudyVersion)
+	if err := verifyDistributionArtifacts(snapshotRoot, outcome.SourceArtifacts); err != nil {
 		return DistributionVerification{}, err
 	}
-	if err := verifyDistributionRevisionProof(sourceRoot, study.Contract.SourceRevision, outcome.SourceArtifacts, outcome.SourceRevisionProof); err != nil {
+	if err := verifyDistributionRevisionProof(snapshotRoot, study.Contract.SourceRevision, outcome.SourceArtifacts, outcome.SourceRevisionProof); err != nil {
 		return DistributionVerification{}, err
 	}
 
@@ -185,6 +187,10 @@ func (study *Study) VerifyDistributionOutcome(publication FrozenPublication, fro
 		LocalSchemasParticipatingByDefault: outcome.LocalSchemasParticipatingByDefault,
 		Compatibility:                      outcome.SelectedCompatibility.Compatibility, SourceArtifacts: append([]DistributionArtifact(nil), outcome.SourceArtifacts...),
 	}, nil
+}
+
+func distributionSourceSnapshotRoot(sourceRoot, studyVersion string) string {
+	return filepath.Join(sourceRoot, "evals", "recall-study", studyVersion, DistributionSourceSnapshotDir)
 }
 
 type gitTreeEntry struct {

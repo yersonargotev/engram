@@ -518,8 +518,9 @@ outcome pins that current legacy-compatible tuple as a unit and authorizes no
 release, rollout, downgrade, or legacy-path contraction. Use the read-only
 `engram recall-study verify-distribution` command described in
 [`RECALL-STUDY.md`](RECALL-STUDY.md) to verify its exact Git revision and source
-hashes. That source-outcome check does not claim anything about the current
-installation: verify post-install readiness independently with
+hashes. Its embedded Git object membership proof requires neither full local
+history nor network access. That source-outcome check does not claim anything
+about the current installation: verify post-install readiness independently with
 `engram setup status codex --json`.
 
 Status describes installed capability only. It is not evidence that Codex loaded or invoked a skill, that hooks ran in the current session, or that the model created a Memory. Use session and checkpoint evidence for those claims.

@@ -518,7 +518,8 @@ Managed Pack `3.3.0` / binary `3.0.0` / Codex plugin `0.1.7` / Protocol `1`
 canary tuple at source revision `105778d820029a2326043739fd676647e5c037f6`.
 It does not release, roll out, or contract legacy state. Verify the frozen
 outcome, exact Git revision, and committed source artifacts read-only with
-`engram recall-study verify-distribution`; its output deliberately leaves
+`engram recall-study verify-distribution`. The embedded Git object membership
+proof works without local history or network access; output deliberately leaves
 post-install readiness `not_verified`. Inspect the installed tuple separately
 with `engram setup status codex --json`.
 See the [frozen study contract and operator workflow](docs/RECALL-STUDY.md).

@@ -24,9 +24,11 @@ action preserves the tuple, every legacy path, and the Legacy prompt archive;
 it requires no release, enables no rollout, and keeps the Recall telemetry and
 Diagnostic capture schemas non-participating by default.
 
-`engram recall-study verify-distribution` resolves the pinned Git revision and
-checks each digest both there and in the supplied working tree. This source
-verification deliberately reports installed readiness as `not_verified`; use
+`engram recall-study verify-distribution` recomputes the pinned commit, minimal
+tree chain, and artifact blob IDs from the self-contained membership proof, then
+checks each independent SHA-256 digest in the supplied source tree. It needs no
+local Git history or network access. This source verification deliberately
+reports installed readiness as `not_verified`; use
 `engram setup status codex --json` for the separate post-install check. Because
 the disposition requires no release, it does not invent a new release artifact
 or checksum.

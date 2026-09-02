@@ -1,11 +1,13 @@
 package recallstudy
 
 import (
+	"bytes"
+	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -17,7 +19,8 @@ const (
 	DistributionVerificationSchema     = "recall-distribution-verification-v1"
 	DistributionActionPreserve         = "preserve_verified_tuple"
 	DistributionPostInstallNotVerified = "not_verified"
-	FrozenV1DistributionSHA256         = "cb7b20ec58a3a1fab2d5e95db090252d8eea3e3a96986137e6dba2639c30f5fd"
+	DistributionRevisionProofSchema    = "git-object-membership-proof-v1"
+	FrozenV1DistributionSHA256         = "44970ac08d15030cb0df16b5e909e9db75cec94465980f82751f238c588a7417"
 	maxDistributionOutcomeBytes        = 1 << 20
 )
 
@@ -39,20 +42,33 @@ type FrozenDistributionOutcome struct {
 }
 
 type DistributionOutcome struct {
-	SchemaVersion                      string                 `json:"schema_version"`
-	StudyID                            string                 `json:"study_id"`
-	StudyVersion                       string                 `json:"study_version"`
-	ContractSHA256                     string                 `json:"contract_sha256"`
-	PublicationSHA256                  string                 `json:"publication_sha256"`
-	Disposition                        string                 `json:"disposition"`
-	Action                             string                 `json:"action"`
-	RolloutEnabled                     bool                   `json:"rollout_enabled"`
-	ReleaseRequired                    bool                   `json:"release_required"`
-	LegacyContractionAllowed           bool                   `json:"legacy_contraction_allowed"`
-	LegacyPromptArchiveAction          string                 `json:"legacy_prompt_archive_action"`
-	LocalSchemasParticipatingByDefault bool                   `json:"local_schemas_participating_by_default"`
-	SelectedCompatibility              CompatibilityEvidence  `json:"selected_compatibility"`
-	SourceArtifacts                    []DistributionArtifact `json:"source_artifacts"`
+	SchemaVersion                      string                    `json:"schema_version"`
+	StudyID                            string                    `json:"study_id"`
+	StudyVersion                       string                    `json:"study_version"`
+	ContractSHA256                     string                    `json:"contract_sha256"`
+	PublicationSHA256                  string                    `json:"publication_sha256"`
+	Disposition                        string                    `json:"disposition"`
+	Action                             string                    `json:"action"`
+	RolloutEnabled                     bool                      `json:"rollout_enabled"`
+	ReleaseRequired                    bool                      `json:"release_required"`
+	LegacyContractionAllowed           bool                      `json:"legacy_contraction_allowed"`
+	LegacyPromptArchiveAction          string                    `json:"legacy_prompt_archive_action"`
+	LocalSchemasParticipatingByDefault bool                      `json:"local_schemas_participating_by_default"`
+	SelectedCompatibility              CompatibilityEvidence     `json:"selected_compatibility"`
+	SourceRevisionProof                DistributionRevisionProof `json:"source_revision_proof"`
+	SourceArtifacts                    []DistributionArtifact    `json:"source_artifacts"`
+}
+
+type DistributionRevisionProof struct {
+	SchemaVersion string                          `json:"schema_version"`
+	ObjectFormat  string                          `json:"object_format"`
+	CommitBase64  string                          `json:"commit_base64"`
+	Trees         []DistributionRevisionProofTree `json:"trees"`
+}
+
+type DistributionRevisionProofTree struct {
+	ObjectID   string `json:"object_id"`
+	BodyBase64 string `json:"body_base64"`
 }
 
 type DistributionArtifact struct {
@@ -154,7 +170,7 @@ func (study *Study) VerifyDistributionOutcome(publication FrozenPublication, fro
 	if err := verifyDistributionArtifacts(sourceRoot, outcome.SourceArtifacts); err != nil {
 		return DistributionVerification{}, err
 	}
-	if err := verifyDistributionRevisionArtifacts(sourceRoot, study.Contract.SourceRevision, outcome.SourceArtifacts); err != nil {
+	if err := verifyDistributionRevisionProof(sourceRoot, study.Contract.SourceRevision, outcome.SourceArtifacts, outcome.SourceRevisionProof); err != nil {
 		return DistributionVerification{}, err
 	}
 
@@ -171,26 +187,136 @@ func (study *Study) VerifyDistributionOutcome(publication FrozenPublication, fro
 	}, nil
 }
 
-func verifyDistributionRevisionArtifacts(sourceRoot, revision string, artifacts []DistributionArtifact) error {
-	if strings.TrimSpace(sourceRoot) == "" || !validHexDigest(revision, 20) {
-		return fmt.Errorf("Recall distribution source revision identity changed")
+type gitTreeEntry struct {
+	Mode, ObjectID string
+}
+
+func verifyDistributionRevisionProof(sourceRoot, revision string, artifacts []DistributionArtifact, proof DistributionRevisionProof) error {
+	if strings.TrimSpace(sourceRoot) == "" || !validHexDigest(revision, 20) ||
+		proof.SchemaVersion != DistributionRevisionProofSchema || proof.ObjectFormat != "sha1" {
+		return fmt.Errorf("Recall distribution source revision proof identity changed")
 	}
-	if err := exec.Command("git", "-C", sourceRoot, "cat-file", "-e", revision+"^{commit}").Run(); err != nil {
-		return fmt.Errorf("verify Recall distribution source revision %s: %w", revision, err)
+	commit, err := base64.StdEncoding.DecodeString(proof.CommitBase64)
+	if err != nil || gitObjectID("commit", commit) != strings.ToLower(revision) {
+		return fmt.Errorf("Recall distribution source revision proof does not match commit %s", revision)
 	}
+	rootTree, err := gitCommitTree(commit)
+	if err != nil {
+		return err
+	}
+	trees := make(map[string][]byte, len(proof.Trees))
+	for _, treeProof := range proof.Trees {
+		body, decodeErr := base64.StdEncoding.DecodeString(treeProof.BodyBase64)
+		objectID := strings.ToLower(treeProof.ObjectID)
+		if decodeErr != nil || !validHexDigest(objectID, 20) || gitObjectID("tree", body) != objectID {
+			return fmt.Errorf("Recall distribution source revision tree proof is invalid")
+		}
+		if _, duplicate := trees[objectID]; duplicate {
+			return fmt.Errorf("Recall distribution source revision tree proof is duplicated")
+		}
+		trees[objectID] = body
+	}
+
+	usedTrees := make(map[string]bool, len(trees))
 	for _, artifact := range artifacts {
-		raw, err := exec.Command("git", "-C", sourceRoot, "show", revision+":"+artifact.Path).Output()
-		if err != nil {
-			return fmt.Errorf("read Recall distribution source artifact %s at revision %s: %w", artifact.Path, revision, err)
+		objectID := rootTree
+		segments := strings.Split(artifact.Path, "/")
+		for index, segment := range segments {
+			body, ok := trees[objectID]
+			if !ok {
+				return fmt.Errorf("Recall distribution source revision proof omits tree for %s", artifact.Path)
+			}
+			usedTrees[objectID] = true
+			entries, parseErr := parseGitTree(body)
+			if parseErr != nil {
+				return parseErr
+			}
+			entry, ok := entries[segment]
+			if !ok {
+				return fmt.Errorf("Recall distribution source revision proof omits %s", artifact.Path)
+			}
+			if index < len(segments)-1 {
+				if entry.Mode != "40000" {
+					return fmt.Errorf("Recall distribution source revision proof path %s is not a tree", artifact.Path)
+				}
+				objectID = entry.ObjectID
+				continue
+			}
+			if entry.Mode != "100644" && entry.Mode != "100755" {
+				return fmt.Errorf("Recall distribution source revision proof path %s is not a regular file", artifact.Path)
+			}
+			raw, readErr := readBoundedFile(filepath.Join(sourceRoot, filepath.FromSlash(artifact.Path)), maxDistributionOutcomeBytes)
+			if readErr != nil {
+				return fmt.Errorf("read Recall distribution source artifact %s for revision proof: %w", artifact.Path, readErr)
+			}
+			if gitObjectID("blob", raw) != entry.ObjectID {
+				return fmt.Errorf("Recall distribution source artifact %s does not match revision %s", artifact.Path, revision)
+			}
 		}
-		if len(raw) > maxDistributionOutcomeBytes {
-			return fmt.Errorf("Recall distribution source artifact %s at revision %s exceeds the verification limit", artifact.Path, revision)
-		}
-		if digestHex(raw) != strings.ToLower(artifact.SHA256) {
-			return fmt.Errorf("Recall distribution source artifact %s does not match revision %s", artifact.Path, revision)
-		}
+	}
+	if len(usedTrees) != len(trees) {
+		return fmt.Errorf("Recall distribution source revision proof contains an unrelated tree")
 	}
 	return nil
+}
+
+func gitCommitTree(commit []byte) (string, error) {
+	lineEnd := bytes.IndexByte(commit, '\n')
+	if lineEnd < 0 || !bytes.HasPrefix(commit[:lineEnd], []byte("tree ")) {
+		return "", fmt.Errorf("Recall distribution source revision proof commit omits its root tree")
+	}
+	objectID := string(commit[len("tree "):lineEnd])
+	if !validHexDigest(objectID, 20) {
+		return "", fmt.Errorf("Recall distribution source revision proof commit root tree is invalid")
+	}
+	return strings.ToLower(objectID), nil
+}
+
+func parseGitTree(body []byte) (map[string]gitTreeEntry, error) {
+	entries := make(map[string]gitTreeEntry)
+	for offset := 0; offset < len(body); {
+		space := bytes.IndexByte(body[offset:], ' ')
+		if space <= 0 {
+			return nil, fmt.Errorf("Recall distribution source revision tree proof is malformed")
+		}
+		space += offset
+		null := bytes.IndexByte(body[space+1:], 0)
+		if null <= 0 {
+			return nil, fmt.Errorf("Recall distribution source revision tree proof is malformed")
+		}
+		null += space + 1
+		objectEnd := null + 1 + sha1.Size
+		if objectEnd > len(body) {
+			return nil, fmt.Errorf("Recall distribution source revision tree proof is malformed")
+		}
+		mode := string(body[offset:space])
+		name := string(body[space+1 : null])
+		if name == "" || strings.Contains(name, "/") || !validGitTreeMode(mode) {
+			return nil, fmt.Errorf("Recall distribution source revision tree proof entry is invalid")
+		}
+		if _, duplicate := entries[name]; duplicate {
+			return nil, fmt.Errorf("Recall distribution source revision tree proof entry is duplicated")
+		}
+		entries[name] = gitTreeEntry{Mode: mode, ObjectID: hex.EncodeToString(body[null+1 : objectEnd])}
+		offset = objectEnd
+	}
+	return entries, nil
+}
+
+func validGitTreeMode(mode string) bool {
+	switch mode {
+	case "40000", "100644", "100755", "120000", "160000":
+		return true
+	default:
+		return false
+	}
+}
+
+func gitObjectID(kind string, body []byte) string {
+	hash := sha1.New() // Git commit and tree identity is defined by SHA-1 for this repository.
+	_, _ = fmt.Fprintf(hash, "%s %d%c", kind, len(body), byte(0))
+	_, _ = hash.Write(body)
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 func verifyDistributionArtifacts(sourceRoot string, artifacts []DistributionArtifact) error {

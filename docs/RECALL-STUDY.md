@@ -250,9 +250,12 @@ backward-compatible, and non-participating by default. Held-out inputs remain
 unopened.
 
 Verify the publication binding, the outcome trust anchor, the four-axis tuple,
-the exact Git revision, and the regular-file content hashes both at that
-revision and in the supplied working tree, without reading private evidence or
-mutating installation state:
+the exact Git revision, and regular-file membership at that revision without
+reading private evidence or mutating installation state. The outcome embeds the
+exact commit and the minimal Git tree bodies needed to reconstruct each path;
+the verifier recomputes commit, tree, and blob object IDs plus the independent
+SHA-256 file digests. This works from a shallow checkout or extracted source
+without fetching history:
 
 ```bash
 engram recall-study verify-distribution \

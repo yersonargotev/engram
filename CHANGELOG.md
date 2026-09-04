@@ -34,6 +34,7 @@ Breaking changes are always marked with a `type:breaking-change` label and docum
 
 ### Memory checkpoints
 
+- **feat(setup):** make `engram setup` the Memory install control plane. Status reports leftover Packy `engram-memory-cli` copies as non-canonical, a disabled standalone CLI skill is not Codex activation, and docs tell existing Packy users to migrate through setup while keeping Managed Pack compatibility.
 - **feat(setup):** add the editorial `engram-memory` skill in the repository skill tree and hash-lock Claude and Codex plugin projections to that file.
 - **feat(memory):** add a local-only, idempotent checkpoint ledger plus equivalent CLI and MCP record/status surfaces for semantic `skipped` outcomes; checkpoint data is excluded from Memory search, context, counts, export, sync, cloud materialization, and Obsidian export.
 - **feat(memory):** complete the `saved` disposition with same-project Memory references, attachment of existing Memories, atomic inline Memory creation, replay without duplicates, and equivalent CLI/MCP contracts.

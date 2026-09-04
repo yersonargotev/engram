@@ -233,6 +233,9 @@ retired user skill
 	if leftover.Status != CursorCheckCustomized || cursorEvidenceValue(leftover, "source") != "user" {
 		t.Fatalf("leftover skill = %#v", leftover)
 	}
+	if !strings.Contains(leftover.Reason, "engram setup") {
+		t.Fatalf("leftover skill reason = %q, want migration via engram setup", leftover.Reason)
+	}
 	if status.Mode == CursorModeCheckpointReady {
 		t.Fatalf("leftover user skill claimed checkpoint readiness: %#v", status)
 	}

@@ -355,6 +355,24 @@ func TestMaintainedDocsDescribeCursorAgentPluginInstall(t *testing.T) {
 	}
 }
 
+func TestMaintainedDocsDescribePackySkillMigration(t *testing.T) {
+	root := filepath.Join("..", "..")
+	agentSetup := strings.ToLower(readPolicyProjection(t, root, "docs/AGENT-SETUP.md"))
+	for _, required := range []string{
+		"engram-memory-cli",
+		"packy",
+		"engram setup",
+		"compatibility",
+	} {
+		if !strings.Contains(agentSetup, required) {
+			t.Errorf("docs/AGENT-SETUP.md missing Packy migration guidance %q", required)
+		}
+	}
+	if !strings.Contains(agentSetup, "leftover") && !strings.Contains(agentSetup, "not the canonical") {
+		t.Error("docs/AGENT-SETUP.md does not tell existing Packy skill users the leftover copy is not canonical")
+	}
+}
+
 func TestMaintainedDocsDescribeExactMemoryDedupeIdentity(t *testing.T) {
 	root := filepath.Join("..", "..")
 	const identity = "normalized content hash + project + scope + type + title + tool_name + normalized topic_key"

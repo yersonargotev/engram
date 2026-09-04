@@ -337,6 +337,9 @@ func TestInspectCodexStatusDiscoversRepositoryAndUserSkills(t *testing.T) {
 	if got := evidenceValue(skills[1], "version"); got != "1.2.3" {
 		t.Fatalf("user skill version = %q", got)
 	}
+	if skills[1].Status != CodexCheckCustomized || skills[1].ReasonCode != "engram_skill_leftover" {
+		t.Fatalf("user CLI skill = %#v, want leftover not canonical", skills[1])
+	}
 }
 
 func TestInspectCodexStatusCompleteSupportedPluginIsCheckpointReady(t *testing.T) {
@@ -892,6 +895,30 @@ args = ["mcp", "--tools=custom"]
 				t.Fatalf("MCP configuration = %#v, want status=%q reason=%q", mcp, tt.wantStatus, tt.wantReason)
 			}
 		})
+	}
+}
+
+func TestInspectCodexStatusDoesNotTreatStandaloneCLISkillAsCanonical(t *testing.T) {
+	home, repo := prepareBasicCodexStatusProfile(t)
+	skillPath := filepath.Join(home, ".agents", "skills", "engram-memory-cli", "SKILL.md")
+	writeStatusTestFile(t, skillPath, "---\nname: engram-memory-cli\ndescription: Recall Engram memory.\n---\nUser skill.\n")
+
+	status, err := InspectCodexStatus("2.2.1", repo)
+	if err != nil {
+		t.Fatalf("inspect leftover CLI skill profile: %v", err)
+	}
+	skills := statusChecksByCapability(status.Checks, "skill")
+	if len(skills) != 1 || skills[0].Status != CodexCheckCustomized || skills[0].ReasonCode != "engram_skill_leftover" {
+		t.Fatalf("leftover CLI skill checks = %#v", skills)
+	}
+	if evidenceValue(skills[0], "source") != "standalone" || evidenceValue(skills[0], "name") != "engram-memory-cli" {
+		t.Fatalf("leftover CLI skill evidence = %#v", skills[0].Evidence)
+	}
+	if !strings.Contains(skills[0].Reason, "engram setup") {
+		t.Fatalf("leftover CLI skill reason = %q, want migration via engram setup", skills[0].Reason)
+	}
+	if status.Mode == CodexModeManualSkillCLI || status.Mode == CodexModeCheckpointReady {
+		t.Fatalf("leftover CLI skill mode = %q, want not an activation mode", status.Mode)
 	}
 }
 

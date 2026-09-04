@@ -108,6 +108,7 @@ var (
 	setupSupportedAgents        = setup.SupportedAgents
 	setupInstallAgent           = setup.InstallWithOptions
 	setupInspectCodexStatus     = setup.InspectCodexStatusWithRevision
+	setupInspectCursorStatus    = setup.InspectCursorStatus
 	setupAddClaudeCodeAllowlist = setup.AddClaudeCodeAllowlist
 	scanInputLine               = fmt.Scanln
 
@@ -747,7 +748,7 @@ func shouldCheckForUpdates(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if isCodexSetupStatus(args) {
+	if isSetupStatusCommand(args) {
 		return false
 	}
 	for _, arg := range args {
@@ -777,7 +778,7 @@ func handleConfigFreeCommand(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if isCodexSetupStatus(args) {
+	if isSetupStatusCommand(args) {
 		cmdSetup(store.Config{})
 		return true
 	}
@@ -847,10 +848,18 @@ func handleConfigFreeCommand(args []string) bool {
 }
 
 func isCodexSetupStatus(args []string) bool {
+	return isSetupStatusFor(args, "codex")
+}
+
+func isSetupStatusCommand(args []string) bool {
+	return isSetupStatusFor(args, "codex") || isSetupStatusFor(args, "cursor")
+}
+
+func isSetupStatusFor(args []string, agent string) bool {
 	return len(args) >= 3 &&
 		strings.EqualFold(strings.TrimSpace(args[0]), "setup") &&
 		strings.EqualFold(strings.TrimSpace(args[1]), "status") &&
-		strings.EqualFold(strings.TrimSpace(args[2]), "codex")
+		strings.EqualFold(strings.TrimSpace(args[2]), agent)
 }
 
 func printUpdateCheckResult(result versioncheck.CheckResult) {
@@ -3074,9 +3083,15 @@ func isPathLikeProjectName(name string) bool {
 // present > protocol-only > no args.
 func cmdSetup(cfg store.Config) {
 	args := os.Args[2:]
-	if len(args) >= 2 && strings.EqualFold(strings.TrimSpace(args[0]), "status") && strings.EqualFold(strings.TrimSpace(args[1]), "codex") {
-		cmdSetupStatusCodex(args[2:])
-		return
+	if len(args) >= 2 && strings.EqualFold(strings.TrimSpace(args[0]), "status") {
+		switch strings.ToLower(strings.TrimSpace(args[1])) {
+		case "codex":
+			cmdSetupStatusCodex(args[2:])
+			return
+		case "cursor":
+			cmdSetupStatusCursor(args[2:])
+			return
+		}
 	}
 
 	var (
@@ -3201,6 +3216,49 @@ func cmdSetupStatusCodex(args []string) {
 	printCodexIntegrationStatus(status)
 }
 
+func cmdSetupStatusCursor(args []string) {
+	jsonMode := false
+	for _, arg := range args {
+		if arg == "--json" {
+			jsonMode = true
+		}
+	}
+	for _, arg := range args {
+		switch arg {
+		case "--json":
+		case "--help", "-h", "help":
+			fmt.Println("usage: engram setup status cursor [--json]")
+			return
+		default:
+			failCLI(jsonMode, "invalid_argument", "usage: engram setup status cursor [--json]", map[string]any{"argument": arg})
+			return
+		}
+	}
+
+	status, err := setupInspectCursorStatus(version, commit, currentCWD())
+	if err != nil {
+		failCLI(jsonMode, "cursor_status_failed", err.Error(), nil)
+		return
+	}
+	if jsonMode {
+		if err := writeCLIJSON(status); err != nil {
+			failCLI(true, "encode_error", err.Error(), nil)
+		}
+		return
+	}
+	printCursorIntegrationStatus(status)
+}
+
+func printCursorIntegrationStatus(status setup.CursorIntegrationStatus) {
+	fmt.Printf("Cursor integration mode: %s\n", status.Mode)
+	for _, check := range status.Checks {
+		fmt.Printf("  - %s: %s — %s\n", check.Capability, check.Status, check.Reason)
+		for _, evidence := range check.Evidence {
+			fmt.Printf("      %s: %s\n", evidence.Name, evidence.Value)
+		}
+	}
+}
+
 func printCodexIntegrationStatus(status setup.CodexIntegrationStatus) {
 	fmt.Printf("Codex integration mode: %s\n", status.Mode)
 	if status.Compatibility.SchemaVersion != "" {
@@ -3319,10 +3377,11 @@ func printSetupResult(result *setup.Result) {
 func printSetupUsage() {
 	fmt.Println("usage: engram setup [<agent>] [--protocol=slim|full] [--development]")
 	fmt.Println("       engram setup status codex [--json]")
+	fmt.Println("       engram setup status cursor [--json]")
 	fmt.Println()
 	fmt.Println("Install an agent plugin (claude-code, opencode, codex, ...).")
 	fmt.Println("Without <agent>, shows an interactive menu.")
-	fmt.Println("The status command reports a read-only Codex capability snapshot.")
+	fmt.Println("The status command reports a read-only Codex or Cursor capability snapshot.")
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  --protocol=<slim|full>  Set the session-start protocol verbosity for the")
@@ -3598,6 +3657,7 @@ Commands:
                      gemini-cli, codex, antigravity-cli, windsurf, qwen, kiro,
                      cursor, vscode-copilot, kilocode)
   setup status codex Report the read-only Codex integration capability snapshot [--json]
+  setup status cursor Report the read-only Cursor plugin, skill, MCP, and hooks snapshot [--json]
   sync               Export new memories as compressed chunk to .engram/
                          --import   Import new chunks from .engram/ into local DB
                          --status   Show sync status

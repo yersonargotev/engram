@@ -76,6 +76,9 @@ func TestInstallCursorUsesPluginMCPInsteadOfNativeActivationWrite(t *testing.T) 
 	if !strings.Contains(string(raw), `"--tools=agent"`) {
 		t.Fatalf("plugin MCP args = %s, want --tools=agent", raw)
 	}
+	if _, err := os.Stat(filepath.Join(home, ".cursor", "rules", "engram.mdc")); !os.IsNotExist(err) {
+		t.Fatalf("global Cursor rule file = %v, want absent", err)
+	}
 }
 
 func TestInstallCursorDoesNotCopySkillIntoUserSkillTrees(t *testing.T) {
@@ -283,6 +286,64 @@ func TestInstallCursorRemovesOwnedNativeMCPAndPreservesOtherServers(t *testing.T
 	}
 	if !strings.Contains(string(raw), `"other"`) {
 		t.Fatalf("neighbor MCP server was removed: %s", raw)
+	}
+}
+
+func TestInstallCursorRemovesNativeMCPFileWhenOnlyOwnedEngramRemains(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	native := filepath.Join(home, ".cursor", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(native), 0755); err != nil {
+		t.Fatalf("create cursor config dir: %v", err)
+	}
+	onlyOwned := `{
+  "mcpServers": {
+    "engram": {
+      "command": "engram",
+      "args": ["mcp", "--tools=agent"]
+    }
+  }
+}`
+	if err := os.WriteFile(native, []byte(onlyOwned), 0644); err != nil {
+		t.Fatalf("write native MCP: %v", err)
+	}
+
+	if _, err := InstallWithOptions("cursor", InstallOptions{
+		Version: "2.2.1",
+		Commit:  testReleaseCommit,
+	}); err != nil {
+		t.Fatalf("InstallWithOptions(cursor): %v", err)
+	}
+	if _, err := os.Stat(native); !os.IsNotExist(err) {
+		t.Fatalf("native MCP file = %v, want removed when only an owned engram entry remained", err)
+	}
+}
+
+func TestInstallCursorPreservesMalformedNativeMCP(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	native := filepath.Join(home, ".cursor", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(native), 0755); err != nil {
+		t.Fatalf("create cursor config dir: %v", err)
+	}
+	if err := os.WriteFile(native, []byte("{not-json"), 0644); err != nil {
+		t.Fatalf("write malformed native MCP: %v", err)
+	}
+
+	result, err := InstallWithOptions("cursor", InstallOptions{
+		Version: "2.2.1",
+		Commit:  testReleaseCommit,
+	})
+	if err != nil {
+		t.Fatalf("InstallWithOptions(cursor): %v", err)
+	}
+	if !slices.Contains(result.Preserved, "mcpServers.engram") {
+		t.Fatalf("result.Preserved = %v, want mcpServers.engram for malformed native MCP", result.Preserved)
+	}
+	got, err := os.ReadFile(native)
+	if err != nil {
+		t.Fatalf("read malformed native MCP: %v", err)
+	}
+	if string(got) != "{not-json" {
+		t.Fatalf("malformed native MCP was rewritten: %q", got)
 	}
 }
 

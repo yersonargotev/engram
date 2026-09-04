@@ -204,19 +204,6 @@ func TestInstallDeclarativeAgentsRegisterMCPAndInstructions(t *testing.T) {
 	}
 }
 
-func TestCursorMemoryProtocolHasNoFrontmatter(t *testing.T) {
-	home := stubCursorInstallEnv(t)
-
-	if _, err := InstallWithOptions("cursor", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit}); err != nil {
-		t.Fatalf("InstallWithOptions(cursor): %v", err)
-	}
-
-	oldMDCPath := filepath.Join(home, ".cursor", "rules", "engram.mdc")
-	if _, err := os.Stat(oldMDCPath); err == nil {
-		t.Errorf("cursor: ~/.cursor/rules/engram.mdc should not be written (Cursor ignores global rule files)")
-	}
-}
-
 func TestVSCodeInstructionsCarryFrontmatter(t *testing.T) {
 	stubRegistryEnv(t)
 

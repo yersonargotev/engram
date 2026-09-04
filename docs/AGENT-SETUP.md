@@ -30,10 +30,9 @@ Engram works with **any MCP-compatible agent**. Pick your agent below.
 | Kilo Code       | `engram setup kilocode`                                                                      | [Details](#kilo-code)                              |
 | Any MCP agent   | `engram mcp --tools=agent` (stdio)                                                           | [Details](#any-other-mcp-agent)                    |
 
-> **Native setup for all agents above.** `engram setup <agent>` writes the right
-> MCP registration (handling each client's config format — `mcpServers`,
-> `servers`, or OpenCode's `mcp` object) plus the Memory Protocol into that
-> agent's instruction surface, idempotently. The per-agent sections below describe
+> **Native setup for all agents above.** `engram setup <agent>` installs that
+> host's Engram-owned activation surface — a plugin, MCP registration, and/or
+> instruction file, depending on the agent. The per-agent sections below describe
 > the exact files each command touches and the manual equivalent.
 
 The `agent` profile exposes exactly `mem_current_project`, `mem_search`,
@@ -875,7 +874,7 @@ only when that integration owns the corresponding workflow.
 
 ## Surviving Compaction (Recommended)
 
-> **Is this step required?** No — `engram setup` handles all the MCP wiring. These snippets are an optional resilience layer. Add them if your agent forgets about Engram after long sessions or context resets. They are especially useful for agents that do not have a full plugin (VS Code, Cursor, Windsurf, Antigravity) and have no automated session tracking.
+> **Is this step required?** No — `engram setup` handles the host-specific wiring. These snippets are an optional resilience layer. Add them if your agent forgets about Engram after long sessions or context resets. They are especially useful for agents that do not have a full plugin (VS Code, Windsurf, Antigravity) and have no automated session tracking.
 
 When an agent does not support the complete Engram plugin, add this compact
 pointer to its persistent instruction surface:
@@ -923,18 +922,9 @@ Use the canonical Engram Memory skill. After each settled root user turn, commit
 one terminal Memory checkpoint. Recall prior Memory only when it can change the work.
 ```
 
-**For Cursor** (`.cursor/rules/engram.mdc` or `~/.cursor/rules/engram.mdc`):
+**For Cursor** (`~/.cursor/plugins/local/engram` after `engram setup cursor`):
 
-The `alwaysApply: true` frontmatter tells Cursor to load this rule in every conversation, regardless of which files are open.
-
-```text
----
-alwaysApply: true
----
-
-Use the canonical Engram Memory skill. Commit one terminal Memory checkpoint for
-each settled root user turn and use selective Recall when it can change the work.
-```
+The installed Agent Plugin already ships the editorial `engram-memory` skill and plugin MCP. Do not add a global `.mdc` rule or a second native `~/.cursor/mcp.json` entry as the activation path.
 
 **For Windsurf** (`.windsurfrules`):
 
@@ -943,7 +933,7 @@ Use the canonical Engram Memory skill. Commit one terminal Memory checkpoint for
 each settled root user turn and use selective Recall when it can change the work.
 ```
 
-This is the **nuclear option** — system prompts survive everything, including compaction. Use it when you want guaranteed agent behavior without relying on plugin hooks. It is optional for agents that have a full plugin (Claude Code, OpenCode, Gemini CLI, Codex) and required for agents that do not (VS Code, Cursor, Windsurf, Antigravity).
+This is the **nuclear option** — system prompts survive everything, including compaction. Use it when you want guaranteed agent behavior without relying on plugin hooks. It is optional for agents that have a full plugin (Claude Code, OpenCode, Gemini CLI, Codex, Cursor) and required for agents that do not (VS Code, Windsurf, Antigravity).
 
 ---
 

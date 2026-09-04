@@ -812,6 +812,8 @@ The command does not install, repair, start an MCP server, or read captured cont
 
 > Reload Cursor after setup so the local Agent Plugin is discovered. On Teams and Enterprise, local plugin imports may be gated by an admin setting.
 
+User-level hooks (`~/.cursor/hooks.json`) and the local Agent Plugin (`~/.cursor/plugins/local/engram`) are not Cloud Agent coverage. Cursor Cloud Agents do not load those user-scoped files.
+
 ---
 
 ## Windsurf
@@ -935,9 +937,13 @@ Use the canonical Engram Memory skill. After each settled root user turn, commit
 one terminal Memory checkpoint. Recall prior Memory only when it can change the work.
 ```
 
-**For Cursor** (`~/.cursor/plugins/local/engram` after `engram setup cursor`):
+**For Cursor** (`engram setup cursor` already installs the short activation cue):
 
-The installed Agent Plugin already ships the editorial `engram-memory` skill and plugin MCP. Do not add a global `.mdc` rule or a second native `~/.cursor/mcp.json` entry as the activation path.
+`sessionStart` re-delivers this short activation cue from the installed `engram-memory` skill after compaction. Do not paste the full Memory rubric into User Rules or a global `.mdc` file.
+
+```markdown
+For every root user turn, use the engram-memory skill to make exactly one Terminal Memory commit after all causal work settles: `saved`, `skipped(no_durable_knowledge)`, or `needs_review`. Current user intent, maintained source, and runtime evidence override Memory. Reuse the supplied host checkpoint identity across continuations; subagents do not create checkpoints.
+```
 
 **For Windsurf** (`.windsurfrules`):
 

@@ -265,6 +265,81 @@ func decodeLifecycleResponse(t *testing.T, raw string) lifecycleHookResponse {
 	return response
 }
 
+func TestCursorLifecycleSessionStartDeliversCanonicalCue(t *testing.T) {
+	stubRuntimeHooks(t)
+	cfg := store.FallbackConfig(t.TempDir())
+	pluginRoot := writeCursorLifecycleTestPlugin(t)
+
+	input := `{
+  "conversation_id": "conv-cursor-start",
+  "session_id": "conv-cursor-start",
+  "generation_id": "gen-cursor-start",
+  "hook_event_name": "sessionStart",
+  "workspace_roots": [` + quoteLifecycleJSON(t, t.TempDir()) + `],
+  "composer_mode": "agent"
+}`
+	stdout, stderr := captureOutput(t, func() {
+		cmdLifecycleSessionStart(cfg, []string{"--host=cursor", "--plugin-root=" + pluginRoot}, strings.NewReader(input))
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	var response map[string]any
+	if err := json.Unmarshal([]byte(stdout), &response); err != nil {
+		t.Fatalf("decode Cursor sessionStart response: %v\n%s", err, stdout)
+	}
+	if got, _ := response["additional_context"].(string); got != "canonical cue" {
+		t.Fatalf("additional_context = %#v, want canonical cue", response["additional_context"])
+	}
+	if _, ok := response["hookSpecificOutput"]; ok {
+		t.Fatalf("Cursor sessionStart used Codex hookSpecificOutput: %s", stdout)
+	}
+
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("open Cursor lifecycle store: %v", err)
+	}
+	defer s.Close()
+	if _, err := s.GetSession("conv-cursor-start"); err == nil {
+		t.Fatal("Cursor sessionStart registered a session; cue delivery must not own durability")
+	}
+	for _, table := range []string{"observations", "memory_proposals", "memory_checkpoints", "diagnostic_captures"} {
+		var count int
+		if err := s.DB().QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+			t.Errorf("%s count=%d err=%v, want zero", table, count, err)
+		}
+	}
+}
+
+func TestCursorLifecycleSessionStartInvalidInputReturnsEmptyObject(t *testing.T) {
+	stubRuntimeHooks(t)
+	cfg := store.FallbackConfig(t.TempDir())
+	pluginRoot := writeCursorLifecycleTestPlugin(t)
+	stdout, stderr := captureOutput(t, func() {
+		cmdLifecycleSessionStart(cfg, []string{"--host=cursor", "--plugin-root=" + pluginRoot}, strings.NewReader(`{`))
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if strings.TrimSpace(stdout) != "{}" {
+		t.Fatalf("invalid Cursor sessionStart stdout = %q, want empty object", stdout)
+	}
+}
+
+func writeCursorLifecycleTestPlugin(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	path := filepath.Join(root, "skills", "engram-memory", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("create Cursor lifecycle test plugin: %v", err)
+	}
+	content := "before\n<!-- engram:checkpoint-cue:start -->\ncanonical cue\n<!-- engram:checkpoint-cue:end -->\nafter\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write Cursor lifecycle test skill: %v", err)
+	}
+	return root
+}
+
 func writeLifecycleTestPlugin(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()

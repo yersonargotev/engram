@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"strconv"
+
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 )
@@ -42,6 +44,13 @@ func installCursorWithOptions(options InstallOptions) (*Result, error) {
 		return nil, err
 	}
 	files++
+	hookPreserved, err := installCursorUserHooks(dest)
+	if err != nil {
+		return nil, err
+	}
+	if len(hookPreserved) == 0 {
+		files++
+	}
 	preserved, err := retireOwnedCursorNativeMCP()
 	if err != nil {
 		return nil, err
@@ -51,7 +60,7 @@ func installCursorWithOptions(options InstallOptions) (*Result, error) {
 		Agent:       "cursor",
 		Destination: dest,
 		Files:       files,
-		Preserved:   preserved,
+		Preserved:   append(preserved, hookPreserved...),
 	}, nil
 }
 
@@ -162,6 +171,128 @@ func installCursorPluginBinary(dest string) error {
 func cursorMCPPath() string {
 	home, _ := userHome()
 	return filepath.Join(home, ".cursor", "mcp.json")
+}
+
+func cursorHooksPath() string {
+	home, _ := userHome()
+	return filepath.Join(home, ".cursor", "hooks.json")
+}
+
+type cursorUserHooksFile struct {
+	Version int                          `json:"version"`
+	Hooks   map[string][]json.RawMessage `json:"hooks"`
+}
+
+type cursorHookSpec struct {
+	Command   string `json:"command"`
+	LoopLimit *int   `json:"loop_limit,omitempty"`
+}
+
+func installCursorUserHooks(pluginRoot string) ([]string, error) {
+	path := cursorHooksPath()
+	config, preserved, err := readCursorUserHooks(path)
+	if err != nil {
+		return nil, err
+	}
+	if preserved != nil {
+		return preserved, nil
+	}
+
+	loopLimit := 1
+	owned := []struct {
+		event string
+		spec  cursorHookSpec
+	}{
+		{event: "sessionStart", spec: cursorHookSpec{Command: cursorSessionStartCommand(pluginRoot)}},
+		{event: "stop", spec: cursorHookSpec{Command: cursorStopCommand(pluginRoot), LoopLimit: &loopLimit}},
+	}
+	if config.Hooks == nil {
+		config.Hooks = map[string][]json.RawMessage{}
+	}
+	config.Version = 1
+	for _, ownedHook := range owned {
+		kept := make([]json.RawMessage, 0, len(config.Hooks[ownedHook.event]))
+		for _, raw := range config.Hooks[ownedHook.event] {
+			var existing cursorHookSpec
+			if err := json.Unmarshal(raw, &existing); err != nil {
+				kept = append(kept, raw)
+				continue
+			}
+			if cursorOwnedHookCommand(existing.Command) {
+				continue
+			}
+			kept = append(kept, raw)
+		}
+		entry, err := jsonMarshalFn(ownedHook.spec)
+		if err != nil {
+			return nil, fmt.Errorf("marshal Cursor %s hook: %w", ownedHook.event, err)
+		}
+		config.Hooks[ownedHook.event] = append(kept, json.RawMessage(entry))
+	}
+	if err := writeCursorUserHooks(path, config); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+func readCursorUserHooks(path string) (cursorUserHooksFile, []string, error) {
+	raw, err := readFileFn(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return cursorUserHooksFile{Version: 1, Hooks: map[string][]json.RawMessage{}}, nil, nil
+		}
+		return cursorUserHooksFile{}, nil, fmt.Errorf("read Cursor user hooks: %w", err)
+	}
+	var config cursorUserHooksFile
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return cursorUserHooksFile{}, []string{"hooks"}, nil
+	}
+	if config.Hooks == nil {
+		config.Hooks = map[string][]json.RawMessage{}
+	}
+	return config, nil, nil
+}
+
+func writeCursorUserHooks(path string, config cursorUserHooksFile) error {
+	raw, err := jsonMarshalIndentFn(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal Cursor user hooks: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("create Cursor hooks directory: %w", err)
+	}
+	if err := writeFileFn(path, append(raw, '\n'), 0644); err != nil {
+		return fmt.Errorf("write Cursor user hooks: %w", err)
+	}
+	return nil
+}
+
+func cursorOwnedHookCommand(command string) bool {
+	command = strings.TrimSpace(command)
+	if !strings.Contains(command, "--host=cursor") && !strings.Contains(command, "--host cursor") {
+		return false
+	}
+	return strings.Contains(command, "lifecycle session-start") || strings.Contains(command, "checkpoint verify-stop")
+}
+
+func cursorSessionStartCommand(pluginRoot string) string {
+	return quoteCursorHookArg(cursorHookBinary(pluginRoot)) +
+		" lifecycle session-start --host=cursor --plugin-root=" + quoteCursorHookArg(pluginRoot)
+}
+
+func cursorStopCommand(pluginRoot string) string {
+	return quoteCursorHookArg(cursorHookBinary(pluginRoot)) + " checkpoint verify-stop --host=cursor"
+}
+
+func cursorHookBinary(pluginRoot string) string {
+	return filepath.Join(pluginRoot, "bin", "engram")
+}
+
+func quoteCursorHookArg(value string) string {
+	if strings.ContainsAny(value, " \t\"'") {
+		return strconv.Quote(value)
+	}
+	return value
 }
 
 func retireOwnedCursorNativeMCP() ([]string, error) {

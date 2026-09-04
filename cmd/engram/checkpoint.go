@@ -334,6 +334,10 @@ type checkpointStopResponse struct {
 }
 
 func cmdCheckpointVerifyStop(cfg store.Config, host string, input io.Reader) {
+	if strings.EqualFold(strings.TrimSpace(host), "cursor") {
+		cmdCheckpointVerifyStopCursor(cfg, input)
+		return
+	}
 	started := time.Now()
 	finish := func(event *checkpointStopEvent, stopOutcome, checkpointOutcome recallbaseline.Outcome, response checkpointStopResponse) {
 		finishCheckpointStopWithBaseline(cfg, host, event, stopOutcome, checkpointOutcome, response, started)
@@ -429,6 +433,87 @@ func finishCheckpointStopWithBaseline(
 	}
 	_ = writeCLIJSON(response)
 	recordRecallBaselineEvents(cfg, events...)
+}
+
+type cursorStopEvent struct {
+	ConversationID *string `json:"conversation_id"`
+	SessionID      *string `json:"session_id"`
+	GenerationID   *string `json:"generation_id"`
+	Status         string  `json:"status"`
+	LoopCount      *int    `json:"loop_count"`
+}
+
+type cursorStopResponse struct {
+	FollowupMessage string `json:"followup_message,omitempty"`
+}
+
+func cmdCheckpointVerifyStopCursor(cfg store.Config, input io.Reader) {
+	writeCursorStop := func(response cursorStopResponse) {
+		_ = writeCLIJSON(response)
+	}
+	event, err := decodeCursorStopEvent(input)
+	if err != nil {
+		writeCursorStop(cursorStopResponse{})
+		return
+	}
+	status := strings.ToLower(strings.TrimSpace(event.Status))
+	if status == "aborted" || status == "error" {
+		writeCursorStop(cursorStopResponse{})
+		return
+	}
+
+	s, err := storeNew(cfg)
+	if err != nil {
+		writeCursorStop(cursorStopResponse{})
+		return
+	}
+	defer s.Close()
+
+	loopCount := 0
+	if event.LoopCount != nil {
+		loopCount = *event.LoopCount
+	}
+	sessionID := firstNonEmptyString(event.ConversationID, event.SessionID)
+	outcome, err := memoryops.New(s).VerifyCheckpoint(memoryops.CheckpointVerificationInput{
+		Host:           "cursor",
+		SessionID:      sessionID,
+		RootTurnID:     strings.TrimSpace(*event.GenerationID),
+		RecoveryActive: loopCount > 0,
+	})
+	if err != nil || outcome != memoryops.CheckpointVerificationContinuationRequired {
+		writeCursorStop(cursorStopResponse{})
+		return
+	}
+	identity, marshalErr := json.Marshal(store.CheckpointIdentity{
+		Host: "cursor", SessionID: sessionID, RootTurnID: strings.TrimSpace(*event.GenerationID),
+	})
+	if marshalErr != nil {
+		writeCursorStop(cursorStopResponse{})
+		return
+	}
+	writeCursorStop(cursorStopResponse{
+		FollowupMessage: "Finalize the missing Engram checkpoint for the original root user turn " + string(identity) + " using the Engram memory skill. Preserve this identity unchanged; do not checkpoint this continuation.",
+	})
+}
+
+func decodeCursorStopEvent(input io.Reader) (cursorStopEvent, error) {
+	var event cursorStopEvent
+	decoder := json.NewDecoder(input)
+	if err := decoder.Decode(&event); err != nil {
+		return event, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return event, fmt.Errorf("multiple Stop input values")
+		}
+		return event, err
+	}
+	sessionID := firstNonEmptyString(event.ConversationID, event.SessionID)
+	if sessionID == "" || event.GenerationID == nil || strings.TrimSpace(*event.GenerationID) == "" {
+		return event, fmt.Errorf("incomplete Cursor Stop input")
+	}
+	return event, nil
 }
 
 func decodeCheckpointStopEvent(input io.Reader) (checkpointStopEvent, error) {

@@ -58,7 +58,12 @@ func ReadCanonicalCue(pluginRoot string) (string, error) {
 	if pluginRoot == "" {
 		return "", fmt.Errorf("plugin root is required")
 	}
-	raw, err := os.ReadFile(filepath.Join(pluginRoot, "skills", "memory", "SKILL.md"))
+	return ReadCanonicalCueFile(filepath.Join(pluginRoot, "skills", "memory", "SKILL.md"))
+}
+
+// ReadCanonicalCueFile loads the single canonical cue from a skill file.
+func ReadCanonicalCueFile(path string) (string, error) {
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read canonical checkpoint skill: %w", err)
 	}

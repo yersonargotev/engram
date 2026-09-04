@@ -793,6 +793,8 @@ engram setup cursor
 
 This installs the portable Agent Plugin into Cursor's local plugin directory at `~/.cursor/plugins/local/engram`: `plugin.json`, editorial `skills/engram-memory`, plugin `mcp.json` (`./bin/engram mcp --tools=agent`), and a copy of the running binary. Stable setup pins that install to the binary's release version and commit. A second run refreshes only the Engram-owned plugin and leaves other local plugins alone.
 
+Setup also writes user-level Cursor hooks in `~/.cursor/hooks.json`. `sessionStart` injects the short activation cue from the installed skill. `stop` may emit one follow-up when that root turn has no Memory checkpoint. The hook commands parse Cursor JSON, call Engram, and return; they do not decide durability. Prompt and subagent capture stay off. A second run refreshes Engram-owned hook entries and leaves user-owned hooks in place.
+
 Setup does not write a second native `~/.cursor/mcp.json` activation entry, does not copy the skill into `~/.cursor/skills` or `~/.agents/skills`, and does not write project-level `.cursor` files in the current working tree. An existing Engram-owned `mcpServers.engram` entry that still matches the old native shape is removed after the plugin is in place; a customized entry is preserved.
 
 **Manual** — copy `plugin/engram/` to `~/.cursor/plugins/local/engram`, place the Engram binary at `bin/engram`, then restart Cursor or run Developer: Reload Window.

@@ -385,6 +385,189 @@ func TestInstallCursorPreservesCustomNativeMCP(t *testing.T) {
 	}
 }
 
+func TestInstallCursorDoesNotWritePluginOrProjectHooks(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	project := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(project, ".cursor"), 0755); err != nil {
+		t.Fatalf("create project .cursor: %v", err)
+	}
+	t.Chdir(project)
+
+	if _, err := InstallWithOptions("cursor", InstallOptions{
+		Version: "2.2.1",
+		Commit:  testReleaseCommit,
+	}); err != nil {
+		t.Fatalf("InstallWithOptions(cursor): %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(home, ".cursor", "plugins", "local", "engram", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("portable plugin bundled hooks.json = %v, want absent", err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".cursor", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("project hooks.json = %v, want absent", err)
+	}
+}
+
+func TestInstallCursorWritesUserHooksForCueAndStop(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+
+	if _, err := InstallWithOptions("cursor", InstallOptions{
+		Version: "2.2.1",
+		Commit:  testReleaseCommit,
+	}); err != nil {
+		t.Fatalf("InstallWithOptions(cursor): %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(home, ".cursor", "hooks.json"))
+	if err != nil {
+		t.Fatalf("read user Cursor hooks: %v", err)
+	}
+	pluginBin := filepath.Join(home, ".cursor", "plugins", "local", "engram", "bin", "engram")
+	pluginRoot := filepath.Join(home, ".cursor", "plugins", "local", "engram")
+	if !strings.Contains(string(raw), `"version": 1`) {
+		t.Fatalf("hooks.json = %s, want version 1", raw)
+	}
+	if !strings.Contains(string(raw), `"sessionStart"`) {
+		t.Fatalf("hooks.json missing sessionStart: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"stop"`) {
+		t.Fatalf("hooks.json missing stop: %s", raw)
+	}
+	if !strings.Contains(string(raw), "lifecycle session-start --host=cursor") {
+		t.Fatalf("sessionStart hook is not the Cursor lifecycle adapter: %s", raw)
+	}
+	if !strings.Contains(string(raw), "checkpoint verify-stop --host=cursor") {
+		t.Fatalf("stop hook is not the Cursor checkpoint verifier: %s", raw)
+	}
+	if !strings.Contains(string(raw), pluginBin) {
+		t.Fatalf("hooks.json = %s, want plugin binary %s", raw, pluginBin)
+	}
+	if !strings.Contains(string(raw), "--plugin-root="+pluginRoot) && !strings.Contains(string(raw), `--plugin-root="`+pluginRoot+`"`) {
+		t.Fatalf("hooks.json = %s, want plugin-root %s", raw, pluginRoot)
+	}
+	if !strings.Contains(string(raw), `"loop_limit": 1`) {
+		t.Fatalf("stop hook = %s, want one recovery follow-up", raw)
+	}
+}
+
+func TestInstallCursorLeavesPromptAndSubagentCaptureOff(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+
+	if _, err := InstallWithOptions("cursor", InstallOptions{
+		Version: "2.2.1",
+		Commit:  testReleaseCommit,
+	}); err != nil {
+		t.Fatalf("InstallWithOptions(cursor): %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(home, ".cursor", "hooks.json"))
+	if err != nil {
+		t.Fatalf("read user Cursor hooks: %v", err)
+	}
+	for _, forbidden := range []string{
+		"beforeSubmitPrompt",
+		"subagentStart",
+		"subagentStop",
+		"capture prompt",
+		"capture subagent",
+	} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("hooks.json enabled capture surface %q: %s", forbidden, raw)
+		}
+	}
+}
+
+func TestInstallCursorRefreshUpdatesOwnedHooksAndPreservesUserHooks(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	hooksPath := filepath.Join(home, ".cursor", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0755); err != nil {
+		t.Fatalf("create cursor config dir: %v", err)
+	}
+	existing := `{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "echo user-owned-session-start"
+      }
+    ],
+    "stop": [
+      {
+        "command": "/old/engram checkpoint verify-stop --host=cursor",
+        "loop_limit": 9
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "echo user-owned-shell"
+      }
+    ]
+  }
+}`
+	if err := os.WriteFile(hooksPath, []byte(existing), 0644); err != nil {
+		t.Fatalf("write existing hooks: %v", err)
+	}
+
+	if _, err := InstallWithOptions("cursor", InstallOptions{
+		Version: "2.2.1",
+		Commit:  testReleaseCommit,
+	}); err != nil {
+		t.Fatalf("InstallWithOptions(cursor): %v", err)
+	}
+
+	raw, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatalf("read refreshed hooks: %v", err)
+	}
+	if !strings.Contains(string(raw), "echo user-owned-session-start") {
+		t.Fatalf("user sessionStart hook was removed: %s", raw)
+	}
+	if !strings.Contains(string(raw), "echo user-owned-shell") {
+		t.Fatalf("user-owned hook event was removed: %s", raw)
+	}
+	if strings.Contains(string(raw), "/old/engram checkpoint verify-stop --host=cursor") {
+		t.Fatalf("owned stop hook was not refreshed: %s", raw)
+	}
+	if !strings.Contains(string(raw), "lifecycle session-start --host=cursor") {
+		t.Fatalf("owned sessionStart hook was not written: %s", raw)
+	}
+	if !strings.Contains(string(raw), "checkpoint verify-stop --host=cursor") {
+		t.Fatalf("owned stop hook was not written: %s", raw)
+	}
+	if strings.Contains(string(raw), `"loop_limit": 9`) {
+		t.Fatalf("stale owned loop_limit remained: %s", raw)
+	}
+}
+
+func TestInstallCursorPreservesMalformedUserHooks(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	hooksPath := filepath.Join(home, ".cursor", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0755); err != nil {
+		t.Fatalf("create cursor config dir: %v", err)
+	}
+	if err := os.WriteFile(hooksPath, []byte("{not-json"), 0644); err != nil {
+		t.Fatalf("write malformed hooks: %v", err)
+	}
+
+	result, err := InstallWithOptions("cursor", InstallOptions{
+		Version: "2.2.1",
+		Commit:  testReleaseCommit,
+	})
+	if err != nil {
+		t.Fatalf("InstallWithOptions(cursor): %v", err)
+	}
+	if !slices.Contains(result.Preserved, "hooks") {
+		t.Fatalf("result.Preserved = %v, want hooks for malformed user hooks", result.Preserved)
+	}
+	got, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatalf("read malformed hooks: %v", err)
+	}
+	if string(got) != "{not-json" {
+		t.Fatalf("malformed user hooks were rewritten: %q", got)
+	}
+}
+
 func TestEmbeddedCursorAgentPluginMatchesSource(t *testing.T) {
 	for _, rel := range []string{
 		"plugin.json",

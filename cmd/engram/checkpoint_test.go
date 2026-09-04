@@ -645,6 +645,103 @@ func TestCheckpointVerifyStopProcessHelper(t *testing.T) {
 	os.Exit(0)
 }
 
+func TestCheckpointVerifyStopCursorAbortedDoesNotFollowUp(t *testing.T) {
+	cfg := testConfig(t)
+	stdout, stderr := captureOutput(t, func() {
+		cmdCheckpointVerifyStop(cfg, "cursor", strings.NewReader(`{
+  "conversation_id": "conv-cursor-aborted",
+  "generation_id": "gen-cursor-aborted",
+  "status": "aborted",
+  "loop_count": 0
+}`))
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	response := decodeCLIJSON(t, stdout)
+	if response["followup_message"] != nil {
+		t.Fatalf("aborted Cursor stop requested a follow-up: %#v", response)
+	}
+}
+
+func TestCheckpointVerifyStopCursorRequestsFollowUpWhenCheckpointMissing(t *testing.T) {
+	cfg := testConfig(t)
+	stdout, stderr := captureOutput(t, func() {
+		cmdCheckpointVerifyStop(cfg, "cursor", strings.NewReader(`{
+  "conversation_id": "conv-cursor-missing",
+  "generation_id": "gen-cursor-missing",
+  "status": "completed",
+  "loop_count": 0
+}`))
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	response := decodeCLIJSON(t, stdout)
+	followup, _ := response["followup_message"].(string)
+	if !strings.Contains(followup, `{"host":"cursor","session_id":"conv-cursor-missing","root_turn_id":"gen-cursor-missing"}`) {
+		t.Fatalf("missing Cursor follow-up = %#v", response)
+	}
+	if response["decision"] != nil {
+		t.Fatalf("Cursor stop used Codex decision field: %#v", response)
+	}
+	if strings.Contains(stdout, store.CheckpointDispositionSkipped) || strings.Contains(stdout, store.CheckpointSkipReasonNoDurableKnowledge) {
+		t.Fatalf("Cursor stop invented a disposition: %s", stdout)
+	}
+}
+
+func TestCheckpointVerifyStopCursorSilentWhenCheckpointExists(t *testing.T) {
+	cfg := testConfig(t)
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("open checkpoint store: %v", err)
+	}
+	if _, err := memoryops.New(s).RecordCheckpoint(memoryops.CheckpointRecordInput{
+		Host: "cursor", SessionID: "conv-cursor-done", RootTurnID: "gen-cursor-done",
+		Disposition: store.CheckpointDispositionSkipped, ReasonCode: store.CheckpointSkipReasonNoDurableKnowledge,
+	}); err != nil {
+		t.Fatalf("record Cursor checkpoint: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close checkpoint store: %v", err)
+	}
+
+	stdout, stderr := captureOutput(t, func() {
+		cmdCheckpointVerifyStop(cfg, "cursor", strings.NewReader(`{
+  "conversation_id": "conv-cursor-done",
+  "generation_id": "gen-cursor-done",
+  "status": "completed",
+  "loop_count": 0
+}`))
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	response := decodeCLIJSON(t, stdout)
+	if len(response) != 0 {
+		t.Fatalf("complete Cursor stop = %#v, want empty object", response)
+	}
+}
+
+func TestCheckpointVerifyStopCursorDoesNotFollowUpAfterOneRecovery(t *testing.T) {
+	cfg := testConfig(t)
+	stdout, stderr := captureOutput(t, func() {
+		cmdCheckpointVerifyStop(cfg, "cursor", strings.NewReader(`{
+  "conversation_id": "conv-cursor-replay",
+  "generation_id": "gen-cursor-replay",
+  "status": "completed",
+  "loop_count": 1
+}`))
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	response := decodeCLIJSON(t, stdout)
+	if response["followup_message"] != nil {
+		t.Fatalf("replayed Cursor stop requested another follow-up: %#v", response)
+	}
+}
+
 func TestCheckpointVerifyStopReportsStoreFailureWithoutInventingDisposition(t *testing.T) {
 	originalStoreNew := storeNew
 	storeNew = func(store.Config) (*store.Store, error) {

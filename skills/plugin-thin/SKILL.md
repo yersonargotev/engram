@@ -2,7 +2,7 @@
 name: engram-plugin-thin
 description: >
   Adapter boundary rules for plugin integrations.
-  Trigger: Changes in plugin scripts/hooks for Claude, OpenCode, Gemini, or Codex.
+  Trigger: Changes in plugin scripts/hooks for Claude, OpenCode, Gemini, Codex, or Cursor.
 license: Apache-2.0
 metadata:
   author: yersonargotev
@@ -32,4 +32,5 @@ Use this skill when:
 - [ ] Claude Code flow still works
 - [ ] OpenCode flow still works
 - [ ] Gemini/Codex config paths remain valid
+- [ ] Cursor local Agent Plugin install remains valid
 - [ ] Docs reflect real integration behavior

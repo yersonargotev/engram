@@ -355,7 +355,7 @@ func TestPrintPostInstall(t *testing.T) {
 		{
 			name:    "cursor",
 			result:  &setup.Result{Agent: "cursor"},
-			expects: []string{"Restart Cursor", "~/.cursor/mcp.json", "engram-memory-protocol.md", "User Rules"},
+			expects: []string{"Restart Cursor", "~/.cursor/plugins/local/engram", "plugin.json"},
 		},
 		{
 			name:    "vscode-copilot",

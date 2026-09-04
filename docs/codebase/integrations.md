@@ -40,11 +40,12 @@ is either:
 
 - **bespoke** — a `custom` installer for agents with special needs (OpenCode embeds
   a TS plugin, Pi runs a package manager, Claude Code drives the `claude` CLI, Codex
-  writes TOML, Gemini CLI cleans up legacy env state), or
+  writes TOML, Gemini CLI cleans up legacy env state, Cursor installs the portable
+  Agent Plugin into `~/.cursor/plugins/local/engram`), or
 - **declarative** — just an MCP path + format (`mcpServers` / `servers` / OpenCode's
   `mcp` object) and instruction surfaces; the generic `injectMCP` / `writeInstruction`
   driver in `registry.go` does the writes. Antigravity CLI, Windsurf, Qwen, Kiro,
-  Cursor, VS Code Copilot, and Kilo Code are all declarative.
+  VS Code Copilot, and Kilo Code are all declarative.
 
 Adding a declarative agent is normally just a new entry in `agentAdapters()` plus
 its path helpers — no new install code path. Agents not in the registry remain

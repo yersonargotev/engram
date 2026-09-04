@@ -194,7 +194,7 @@ When using `engram setup`, config files are written to platform-appropriate loca
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` + `.../memories/global_rules.md` | `%USERPROFILE%\.codeium\windsurf\...` |
 | Qwen Code | `~/.qwen/settings.json` + `~/.qwen/QWEN.md` | `%USERPROFILE%\.qwen\...` |
 | Kiro | `~/.kiro/settings/mcp.json` + `~/.kiro/steering/engram.md` | `%USERPROFILE%\.kiro\...` |
-| Cursor | `~/.cursor/mcp.json` + `~/.cursor/rules/engram.mdc` | `%USERPROFILE%\.cursor\...` |
+| Cursor | `~/.cursor/plugins/local/engram` | `%USERPROFILE%\.cursor\plugins\local\engram` |
 | VS Code Copilot | `~/.config/Code/User/mcp.json` + `.../prompts/engram.instructions.md` (macOS: `~/Library/Application Support/Code/User/`) | `%APPDATA%\Code\User\...` |
 | Kilo Code | `~/.config/kilo/opencode.json` + `~/.config/kilo/AGENTS.md` | `%USERPROFILE%\.config\kilo\...` |
 | Data directory | `~/.engram/` | `%USERPROFILE%\.engram\` |

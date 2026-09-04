@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -66,12 +67,17 @@ func TestInstallCursorUsesPluginMCPInsteadOfNativeActivationWrite(t *testing.T) 
 		t.Fatalf("native ~/.cursor/mcp.json = %v, want absent so MCP comes from the plugin", err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(home, ".cursor", "plugins", "local", "engram", "mcp.json"))
+	pluginRoot := filepath.Join(home, ".cursor", "plugins", "local", "engram")
+	raw, err := os.ReadFile(filepath.Join(pluginRoot, "mcp.json"))
 	if err != nil {
 		t.Fatalf("read installed plugin MCP: %v", err)
 	}
-	if !strings.Contains(string(raw), `"./bin/engram"`) {
-		t.Fatalf("plugin MCP command = %s, want ./bin/engram", raw)
+	wantCommand := cursorHookBinary(pluginRoot)
+	if !strings.Contains(string(raw), strconv.Quote(wantCommand)) {
+		t.Fatalf("plugin MCP command = %s, want absolute plugin binary %q so Cursor does not resolve ./bin/engram against the workspace cwd", raw, wantCommand)
+	}
+	if strings.Contains(string(raw), `"./bin/engram"`) {
+		t.Fatalf("installed plugin MCP kept the portable relative command; Cursor spawn would ENOENT against the workspace")
 	}
 	if !strings.Contains(string(raw), `"--tools=agent"`) {
 		t.Fatalf("plugin MCP args = %s, want --tools=agent", raw)
@@ -565,6 +571,20 @@ func TestInstallCursorPreservesMalformedUserHooks(t *testing.T) {
 	}
 	if string(got) != "{not-json" {
 		t.Fatalf("malformed user hooks were rewritten: %q", got)
+	}
+}
+
+func TestRewriteCursorPluginMCPCommandRejectsMissingServer(t *testing.T) {
+	resetSetupSeams(t)
+	dest := t.TempDir()
+	path := filepath.Join(dest, "mcp.json")
+	if err := os.WriteFile(path, []byte(`{"$schema":"https://agent-plugins.org/schemas/1.0.0/mcp.schema.json","mcpServers":{}}`), 0644); err != nil {
+		t.Fatalf("write incomplete plugin MCP: %v", err)
+	}
+
+	err := rewriteCursorPluginMCPCommand(dest)
+	if err == nil || !strings.Contains(err.Error(), "missing the engram server") {
+		t.Fatalf("rewriteCursorPluginMCPCommand = %v, want missing engram server", err)
 	}
 }
 

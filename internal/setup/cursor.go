@@ -39,6 +39,9 @@ func installCursorWithOptions(options InstallOptions) (*Result, error) {
 	if err := installCursorPluginBinary(dest); err != nil {
 		return nil, err
 	}
+	if err := rewriteCursorPluginMCPCommand(dest); err != nil {
+		return nil, err
+	}
 	files++
 	if err := stampCursorPluginIdentity(dest, version, commit); err != nil {
 		return nil, err
@@ -158,12 +161,45 @@ func installCursorPluginBinary(dest string) error {
 	if err != nil {
 		return fmt.Errorf("read Engram binary for Cursor plugin: %w", err)
 	}
-	target := filepath.Join(dest, "bin", "engram")
+	target := cursorHookBinary(dest)
 	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 		return fmt.Errorf("create Cursor plugin bin directory: %w", err)
 	}
 	if err := writeFileFn(target, data, 0755); err != nil {
 		return fmt.Errorf("write Cursor plugin binary: %w", err)
+	}
+	return nil
+}
+
+func rewriteCursorPluginMCPCommand(dest string) error {
+	path := filepath.Join(dest, "mcp.json")
+	raw, err := readFileFn(path)
+	if err != nil {
+		return fmt.Errorf("read Cursor plugin MCP: %w", err)
+	}
+	var config struct {
+		Schema  string `json:"$schema"`
+		Servers map[string]struct {
+			Type    string   `json:"type"`
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return fmt.Errorf("parse Cursor plugin MCP: %w", err)
+	}
+	entry, ok := config.Servers["engram"]
+	if !ok {
+		return fmt.Errorf("Cursor plugin MCP is missing the engram server")
+	}
+	entry.Command = cursorHookBinary(dest)
+	config.Servers["engram"] = entry
+	updated, err := jsonMarshalIndentFn(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal Cursor plugin MCP: %w", err)
+	}
+	if err := writeFileFn(path, append(updated, '\n'), 0644); err != nil {
+		return fmt.Errorf("write Cursor plugin MCP: %w", err)
 	}
 	return nil
 }

@@ -98,11 +98,56 @@ func cmdLifecycleSessionStart(cfg store.Config, args []string, input io.Reader) 
 	host, pluginRoot := "", ""
 	set.StringVar(&host, "host", "", "hook host")
 	set.StringVar(&pluginRoot, "plugin-root", "", "installed plugin root")
-	if err := set.Parse(args); err != nil || set.NArg() != 0 || strings.ToLower(strings.TrimSpace(host)) != "codex" {
+	if err := set.Parse(args); err != nil || set.NArg() != 0 {
 		writeEmptyHookResponse()
 		return
 	}
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "codex":
+		cmdCodexLifecycleSessionStart(cfg, pluginRoot, input, started)
+	case "cursor":
+		cmdCursorLifecycleSessionStart(pluginRoot, input)
+	default:
+		writeEmptyHookResponse()
+	}
+}
 
+type cursorLifecycleStartResponse struct {
+	AdditionalContext string `json:"additional_context,omitempty"`
+}
+
+func cmdCursorLifecycleSessionStart(pluginRoot string, input io.Reader) {
+	raw, err := io.ReadAll(io.LimitReader(input, maxCodexLifecycleInputBytes+1))
+	if err != nil || len(raw) > maxCodexLifecycleInputBytes || !utf8.Valid(raw) {
+		writeEmptyHookResponse()
+		return
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		writeEmptyHookResponse()
+		return
+	}
+	cue, err := codexlifecycle.ReadCanonicalCueFile(filepath.Join(pluginRoot, "skills", "engram-memory", "SKILL.md"))
+	if err != nil {
+		writeEmptyHookResponse()
+		return
+	}
+	modelContext, _ := codexlifecycle.BuildModelContext(cue, "", codexlifecycle.MaxInjectedUTF8Bytes)
+	_ = writeCLIJSON(cursorLifecycleStartResponse{AdditionalContext: modelContext})
+}
+
+func firstNonEmptyString(values ...*string) string {
+	for _, value := range values {
+		if value != nil {
+			if trimmed := strings.TrimSpace(*value); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
+func cmdCodexLifecycleSessionStart(cfg store.Config, pluginRoot string, input io.Reader, started time.Time) {
 	raw, err := io.ReadAll(io.LimitReader(input, maxCodexLifecycleInputBytes+1))
 	if err != nil || len(raw) > maxCodexLifecycleInputBytes || !utf8.Valid(raw) {
 		writeEmptyHookResponse()

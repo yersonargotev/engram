@@ -18,7 +18,7 @@
 
 | Integration | Coverage |
 |---|---|
-| Agent Plugin (portable) | Agent Plugins 1.0 package under `plugin/engram/`: root `plugin.json`, editorial `engram-memory` skill, and `mcp.json` for the agent tool profile with a plugin-relative `./bin/engram` command. No hooks or rules. `engram setup cursor` installs that package into `~/.cursor/plugins/local/engram`. |
+| Agent Plugin (portable) | Agent Plugins 1.0 package under `plugin/engram/`: root `plugin.json`, editorial `engram-memory` skill, and `mcp.json` for the agent tool profile with a plugin-relative `./bin/engram` command. No hooks or rules. `engram setup cursor` installs that package into `~/.cursor/plugins/local/engram` and writes a separate user-level `~/.cursor/hooks.json` adapter for the activation cue and stop follow-up. |
 | OpenCode | TypeScript plugin plus MCP registration via `engram setup opencode`. |
 | Claude Code | Marketplace/bundled plugin plus best-effort durable user MCP config via `engram setup claude-code`. |
 | Codex | Codex plugin assets under `plugin/codex/`; `engram setup codex` pins the binary's release tag and commit, preserves unrecognized state, and reports plugin, MCP, activation-cue, and verifier readiness separately. |

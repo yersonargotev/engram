@@ -311,6 +311,50 @@ func TestMaintainedDocsDescribeFiveToolTerminalPolicy(t *testing.T) {
 	}
 }
 
+func TestMaintainedDocsDescribeCursorAgentPluginInstall(t *testing.T) {
+	root := filepath.Join("..", "..")
+	readme := readPolicyProjection(t, root, "README.md")
+	if strings.Contains(readme, ".cursorrules") {
+		t.Error("README.md still treats a deprecated Cursor rule file as the Memory surface")
+	}
+
+	agentSetup := readPolicyProjection(t, root, "docs/AGENT-SETUP.md")
+	cursorStart := strings.Index(agentSetup, "## Cursor")
+	cursorEnd := strings.Index(agentSetup[cursorStart+len("## Cursor"):], "\n## ")
+	if cursorStart == -1 || cursorEnd == -1 {
+		t.Fatal("docs/AGENT-SETUP.md is missing a Cursor section")
+	}
+	cursor := strings.ToLower(agentSetup[cursorStart : cursorStart+len("## Cursor")+cursorEnd])
+	if !strings.Contains(cursor, "cloud agent") || !strings.Contains(cursor, "user-level hooks") || !strings.Contains(cursor, "local") {
+		t.Error("docs/AGENT-SETUP.md Cursor section does not state that user-level hooks and local plugins are not Cloud Agent coverage")
+	}
+
+	compactionStart := strings.Index(agentSetup, "**For Cursor**")
+	compactionEnd := strings.Index(agentSetup[compactionStart+len("**For Cursor**"):], "**For ")
+	if compactionStart == -1 || compactionEnd == -1 {
+		t.Fatal("docs/AGENT-SETUP.md is missing Cursor compaction guidance")
+	}
+	compaction := strings.ToLower(agentSetup[compactionStart : compactionStart+len("**For Cursor**")+compactionEnd])
+	if !strings.Contains(compaction, "activation cue") {
+		t.Error("docs/AGENT-SETUP.md compaction guidance does not use the short activation cue")
+	}
+	if strings.Contains(compaction, ".cursorrules") {
+		t.Error("docs/AGENT-SETUP.md compaction guidance still advertises a deprecated Cursor rule file")
+	}
+
+	plugins := readPolicyProjection(t, root, "docs/PLUGINS.md")
+	if !strings.Contains(plugins, "| Cursor |") {
+		t.Error("docs/PLUGINS.md plugin coverage does not list Cursor")
+	}
+
+	installation := readPolicyProjection(t, root, "docs/INSTALLATION.md")
+	for _, path := range []string{"~/.cursor/plugins/local/engram", "~/.cursor/hooks.json"} {
+		if !strings.Contains(installation, path) {
+			t.Errorf("docs/INSTALLATION.md path table missing %q", path)
+		}
+	}
+}
+
 func TestMaintainedDocsDescribeExactMemoryDedupeIdentity(t *testing.T) {
 	root := filepath.Join("..", "..")
 	const identity = "normalized content hash + project + scope + type + title + tool_name + normalized topic_key"

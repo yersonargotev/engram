@@ -69,7 +69,7 @@ Full per-agent config, Memory Protocol, and compaction survival → [docs/AGENT-
 
 To inspect Codex without installing or repairing anything, run `engram setup status codex` (add `--json` for automation). It reports the Managed Pack, Engram binary, Codex plugin, and Protocol contract as four independent version axes, computes their declared Protocol-range intersection, and reports CLI, skill, marketplace, MCP, prompt/session/subagent hooks, activation-cue, lifecycle-canary, and Stop-verifier state independently. The content-free `subagent_capture` status distinguishes `default_disabled`, `consented`, `expired`, and `unavailable`; `lifecycle_canary` reports the selected treatment, cue readiness, injection limit, and any aggregate SessionStart latency/injected-byte observations without enabling either feature. `checkpoint_ready` requires attributable compatible metadata; missing, malformed, ambiguous, or non-overlapping declarations fail closed. This is a capability snapshot, not proof that the model invoked a skill or created a Memory in a particular session.
 
-To inspect Cursor without installing or repairing anything, run `engram setup status cursor` (add `--json` for automation). It reports plugin, skill, MCP, and hooks independently. User Rules stay unknown because setup cannot read the Settings store. An empty or MCP-only profile is not `checkpoint_ready`. Status does not read captured content.
+To inspect Cursor without installing or repairing anything, run `engram setup status cursor` (add `--json` for automation). It reports plugin, skill, MCP, and hooks independently. User Rules stay unknown because setup cannot read the Settings store. An empty or MCP-only profile is not `checkpoint_ready`. Status does not read captured content. User-level hooks and the local Agent Plugin are not Cloud Agent coverage.
 
 > **Do I need to run `engram serve` or `engram mcp` myself?**
 >
@@ -99,7 +99,7 @@ It gives Pi persistent project memory, compaction recovery, and shared memory wi
 
 **When do I need to manually add config to my agent's prompt or settings?**
 
-`engram setup` covers the MCP wiring automatically. Manual config — adding a Memory Protocol snippet to your `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, etc. — is only needed if your agent keeps forgetting to use Engram after long sessions or context compaction. That manual step is called the "nuclear option" in the detailed docs because system prompts survive everything, including compaction. It is a reliability boost for heavy users, not a required first step. See [Agent Setup → Surviving Compaction](docs/AGENT-SETUP.md#surviving-compaction-recommended) for the snippets.
+`engram setup` covers the host-specific wiring automatically. For Cursor, that is the local Agent Plugin plus user-level hooks; do not treat a deprecated Cursor rule file as the Memory surface. Manual config — adding a short Memory pointer to `CLAUDE.md`, `GEMINI.md`, or another agent instruction file — is only needed if an agent without those hooks keeps forgetting Engram after long sessions or context compaction. That manual step is called the "nuclear option" in the detailed docs because system prompts survive everything, including compaction. It is a reliability boost for agents that do not have a full plugin, not a required first step. See [Agent Setup → Surviving Compaction](docs/AGENT-SETUP.md#surviving-compaction-recommended) for the snippets.
 
 **Can Docker agents (or remote agents) connect to Engram's MCP?**
 

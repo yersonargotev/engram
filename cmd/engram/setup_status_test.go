@@ -232,6 +232,126 @@ func TestCmdSetupStatusCodexUnknownArgumentHonorsJSONModeAnywhere(t *testing.T) 
 	}
 }
 
+func TestCmdSetupStatusCursorJSONDoesNotInstall(t *testing.T) {
+	stubRuntimeHooks(t)
+	stubExitWithPanic(t)
+
+	setupInstallAgent = func(string, setup.InstallOptions) (*setup.Result, error) {
+		t.Fatal("setup status must not execute installation")
+		return nil, nil
+	}
+	setupInspectCursorStatus = func(runningVersion, runningRevision, cwd string) (setup.CursorIntegrationStatus, error) {
+		if runningVersion != version {
+			t.Fatalf("running version = %q, want %q", runningVersion, version)
+		}
+		if runningRevision != commit {
+			t.Fatalf("running revision = %q, want %q", runningRevision, commit)
+		}
+		if strings.TrimSpace(cwd) == "" {
+			t.Fatal("working directory must be forwarded")
+		}
+		return setup.CursorIntegrationStatus{
+			SchemaVersion: setup.CursorIntegrationStatusSchemaVersion,
+			Agent:         "cursor",
+			Mode:          setup.CursorModeUnknown,
+			Checks: []setup.CursorIntegrationCheck{{
+				Capability: "plugin",
+				Status:     setup.CursorCheckMissing,
+				ReasonCode: "plugin_missing",
+				Reason:     "The Engram Agent Plugin is not installed.",
+			}},
+		}, nil
+	}
+
+	withArgs(t, "engram", "setup", "status", "cursor", "--json")
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdSetup(store.Config{}) })
+	if recovered != nil || stderr != "" {
+		t.Fatalf("setup status JSON failed: panic=%v stderr=%q", recovered, stderr)
+	}
+
+	var got setup.CursorIntegrationStatus
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("decode setup status JSON: %v\n%s", err, stdout)
+	}
+	if got.SchemaVersion != setup.CursorIntegrationStatusSchemaVersion || got.Agent != "cursor" || got.Mode != setup.CursorModeUnknown {
+		t.Fatalf("setup status JSON = %#v", got)
+	}
+	if len(got.Checks) != 1 || got.Checks[0].Capability != "plugin" {
+		t.Fatalf("setup status checks = %#v", got.Checks)
+	}
+}
+
+func TestSetupStatusCursorRunsBeforeUpdateChecksAndStoreResolution(t *testing.T) {
+	stubRuntimeHooks(t)
+	stubExitWithPanic(t)
+
+	setupInspectCursorStatus = func(string, string, string) (setup.CursorIntegrationStatus, error) {
+		return setup.CursorIntegrationStatus{
+			SchemaVersion: setup.CursorIntegrationStatusSchemaVersion,
+			Agent:         "cursor",
+			Mode:          setup.CursorModeUnknown,
+			Checks:        []setup.CursorIntegrationCheck{},
+		}, nil
+	}
+
+	args := []string{"setup", "status", "cursor"}
+	if shouldCheckForUpdates(args) {
+		t.Fatal("setup status must not run the network update check")
+	}
+
+	withArgs(t, "engram", "setup", "status", "cursor")
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() {
+		if !handleConfigFreeCommand(args) {
+			t.Fatal("setup status must finish before store configuration and migrations")
+		}
+	})
+	if recovered != nil || stderr != "" {
+		t.Fatalf("config-free setup status failed: panic=%v stderr=%q", recovered, stderr)
+	}
+	if stdout != "Cursor integration mode: unknown\n" {
+		t.Fatalf("human status output = %q", stdout)
+	}
+}
+
+func TestCmdSetupStatusCursorUnknownArgumentHonorsJSONModeAnywhere(t *testing.T) {
+	stubRuntimeHooks(t)
+	stubExitWithPanic(t)
+	setupInspectCursorStatus = func(string, string, string) (setup.CursorIntegrationStatus, error) {
+		t.Fatal("invalid status arguments must fail before inspection")
+		return setup.CursorIntegrationStatus{}, nil
+	}
+
+	withArgs(t, "engram", "setup", "status", "cursor", "--typo", "--json")
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdSetup(store.Config{}) })
+	if stdout != "" {
+		t.Fatalf("stdout = %q", stdout)
+	}
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("exit = %#v", recovered)
+	}
+	if got := decodeCLIJSON(t, stderr)["code"]; got != "invalid_argument" {
+		t.Fatalf("error code = %#v, want invalid_argument", got)
+	}
+}
+
+func TestCmdSetupHelpDocumentsReadOnlyCursorStatus(t *testing.T) {
+	stubRuntimeHooks(t)
+	stubExitWithPanic(t)
+	setupInspectCursorStatus = func(string, string, string) (setup.CursorIntegrationStatus, error) {
+		t.Fatal("setup help must not inspect the profile")
+		return setup.CursorIntegrationStatus{}, nil
+	}
+
+	withArgs(t, "engram", "setup", "--help")
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdSetup(store.Config{}) })
+	if recovered != nil || stderr != "" {
+		t.Fatalf("setup help failed: panic=%v stderr=%q", recovered, stderr)
+	}
+	if !strings.Contains(stdout, "engram setup status cursor [--json]") || !strings.Contains(stdout, "read-only") {
+		t.Fatalf("setup help does not document Cursor status:\n%s", stdout)
+	}
+}
+
 func TestCmdSetupHelpDocumentsReadOnlyCodexStatus(t *testing.T) {
 	stubRuntimeHooks(t)
 	stubExitWithPanic(t)

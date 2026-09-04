@@ -48,7 +48,7 @@ func TestProtocolFixtureValidatesMCPAndCanonicalCueProjections(t *testing.T) {
 		}
 	}
 
-	skillRaw, err := os.ReadFile(filepath.Join(root, "plugin", "codex", "skills", "memory", "SKILL.md"))
+	skillRaw, err := os.ReadFile(filepath.Join(root, "skills", "engram-memory", "SKILL.md"))
 	if err != nil {
 		t.Fatalf("read canonical memory skill: %v", err)
 	}

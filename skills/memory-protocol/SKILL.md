@@ -9,6 +9,6 @@ metadata:
 
 # Engram Memory protocol
 
-Load the canonical [`engram-memory`](../../plugin/codex/skills/memory/SKILL.md)
+Load the canonical [`engram-memory`](../engram-memory/SKILL.md)
 skill and follow its Terminal Memory checkpoint rubric. That skill is the only
 authority for root-turn disposition, Recall, compaction, and finalization.

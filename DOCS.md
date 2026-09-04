@@ -1309,7 +1309,7 @@ Behavior:
 
 ## Memory Protocol
 
-The canonical [`engram-memory`](plugin/codex/skills/memory/SKILL.md) skill is the
+The canonical [`engram-memory`](skills/engram-memory/SKILL.md) skill is the
 single source of truth for the root-turn disposition rubric, Recall, compaction,
 and terminal finalization. Agent-specific setup projects that skill or its short
 activation cue; adapters do not maintain another policy copy.

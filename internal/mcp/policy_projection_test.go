@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -8,9 +10,65 @@ import (
 	"testing"
 )
 
+const editorialMemorySkillPath = "skills/engram-memory/SKILL.md"
+
+func TestEditorialMemorySkillExistsWithMatchingDirectoryName(t *testing.T) {
+	root := filepath.Join("..", "..")
+	path := filepath.Join(root, filepath.FromSlash(editorialMemorySkillPath))
+	content := readPolicyProjection(t, root, editorialMemorySkillPath)
+	dirName := filepath.Base(filepath.Dir(path))
+	name := skillFrontmatterName(t, content)
+	if name != dirName {
+		t.Fatalf("editorial skill name %q does not match directory %q", name, dirName)
+	}
+}
+
+func TestRepositoryPointerRoutesToEditorialMemorySkill(t *testing.T) {
+	pointer := readPolicyProjection(t, filepath.Join("..", ".."), "skills/memory-protocol/SKILL.md")
+	if !strings.Contains(pointer, "skills/engram-memory/SKILL.md") && !strings.Contains(pointer, "../engram-memory/SKILL.md") {
+		t.Fatal("repository pointer must route to the editorial engram-memory skill")
+	}
+	if strings.Contains(pointer, "plugin/codex/skills/memory") {
+		t.Fatal("repository pointer must not treat the Codex plugin copy as authority")
+	}
+}
+
+func TestEditorialMemorySkillStatesTerminalCommitDefaultToolsAndCLIFallback(t *testing.T) {
+	content := readPolicyProjection(t, filepath.Join("..", ".."), editorialMemorySkillPath)
+	for _, required := range []string{
+		"Terminal Memory commit",
+		"mem_current_project",
+		"mem_search",
+		"mem_get_observation",
+		"mem_checkpoint",
+		"mem_checkpoint_status",
+		"If MCP is unavailable",
+		"engram checkpoint record",
+	} {
+		if !strings.Contains(content, required) {
+			t.Errorf("editorial Memory skill missing %q", required)
+		}
+	}
+}
+
+func TestHostMemorySkillProjectionsMatchEditorialFile(t *testing.T) {
+	root := filepath.Join("..", "..")
+	editorial := fileSHA256(t, filepath.Join(root, filepath.FromSlash(editorialMemorySkillPath)))
+	for _, projection := range []string{
+		"plugin/codex/skills/memory/SKILL.md",
+		"plugin/claude-code/skills/memory/SKILL.md",
+	} {
+		got := fileSHA256(t, filepath.Join(root, filepath.FromSlash(projection)))
+		if got != editorial {
+			t.Errorf("%s sha256 = %s, want editorial %s", projection, got, editorial)
+		}
+	}
+}
+
 func TestAgentPolicyProjectionsDoNotReintroduceLegacyMandates(t *testing.T) {
 	root := filepath.Join("..", "..")
 	paths := []string{
+		editorialMemorySkillPath,
 		"plugin/codex/skills/memory/SKILL.md",
 		"plugin/claude-code/skills/memory/SKILL.md",
 		"plugin/claude-code/scripts/session-start.sh",
@@ -61,7 +119,7 @@ func TestAgentPolicyProjectionsDoNotReintroduceLegacyMandates(t *testing.T) {
 
 func TestCanonicalAndRepositorySkillsShareTerminalMemoryAuthority(t *testing.T) {
 	root := filepath.Join("..", "..")
-	canonical := readPolicyProjection(t, root, "plugin/codex/skills/memory/SKILL.md")
+	canonical := readPolicyProjection(t, root, editorialMemorySkillPath)
 	for _, required := range []string{"Terminal Memory commit", "explicit curation", "material loss-risk handoff"} {
 		if !strings.Contains(canonical, required) {
 			t.Errorf("canonical skill missing %q", required)
@@ -140,6 +198,7 @@ func TestCLISkillUsesRecordResultAsNormalCheckpointCompletionSignal(t *testing.T
 func TestAgentPolicyProjectionsPublishBoundedAuthorityAwareRecall(t *testing.T) {
 	root := filepath.Join("..", "..")
 	paths := []string{
+		editorialMemorySkillPath,
 		"plugin/codex/skills/memory/SKILL.md",
 		"plugin/claude-code/skills/memory/SKILL.md",
 		"skills/engram-memory-cli/SKILL.md",
@@ -270,4 +329,34 @@ func readPolicyProjection(t *testing.T, root, path string) string {
 		t.Fatalf("read policy projection %s: %v", path, err)
 	}
 	return string(raw)
+}
+
+func fileSHA256(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
+}
+
+func skillFrontmatterName(t *testing.T, content string) string {
+	t.Helper()
+	if !strings.HasPrefix(content, "---\n") {
+		t.Fatal("editorial Memory skill is missing YAML frontmatter")
+	}
+	body := content[len("---\n"):]
+	end := strings.Index(body, "\n---")
+	if end == -1 {
+		t.Fatal("editorial Memory skill frontmatter is not closed")
+	}
+	for _, line := range strings.Split(body[:end], "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if ok && strings.TrimSpace(key) == "name" {
+			return strings.TrimSpace(value)
+		}
+	}
+	t.Fatal("editorial Memory skill frontmatter is missing name")
+	return ""
 }

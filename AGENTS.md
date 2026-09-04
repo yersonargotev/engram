@@ -21,6 +21,7 @@ When working on this project, load the relevant skill(s) BEFORE writing any code
 | `engram-dashboard-htmx` | Any change to htmx attributes, partial updates, forms, or server-rendered browser UI. | [`skills/dashboard-htmx/SKILL.md`](skills/dashboard-htmx/SKILL.md) |
 | `engram-docs-alignment` | Any code or workflow change that affects user or contributor behavior. | [`skills/docs-alignment/SKILL.md`](skills/docs-alignment/SKILL.md) |
 | `engram-issue-creation` | When creating a GitHub issue, reporting a bug, or requesting a feature. | [`skills/issue-creation/SKILL.md`](skills/issue-creation/SKILL.md) |
+| `engram-memory` | Terminal Memory commit after a settled root user turn, or when the checkpoint cue appears. | [`skills/engram-memory/SKILL.md`](skills/engram-memory/SKILL.md) |
 | `engram-memory-protocol` | Decisions, bugfixes, discoveries, preferences, or session closure. | [`skills/memory-protocol/SKILL.md`](skills/memory-protocol/SKILL.md) |
 | `engram-memory-cli` | Recall or preserve durable project knowledge before work that may depend on it, after work produces it, or during explicit memory curation. | [`skills/engram-memory-cli/SKILL.md`](skills/engram-memory-cli/SKILL.md) |
 | `engram-plugin-thin` | Changes in plugin scripts/hooks for Claude, OpenCode, Gemini, or Codex. | [`skills/plugin-thin/SKILL.md`](skills/plugin-thin/SKILL.md) |

@@ -3330,7 +3330,7 @@ func printSetupUsage() {
 	fmt.Println("                          missing values fall back to full with a warning.")
 	fmt.Println("                          slim currently only takes effect for claude-code,")
 	fmt.Println("                          and only when the installed engram is >= 1.4.0.")
-	fmt.Println("  --development           Allow Codex setup to follow the moving main branch.")
+	fmt.Println("  --development           Allow setup without a pinned release identity.")
 	fmt.Println("  --help, -h              Show this help and exit.")
 }
 

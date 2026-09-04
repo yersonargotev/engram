@@ -21,7 +21,7 @@ type mcpFormat int
 const (
 	// mcpServersObject stores servers under a top-level "mcpServers" object, each
 	// entry shaped {command, args}. Used by Gemini, Antigravity, Windsurf, Qwen,
-	// Kiro, and Cursor.
+	// and Kiro.
 	mcpServersObject mcpFormat = iota
 	// serversObject stores servers under a top-level "servers" object, each entry
 	// shaped {type:"stdio", command, args}. Used by VS Code (Copilot).

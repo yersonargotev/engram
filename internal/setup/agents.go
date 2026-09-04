@@ -116,18 +116,13 @@ func agentAdapters() []agentAdapter {
 		},
 		{
 			slug:        "cursor",
-			description: "Cursor — MCP registration in ~/.cursor/mcp.json plus an informational Memory Protocol file to paste as a User Rule",
-			mcpPath:     cursorMCPPath,
-			mcpFormat:   mcpServersObject,
-			instructions: []instrSurface{
-				{path: cursorMemoryProtocolPath, style: wholeFile, body: memoryProtocolMarkdown},
-			},
+			description: "Cursor — local Agent Plugin with editorial Memory skill and plugin MCP",
+			custom:      installCursorWithOptions,
+			installDir:  cursorPluginDir,
 			postInstall: []string{
-				"Restart Cursor so MCP config is reloaded",
-				"Verify ~/.cursor/mcp.json includes mcpServers.engram",
-				"NOTE: Cursor does NOT read global rule files from the filesystem — .mdc files outside a project are silently ignored",
-				"Open ~/.cursor/engram-memory-protocol.md and copy its contents",
-				"In Cursor, open Settings → Rules → User Rules and paste the copied contents",
+				"Restart Cursor, or run Developer: Reload Window, so the local Agent Plugin is loaded",
+				"Verify ~/.cursor/plugins/local/engram contains plugin.json, mcp.json, and skills/engram-memory",
+				"MCP tools come from that plugin; setup does not write a second ~/.cursor/mcp.json activation entry",
 			},
 		},
 		{
@@ -221,23 +216,6 @@ func kiroMCPPath() string {
 func kiroSteeringPath() string {
 	home, _ := userHome()
 	return filepath.Join(home, ".kiro", "steering", "engram.md")
-}
-
-// ─── Cursor paths ────────────────────────────────────────────────────────────
-
-func cursorMCPPath() string {
-	home, _ := userHome()
-	return filepath.Join(home, ".cursor", "mcp.json")
-}
-
-// cursorMemoryProtocolPath returns the path to the informational Memory Protocol
-// file for Cursor. Cursor does not read global rule files from the filesystem;
-// .mdc files with alwaysApply outside a project are silently ignored. This file
-// is intended to be opened by the user and its contents pasted into
-// Settings → Rules → User Rules inside Cursor.
-func cursorMemoryProtocolPath() string {
-	home, _ := userHome()
-	return filepath.Join(home, ".cursor", "engram-memory-protocol.md")
 }
 
 // ─── VS Code (Copilot) paths ─────────────────────────────────────────────────

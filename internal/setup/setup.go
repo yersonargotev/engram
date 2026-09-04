@@ -84,6 +84,9 @@ var (
 //go:embed plugins/opencode/*
 var openCodeFS embed.FS
 
+//go:embed plugins/engram
+var cursorAgentPluginFS embed.FS
+
 // Agent represents a supported AI coding agent.
 type Agent struct {
 	Name        string

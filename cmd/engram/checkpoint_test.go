@@ -645,6 +645,53 @@ func TestCheckpointVerifyStopProcessHelper(t *testing.T) {
 	os.Exit(0)
 }
 
+func TestCheckpointVerifyStopCursorIncompleteInputDoesNotFollowUp(t *testing.T) {
+	cfg := testConfig(t)
+	for _, input := range []string{
+		`{`,
+		`{"conversation_id":"conv-incomplete"}`,
+		`{"generation_id":"gen-incomplete"}`,
+	} {
+		stdout, stderr := captureOutput(t, func() {
+			cmdCheckpointVerifyStop(cfg, "cursor", strings.NewReader(input))
+		})
+		if stderr != "" {
+			t.Fatalf("stderr = %q for %s", stderr, input)
+		}
+		response := decodeCLIJSON(t, stdout)
+		if response["followup_message"] != nil || strings.Contains(stdout, store.CheckpointDispositionSkipped) {
+			t.Fatalf("incomplete Cursor stop %q invented work: %#v", input, response)
+		}
+	}
+}
+
+func TestCheckpointVerifyStopCursorStoreFailureDoesNotInventDisposition(t *testing.T) {
+	originalStoreNew := storeNew
+	storeNew = func(store.Config) (*store.Store, error) {
+		return nil, errors.New("injected store failure")
+	}
+	t.Cleanup(func() { storeNew = originalStoreNew })
+
+	stdout, stderr := captureOutput(t, func() {
+		cmdCheckpointVerifyStop(testConfig(t), "cursor", strings.NewReader(`{
+  "conversation_id": "conv-cursor-store-failure",
+  "generation_id": "gen-cursor-store-failure",
+  "status": "completed",
+  "loop_count": 0
+}`))
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	response := decodeCLIJSON(t, stdout)
+	if response["followup_message"] != nil {
+		t.Fatalf("store failure requested a follow-up: %#v", response)
+	}
+	if strings.Contains(stdout, store.CheckpointDispositionSkipped) || strings.Contains(stdout, store.CheckpointSkipReasonNoDurableKnowledge) {
+		t.Fatalf("store failure invented a disposition: %s", stdout)
+	}
+}
+
 func TestCheckpointVerifyStopCursorAbortedDoesNotFollowUp(t *testing.T) {
 	cfg := testConfig(t)
 	stdout, stderr := captureOutput(t, func() {

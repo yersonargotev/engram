@@ -112,11 +112,6 @@ func cmdLifecycleSessionStart(cfg store.Config, args []string, input io.Reader) 
 	}
 }
 
-type cursorLifecycleStartEvent struct {
-	ConversationID *string `json:"conversation_id"`
-	SessionID      *string `json:"session_id"`
-}
-
 type cursorLifecycleStartResponse struct {
 	AdditionalContext string `json:"additional_context,omitempty"`
 }
@@ -127,12 +122,8 @@ func cmdCursorLifecycleSessionStart(pluginRoot string, input io.Reader) {
 		writeEmptyHookResponse()
 		return
 	}
-	var event cursorLifecycleStartEvent
-	if err := json.Unmarshal(raw, &event); err != nil {
-		writeEmptyHookResponse()
-		return
-	}
-	if strings.TrimSpace(firstNonEmptyString(event.SessionID, event.ConversationID)) == "" {
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
 		writeEmptyHookResponse()
 		return
 	}

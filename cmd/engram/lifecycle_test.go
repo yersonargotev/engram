@@ -311,6 +311,39 @@ func TestCursorLifecycleSessionStartDeliversCanonicalCue(t *testing.T) {
 	}
 }
 
+func TestCursorLifecycleSessionStartDeliversCueWithoutSessionIdentity(t *testing.T) {
+	stubRuntimeHooks(t)
+	cfg := store.FallbackConfig(t.TempDir())
+	pluginRoot := writeCursorLifecycleTestPlugin(t)
+	stdout, stderr := captureOutput(t, func() {
+		cmdLifecycleSessionStart(cfg, []string{"--host=cursor", "--plugin-root=" + pluginRoot}, strings.NewReader(`{"hook_event_name":"sessionStart"}`))
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	var response map[string]any
+	if err := json.Unmarshal([]byte(stdout), &response); err != nil {
+		t.Fatalf("decode Cursor sessionStart response: %v\n%s", err, stdout)
+	}
+	if got, _ := response["additional_context"].(string); got != "canonical cue" {
+		t.Fatalf("additional_context = %#v, want canonical cue even without session identity", response["additional_context"])
+	}
+}
+
+func TestCursorLifecycleSessionStartMissingCueReturnsEmptyObject(t *testing.T) {
+	stubRuntimeHooks(t)
+	cfg := store.FallbackConfig(t.TempDir())
+	stdout, stderr := captureOutput(t, func() {
+		cmdLifecycleSessionStart(cfg, []string{"--host=cursor", "--plugin-root=" + t.TempDir()}, strings.NewReader(`{"session_id":"conv-missing-cue"}`))
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if strings.TrimSpace(stdout) != "{}" {
+		t.Fatalf("missing cue stdout = %q, want empty object", stdout)
+	}
+}
+
 func TestCursorLifecycleSessionStartInvalidInputReturnsEmptyObject(t *testing.T) {
 	stubRuntimeHooks(t)
 	cfg := store.FallbackConfig(t.TempDir())

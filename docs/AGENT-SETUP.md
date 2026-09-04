@@ -797,7 +797,7 @@ Setup also writes user-level Cursor hooks in `~/.cursor/hooks.json`. `sessionSta
 
 Setup does not write a second native `~/.cursor/mcp.json` activation entry, does not copy the skill into `~/.cursor/skills` or `~/.agents/skills`, and does not write project-level `.cursor` files in the current working tree. An existing Engram-owned `mcpServers.engram` entry that still matches the old native shape is removed after the plugin is in place; a customized entry is preserved.
 
-**Manual** — copy `plugin/engram/` to `~/.cursor/plugins/local/engram`, place the Engram binary at `bin/engram`, then restart Cursor or run Developer: Reload Window.
+**Manual** — copy `plugin/engram/` to `~/.cursor/plugins/local/engram`, place the Engram binary at `bin/engram`, and add user-level `sessionStart` / `stop` hook entries in `~/.cursor/hooks.json` that call that binary (`lifecycle session-start --host=cursor` and `checkpoint verify-stop --host=cursor`). Then restart Cursor or run Developer: Reload Window.
 
 > Reload Cursor after setup so the local Agent Plugin is discovered. On Teams and Enterprise, local plugin imports may be gated by an admin setting.
 

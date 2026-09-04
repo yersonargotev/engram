@@ -57,6 +57,7 @@ func TestHostMemorySkillProjectionsMatchEditorialFile(t *testing.T) {
 	for _, projection := range []string{
 		"plugin/codex/skills/memory/SKILL.md",
 		"plugin/claude-code/skills/memory/SKILL.md",
+		"plugin/engram/skills/engram-memory/SKILL.md",
 	} {
 		got := fileSHA256(t, filepath.Join(root, filepath.FromSlash(projection)))
 		if got != editorial {
@@ -71,6 +72,7 @@ func TestAgentPolicyProjectionsDoNotReintroduceLegacyMandates(t *testing.T) {
 		editorialMemorySkillPath,
 		"plugin/codex/skills/memory/SKILL.md",
 		"plugin/claude-code/skills/memory/SKILL.md",
+		"plugin/engram/skills/engram-memory/SKILL.md",
 		"plugin/claude-code/scripts/session-start.sh",
 		"plugin/claude-code/scripts/post-compaction.sh",
 		"plugin/claude-code/scripts/user-prompt-submit.sh",
@@ -201,6 +203,7 @@ func TestAgentPolicyProjectionsPublishBoundedAuthorityAwareRecall(t *testing.T) 
 		editorialMemorySkillPath,
 		"plugin/codex/skills/memory/SKILL.md",
 		"plugin/claude-code/skills/memory/SKILL.md",
+		"plugin/engram/skills/engram-memory/SKILL.md",
 		"skills/engram-memory-cli/SKILL.md",
 		"internal/setup/setup.go",
 		"plugin/opencode/engram.ts",

@@ -313,6 +313,27 @@ func TestSetupStatusCursorRunsBeforeUpdateChecksAndStoreResolution(t *testing.T)
 	}
 }
 
+func TestCmdSetupStatusCursorUnknownArgumentHonorsJSONModeAnywhere(t *testing.T) {
+	stubRuntimeHooks(t)
+	stubExitWithPanic(t)
+	setupInspectCursorStatus = func(string, string, string) (setup.CursorIntegrationStatus, error) {
+		t.Fatal("invalid status arguments must fail before inspection")
+		return setup.CursorIntegrationStatus{}, nil
+	}
+
+	withArgs(t, "engram", "setup", "status", "cursor", "--typo", "--json")
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdSetup(store.Config{}) })
+	if stdout != "" {
+		t.Fatalf("stdout = %q", stdout)
+	}
+	if _, ok := recovered.(exitCode); !ok {
+		t.Fatalf("exit = %#v", recovered)
+	}
+	if got := decodeCLIJSON(t, stderr)["code"]; got != "invalid_argument" {
+		t.Fatalf("error code = %#v, want invalid_argument", got)
+	}
+}
+
 func TestCmdSetupHelpDocumentsReadOnlyCursorStatus(t *testing.T) {
 	stubRuntimeHooks(t)
 	stubExitWithPanic(t)

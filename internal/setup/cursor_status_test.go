@@ -225,15 +225,89 @@ retired user skill
 	if err != nil {
 		t.Fatalf("inspect leftover user skill: %v", err)
 	}
-	skill := cursorCheck(t, status, "skill")
-	if skill.Status != CursorCheckCustomized || skill.ReasonCode != "skill_customized" {
-		t.Fatalf("leftover skill = %#v", skill)
+	pluginSkill := cursorCheckByReason(t, status, "skill", "skill_missing")
+	if pluginSkill.Status != CursorCheckMissing {
+		t.Fatalf("canonical skill = %#v, want missing", pluginSkill)
 	}
-	if cursorEvidenceValue(skill, "source") != "user" {
-		t.Fatalf("leftover skill evidence = %#v", skill.Evidence)
+	leftover := cursorCheckByReason(t, status, "skill", "skill_customized")
+	if leftover.Status != CursorCheckCustomized || cursorEvidenceValue(leftover, "source") != "user" {
+		t.Fatalf("leftover skill = %#v", leftover)
 	}
 	if status.Mode == CursorModeCheckpointReady {
 		t.Fatalf("leftover user skill claimed checkpoint readiness: %#v", status)
+	}
+}
+
+func TestInspectCursorStatusReportsLeftoverUserSkillBesideInstalledPlugin(t *testing.T) {
+	home := installPinnedCursor(t)
+	writeCursorStatusFile(t, filepath.Join(home, ".agents", "skills", "engram-memory-cli", "SKILL.md"), `---
+name: engram-memory-cli
+---
+retired user skill
+`)
+
+	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("inspect leftover skill beside plugin: %v", err)
+	}
+	if cursorCheckByReason(t, status, "skill", "skill_ready").Status != CursorCheckReady {
+		t.Fatal("canonical plugin skill was replaced by leftover user skill")
+	}
+	leftover := cursorCheckByReason(t, status, "skill", "skill_customized")
+	if leftover.Status != CursorCheckCustomized || cursorEvidenceValue(leftover, "source") != "user" {
+		t.Fatalf("leftover skill = %#v", leftover)
+	}
+	if status.Mode != CursorModeCheckpointReady {
+		t.Fatalf("mode = %q, want checkpoint_ready when leftover is extra evidence", status.Mode)
+	}
+}
+
+func TestInspectCursorStatusDistinguishesCustomizedAndIncompletePlugin(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	pluginRoot := filepath.Join(home, ".cursor", "plugins", "local", "engram")
+
+	writeCursorStatusFile(t, filepath.Join(pluginRoot, "plugin.json"), `{"name":"other-plugin"}`)
+	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("inspect non-engram plugin: %v", err)
+	}
+	plugin := cursorCheck(t, status, "plugin")
+	if plugin.Status != CursorCheckCustomized || plugin.ReasonCode != "plugin_customized" {
+		t.Fatalf("foreign plugin = %#v", plugin)
+	}
+
+	writeCursorStatusFile(t, filepath.Join(pluginRoot, "plugin.json"), `{"name":"engram"}`)
+	status, err = InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("inspect plugin without identity: %v", err)
+	}
+	plugin = cursorCheck(t, status, "plugin")
+	if plugin.Status != CursorCheckCustomized || plugin.ReasonCode != "plugin_customized" {
+		t.Fatalf("plugin without identity = %#v", plugin)
+	}
+
+	writeCursorStatusFile(t, filepath.Join(pluginRoot, ".engram-release.json"), `{not-json`)
+	status, err = InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("inspect invalid identity: %v", err)
+	}
+	plugin = cursorCheck(t, status, "plugin")
+	if plugin.Status != CursorCheckCustomized || plugin.ReasonCode != "plugin_customized" {
+		t.Fatalf("invalid identity = %#v", plugin)
+	}
+
+	writeCursorStatusFile(t, filepath.Join(pluginRoot, ".engram-release.json"), `{
+  "version": "2.2.1",
+  "commit": "`+testReleaseCommit+`"
+}`)
+	status, err = InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("inspect plugin without binary: %v", err)
+	}
+	plugin = cursorCheck(t, status, "plugin")
+	if plugin.Status != CursorCheckCustomized || plugin.ReasonCode != "plugin_customized" {
+		t.Fatalf("plugin without binary = %#v", plugin)
 	}
 }
 
@@ -299,6 +373,17 @@ func cursorCheck(t *testing.T, status CursorIntegrationStatus, capability string
 		t.Fatalf("capability %q checks = %#v, want exactly one", capability, matches)
 	}
 	return matches[0]
+}
+
+func cursorCheckByReason(t *testing.T, status CursorIntegrationStatus, capability, reasonCode string) CursorIntegrationCheck {
+	t.Helper()
+	for _, check := range status.Checks {
+		if check.Capability == capability && check.ReasonCode == reasonCode {
+			return check
+		}
+	}
+	t.Fatalf("missing capability %q reason %q in %#v", capability, reasonCode, status.Checks)
+	return CursorIntegrationCheck{}
 }
 
 func cursorEvidenceValue(check CursorIntegrationCheck, name string) string {

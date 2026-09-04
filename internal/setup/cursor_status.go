@@ -65,14 +65,16 @@ type CursorIntegrationStatus struct {
 // installing, repairing, starting, or persisting anything.
 func InspectCursorStatus(runningVersion, runningRevision, workingDirectory string) (CursorIntegrationStatus, error) {
 	plugin := inspectCursorPluginStatus(runningVersion, runningRevision)
-	skill := inspectCursorSkillStatus(plugin)
+	skills := inspectCursorSkillStatus(plugin)
 	mcp := inspectCursorMCPStatus(plugin)
 	hooks := inspectCursorHooksStatus(plugin)
 	userRules := cursorStatusCheck(
 		"user_rules", CursorCheckUnknown, "user_rules_unknown",
 		"Cursor User Rules live in the Settings store, which setup cannot inspect.",
 	)
-	checks := []CursorIntegrationCheck{plugin.Check, skill, mcp, hooks, userRules}
+	checks := []CursorIntegrationCheck{plugin.Check}
+	checks = append(checks, skills...)
+	checks = append(checks, mcp, hooks, userRules)
 	return CursorIntegrationStatus{
 		SchemaVersion: CursorIntegrationStatusSchemaVersion,
 		Agent:         "cursor",
@@ -82,9 +84,8 @@ func InspectCursorStatus(runningVersion, runningRevision, workingDirectory strin
 }
 
 type cursorPluginInspection struct {
-	Check         CursorIntegrationCheck
-	Root          string
-	IdentityReady bool
+	Check CursorIntegrationCheck
+	Root  string
 }
 
 func inspectCursorPluginStatus(runningVersion, runningRevision string) cursorPluginInspection {
@@ -186,15 +187,16 @@ func inspectCursorPluginStatus(runningVersion, runningRevision string) cursorPlu
 			"The local Cursor Agent Plugin matches the running Engram release identity.",
 			evidence...,
 		),
-		Root:          root,
-		IdentityReady: true,
+		Root: root,
 	}
 }
 
-func inspectCursorSkillStatus(plugin cursorPluginInspection) CursorIntegrationCheck {
-	if leftover := inspectCursorLeftoverUserSkill(); leftover != nil && plugin.Check.Status == CursorCheckMissing {
-		return *leftover
-	}
+func inspectCursorSkillStatus(plugin cursorPluginInspection) []CursorIntegrationCheck {
+	checks := []CursorIntegrationCheck{inspectCursorPluginSkill(plugin)}
+	return append(checks, inspectCursorLeftoverUserSkills()...)
+}
+
+func inspectCursorPluginSkill(plugin cursorPluginInspection) CursorIntegrationCheck {
 	if plugin.Root == "" {
 		return cursorStatusCheck(
 			"skill", CursorCheckMissing, "skill_missing",
@@ -248,11 +250,12 @@ func inspectCursorSkillStatus(plugin cursorPluginInspection) CursorIntegrationCh
 	)
 }
 
-func inspectCursorLeftoverUserSkill() *CursorIntegrationCheck {
+func inspectCursorLeftoverUserSkills() []CursorIntegrationCheck {
 	home, err := userHome()
 	if err != nil || strings.TrimSpace(home) == "" {
 		return nil
 	}
+	var checks []CursorIntegrationCheck
 	for _, rel := range []string{
 		filepath.Join(".agents", "skills", "engram-memory", "SKILL.md"),
 		filepath.Join(".agents", "skills", "engram-memory-cli", "SKILL.md"),
@@ -267,16 +270,15 @@ func inspectCursorLeftoverUserSkill() *CursorIntegrationCheck {
 		if !ok {
 			continue
 		}
-		check := cursorStatusCheck(
+		checks = append(checks, cursorStatusCheck(
 			"skill", CursorCheckCustomized, "skill_customized",
 			"A leftover user skill copy is present and is not the canonical plugin skill.",
 			cursorEvidence("path", path),
 			cursorEvidence("name", name),
 			cursorEvidence("source", "user"),
-		)
-		return &check
+		))
 	}
-	return nil
+	return checks
 }
 
 func inspectCursorMCPStatus(plugin cursorPluginInspection) CursorIntegrationCheck {
@@ -409,25 +411,29 @@ func inspectCursorHooksStatus(plugin cursorPluginInspection) CursorIntegrationCh
 }
 
 func deriveCursorOperatingMode(checks []CursorIntegrationCheck) CursorOperatingMode {
-	statusOf := func(capability string) CursorCheckStatus {
+	ready := func(capability string) bool {
 		for _, check := range checks {
-			if check.Capability == capability {
-				return check.Status
+			if check.Capability == capability && check.Status == CursorCheckReady {
+				return true
 			}
 		}
-		return CursorCheckMissing
+		return false
 	}
-	plugin := statusOf("plugin")
-	skill := statusOf("skill")
-	mcp := statusOf("mcp")
-	hooks := statusOf("hooks")
-	if plugin == CursorCheckReady && skill == CursorCheckReady && mcp == CursorCheckReady && hooks == CursorCheckReady {
+	present := func(capability string) bool {
+		for _, check := range checks {
+			if check.Capability == capability && check.Status != CursorCheckMissing {
+				return true
+			}
+		}
+		return false
+	}
+	if ready("plugin") && ready("skill") && ready("mcp") && ready("hooks") {
 		return CursorModeCheckpointReady
 	}
-	if plugin == CursorCheckMissing && skill == CursorCheckMissing && hooks == CursorCheckMissing && mcp == CursorCheckReady {
+	if !present("plugin") && !present("skill") && !present("hooks") && ready("mcp") {
 		return CursorModeMCPOnly
 	}
-	if plugin != CursorCheckMissing || skill != CursorCheckMissing || mcp != CursorCheckMissing || hooks != CursorCheckMissing {
+	if present("plugin") || present("skill") || present("mcp") || present("hooks") {
 		return CursorModePartial
 	}
 	return CursorModeUnknown
@@ -508,4 +514,3 @@ func cursorStatusCheck(capability string, status CursorCheckStatus, reasonCode, 
 		Evidence: items,
 	}
 }
-

@@ -847,10 +847,6 @@ func handleConfigFreeCommand(args []string) bool {
 	return false
 }
 
-func isCodexSetupStatus(args []string) bool {
-	return isSetupStatusFor(args, "codex")
-}
-
 func isSetupStatusCommand(args []string) bool {
 	return isSetupStatusFor(args, "codex") || isSetupStatusFor(args, "cursor")
 }

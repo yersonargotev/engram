@@ -286,13 +286,13 @@ func inspectCursorMCPStatus(plugin cursorPluginInspection) CursorIntegrationChec
 		path := filepath.Join(plugin.Root, "mcp.json")
 		raw, err := readFileFn(path)
 		if err == nil {
-			if cursorPluginMCPOwned(raw) {
+			if cursorPluginMCPOwned(plugin.Root, raw) {
 				return cursorStatusCheck(
 					"mcp", CursorCheckReady, "mcp_ready",
 					"MCP registration comes from the installed Agent Plugin.",
 					cursorEvidence("path", path),
 					cursorEvidence("source", "plugin"),
-					cursorEvidence("command", "./bin/engram"),
+					cursorEvidence("command", cursorHookBinary(plugin.Root)),
 				)
 			}
 			if len(raw) > 0 {
@@ -439,7 +439,7 @@ func deriveCursorOperatingMode(checks []CursorIntegrationCheck) CursorOperatingM
 	return CursorModeUnknown
 }
 
-func cursorPluginMCPOwned(raw []byte) bool {
+func cursorPluginMCPOwned(pluginRoot string, raw []byte) bool {
 	var config struct {
 		Servers map[string]struct {
 			Type    string   `json:"type"`
@@ -454,7 +454,7 @@ func cursorPluginMCPOwned(raw []byte) bool {
 	if !ok {
 		return false
 	}
-	return entry.Type == "stdio" && entry.Command == "./bin/engram" &&
+	return entry.Type == "stdio" && entry.Command == cursorHookBinary(pluginRoot) &&
 		len(entry.Args) == 2 && entry.Args[0] == "mcp" && entry.Args[1] == "--tools=agent"
 }
 

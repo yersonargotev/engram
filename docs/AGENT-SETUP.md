@@ -801,7 +801,7 @@ Then add the canonical Memory pointer as a global rule in
 engram setup cursor
 ```
 
-This installs the portable Agent Plugin into Cursor's local plugin directory at `~/.cursor/plugins/local/engram`: `plugin.json`, editorial `skills/engram-memory`, plugin `mcp.json` (`./bin/engram mcp --tools=agent`), and a copy of the running binary. Stable setup pins that install to the binary's release version and commit. A second run refreshes only the Engram-owned plugin and leaves other local plugins alone.
+This installs the portable Agent Plugin into Cursor's local plugin directory at `~/.cursor/plugins/local/engram`: `plugin.json`, editorial `skills/engram-memory`, plugin `mcp.json`, and a copy of the running binary. The portable package keeps a plugin-relative `./bin/engram mcp --tools=agent` command; setup rewrites the installed `mcp.json` command to that copied binary's absolute path because Cursor resolves relative MCP commands against the workspace cwd, not the plugin root. Stable setup pins that install to the binary's release version and commit. A second run refreshes only the Engram-owned plugin and leaves other local plugins alone.
 
 Setup also writes user-level Cursor hooks in `~/.cursor/hooks.json`. `sessionStart` injects the short activation cue from the installed skill. `stop` may emit one follow-up when that root turn has no Memory checkpoint. The hook commands parse Cursor JSON, call Engram, and return; they do not decide durability. Prompt and subagent capture stay off. A second run refreshes Engram-owned hook entries and leaves user-owned hooks in place.
 
@@ -818,7 +818,7 @@ engram setup status cursor --json
 
 The command does not install, repair, start an MCP server, or read captured content. It reports `plugin`, `skill`, `MCP`, and `hooks` as independent file-checkable capabilities. `user_rules` stays `unknown` because setup cannot inspect the Settings store. Missing, stale, customized, and ready states stay distinct. An empty or MCP-only profile is not `checkpoint_ready`. Leftover user skill copies, including Packy `engram-memory-cli`, are reported and are not treated as the canonical plugin skill. Run `engram setup cursor` to install the editorial rubric; Packy may remain for compatibility.
 
-**Manual** — copy `plugin/engram/` to `~/.cursor/plugins/local/engram`, place the Engram binary at `bin/engram`, and add user-level `sessionStart` / `stop` hook entries in `~/.cursor/hooks.json` that call that binary (`lifecycle session-start --host=cursor` and `checkpoint verify-stop --host=cursor`). Then restart Cursor or run Developer: Reload Window.
+**Manual** — copy `plugin/engram/` to `~/.cursor/plugins/local/engram`, place the Engram binary at `bin/engram`, rewrite the installed `mcp.json` command from `./bin/engram` to that binary's absolute path, and add user-level `sessionStart` / `stop` hook entries in `~/.cursor/hooks.json` that call that binary (`lifecycle session-start --host=cursor` and `checkpoint verify-stop --host=cursor`). Then restart Cursor or run Developer: Reload Window.
 
 > Reload Cursor after setup so the local Agent Plugin is discovered. On Teams and Enterprise, local plugin imports may be gated by an admin setting.
 

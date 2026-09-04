@@ -80,8 +80,12 @@ func TestInspectCursorStatusCompleteInstallIsCheckpointReady(t *testing.T) {
 		t.Fatalf("skill = %#v", skill)
 	}
 	mcp := cursorCheck(t, status, "mcp")
+	pluginRoot := filepath.Join(home, ".cursor", "plugins", "local", "engram")
 	if mcp.Status != CursorCheckReady || mcp.ReasonCode != "mcp_ready" || cursorEvidenceValue(mcp, "source") != "plugin" {
 		t.Fatalf("mcp = %#v", mcp)
+	}
+	if got := cursorEvidenceValue(mcp, "command"); got != cursorHookBinary(pluginRoot) {
+		t.Fatalf("mcp command evidence = %q, want absolute plugin binary", got)
 	}
 	hooks := cursorCheck(t, status, "hooks")
 	if hooks.Status != CursorCheckReady || hooks.ReasonCode != "hooks_ready" {
@@ -167,6 +171,29 @@ stale rubric
 	skill := cursorCheck(t, status, "skill")
 	if skill.Status != CursorCheckStale || skill.ReasonCode != "skill_stale" {
 		t.Fatalf("stale skill = %#v", skill)
+	}
+}
+
+func TestInspectCursorStatusRelativePluginMCPIsNotReady(t *testing.T) {
+	home := installPinnedCursor(t)
+	pluginRoot := filepath.Join(home, ".cursor", "plugins", "local", "engram")
+	writeCursorStatusFile(t, filepath.Join(pluginRoot, "mcp.json"), `{
+  "mcpServers": {
+    "engram": {
+      "type": "stdio",
+      "command": "./bin/engram",
+      "args": ["mcp", "--tools=agent"]
+    }
+  }
+}`)
+
+	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("inspect relative plugin MCP: %v", err)
+	}
+	mcp := cursorCheck(t, status, "mcp")
+	if mcp.Status != CursorCheckCustomized || mcp.ReasonCode != "mcp_customized" {
+		t.Fatalf("relative plugin MCP = %#v, want customized because Cursor resolves ./bin/engram against the workspace cwd", mcp)
 	}
 }
 

@@ -35,9 +35,10 @@ Engram works with **any MCP-compatible agent**. Pick your agent below.
 > instruction file, depending on the agent. The per-agent sections below describe
 > the exact files each command touches and the manual equivalent.
 
-`engram setup` is the Memory install control plane. New installs get the
-canonical `engram-memory` checkpoint rubric from setup; they do not need Packy
-to project a user-level `engram-memory-cli` skill. Existing Packy or
+`engram setup` is the Memory install control plane. New installs do not need
+Packy to project a user-level `engram-memory-cli` skill. Hosts that install an
+Engram plugin get the canonical `engram-memory` checkpoint rubric from setup;
+other hosts get setup-owned MCP and protocol files. Existing Packy or
 `~/.agents/skills/engram-memory-cli` copies are leftover user skills: status
 reports them and they are not the canonical rubric. Run `engram setup <agent>`
 for the host you use, then keep or remove the leftover copy. The Managed Pack

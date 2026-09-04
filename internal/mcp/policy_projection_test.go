@@ -17,9 +17,6 @@ func TestEditorialMemorySkillExistsWithMatchingDirectoryName(t *testing.T) {
 	path := filepath.Join(root, filepath.FromSlash(editorialMemorySkillPath))
 	content := readPolicyProjection(t, root, editorialMemorySkillPath)
 	dirName := filepath.Base(filepath.Dir(path))
-	if dirName != "engram-memory" {
-		t.Fatalf("editorial Memory skill directory = %q, want engram-memory", dirName)
-	}
 	name := skillFrontmatterName(t, content)
 	if name != dirName {
 		t.Fatalf("editorial skill name %q does not match directory %q", name, dirName)

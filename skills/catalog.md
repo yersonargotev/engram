@@ -4,6 +4,7 @@
 - testing-coverage: strict TDD and coverage discipline.
 - sdd-flow: mandatory Spec-Driven Development phases.
 - memory-protocol: persistent memory discipline.
+- engram-memory: editorial Terminal Memory checkpoint rubric; host plugins project this file.
 - engram-memory-cli: durable project-memory workflows through the Engram CLI.
 - commit-hygiene: clean conventional commits.
 - server-api: API contract + E2E guardrails.

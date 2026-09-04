@@ -6,11 +6,26 @@ description: "Checkpoint each settled root user turn as saved, skipped(no_durabl
 # Engram Memory checkpoint protocol
 
 <!-- engram:checkpoint-cue:start -->
-For every root user turn, use the engram-memory skill to make exactly one Terminal Memory commit after all causal work settles: `saved`, `skipped(no_durable_knowledge)`, or `needs_review`. Current user intent, maintained source, and runtime evidence override Memory. Reuse the supplied Codex checkpoint identity across continuations; subagents do not create checkpoints.
+For every root user turn, use the engram-memory skill to make exactly one Terminal Memory commit after all causal work settles: `saved`, `skipped(no_durable_knowledge)`, or `needs_review`. Current user intent, maintained source, and runtime evidence override Memory. Reuse the supplied host checkpoint identity across continuations; subagents do not create checkpoints.
 <!-- engram:checkpoint-cue:end -->
 
 The cue above is the canonical model-visible activation text. Host adapters may
 extract and deliver it, but must not maintain their own Memory rubric.
+
+## Default tools
+
+The default agent profile contains exactly these tools:
+
+- `mem_current_project` establishes project scope and write authority.
+- `mem_search` recalls prior Memory when it can change the current work.
+- `mem_get_observation` retrieves complete content for a selected result.
+- `mem_checkpoint` commits the terminal disposition and durable result.
+- `mem_checkpoint_status` inspects the exact root-turn checkpoint.
+
+Use deferred curation, lifecycle, or admin profiles only for an explicit
+specialized workflow. `mem_save` is an independent curation operation, not the
+default commit. `mem_session_summary` is optional curation for an explicit
+handoff with material loss risk; it is not an agent lifecycle requirement.
 
 ## Terminal Memory commit
 
@@ -34,7 +49,8 @@ completion requirement.
    preflight for them before choosing the disposition.
 4. Account for every exact duplicate and every returned semantic candidate.
 5. After all causal work settles, apply the disposition rubric once.
-6. Finalize through `mem_checkpoint` or the equivalent CLI command.
+6. Finalize through `mem_checkpoint`. If MCP is unavailable, use the equivalent
+   CLI command `engram checkpoint record`.
 
 The protocol is complete when the exact identity returns `created` or
 `already_recorded` for one terminal disposition. An adapter or persistence
@@ -187,7 +203,7 @@ user turn:
 
 ```json
 {
-  "host": "codex",
+  "host": "<host>",
   "session_id": "<opaque session id>",
   "root_turn_id": "<opaque original turn id>",
   "disposition": "skipped",
@@ -213,7 +229,7 @@ If MCP is unavailable, use the equivalent CLI adapter:
 
 ```bash
 engram checkpoint record \
-  --host codex \
+  --host '<host>' \
   --session-id '<opaque session id>' \
   --root-turn-id '<opaque original turn id>' \
   --disposition skipped \

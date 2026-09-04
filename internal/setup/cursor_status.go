@@ -272,7 +272,7 @@ func inspectCursorLeftoverUserSkills() []CursorIntegrationCheck {
 		}
 		checks = append(checks, cursorStatusCheck(
 			"skill", CursorCheckCustomized, "skill_customized",
-			"A leftover user skill copy is present and is not the canonical plugin skill.",
+			"A leftover user skill copy is present and is not the canonical plugin skill. Run engram setup to install the editorial rubric; Packy may remain for compatibility.",
 			cursorEvidence("path", path),
 			cursorEvidence("name", name),
 			cursorEvidence("source", "user"),

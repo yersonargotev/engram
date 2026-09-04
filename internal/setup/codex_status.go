@@ -722,6 +722,11 @@ func inspectCodexStandaloneSkills(workingDirectory, configPath string) []CodexIn
 			status := CodexCheckReady
 			reasonCode := "engram_skill_discovered"
 			reason := "A standalone Engram memory skill is discoverable by Codex."
+			if name == "engram-memory-cli" {
+				status = CodexCheckCustomized
+				reasonCode = "engram_skill_leftover"
+				reason = "A leftover Packy or user engram-memory-cli skill is present and is not the canonical setup skill. Run engram setup to install the editorial rubric; Packy may remain for compatibility."
+			}
 			if _, disabled := disabledPaths[filepath.Clean(resolvedPath)]; disabled {
 				status = CodexCheckPartial
 				reasonCode = "engram_skill_disabled"

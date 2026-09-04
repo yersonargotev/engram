@@ -35,6 +35,15 @@ Engram works with **any MCP-compatible agent**. Pick your agent below.
 > instruction file, depending on the agent. The per-agent sections below describe
 > the exact files each command touches and the manual equivalent.
 
+`engram setup` is the Memory install control plane. New installs get the
+canonical `engram-memory` checkpoint rubric from setup; they do not need Packy
+to project a user-level `engram-memory-cli` skill. Existing Packy or
+`~/.agents/skills/engram-memory-cli` copies are leftover user skills: status
+reports them and they are not the canonical rubric. Run `engram setup <agent>`
+for the host you use, then keep or remove the leftover copy. The Managed Pack
+and Packy may remain for compatibility; they are not the happy-path install.
+A disabled standalone `engram-memory-cli` skill is not Codex activation.
+
 The `agent` profile exposes exactly `mem_current_project`, `mem_search`,
 `mem_get_observation`, `mem_checkpoint`, and `mem_checkpoint_status`. Add
 `curation` for independent authoring, optional Session summary, context, review,
@@ -492,7 +501,7 @@ The command does not install, upgrade, repair, start an MCP server, rewrite conf
 - `compatibility`: the Managed Pack version, Engram binary version, Codex plugin version, and monotonic Protocol contract version are separate axes. Each distributable reports attributable provenance and an inclusive `supported_protocol` range. Readiness uses the intersection of those ranges, never equality between the three distributable versions.
 
 - `engram_cli` and `codex_cli`: availability, resolved executable path, and version. The Engram binary also reports its embedded source revision when available; the real CLI path fails compatibility provenance closed when that revision is malformed.
-- `skill`: every relevant repository, user, administrator, or plugin-provided Engram memory skill, including scope, resolved path, SHA-256 identity, optional version, and disabled state when configured.
+- `skill`: every relevant repository, user, administrator, or plugin-provided Engram memory skill, including scope, resolved path, SHA-256 identity, optional version, and disabled state when configured. A standalone `engram-memory-cli` copy is leftover compatibility evidence, not the canonical skill and not Codex activation.
 - `marketplace` and `plugin`: registration is kept separate from installed/enabled plugin state; attributable source, requested ref, installed version, and resolved revision are included when known.
 - `mcp_configuration` and `mcp_readiness`: a present registration is kept separate from an executable that passes the non-starting checkpoint CLI preflight. Missing, invalid, customized, and unavailable states remain distinct; status does not claim that a live stdio transport was contacted.
 - `prompt_hook`, `session_hook`, `subagent_hook`, `activation_cue`, and `stop_verifier`: each canonical plugin contract is verified separately. The separate content-free `subagent_capture` object reports `default_disabled`, `consented`, `expired`, or `unavailable` without reading captured content or exposing session identifiers.
@@ -502,7 +511,7 @@ The stable `mode` field is conservative:
 
 | Mode | Meaning |
 | --- | --- |
-| `manual_skill_cli` | Engram and Codex CLIs plus at least one enabled standalone skill are available, without an attributable plugin or MCP registration. |
+| `manual_skill_cli` | Engram and Codex CLIs plus at least one enabled standalone skill other than leftover `engram-memory-cli` are available, without an attributable plugin or MCP registration. |
 | `mcp_only` | The supported MCP registration and non-starting executable preflight are ready, but the complete plugin contract is not. |
 | `partial_plugin` | Attributable plugin state exists, but one or more required capabilities are missing, unavailable, or unverified. |
 | `checkpoint_ready` | The attributable Managed Pack, binary, plugin, and Protocol ranges intersect, and the plugin, MCP configuration/readiness, prompt/session/subagent hooks, activation cue, and Stop verifier are all ready. |
@@ -806,7 +815,7 @@ engram setup status cursor
 engram setup status cursor --json
 ```
 
-The command does not install, repair, start an MCP server, or read captured content. It reports `plugin`, `skill`, `MCP`, and `hooks` as independent file-checkable capabilities. `user_rules` stays `unknown` because setup cannot inspect the Settings store. Missing, stale, customized, and ready states stay distinct. An empty or MCP-only profile is not `checkpoint_ready`. Leftover user skill copies are reported and are not treated as the canonical plugin skill.
+The command does not install, repair, start an MCP server, or read captured content. It reports `plugin`, `skill`, `MCP`, and `hooks` as independent file-checkable capabilities. `user_rules` stays `unknown` because setup cannot inspect the Settings store. Missing, stale, customized, and ready states stay distinct. An empty or MCP-only profile is not `checkpoint_ready`. Leftover user skill copies, including Packy `engram-memory-cli`, are reported and are not treated as the canonical plugin skill. Run `engram setup cursor` to install the editorial rubric; Packy may remain for compatibility.
 
 **Manual** — copy `plugin/engram/` to `~/.cursor/plugins/local/engram`, place the Engram binary at `bin/engram`, and add user-level `sessionStart` / `stop` hook entries in `~/.cursor/hooks.json` that call that binary (`lifecycle session-start --host=cursor` and `checkpoint verify-stop --host=cursor`). Then restart Cursor or run Developer: Reload Window.
 

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "engram",
+  "version": "0.1.0",
+  "description": "Persistent memory for AI coding agents. Survives across sessions and compactions.",
+  "author": {
+    "name": "yersonargotev"
+  },
+  "homepage": "https://github.com/yersonargotev/engram",
+  "repository": "https://github.com/yersonargotev/engram",
+  "license": "MIT",
+  "keywords": ["memory", "persistence", "sessions", "context"]
+}

@@ -24,6 +24,11 @@ Agent
   │     ├── plugin/claude-code/scripts/*.sh / *.ps1
   │     └── plugin/claude-code/skills/memory/SKILL.md
   │
+  ├── Portable Agent Plugin
+  │     ├── plugin/engram/plugin.json
+  │     ├── plugin/engram/mcp.json
+  │     └── plugin/engram/skills/engram-memory/SKILL.md
+  │
   └── Agent registry (declarative setup)
         ├── internal/setup/registry.go   (generic injectMCP / writeInstruction driver)
         └── internal/setup/agents.go     (one data entry per agent)

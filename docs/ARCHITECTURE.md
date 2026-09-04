@@ -276,6 +276,10 @@ engram/
 │       ├── update.go               # Input handling, per-screen handlers
 │       └── view.go                 # Rendering, per-screen views
 ├── plugin/
+│   ├── engram/                     # Portable Agent Plugin 1.0 (skill + MCP, no hooks/rules)
+│   │   ├── plugin.json
+│   │   ├── mcp.json
+│   │   └── skills/engram-memory/SKILL.md
 │   ├── opencode/engram.ts          # OpenCode adapter plugin
 │   └── claude-code/                # Claude Code plugin (hooks + skill)
 │       ├── .claude-plugin/plugin.json

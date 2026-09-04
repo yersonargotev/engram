@@ -52,6 +52,8 @@ func TestPluginAssetsDoNotLeakSpanishTriggers(t *testing.T) {
 		// claude-code: shell scripts and skill markdown files
 		{filepath.Join(root, "plugin", "claude-code", "scripts", "*.sh")},
 		{filepath.Join(root, "plugin", "claude-code", "skills", "*", "SKILL.md")},
+		// portable Agent Plugin: editorial Memory skill
+		{filepath.Join(root, "plugin", "engram", "skills", "*", "SKILL.md")},
 		// opencode: TypeScript plugin adapter
 		{filepath.Join(root, "plugin", "opencode", "*.ts")},
 		// pi: TypeScript plugin adapter

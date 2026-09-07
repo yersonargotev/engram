@@ -12284,3 +12284,124 @@ func TestUpdateObservationAcceptsPrivateTagOnlyTitle(t *testing.T) {
 		t.Fatalf("expected redacted title in update payload, got %#v", payload["title"])
 	}
 }
+
+func TestDeleteProjectPreservesCrossProjectObservationSession(t *testing.T) {
+	for _, deleted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("deleted=%t", deleted), func(t *testing.T) {
+			s := newTestStore(t)
+
+			if err := s.CreateSession("s-del-proj-cross-obs", "alpha", "/tmp/alpha"); err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			for _, project := range []string{"alpha", "beta"} {
+				_, err := s.AddObservation(AddObservationParams{
+					SessionID: "s-del-proj-cross-obs",
+					Type:      "decision",
+					Title:     project + " observation",
+					Content:   project + " content",
+					Project:   project,
+					Scope:     "project",
+				})
+				if err != nil {
+					t.Fatalf("add %s observation: %v", project, err)
+				}
+			}
+
+			if deleted {
+				if _, err := s.db.Exec(`UPDATE observations SET deleted_at = ? WHERE project = ?`, "2025-03-04 05:00:00", "beta"); err != nil {
+					t.Fatalf("soft delete cross-project observation: %v", err)
+				}
+			}
+			result, err := s.DeleteProject("alpha", true)
+			if err != nil {
+				t.Fatalf("DeleteProject: %v", err)
+			}
+
+			if result.ObservationsDeleted != 1 || result.SessionsDeleted != 0 {
+				t.Fatalf("delete result = %+v, want one observation deleted and shared session retained", result)
+			}
+			var count int
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM observations WHERE project = ?`, "beta").Scan(&count); err != nil {
+				t.Fatalf("count cross-project observations: %v", err)
+			}
+			if count != 1 {
+				t.Fatalf("expected cross-project observation to survive, got %d rows", count)
+			}
+			if err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = ?`, "s-del-proj-cross-obs").Scan(&count); err != nil {
+				t.Fatalf("count shared session: %v", err)
+			}
+			if count != 1 {
+				t.Fatalf("expected shared session to survive, got %d rows", count)
+			}
+		})
+	}
+}
+
+func TestDeleteProjectPreservesCrossProjectPromptSession(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.CreateSession("s-del-proj-cross-prompt", "alpha", "/tmp/alpha"); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	for _, project := range []string{"alpha", "beta"} {
+		if _, err := s.AddPrompt(AddPromptParams{
+			SessionID: "s-del-proj-cross-prompt",
+			Content:   project + " prompt",
+			Project:   project,
+		}); err != nil {
+			t.Fatalf("add %s prompt: %v", project, err)
+		}
+	}
+
+	if _, err := s.DeleteProject("alpha", true); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM user_prompts WHERE project = ?`, "beta").Scan(&count); err != nil {
+		t.Fatalf("count cross-project prompts: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected cross-project prompt to survive, got %d rows", count)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = ?`, "s-del-proj-cross-prompt").Scan(&count); err != nil {
+		t.Fatalf("count shared session: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected shared session to survive, got %d rows", count)
+	}
+}
+
+func TestDeleteProjectHardDeleteRemovesOrphanSession(t *testing.T) {
+	s := newTestStore(t)
+
+	if err := s.CreateSession("s-del-proj-orphan", "alpha", "/tmp/alpha"); err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := s.AddObservation(AddObservationParams{
+		SessionID: "s-del-proj-orphan",
+		Type:      "decision",
+		Title:     "orphaned session observation",
+		Content:   "content",
+		Project:   "alpha",
+		Scope:     "project",
+	}); err != nil {
+		t.Fatalf("add observation: %v", err)
+	}
+
+	result, err := s.DeleteProject("alpha", true)
+	if err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+	if result.SessionsDeleted != 1 {
+		t.Fatalf("SessionsDeleted = %d, want 1", result.SessionsDeleted)
+	}
+
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = ?`, "s-del-proj-orphan").Scan(&count); err != nil {
+		t.Fatalf("count orphan session: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected orphan session to be deleted, got %d rows", count)
+	}
+}

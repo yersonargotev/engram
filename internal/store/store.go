@@ -6307,10 +6307,12 @@ func (s *Store) DeleteProject(project string, hardDelete bool) (*DeleteProjectRe
 
 		// 3. Delete sessions — only when hard-deleting, because observation rows
 		//    reference sessions via a NOT NULL FK and soft-deleted rows are still
-		//    present in the table.
+		//    present in the table. Keep sessions referenced by either table, even
+		//    when the remaining rows belong to another project.
 		if hardDelete {
 			res, err = s.execHook(tx, `DELETE FROM sessions
 				WHERE project = ?
+				  AND NOT EXISTS (SELECT 1 FROM observations WHERE observations.session_id = sessions.id)
 				  AND NOT EXISTS (SELECT 1 FROM user_prompts WHERE user_prompts.session_id = sessions.id)`, project)
 			if err != nil {
 				return fmt.Errorf("delete project: delete sessions: %w", err)
@@ -7752,13 +7754,20 @@ func (s *Store) applyObservationDeleteTx(tx *sql.Tx, payload syncObservationPayl
 		return err
 	}
 	deletedAt := payload.DeletedAt
+	updatedAt := strings.TrimSpace(payload.UpdatedAt)
 	if deletedAt == nil {
 		now := Now()
 		deletedAt = &now
+		if updatedAt == "" {
+			updatedAt = now
+		}
+	}
+	if updatedAt == "" {
+		updatedAt = *deletedAt
 	}
 	_, err = s.execHook(tx,
-		`UPDATE observations SET deleted_at = ?, local_revision_count = local_revision_count + 1, updated_at = datetime('now') WHERE id = ?`,
-		deletedAt, existing.ID,
+		`UPDATE observations SET deleted_at = ?, local_revision_count = local_revision_count + 1, updated_at = ? WHERE id = ?`,
+		deletedAt, updatedAt, existing.ID,
 	)
 	return err
 }

@@ -21,6 +21,12 @@ Breaking changes are always marked with a `type:breaking-change` label and docum
 
 <!-- Changes that are merged but not yet released are tracked here until the next tag. -->
 
+### Data integrity corrections
+
+- **fix(store):** preserve remote observation deletion timestamps during sync while retaining local revision tracking.
+- **fix(store):** retain shared sessions when hard-deleting a project if surviving observations or archived prompts still reference them.
+- **fix(cloud):** accept boolean `issued_token` bootstrap audit flags while continuing to reject non-boolean values that could contain credentials.
+
 ### Engram v3.0.0 breaking boundary
 
 - **breaking:** remove the complete Admission experiment in Engram v3.0.0 with

@@ -70,6 +70,51 @@ that message has settled.
   opaque values. Never derive replacements from prompt text, process IDs, tool
   IDs, or subagent IDs.
 
+## Project binding and cross-repository work
+
+Before committing work for another repository in an ongoing conversation,
+distinguish these boundaries:
+
+| Fact | Meaning for a Terminal Memory commit |
+| --- | --- |
+| Detected project | Current working-directory context; strong or explicit detection establishes automatic project scope. |
+| Explicit target authority | User intent can authorize work in a target project; it does not reassign an internal session. |
+| Memory ownership | Every referenced or inline Memory in one checkpoint must belong to its selected project. |
+| Internal session binding | Inline Memories reuse the host `session_id` as an Engram session. An existing nonempty session project must match the selected project. |
+| Opaque checkpoint identity | `(host, session_id, root_turn_id)` identifies one terminal result. Changing cwd or `project` does not change that identity. |
+
+This is the current CLI/MCP Core contract. A conversation that already created
+inline Memories for project A cannot create inline Memories for B in a later
+turn using that same session. Explicit B authority and `--project B` do not
+remove this restriction. A references-only checkpoint can attach existing B
+Memories without the inline session check, but all references must still belong
+to B. This does not authorize creating a separate Memory merely to bypass the
+normal Terminal Memory commit.
+
+Preflight assesses prospective Memories within a project; it receives no
+host/session/root-turn identity. Success does not establish that the session
+can record them. `checkpoint_project_mismatch` can mean either a referenced
+Memory belongs to another project or an inline session is bound elsewhere.
+
+For cross-repository work, keep the supplied identity and assess the actual
+knowledge and its intended owner. If the normal contract cannot store new
+inline knowledge in the destination project, report that limitation. An
+original-project handoff is valid only when its content is independently useful
+there and write authority exists there; state explicitly that it is stored in A,
+not B, and does not fulfill a destination-write request. Independent curation
+remains reserved for explicit curation or a material loss-risk handoff under its
+existing rules. Multi-project Core design is separate future work.
+
+After a structured record rejection, correct only a legitimate input and retry
+with the same identity and disposition. If revised content could be saved, run
+preflight for that content and project first. A failed transaction leaves no
+terminal checkpoint; if no legitimate correction exists, leave the incomplete
+result visible. An integration failure is neither `no_durable_knowledge` nor a
+reason to invent an identity or reassign a session. For an ambiguous transport
+outcome, inspect the exact checkpoint before retrying; routine successful or
+structured-error responses need no status polling. Same-disposition replay
+returns the original terminal result, not an appended or moved Memory.
+
 ## Recall when it can change the work
 
 Current user intent, maintained source, and runtime evidence override Memory.

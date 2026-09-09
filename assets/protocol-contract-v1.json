@@ -70,7 +70,7 @@
   "distributions": {
     "managed_pack": {
       "version": "3.3.1",
-      "skill_sha256": "e37b45dbfa8c26c398d7cdbf996354433f1505f6054a1129122c48a2b830009f",
+      "skill_sha256": "b2168c0e0c627320443e655ede2fabeeea404af6048f2840af7ddcdd9f0670d4",
       "legacy_compatible": true,
       "supported_protocol": {
         "minimum": 1,

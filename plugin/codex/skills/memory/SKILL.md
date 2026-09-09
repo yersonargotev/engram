@@ -45,8 +45,8 @@ completion requirement.
 1. Keep the supplied `(host, session_id, root_turn_id)` as the identity of the
    original root user turn.
 2. Recall prior Memory only when it can change the work.
-3. Draft any prospective Memories, then run one read-only Terminal Memory
-   preflight for them before choosing the disposition.
+3. Draft prospective Memories using the authoring guidance below, then run one
+   read-only Terminal Memory preflight before choosing the disposition.
 4. Account for every exact duplicate and every returned semantic candidate.
 5. After all causal work settles, apply the disposition rubric once.
 6. Finalize through `mem_checkpoint`. If MCP is unavailable, use the equivalent
@@ -147,6 +147,87 @@ rubric; it does not create the terminal checkpoint.
   "memories": [{"title": "<title>", "content": "<durable result>"}]
 }
 ```
+
+## Author for future Recall
+
+Ask: **Will this prevent a specific repeated investigation or mistake?** Lead
+with the reusable decision, invariant, non-obvious cause, or durable constraint
+and the rationale needed to apply it. Keep applicability, uncertainty, and
+necessary version boundaries beside the claim; put compact evidence references
+after the knowledge. A title helps discovery, but the content must stand alone.
+
+Ordinary Recall currently exposes a UTF-8-safe content prefix, capped at 512
+bytes per candidate, rather than a semantic summary. The aggregate response
+budget can further omit a summary. Put the actionable lesson and its essential
+qualification early enough to be useful in a returned prefix; inspect ordinary
+Recall with representative examples when changing this guidance. Full retrieval
+can supply detail, but should not be needed merely to discover the lesson.
+Preserve material qualifications even when they cannot fit: prefix placement
+improves an opportunity for useful Recall, not guaranteed visibility. Judge
+usefulness by the decision a future agent can make, not exact prose or a
+universal word quota.
+
+Keep one finding cohesive; split only independently reusable outcomes. Choose
+a natural structure for the finding. CLI example labels such as What/Why/Where/
+Learned are placeholders, not a required schema: put the reusable lesson and
+its reason in the opening content rather than reserving them for a final label.
+
+Delivery metadata earns space when it changes applicability or prevents a
+specific repeated investigation: a first fixed version, an exact compatibility
+boundary, or the identity of an external artifact that must be found again.
+Place that boundary beside the claim and link supporting evidence afterward.
+A PR number, full commit hashes, tests, CI, and cleanup do not by themselves
+justify a companion delivery Memory. Apply the disposition rubric below to the
+knowledge the turn produced.
+
+### Contrasting examples
+
+These are synthetic editorial examples, not claims about a real project.
+Quoted contents illustrate choices rather than a mandatory format.
+
+**Bug fix.** Delivery-first: “Merged PR 42; tests and CI passed; deleted the
+branch. The retry bug is fixed.” A reusable saved finding instead leads with
+cause, correction, and scope:
+
+> In client v2.4, reuse the idempotency key when retrying a timed-out payment
+> request: the server may have committed before the response was lost. Creating
+> a new key can charge twice. This applies only to endpoints supporting
+> idempotency keys; other endpoints still require reconciliation. Evidence:
+> payment-client PR 42, timeout replay test.
+
+The version and endpoint qualification determine where the correction is safe;
+the PR locates evidence. CI and branch cleanup add no reusable lesson here.
+
+**Architectural decision.** Activity-first: “Discussed cache options and selected
+process-local caching.” A useful saved decision preserves the tradeoff:
+
+> For the single-worker importer, keep the schema cache process-local to avoid
+> cross-worker invalidation state. This assumes one worker owns the whole import;
+> parallel workers would require revisiting ownership before sharing the cache.
+> The decision reduces coordination, not database reads across independent runs.
+> Evidence: importer ADR 7.
+
+The assumption belongs beside the choice; removing it would turn a conditional
+decision into unsafe general advice.
+
+**Routine delivery.** “Renamed the documented command; PR 51 merged, checks
+passed, branch removed” normally yields `skipped(no_durable_knowledge)` when
+maintained source and docs already contain the complete result. An external
+artifact can itself warrant `saved` when its identity prevents rediscovery:
+
+> Use vendor support case CASE-82 for the unresolved importer timeout; it holds
+> the vendor-requested trace and is the channel for follow-up. The vendor has
+> not confirmed a cause or fix. Evidence: the team's vendor case link.
+
+Here the case identity and unresolved state are the useful knowledge. Preserve
+only a safe, actual reference in real work; inventing a cause would weaken it.
+
+**No durable knowledge.** Answering “which command lists sessions?” from current
+CLI help normally yields `skipped(no_durable_knowledge)`. Saving “answered the
+question” would only duplicate activity. If the investigation instead uncovers
+a verified, non-obvious constraint, assess that finding under `saved`; if it
+remains materially uncertain, apply `needs_review`, preserving any independently
+settled findings in the same Mixed Memory checkpoint.
 
 ## Choose a disposition
 

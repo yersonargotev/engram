@@ -1334,6 +1334,12 @@ most three full same-project semantic candidates. Clear low-risk outcomes can
 settle directly; ambiguity or a material architecture, policy, or decision
 conflict selects `needs_review`.
 
+For work spanning repositories in one conversation, read the canonical
+[project binding and recovery guidance](skills/engram-memory/SKILL.md#project-binding-and-cross-repository-work)
+and the [disposable CLI examples](skills/engram-memory-cli/SKILL.md#cross-repository-checkpoint-examples).
+Project-only preflight success does not validate the session binding required
+by an inline commit.
+
 Selective Recall starts only when prior history can change the task. Its first
 project request is bounded to five candidates/4 KiB with one possible
 reformulation; limits 6-10 are deliberate follow-up, and personal or

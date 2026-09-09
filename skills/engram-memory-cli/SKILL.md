@@ -139,6 +139,75 @@ Complete normal preservation when the exact root-turn identity returns `created`
 or same-disposition `already_recorded`; the record result is the routine
 completion signal.
 
+## Cross-repository checkpoint examples
+
+When a conversation changes repositories, or record returns
+`checkpoint_project_mismatch`, apply the canonical `engram-memory` section
+**Project binding and cross-repository work** before choosing recovery. The
+commands below illustrate that policy through the CLI; they do not grant write
+authority. In real work, use the exact host-supplied identity and establish each
+project's authority through the normal detection/explicit-intent protocol.
+
+These fixtures use synthetic identities **only inside disposable state**. Run
+the block in a subshell so the data-directory override cannot affect later work:
+
+```bash
+(
+  fixture_dir=$(mktemp -d)
+  trap 'rm -rf "$fixture_dir"' EXIT
+  export ENGRAM_DATA_DIR="$fixture_dir"
+
+  # Same-project work: both turns return created in project-a.
+  engram checkpoint record --host codex --session-id fixture-session \
+    --root-turn-id fixture-turn-1 --disposition saved --project project-a \
+    --memory-json '{"title":"Fixture A","content":"Synthetic first-project knowledge."}' --json
+  engram checkpoint record --host codex --session-id fixture-session \
+    --root-turn-id fixture-turn-2 --disposition saved --project project-a \
+    --memory-json '{"title":"Fixture A2","content":"Synthetic next-turn knowledge."}' --json
+
+  # Cross-repository task: project-only preflight succeeds for B.
+  engram checkpoint preflight --project project-b \
+    --memory-json '{"title":"Fixture B","content":"Synthetic destination knowledge."}' --json
+
+  # The same session cannot create inline Memories in B: nonzero exit,
+  # checkpoint_project_mismatch. The failed turn remains unfinalized.
+  engram checkpoint record --host codex --session-id fixture-session \
+    --root-turn-id fixture-turn-3 --disposition saved --project project-b \
+    --memory-json '{"title":"Fixture B","content":"Synthetic destination knowledge."}' --json
+
+  # Conditional recovery: assume independently useful A handoff content
+  # and authority to store it in A. This does not store the B knowledge.
+  engram checkpoint preflight --project project-a \
+    --memory-json '{"title":"Fixture handoff","content":"Synthetic project-a handoff about unresolved project-b work."}' --json
+  engram checkpoint record --host codex --session-id fixture-session \
+    --root-turn-id fixture-turn-3 --disposition saved --project project-a \
+    --memory-json '{"title":"Fixture handoff","content":"Synthetic project-a handoff about unresolved project-b work."}' --json
+
+  # Same identity/disposition: already_recorded; no second Memory is added.
+  engram checkpoint record --host codex --session-id fixture-session \
+    --root-turn-id fixture-turn-3 --disposition saved --project project-a \
+    --memory-json '{"title":"Fixture handoff","content":"Synthetic project-a handoff about unresolved project-b work."}' --json
+)
+```
+
+The rejection above is expected; run the fixture without shell `errexit` so the
+recovery commands execute. The handoff is a conditional example, not the
+required disposition after every failure. When no legitimate correction exists,
+report the incomplete checkpoint rather than substituting a false skip.
+
+For an ambiguous process/transport result only, inspect with
+`engram checkpoint status --host '<host>' --session-id '<session>' --root-turn-id '<root-turn>' --json`.
+`checkpoint_not_found` permits a corrected retry with that same identity; an
+existing terminal result must be respected. A structured ownership rejection
+already identifies the failed operation and does not require this extra call.
+
+MCP exposes the same Core restriction through `mem_checkpoint`: preflight uses
+`operation: "preflight"`, `project`, and prospective `memories`; record carries
+`host`, `session_id`, `root_turn_id`, `disposition`, `project`, and `memories`.
+Use `mem_checkpoint_status` only for explicit inspection or ambiguous recovery.
+The shell fixtures exercise CLI behavior; shared MCP behavior is supported by
+Core delegation and adapter tests, not implied to be a live MCP transcript.
+
 ## Independent save
 
 Use `engram save` only for explicit curation or a long-running, material

@@ -1314,6 +1314,11 @@ single source of truth for the root-turn disposition rubric, Recall, compaction,
 and terminal finalization. Agent-specific setup projects that skill or its short
 activation cue; adapters do not maintain another policy copy.
 
+When authoring Memories, consult the canonical [authoring guidance and contrasting
+examples](skills/engram-memory/SKILL.md#author-for-future-recall). The
+[editorial audit and synthetic Recall verification](docs/research/memory-authoring-bounded-recall.md)
+record the scope and observed limits of that guidance.
+
 Normal work ends in one **Terminal Memory commit** after the root user turn and
 all causal work settle:
 

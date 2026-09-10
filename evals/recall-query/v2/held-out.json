@@ -1,0 +1,41 @@
+{
+  "cohort": "held-out",
+  "units": [
+    {
+      "id": "h21",
+      "issue": "9901",
+      "concept": "audio playback",
+      "task": "How should sound continuity be maintained, and what fixed clicks between decoded blocks?",
+      "reformulation": "sound clicks blocks",
+      "invariant": "For audio playback in fictional ticket 9901, preserve continuous sound across decoded block boundaries; this invariant remains valid.",
+      "diagnosis": "At synthetic commit a9901 only, clicks between decoded blocks were incorrectly attributed to loudspeaker impedance. This diagnosis does not apply after the verified fix.",
+      "resolution": "Fictional ticket 9901: synthetic commit b9901 verified that retaining the resampler phase between decoded blocks eliminates boundary clicks.",
+      "editorial": "Fictional ticket 9901 audio playback: synthetic commit b9901 verified that retaining the resampler phase between decoded blocks eliminates boundary clicks.",
+      "rationale": "The invariant and resolution apply to present guidance. The diagnosis is stale after the fix. Historical deliveries are not useful."
+    },
+    {
+      "id": "h22",
+      "issue": "9902",
+      "concept": "irrigation scheduling",
+      "task": "Which moisture rule protects seedlings, and what prevented duplicate watering cycles?",
+      "reformulation": "seedlings duplicate watering",
+      "invariant": "For irrigation scheduling in fictional ticket 9902, water seedlings only when measured soil moisture is below the configured threshold; this invariant remains valid.",
+      "diagnosis": "At synthetic commit a9902 only, duplicate watering cycles were incorrectly attributed to humidity sensor calibration. This diagnosis does not apply after the verified fix.",
+      "resolution": "Fictional ticket 9902: synthetic commit b9902 verified that claiming each watering cycle identifier atomically before opening a valve prevents duplicate activations.",
+      "editorial": "Fictional ticket 9902 irrigation scheduling: synthetic commit b9902 verified that claiming each watering cycle identifier atomically before opening a valve prevents duplicate activations.",
+      "rationale": "The invariant and resolution apply to present guidance. The diagnosis is stale after the fix. Historical deliveries are not useful."
+    },
+    {
+      "id": "h23",
+      "issue": "9903",
+      "concept": "telescope tracking",
+      "task": "What celestial reference should guide the mount, and what corrected drift during long exposures?",
+      "reformulation": "celestial mount drift",
+      "invariant": "For telescope tracking in fictional ticket 9903, guide the mount against the configured celestial reference frame during exposures; this invariant remains valid.",
+      "diagnosis": "At synthetic commit a9903 only, drift during long exposures was incorrectly attributed to mirror temperature. This diagnosis does not apply after the verified fix.",
+      "resolution": "Fictional ticket 9903: synthetic commit b9903 verified that converting sidereal angular velocity into radians per second before mount updates corrects exposure drift.",
+      "editorial": "Fictional ticket 9903 telescope tracking: synthetic commit b9903 verified that converting sidereal angular velocity into radians per second before mount updates corrects exposure drift.",
+      "rationale": "The invariant and resolution apply to present guidance. The diagnosis is stale after the fix. Historical deliveries are not useful."
+    }
+  ]
+}

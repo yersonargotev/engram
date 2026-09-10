@@ -1,0 +1,30 @@
+{
+  "study_id": "concept-versus-identifier",
+  "version": "1",
+  "source_revision": "5855e1de2a77cd07dbea67a901752b26cd5e9a7f",
+  "protocol": 2,
+  "calibration_sha256": "1ef8eb00fa14acd1a31050a97c80de16acbfb1de6a80ae5e8285a82f3643969c",
+  "held_out_sha256": "2bacd3e0b4d6acdc77c8f6e6955382fd3f9592547e842acb2e6a1f9ec06c99d5",
+  "units_per_cohort": 3,
+  "candidate_limit": 5,
+  "candidate_bytes": 4096,
+  "reformulations": 1,
+  "policy": {
+    "sampling": "One distinct synthetic information need is the sampling unit. Three calibration and three disjoint held-out needs; matched query classes and variants are repeated measurements, never independent extra samples.",
+    "queries": "English identifier, concept, and task paraphrase per need. Always execute exactly one frozen same-intent reformulation, independently for each query class; it never uses the ticket identifier. all matching on both calls. No adaptive query selection.",
+    "language": "Spanish is the supported maintainer conversation language, but this first small diagnostic study omits translated cases to isolate the reported English effect. No multilingual capability inference is permitted; a separately versioned language study is needed.",
+    "variants": "Factorial 2x2: baseline/editorial resolution wording crossed with absent/present structural supersession of diagnosis by resolution. All other fixture fields and relevance judgments remain identical. No ranking alternatives.",
+    "fixtures": "Each need has an older applicable invariant, three related delivery histories, a commit-scoped stale diagnosis, a current resolution, two unrelated recent pinned distractors, an out-of-project matching distractor and a deleted matching distractor. Explicit authored judgments determine applicability, never dates, pins or active review state.",
+    "judgments": "Relevant-current keys are invariant and resolution. Acceptable sets contain resolution (invariant alone helps coverage but cannot answer the resolved-issue need). Diagnosis is stale; delivery histories and distractors are noise. Historical deliveries share one equivalence group for duplicate exposure. These retrieval judgments are not Recall utility/quality labels.",
+    "calibration_gate": "Verify compiled contract commitment and calibration digest without reading held-out. Calibration must complete all 36 matched rows with no operational failures or budget/scope/lifecycle violations. Retrieval misses are valid quality outcomes, not prerequisites. Only then read and verify held-out digest and nonoverlapping units/issues/concepts. Failed prerequisites produce invalid evidence and leave held-out unopened.",
+    "metrics": "For each cohort/variant/query class report first and cumulative: intersection of unique exposed keys with the two relevant-current keys / 2; acceptable-set success; reciprocal rank of first relevant-current result (zero for successful misses); empty and nonempty-without-relevant counts separately. Cumulative order is first encounter across two calls. Exposures count every delivered candidate; noise, stale and duplicate rates use that denominator, duplicates mean repeat ID or previously encountered equivalence group. Report total candidate bytes and both call latencies. A row with any failed call is operational_failure, its quality metrics unavailable; retain successful-call exposure and label unknowns separately.",
+    "uncertainty": "Wilson 95% intervals for acceptable-set success with denominator distinct needs within one cohort/variant/query class. Coverage and reciprocal rank are descriptive means only. Three purposive synthetic needs do not estimate a population; no cross-variant/cohort pooled inferential claim or significance test.",
+    "time_to_useful": "Task time-to-useful is unavailable without observed agent action and explicit assessment. Report a separately named candidate-discovery latency proxy: sum of measured Recall wall times through the first response exposing a relevant-current key; null if none. It excludes human reading, startup, fixture setup and task completion.",
+    "labels": "No agent task is executed and no explicit Recall labels are collected. Every exposure has unknown utility and quality, zero explicit sources/disagreements, and an explicit omission reason retrieval_only. Missing evidence is unavailable, not unused/current/false_empty. Assessment and MetricEvidence vocabulary follows recallstudy; its frozen gates and treatments remain untouched.",
+    "content": "No selected-content retrieval occurs: zero content bytes, selections and continuations. Candidate discovery is the measured surface; full-content readability and downstream task utility remain unassessed. No scope widening or automatic history.",
+    "privacy": "Only synthetic fixtures and aggregate outputs are shared. No host session, Recall IDs, Memory IDs, queries, content or transcript paths in aggregate evidence; content-free telemetry is not read. Disposable local Store only, no cloud, production data, release or rollout.",
+    "disposition": "Invalid prerequisite evidence yields evaluation_incomplete. Otherwise, improvement in acceptable-set success or coverage or reduction in stale exposure under controlled editorial/lifecycle variants indicates editorial_lifecycle_correction_indicated. If baseline concepts/tasks match or exceed identifier coverage and acceptable success, no_ranking_change_indicated. A residual gap only proposes separate ranking investigation, never implements a ranking change. Findings remain synthetic and conditional.",
+    "provenance": "Pin Core source revision and Protocol 2; report evaluator Git revision, dirty state, executable SHA256, Go runtime and platform. Direct Core consumer has no model, plugin or Managed Pack treatment; mark those not participating, do not claim a released Compatibility tuple.",
+    "freeze": "Contract and corpus bytes are frozen before candidate execution; changing queries, judgments, metrics, cohort membership or policy requires a new version. Held-out authored in a separate context and not inspected during calibration."
+  }
+}

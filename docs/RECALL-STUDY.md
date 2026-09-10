@@ -295,3 +295,12 @@ A checkpoint non-inferiority, Stop-growth, or harm failure selects
 `rollback_prior_verified_tuple`; other failed gates select `continue_canary`
 and are listed as evidence gaps. Every publication keeps `rollout_enabled`
 false. Applying any disposition remains a separate protected delivery stage.
+
+## Concept versus identifier diagnostic evaluation
+
+The independent [Recall query study v2](../evals/recall-query/v2/README.md)
+compares identifier, concept and task-language discovery on frozen synthetic
+fixtures. Its direct Core evaluator has separate cohorts, judgments and metrics;
+it does not reuse or rewrite the frozen exposure-strategy study's treatments,
+publication or general-availability gates. See its README for bounded execution,
+provenance and output interpretation.

@@ -1,0 +1,41 @@
+{
+  "cohort": "calibration",
+  "units": [
+    {
+      "id": "c1",
+      "issue": "7701",
+      "concept": "catalog integrity",
+      "task": "Where should imported entries be checked before they are stored?",
+      "reformulation": "catalog",
+      "invariant": "Issue 7701, established at synthetic commit aaaa001: Validate entries at the catalog boundary, before persistence. This rule remains applicable after bbbb002.",
+      "diagnosis": "Issue 7701, catalog integrity, at synthetic commit aaaa002 only: The renderer appeared to be responsible. This diagnosis was corrected at bbbb002.",
+      "resolution": "Issue 7701, verified at synthetic commit bbbb002: Check imported entries in the owning write operation. This replaces the earlier diagnosis.",
+      "editorial": "catalog integrity: Issue 7701, verified at synthetic commit bbbb002: Check imported entries in the owning write operation. This replaces the earlier diagnosis.",
+      "rationale": "For present guidance after bbbb002, both the invariant and resolution are relevant and applicable. The diagnosis is stale regardless of active review state. Historical deliveries and unrelated distractors are not useful."
+    },
+    {
+      "id": "c2",
+      "issue": "7702",
+      "concept": "installed sources",
+      "task": "How do we preserve edits in files copied from a package?",
+      "reformulation": "installed",
+      "invariant": "Issue 7702, established at synthetic commit aaaa001: User modifications must survive replacement of installed sources. This rule remains applicable after bbbb002.",
+      "diagnosis": "Issue 7702, installed sources, at synthetic commit aaaa002 only: The download cache appeared to be responsible. This diagnosis was corrected at bbbb002.",
+      "resolution": "Issue 7702, verified at synthetic commit bbbb002: Compare the installed digest before replacing a locally edited file. This replaces the earlier diagnosis.",
+      "editorial": "installed sources: Issue 7702, verified at synthetic commit bbbb002: Compare the installed digest before replacing a locally edited file. This replaces the earlier diagnosis.",
+      "rationale": "For present guidance after bbbb002, both the invariant and resolution are relevant and applicable. The diagnosis is stale regardless of active review state. Historical deliveries and unrelated distractors are not useful."
+    },
+    {
+      "id": "c3",
+      "issue": "7703",
+      "concept": "bundle lock",
+      "task": "Which operations must exclude simultaneous package changes?",
+      "reformulation": "bundle",
+      "invariant": "Issue 7703, established at synthetic commit aaaa001: All bundle lock mutations share one process exclusion boundary. This rule remains applicable after bbbb002.",
+      "diagnosis": "Issue 7703, bundle lock, at synthetic commit aaaa002 only: The network retry appeared to be responsible. This diagnosis was corrected at bbbb002.",
+      "resolution": "Issue 7703, verified at synthetic commit bbbb002: Acquire the shared exclusion token for every package-changing operation. This replaces the earlier diagnosis.",
+      "editorial": "bundle lock: Issue 7703, verified at synthetic commit bbbb002: Acquire the shared exclusion token for every package-changing operation. This replaces the earlier diagnosis.",
+      "rationale": "For present guidance after bbbb002, both the invariant and resolution are relevant and applicable. The diagnosis is stale regardless of active review state. Historical deliveries and unrelated distractors are not useful."
+    }
+  ]
+}

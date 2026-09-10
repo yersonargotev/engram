@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -939,5 +941,92 @@ func TestCheckpointCLIAndMCPProjectConflictDiagnostics(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestCheckpointPreflightAssessmentContractAcrossCLIAndMCP(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "internal", "memoryops", "testdata", "checkpoint-preflight-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want map[string]any
+	if err := json.Unmarshal(raw, &want); err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range []struct{ name, project, content, resultField string }{
+		{"empty", "other-project", "Durable parity content 1", ""},
+		{"exact duplicate", "engram", "Durable parity content 1", "exact_duplicates"},
+		{"semantic candidate", "engram", "Durable parity content with a revised conclusion", "candidates"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			cfg := testConfig(t)
+			seedCheckpointParityMemories(t, cfg, "engram", 1)
+			memory := map[string]any{"type": "decision", "title": "Parity Memory 1", "content": scenario.content}
+			encoded, err := json.Marshal(memory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			withArgs(t, "engram", "checkpoint", "preflight", "--project="+scenario.project, "--memory-json="+string(encoded), "--json")
+			stdout, stderr := captureOutput(t, func() { cmdCheckpoint(cfg) })
+			if stderr != "" {
+				t.Fatalf("stderr = %q", stderr)
+			}
+			cli := decodeCLIJSON(t, stdout)
+			s := openCheckpointParityStore(t, cfg)
+			mcp := callCheckpointMCP(t, engrammcp.CheckpointToolHandler(s), map[string]any{"operation": "preflight", "project": scenario.project, "memories": []any{memory}}, false)
+			if !reflect.DeepEqual(cli, mcp) {
+				t.Fatalf("CLI=%#v MCP=%#v", cli, mcp)
+			}
+			if !reflect.DeepEqual(cli["assessment"], want) {
+				t.Fatalf("assessment = %#v, want %#v", cli["assessment"], want)
+			}
+			if scenario.resultField != "" {
+				if results, _ := cli[scenario.resultField].([]any); len(results) != 1 {
+					t.Fatalf("missing expected result: %#v", cli)
+				}
+			} else if cli["exact_duplicates"] != nil || cli["candidates"] != nil {
+				t.Fatalf("expected empty result: %#v", cli)
+			}
+			// An additive field remains consumable by callers decoding the old result.
+			var legacy struct {
+				Project        string `json:"project"`
+				CandidateLimit int    `json:"candidate_limit"`
+			}
+			if err := json.Unmarshal([]byte(stdout), &legacy); err != nil || legacy.Project != scenario.project || legacy.CandidateLimit != 3 {
+				t.Fatalf("legacy result = %#v, %v", legacy, err)
+			}
+		})
+	}
+}
+
+func TestCheckpointPreflightRejectsIdentityAndRecordArguments(t *testing.T) {
+	for _, input := range []struct {
+		flag, key, value string
+		mcpValue         any
+	}{
+		{"host", "host", "codex", "codex"},
+		{"session-id", "session_id", "fixture-session", "fixture-session"},
+		{"root-turn-id", "root_turn_id", "fixture-turn", "fixture-turn"},
+		{"disposition", "disposition", "saved", "saved"},
+		{"reason", "reason", "no_durable_knowledge", "no_durable_knowledge"},
+		{"memory-id", "memory_ids", "1", []any{float64(1)}},
+		{"proposal-json", "proposal", `{"title":"Fixture","content":"Synthetic proposal"}`, map[string]any{"title": "Fixture", "content": "Synthetic proposal"}},
+		{"recall-feedback-json", "recall_feedback", `{"recall_id":"fixture"}`, map[string]any{"recall_id": "fixture"}},
+	} {
+		t.Run(input.key, func(t *testing.T) {
+			cfg := testConfig(t)
+			stubExitWithPanic(t)
+			withArgs(t, "engram", "checkpoint", "preflight", "--project=engram", `--memory-json={"title":"Fixture","content":"Synthetic content"}`, "--"+input.flag+"="+input.value, "--json")
+			stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdCheckpoint(cfg) })
+			if code, ok := recovered.(exitCode); !ok || code != 1 || stdout != "" || decodeCLIJSON(t, stderr)["code"] != "invalid_arguments" {
+				t.Fatalf("CLI accepted record input: stdout=%q stderr=%q exit=%v", stdout, stderr, recovered)
+			}
+			s := openCheckpointParityStore(t, cfg)
+			args := map[string]any{"operation": "preflight", "project": "engram", "memories": []any{map[string]any{"title": "Fixture", "content": "Synthetic content"}}, input.key: input.mcpValue}
+			result := callCheckpointMCP(t, engrammcp.CheckpointToolHandler(s), args, true)
+			if result["code"] != "invalid_checkpoint_references" {
+				t.Fatalf("MCP accepted record input: %#v", result)
+			}
+		})
 	}
 }

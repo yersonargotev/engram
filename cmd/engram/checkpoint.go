@@ -84,6 +84,7 @@ func cmdCheckpoint(cfg store.Config) {
 		}
 		fmt.Printf("Terminal Memory preflight: %d exact duplicate(s), %d semantic candidate(s) (limit %d)\n",
 			len(result.ExactDuplicates), len(result.Candidates), result.CandidateLimit)
+		fmt.Println("Session-project compatibility and final-record eligibility were not assessed; success does not guarantee a later commit.")
 		for _, duplicate := range result.ExactDuplicates {
 			fmt.Printf("  Input %d reuses Memory #%d (%s, project %s)\n", duplicate.InputIndex+1,
 				duplicate.Reference.MemoryID, duplicate.Reference.MemorySyncID, duplicate.Reference.Project)

@@ -200,6 +200,7 @@ func TestCheckpointPreflightReusesExactDuplicatesBoundsCandidatesAndDoesNotPersi
 		"memory_checkpoint_proposal_references",
 	}
 	before := checkpointTableCounts(t, service, tables)
+	fullBefore := checkpointStoreSnapshot(t, service.store)
 	exactBefore, err := service.Get(exact.ID)
 	if err != nil {
 		t.Fatalf("get exact duplicate before preflight: %v", err)
@@ -237,6 +238,9 @@ func TestCheckpointPreflightReusesExactDuplicatesBoundsCandidatesAndDoesNotPersi
 		seen[candidate.Reference.MemoryID] = true
 	}
 
+	if fullAfter := checkpointStoreSnapshot(t, service.store); !reflect.DeepEqual(fullAfter, fullBefore) {
+		t.Fatal("preflight changed initialized Store")
+	}
 	after := checkpointTableCounts(t, service, tables)
 	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("preflight changed persistent state: before=%v after=%v", before, after)
@@ -1218,4 +1222,40 @@ func checkpointStoreSnapshot(t *testing.T, s *store.Store) map[string][]string {
 		slices.Sort(snapshot[table])
 	}
 	return snapshot
+}
+
+func TestCheckpointPreflightDeclaresAssessmentWithoutCertifyingRecord(t *testing.T) {
+	service := newTestService(t)
+	memory := CheckpointMemoryInput{Title: "Synthetic boundary decision", Content: "Keep project ownership explicit."}
+	first := CheckpointRecordInput{Host: "codex", SessionID: "fixture-bound-session", RootTurnID: "fixture-a", Disposition: "saved", Project: "project-a", Memories: []CheckpointMemoryInput{memory}}
+	if _, err := service.RecordCheckpoint(first); err != nil {
+		t.Fatal(err)
+	}
+	before := checkpointStoreSnapshot(t, service.store)
+	result, err := service.PreflightCheckpoint(CheckpointPreflightInput{Project: "project-b", Memories: []CheckpointMemoryInput{memory}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := CheckpointPreflightAssessment{ExactDuplicates: "assessed", SemanticCandidates: "assessed", SessionProjectCompatibility: "not_assessed", FinalRecordEligibility: "not_assessed"}
+	if result.Assessment != want || len(result.Candidates) != 0 || len(result.ExactDuplicates) != 0 {
+		t.Fatalf("unexpected preflight: %#v", result)
+	}
+	if after := checkpointStoreSnapshot(t, service.store); !reflect.DeepEqual(before, after) {
+		t.Fatal("preflight changed initialized Store")
+	}
+	second := first
+	second.Project, second.RootTurnID = "project-b", "fixture-b"
+	if _, err := service.RecordCheckpoint(second); !errors.Is(err, store.ErrCheckpointProjectMismatch) {
+		t.Fatalf("record error = %v", err)
+	}
+	if after := checkpointStoreSnapshot(t, service.store); !reflect.DeepEqual(before, after) {
+		t.Fatal("rejected record changed initialized Store")
+	}
+	if _, err := service.CheckpointStatus(CheckpointStatusInput{Host: second.Host, SessionID: second.SessionID, RootTurnID: second.RootTurnID}); !errors.Is(err, store.ErrCheckpointNotFound) {
+		t.Fatalf("rejected checkpoint exists: %v", err)
+	}
+	replay, err := service.RecordCheckpoint(first)
+	if err != nil || replay.Idempotency != "already_recorded" {
+		t.Fatalf("replay = %#v, %v", replay, err)
+	}
 }

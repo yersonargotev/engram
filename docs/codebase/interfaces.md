@@ -32,7 +32,11 @@ Important points:
   candidate semantics.
 - Normal writes should not pass `project` as an arbitrary override.
 - `mem_checkpoint` preflight is a bounded read-only operation over one explicit
-  project. Record mode uses the same explicit project for `saved` and
+  project. Its `assessment` declares bounded exact-duplicate and semantic-candidate
+  lookup as `assessed`, and session-project compatibility and final-record
+  eligibility as `not_assessed`, even when no candidates are returned. Success
+  reserves no state and does not authorize or guarantee a later commit.
+  Record mode uses the same explicit project for `saved` and
   `needs_review` so the core can enforce Memory and proposal ownership
   atomically. Its optional `recall_feedback` sidecar records explicit labels
   for one Recall run bound at search time to that exact root turn without

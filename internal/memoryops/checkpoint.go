@@ -124,7 +124,17 @@ type CheckpointPreflightCandidate struct {
 	Score      float64                   `json:"score"`
 }
 
+// CheckpointPreflightAssessment describes coverage, not compatibility or write authority.
+// Assessed duplicate/candidate lookup remains bounded by the preflight contract.
+type CheckpointPreflightAssessment struct {
+	ExactDuplicates             string `json:"exact_duplicates"`
+	SemanticCandidates          string `json:"semantic_candidates"`
+	SessionProjectCompatibility string `json:"session_project_compatibility"`
+	FinalRecordEligibility      string `json:"final_record_eligibility"`
+}
+
 type CheckpointPreflightResult struct {
+	Assessment      CheckpointPreflightAssessment  `json:"assessment"`
 	Project         string                         `json:"project"`
 	CandidateLimit  int                            `json:"candidate_limit"`
 	ExactDuplicates []CheckpointPreflightDuplicate `json:"exact_duplicates,omitempty"`
@@ -262,7 +272,13 @@ func (s *Service) PreflightCheckpoint(input CheckpointPreflightInput) (*Checkpoi
 		return nil, store.ErrCheckpointInvalidReferences
 	}
 
-	result := &CheckpointPreflightResult{Project: project, CandidateLimit: CheckpointPreflightCandidateLimit}
+	result := &CheckpointPreflightResult{
+		Project: project, CandidateLimit: CheckpointPreflightCandidateLimit,
+		Assessment: CheckpointPreflightAssessment{
+			ExactDuplicates: "assessed", SemanticCandidates: "assessed",
+			SessionProjectCompatibility: "not_assessed", FinalRecordEligibility: "not_assessed",
+		},
+	}
 	memories := checkpointStoreMemories(input.Memories)
 	exactMemoryIDs := make(map[int64]struct{}, len(memories))
 	nonExactInputs := make([]int, 0, len(memories))

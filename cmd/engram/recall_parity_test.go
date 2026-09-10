@@ -340,3 +340,115 @@ func assertRecallNormalizedParity(t *testing.T, cli, mcpEnvelope map[string]any)
 		}
 	}
 }
+
+func TestRecallCLIAndMCPHistoricalModeAndRecordedMetadataParity(t *testing.T) {
+	cfg := testConfig(t)
+	mustSeedObservation(t, cfg, "history-parity", "engram", "decision", "Historical parity evidence", "The original recorded evidence.", "project")
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.DB().Exec(`UPDATE observations SET created_at = '2026-01-02 03:04:05', updated_at = '2026-02-03 04:05:06', review_after = '2099-01-01 00:00:00' WHERE title = 'Historical parity evidence'`); err != nil {
+		t.Fatal(err)
+	}
+	var oldID int64
+	if err := s.DB().QueryRow(`SELECT id FROM observations WHERE title = 'Historical parity evidence'`).Scan(&oldID); err != nil {
+		t.Fatal(err)
+	}
+	replacementID, err := s.AddObservation(store.AddObservationParams{SessionID: "history-parity", Project: "engram", Scope: "project", Type: "decision", Title: "Replacement decision", Content: "The replacement reflects the current system."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := memoryops.New(s).Compare(memoryops.CompareInput{MemoryIDA: replacementID, MemoryIDB: oldID, Relation: "supersedes", Confidence: 1, Reasoning: "Verified replacement", Model: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	withArgs(t, "engram", "search", "Historical parity evidence", "--project", "engram", "--json")
+	regularOutput, regularErr := captureOutput(t, func() { cmdSearch(cfg) })
+	if regularErr != "" {
+		t.Fatalf("regular CLI stderr=%q", regularErr)
+	}
+	for _, regular := range []map[string]any{decodeCLIJSON(t, regularOutput), recallParityMCPEnvelope(t, s, map[string]any{"query": "Historical parity evidence", "project": "engram"})} {
+		if regular["result_count"] != float64(0) || regular["include_history"] != false {
+			t.Fatalf("regular mode=%v", regular)
+		}
+	}
+	withArgs(t, "engram", "search", "Historical parity evidence", "--include-history", "--project", "engram", "--json")
+	stdout, stderr := captureOutput(t, func() { cmdSearch(cfg) })
+	if stderr != "" {
+		t.Fatalf("CLI stderr=%q", stderr)
+	}
+	cli := decodeCLIJSON(t, stdout)
+	mcpEnvelope := recallParityMCPEnvelope(t, s, map[string]any{"query": "Historical parity evidence", "include_history": true, "project": "engram"})
+	for _, envelope := range []map[string]any{cli, mcpEnvelope} {
+		if envelope["include_history"] != true || envelope["result_count"] != float64(1) {
+			t.Fatalf("historical envelope=%v", envelope)
+		}
+		candidate := envelope["results"].([]any)[0].(map[string]any)
+		relations := candidate["supersessions"].([]any)
+		if len(relations) != 1 {
+			t.Fatalf("supersessions=%v", relations)
+		}
+		relation := relations[0].(map[string]any)
+		if relation["direction"] != "superseded_by" || relation["endpoint_available"] != true || relation["memory_id"] != float64(replacementID) {
+			t.Fatalf("supersession=%v", relation)
+		}
+
+		for field, want := range map[string]string{"created_at": "2026-01-02 03:04:05", "updated_at": "2026-02-03 04:05:06", "review_after": "2099-01-01 00:00:00", "review_state": "active"} {
+			if candidate[field] != want {
+				t.Fatalf("candidate %s=%v, want %q", field, candidate[field], want)
+			}
+		}
+	}
+	if !reflect.DeepEqual(recallCandidatesWithoutOpaqueIDs(cli["results"]), recallCandidatesWithoutOpaqueIDs(mcpEnvelope["results"])) {
+		t.Fatalf("historical candidates differ: CLI=%v MCP=%v", cli, mcpEnvelope)
+	}
+	withArgs(t, "engram", "get", "--recall-id", cli["recall_id"].(string), "--result-id", cli["opaque_result_ids"].([]any)[0].(string), "--project", "engram", "--json")
+	stdout, stderr = captureOutput(t, func() { cmdGet(cfg) })
+	if stderr != "" {
+		t.Fatalf("CLI get stderr=%q", stderr)
+	}
+	content := decodeCLIJSON(t, stdout)
+	if content["include_history"] != true || content["memory"].(map[string]any)["review_state"] != "active" {
+		t.Fatalf("historical content=%v", content)
+	}
+	result, err := engrammcp.GetObservationToolHandler(s, engrammcp.MCPConfig{BinaryVersion: version, BinaryRevision: commit})(context.Background(), mcppkg.CallToolRequest{Params: mcppkg.CallToolParams{Arguments: map[string]any{"recall_id": mcpEnvelope["recall_id"], "result_id": mcpEnvelope["opaque_result_ids"].([]any)[0], "project": "engram"}}})
+	if err != nil || result.IsError {
+		t.Fatalf("historical MCP get err=%v result=%v", err, result)
+	}
+	resultText, _ := mcppkg.AsTextContent(result.Content[0])
+	var mcpContent map[string]any
+	if err := json.Unmarshal([]byte(resultText.Text), &mcpContent); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"memory", "include_history", "original_bytes", "delivered_utf8_bytes", "truncated"} {
+		if !reflect.DeepEqual(content[field], mcpContent[field]) {
+			t.Fatalf("historical content field %q differs: CLI=%v MCP=%v", field, content[field], mcpContent[field])
+		}
+	}
+	withArgs(t, "engram", "search", "Historical parity evidence", "--include-history", "--project", "engram")
+	human, humanErr := captureOutput(t, func() { cmdSearch(cfg) })
+	if humanErr != "" || !strings.Contains(human, "superseded_by:") || !strings.Contains(human, "Review state: active (separate from applicability)") || !strings.Contains(human, "Recorded: 2026-01-02 03:04:05") {
+		t.Fatalf("historical presentation stdout=%q stderr=%q", human, humanErr)
+	}
+	if err := s.DeleteObservation(replacementID, false); err != nil {
+		t.Fatal(err)
+	}
+	withArgs(t, "engram", "search", "Historical parity evidence", "--include-history", "--project", "engram", "--json")
+	unavailableOutput, unavailableErr := captureOutput(t, func() { cmdSearch(cfg) })
+	if unavailableErr != "" {
+		t.Fatalf("unavailable CLI stderr=%q", unavailableErr)
+	}
+	for _, envelope := range []map[string]any{decodeCLIJSON(t, unavailableOutput), recallParityMCPEnvelope(t, s, map[string]any{"query": "Historical parity evidence", "include_history": true, "project": "engram"})} {
+		relation := envelope["results"].([]any)[0].(map[string]any)["supersessions"].([]any)[0].(map[string]any)
+		if relation["direction"] != "superseded_by" || relation["endpoint_available"] != false || relation["memory_id"] != nil || relation["sync_id"] != nil || relation["title"] != nil {
+			t.Fatalf("unavailable relation leaked endpoint=%v", relation)
+		}
+	}
+	withArgs(t, "engram", "search", "Historical parity evidence", "--include-history", "--project", "engram")
+	unavailableHuman, _ := captureOutput(t, func() { cmdSearch(cfg) })
+	if !strings.Contains(unavailableHuman, "superseded_by: endpoint unavailable") || strings.Contains(unavailableHuman, "Replacement decision") {
+		t.Fatalf("unavailable presentation=%q", unavailableHuman)
+	}
+
+}

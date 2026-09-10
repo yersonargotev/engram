@@ -122,10 +122,31 @@ func cmdGet(cfg store.Config) {
 		return
 	}
 	baselineOutcome = recallbaseline.OutcomeSuccess
+	if result.IncludeHistory {
+		fmt.Println("Historical inspection; recorded dates and review state do not establish present applicability.")
+	}
 	fmt.Printf("Memory #%d [%s] %s\n%s\n", result.Memory.ID, result.Memory.Type, result.Memory.Title, result.Memory.Content)
+	fmt.Printf("Recorded: %s | Updated: %s | Review state: %s (separate from applicability)\n", result.Memory.CreatedAt, result.Memory.UpdatedAt, result.Memory.ReviewState)
+	if result.Memory.ReviewAfter != nil {
+		fmt.Printf("Review after: %s\n", *result.Memory.ReviewAfter)
+	}
+	printRecallSupersessions(result.Memory.Supersessions, result.Memory.SupersessionsOmitted, "")
 	fmt.Printf("Bytes: %d/%d (limit %d) | position: %d | truncated: %t\n", result.DeliveredUTF8Bytes, result.OriginalBytes, result.LimitBytes, result.Position, result.Truncated)
 	if result.ContinuationPosition != nil {
 		fmt.Printf("Continuation position: %d\n", *result.ContinuationPosition)
+	}
+}
+
+func printRecallSupersessions(relations []memoryops.RecallSupersession, omitted int, indent string) {
+	for _, relation := range relations {
+		if !relation.EndpointAvailable {
+			fmt.Printf("%s%s: endpoint unavailable within this Recall boundary\n", indent, relation.Direction)
+			continue
+		}
+		fmt.Printf("%s%s: #%d %s (search this title in the same scope, verify the ID, then retrieve its selected result)\n", indent, relation.Direction, relation.MemoryID, relation.Title)
+	}
+	if omitted > 0 {
+		fmt.Printf("%sAdditional supersession relationships omitted: %d\n", indent, omitted)
 	}
 }
 

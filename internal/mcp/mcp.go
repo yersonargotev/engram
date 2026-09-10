@@ -490,6 +490,9 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 				mcp.WithBoolean("all_projects",
 					mcp.Description("Deliberately search across every project only when the task makes that scope relevant. Cannot be combined with project."),
 				),
+				mcp.WithBoolean("include_history",
+					mcp.Description("Explicit historical inspection, including superseded Memory. Recorded dates and review state do not establish present applicability. The selected retrieval preserves this mode."),
+				),
 				mcp.WithString("scope",
 					mcp.Description("Filter by scope: project (default), personal, or global"),
 					mcp.Enum("project", "personal", "global"),
@@ -1277,6 +1280,7 @@ func handleSearch(s *store.Store, cfg MCPConfig, activity *SessionActivity) serv
 		authority := projectpkg.IdentityPolicyForResult(detRes)
 		recallResult, err := memoryops.New(s).RecallContext(ctx, memoryops.RecallInput{
 			Type:            typ,
+			IncludeHistory:  boolArg(req, "include_history", false),
 			Query:           query,
 			Project:         detRes.Project,
 			Scope:           scope,
@@ -1300,8 +1304,12 @@ func handleSearch(s *store.Store, cfg MCPConfig, activity *SessionActivity) serv
 		if recallResult.Warning != nil {
 			message = "Recall returned no candidates; continue the task using current authoritative evidence."
 		}
+		if recallResult.IncludeHistory {
+			message += " Historical inspection includes superseded Memory; recorded dates and review state do not establish present applicability. To inspect an available supersession endpoint, search its title in the same scope, verify the memory ID, then retrieve the selected result."
+		}
 		extra := map[string]any{
 			"recall_id":            recallResult.RecallID,
+			"include_history":      recallResult.IncludeHistory,
 			"results":              recallResult.Candidates,
 			"result_ids":           recallResult.ResultIDs,
 			"opaque_result_ids":    recallResult.OpaqueResultIDs,
@@ -2069,6 +2077,9 @@ func handleGetObservation(s *store.Store, cfg MCPConfig) server.ToolHandlerFunc 
 			return mcp.NewToolResultError(fmt.Sprintf("Recall content JSON error: %s", err)), nil
 		}
 		message := "Retrieved one bounded complete-Memory segment."
+		if contentResult.IncludeHistory {
+			message += " Historical inspection; review state is separate from applicability. Supersession directions are explicit relationships; unavailable endpoints remain undisclosed. Search available endpoint titles in the same scope, verify the memory ID, then retrieve the selected result."
+		}
 		if contentResult.Warning != nil {
 			message = "Complete Memory retrieval returned no content; continue with current authoritative evidence."
 		}

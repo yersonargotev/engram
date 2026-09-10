@@ -25,16 +25,23 @@ type RecallContentInput struct {
 }
 
 type RecallMemoryContent struct {
-	ID      int64  `json:"id"`
-	SyncID  string `json:"sync_id"`
-	Title   string `json:"title"`
-	Type    string `json:"type"`
-	Project string `json:"project,omitempty"`
-	Scope   string `json:"scope"`
-	Content string `json:"content"`
+	Supersessions        []RecallSupersession `json:"supersessions,omitempty"`
+	SupersessionsOmitted int                  `json:"supersessions_omitted,omitempty"`
+	CreatedAt            string               `json:"created_at"`
+	UpdatedAt            string               `json:"updated_at"`
+	ReviewState          string               `json:"review_state"`
+	ReviewAfter          *string              `json:"review_after,omitempty"`
+	ID                   int64                `json:"id"`
+	SyncID               string               `json:"sync_id"`
+	Title                string               `json:"title"`
+	Type                 string               `json:"type"`
+	Project              string               `json:"project,omitempty"`
+	Scope                string               `json:"scope"`
+	Content              string               `json:"content"`
 }
 
 type RecallContentResult struct {
+	IncludeHistory       bool                `json:"include_history,omitempty"`
 	RecallID             string              `json:"recall_id"`
 	ResultID             string              `json:"result_id"`
 	Memory               RecallMemoryContent `json:"memory"`
@@ -128,6 +135,7 @@ func (s *Service) RecallContentContext(ctx context.Context, input RecallContentI
 		}
 		return result, nil
 	}
+	result.IncludeHistory = selection.IncludeHistory
 	content := selection.Observation.Content
 	if selection.Observation.RevisionCount != selection.RevisionCount || selection.CurrentLocalRevisionCount != selection.LocalRevisionCount {
 		setRecallContentFailure(result, "recall_selection_invalid", "recall_memory_changed", "selected Memory changed after candidate Recall")
@@ -175,11 +183,27 @@ func (s *Service) RecallContentContext(ctx context.Context, input RecallContentI
 	}
 	observation := selection.Observation
 	result.Memory = RecallMemoryContent{
+		CreatedAt: observation.CreatedAt, UpdatedAt: observation.UpdatedAt, ReviewState: observation.State(), ReviewAfter: observation.ReviewAfter,
 		ID: observation.ID, SyncID: observation.SyncID, Title: observation.Title,
 		Type: observation.Type, Scope: observation.Scope, Content: segment,
 	}
 	if observation.Project != nil {
 		result.Memory.Project = *observation.Project
+	}
+	if selection.IncludeHistory {
+		relations, relationErr := s.store.GetRelationsForObservationsContext(ctx, []string{observation.SyncID})
+		if relationErr == nil {
+			result.Memory.Supersessions, result.Memory.SupersessionsOmitted, relationErr = s.recallSupersessions(ctx, relations[observation.SyncID], input.Project, input.Scope)
+		}
+		if relationErr != nil {
+			result.Memory = RecallMemoryContent{}
+			result.OriginalBytes = 0
+			result.DeliveredUTF8Bytes = 0
+			result.Truncated = false
+			result.ContinuationPosition = nil
+			setRecallContentFailure(result, "recall_unavailable", "recall_store_failure", relationErr.Error())
+			return result, nil
+		}
 	}
 	replayed, err := s.store.RecordRecallSegmentContext(ctx, store.RecallSegmentRecord{
 		RecallID: result.RecallID, ResultID: result.ResultID, ObservationID: observation.ID,

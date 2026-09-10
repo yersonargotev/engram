@@ -199,17 +199,18 @@ type TimelineResult struct {
 }
 
 type SearchOptions struct {
-	Type      string `json:"type,omitempty"`
-	Project   string `json:"project,omitempty"`
-	Scope     string `json:"scope,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
-	MatchMode string `json:"match_mode,omitempty"` // "all" (default) | "any"
+	IncludeHistory bool   `json:"include_history,omitempty"`
+	Type           string `json:"type,omitempty"`
+	Project        string `json:"project,omitempty"`
+	Scope          string `json:"scope,omitempty"`
+	Limit          int    `json:"limit,omitempty"`
+	MatchMode      string `json:"match_mode,omitempty"` // "all" (default) | "any"
 }
 
-// RecallConflictTarget is the safe candidate metadata for an unresolved
+// RecallRelationTarget is the safe candidate metadata for an unresolved
 // conflict counterpart that passed the same Recall eligibility and authority
 // boundary as the selected Memory.
-type RecallConflictTarget struct {
+type RecallRelationTarget struct {
 	ID     int64
 	SyncID string
 	Title  string
@@ -3426,23 +3427,23 @@ func (s *Store) SearchContext(ctx context.Context, query string, opts SearchOpti
 	return s.searchContext(ctx, query, opts, searchPolicy{})
 }
 
-// RecallCandidatesContext returns only active, non-superseded Memory
-// candidates in deterministic Recall order. Generic Search remains unchanged
+// RecallCandidatesContext returns active-review Memory candidates in existing
+// Recall order. IncludeHistory explicitly admits superseded Memories. Generic Search remains unchanged
 // for curation and compatibility callers.
 func (s *Store) RecallCandidatesContext(ctx context.Context, query string, opts SearchOptions) ([]SearchResult, error) {
 	return s.searchContext(ctx, query, opts, searchPolicy{
 		activeOnly:        true,
-		excludeSuperseded: true,
+		excludeSuperseded: !opts.IncludeHistory,
 		recallOrdering:    true,
 	})
 }
 
-// RecallEligibleConflictTargetsContext filters relation counterparts through
-// the same active/current scope boundary used for Recall candidates. It avoids
-// returning relation-join metadata for deleted, stale, superseded, or
-// out-of-scope Memories.
-func (s *Store) RecallEligibleConflictTargetsContext(ctx context.Context, syncIDs []string, opts SearchOptions) (map[string]RecallConflictTarget, error) {
-	result := make(map[string]RecallConflictTarget)
+// RecallEligibleRelationTargetsContext filters relation counterparts through
+// the same active-review scope boundary used for Recall candidates. IncludeHistory
+// admits superseded endpoints for deliberate history; deleted and out-of-scope
+// endpoint metadata remain unavailable.
+func (s *Store) RecallEligibleRelationTargetsContext(ctx context.Context, syncIDs []string, opts SearchOptions) (map[string]RecallRelationTarget, error) {
+	result := make(map[string]RecallRelationTarget)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -3468,7 +3469,7 @@ func (s *Store) RecallEligibleConflictTargetsContext(ctx context.Context, syncID
 	query := `SELECT o.id, ifnull(o.sync_id, ''), o.title
 		FROM observations o
 		WHERE o.deleted_at IS NULL AND o.sync_id IN (` + placeholders + `)`
-	query += searchEligibilitySQL("o", searchPolicy{activeOnly: true, excludeSuperseded: true})
+	query += searchEligibilitySQL("o", searchPolicy{activeOnly: true, excludeSuperseded: !opts.IncludeHistory})
 	args := make([]any, 0, len(unique)+2)
 	for _, syncID := range unique {
 		args = append(args, syncID)
@@ -3492,7 +3493,7 @@ func (s *Store) RecallEligibleConflictTargetsContext(ctx context.Context, syncID
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var target RecallConflictTarget
+		var target RecallRelationTarget
 		if err := rows.Scan(&target.ID, &target.SyncID, &target.Title); err != nil {
 			return nil, err
 		}

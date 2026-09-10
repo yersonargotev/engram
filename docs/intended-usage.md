@@ -39,6 +39,22 @@ If you're thinking about engram while working, something went wrong. It should b
 
 ---
 
+## When You Need Historical Guidance
+
+Ordinary Recall excludes superseded Memories. For an explicit historical
+question, use `engram search "<anchors>" --project "<project>"
+--include-history --json`, or `mem_search` with `include_history: true`.
+Historical Recall keeps the same project permissions and retrieval bounds.
+Dates and review metadata help interpret a result; authored evidence determines
+where guidance applies. Available replacement titles provide anchors for a new
+search in the same scope; verify the candidate's `id` matches the hint's
+`memory_id` before bounded retrieval.
+Generic legacy titles can be improved through explicit curation with the
+existing update operation. Optional Session summaries remain explicit curation.
+See [the Recall contract](../DOCS.md#mem_search) for details and compatibility.
+
+---
+
 ## Quick Reference
 
 | Do | Don't |

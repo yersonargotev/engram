@@ -136,13 +136,14 @@ func (s *Service) Save(input SaveInput) (*SaveResult, error) {
 // SearchInput controls a full-content memory search. Project must already be
 // resolved by the caller unless AllProjects is explicitly true.
 type SearchInput struct {
-	Query       string
-	Type        string
-	Project     string
-	Scope       string
-	Limit       int
-	MatchMode   string
-	AllProjects bool
+	IncludeHistory bool
+	Query          string
+	Type           string
+	Project        string
+	Scope          string
+	Limit          int
+	MatchMode      string
+	AllProjects    bool
 }
 
 // ObservationResult pairs a search result with all known relations involving it.
@@ -187,11 +188,12 @@ func (s *Service) searchContext(ctx context.Context, input SearchInput, recallCa
 	}
 
 	options := store.SearchOptions{
-		Type:      input.Type,
-		Project:   project,
-		Scope:     input.Scope,
-		Limit:     input.Limit,
-		MatchMode: input.MatchMode,
+		IncludeHistory: input.IncludeHistory,
+		Type:           input.Type,
+		Project:        project,
+		Scope:          input.Scope,
+		Limit:          input.Limit,
+		MatchMode:      input.MatchMode,
 	}
 	var observations []store.SearchResult
 	var err error

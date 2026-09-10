@@ -34,7 +34,7 @@ func TestRecallCandidatesDefaultsToFiveProjectResultsWithinFourKiB(t *testing.T)
 			Scope:     "project",
 			Type:      "decision",
 			Title:     fmt.Sprintf("Recall budget candidate %d", i),
-			Content:   strings.Repeat("🧠", 900),
+			Content:   "At commit abc123 only: " + strings.Repeat("🧠", 900),
 		}); err != nil {
 			t.Fatalf("seed candidate: %v", err)
 		}
@@ -69,7 +69,7 @@ func TestRecallCandidatesDefaultsToFiveProjectResultsWithinFourKiB(t *testing.T)
 		if result.ResultIDs[index] != candidate.ID || result.OpaqueResultIDs[index] != candidate.ResultID {
 			t.Fatalf("additive result identity mapping at %d = %d/%q, candidate=%#v", index, result.ResultIDs[index], result.OpaqueResultIDs[index], candidate)
 		}
-		if !strings.HasSuffix(candidate.Summary, "…") {
+		if !strings.HasPrefix(candidate.Summary, "At commit abc123 only: ") || !strings.HasSuffix(candidate.Summary, "…") {
 			t.Fatalf("candidate summary was not byte-bounded: %q", candidate.Summary)
 		}
 		if !utf8.ValidString(candidate.Summary) {

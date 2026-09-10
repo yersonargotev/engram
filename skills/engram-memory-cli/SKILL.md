@@ -47,7 +47,7 @@ requires explicit task relevance or user direction.
      --scope project --match-mode all --limit 5 --json
    ```
 
-2. The initial response is limited to five candidate summaries and 4 KiB. Core
+2. The initial response is limited to five candidate summaries and 4 KiB. By default, Core
    excludes inactive, deleted, and superseded Memories; relevance/currentness
    rank before pins and recency. Account for every result and explicit conflict.
    Use the response's `recall_id` and one selected candidate's opaque
@@ -86,6 +86,27 @@ requires explicit task relevance or user direction.
 Use `--all-projects` only for an explicitly cross-project request. Complete
 Recall when every relevant result is accounted for, or when the initial search
 and its single allowed reformulation are empty.
+
+## Historical Recall
+
+For explicit historical inspection, apply the canonical `engram-memory`
+section **Inspect history deliberately** and add the search flag:
+
+```bash
+engram search "<historical anchors>" --project "<project>" \
+  --scope project --match-mode all --include-history --limit 5 --json
+```
+
+The run retains `include_history`; use its opaque search/get flow above,
+including explicit continuation positions. History admits superseded Memories
+with the same eligibility, authority, ranking, and byte/item bounds. Dates and
+review metadata describe stored facts, not proof of current applicability.
+For an available `superseded_by` endpoint, search its title/concept anchors in
+the same scope, verify the candidate's `id` matches the hint's `memory_id`,
+then retrieve the newly selected opaque result. Curate generic titles through `engram update <id> --title '<title>'`
+only when supported by evidence and write authority. Older binaries may reject
+`--include-history`; report unavailable support instead of claiming history was
+searched. This is additive Protocol v2 behavior, not a released tuple guarantee.
 
 ## Terminal Memory commit
 

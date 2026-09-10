@@ -719,6 +719,18 @@ and 4 KiB, with at most one reformulation. Limits 6-10 and personal or
 cross-project scope are deliberate. Empty Recall is a warning-free success;
 unavailable Recall is non-blocking and leaves one warning plus diagnostics.
 
+For explicit historical inspection, use `mem_search` with
+`include_history: true`, or `engram search ... --include-history --json`.
+Superseded Memories become eligible under the same active-review, deletion,
+authority, ranking, and retrieval bounds. Search/get expose the run's history
+choice, dates, review metadata, and bounded supersession hints. Search an
+available replacement's title/concept anchors in the same scope, verify the
+candidate's `id` matches the hint's `memory_id`, then retrieve its opaque
+selection. Authored evidence establishes applicability; dates and review state alone do not. See the
+[Recall contract](../DOCS.md#mem_search). This is additive within Protocol v2;
+older binaries may reject the flag. It changes no distributable versions and
+does not establish a released compatible tuple.
+
 See [Surviving Compaction](#surviving-compaction-recommended) for the minimal
 pointer and [DOCS.md](../DOCS.md#memory-protocol) for the canonical policy.
 

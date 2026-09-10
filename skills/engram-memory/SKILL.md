@@ -144,12 +144,48 @@ truncation. When truncated, issue a new request with exactly the returned
 original project and Recall scope.
 
 Personal or cross-project Recall requires explicit task relevance or user
-direction. Account for each candidate before acting. Core excludes deleted,
+direction. Account for each candidate before acting. By default, Core excludes deleted,
 inactive, and superseded Memories, orders relevance/currentness before pins and
 recency, and returns unresolved conflicts explicitly. If Recall is unavailable,
 continue the task after its single warning and structured diagnostics.
 `mem_context` remains optional curation for explicit chronological review and is
 not part of the default five-tool path.
+
+## Inspect history deliberately
+
+For a historical question, set `include_history: true` on `mem_search` (CLI:
+`engram search ... --include-history --json`). This admits superseded Memories;
+active-review eligibility, deleted exclusion, project/scope authority, ranking,
+and the five/ten-candidate, 4 KiB and positioned 16 KiB content bounds still
+apply. Core retains `include_history` on the local Recall run and returns it
+on search/get; retrieve through that run's opaque selection without adding a
+history flag to get. Default searches continue to exclude superseded targets.
+
+Candidates and retrieved content expose `created_at`, `updated_at`,
+`review_state`, and `review_after`. Dates, review state, and Memory type do not
+prove currentness or applicability. Read the authored evidence and qualifications
+and compare them with maintained source and runtime evidence.
+
+Historical results expose up to three `supersessions` with direction
+`superseded_by` or `supersedes`, plus `supersessions_omitted` for the remainder.
+Only an eligible endpoint inside the authorized scope exposes `memory_id`,
+`sync_id`, and a UTF-8-safe title of at most 256 bytes; otherwise
+`endpoint_available: false` exposes no endpoint identity or title. To inspect
+an available replacement, explicitly search its title or distinctive concept
+anchors within the same scope, verify the candidate's `id` matches the hint's `memory_id`, then get
+that candidate through its own `recall_id` and opaque `result_id`. An endpoint
+hint is not an opaque content selection or permission to widen scope.
+
+Use explicit curation through existing update operations to replace generic
+legacy titles with evidence-grounded discovery anchors. Preserve ownership and
+applicability unless independently established; a title or date cannot imply a
+rename, scope migration, or newly applicable guidance. Optional explicit Session
+summaries remain available for their existing curation purpose.
+
+Historical Recall is additive within Protocol v2; older binaries may reject the
+new flag. Check actual support rather than inferring a released compatible tuple
+from the Protocol number alone. The added run boolean is local operational
+state; it does not reinterpret the Memory lifecycle or Memory schema.
 
 ## Record only explicit Recall feedback
 

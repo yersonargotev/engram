@@ -1081,13 +1081,14 @@ func cmdSearch(cfg store.Config) {
 	defer func() { observeRecallBaselineCLI(cfg, "search", started, baselineOutcome, baselineBytes) }()
 	jsonMode := hasArg("--json")
 	if len(os.Args) < 3 {
-		failCLI(jsonMode, "invalid_arguments", "usage: engram search <query> [--type TYPE] [--project PROJECT] [--all-projects] [--match-mode all|any] [--scope SCOPE] [--limit N] [--host HOST --session-id ID --root-turn-id ID] [--json]", nil)
+		failCLI(jsonMode, "invalid_arguments", "usage: engram search <query> [--type TYPE] [--project PROJECT] [--all-projects] [--include-history] [--match-mode all|any] [--scope SCOPE] [--limit N] [--host HOST --session-id ID --root-turn-id ID] [--json]", nil)
 		return
 	}
 
 	var queryParts []string
 	opts := store.SearchOptions{}
 	allProjects := false
+	includeHistory := false
 	turnIdentity := store.CheckpointIdentity{}
 
 	for i := 2; i < len(os.Args); i++ {
@@ -1112,6 +1113,8 @@ func cmdSearch(cfg store.Config) {
 		}
 		switch arg {
 		case "--json":
+		case "--include-history":
+			includeHistory = true
 		case "--all-projects":
 			allProjects = true
 		case "--type", "--project", "--limit", "--scope", "--match-mode", "--host", "--session-id", "--root-turn-id":
@@ -1225,6 +1228,7 @@ func cmdSearch(cfg store.Config) {
 	identity := projectpkg.ClassifyIdentitySource(projectSource)
 	recallResult, err := service.Recall(memoryops.RecallInput{
 		Query:           query,
+		IncludeHistory:  includeHistory,
 		Type:            opts.Type,
 		Project:         opts.Project,
 		Scope:           opts.Scope,
@@ -1251,6 +1255,7 @@ func cmdSearch(cfg store.Config) {
 			"implicit_write_allowed": identity.AllowsImplicitWrite,
 			"all_projects":           allProjects,
 			"recall_id":              recallResult.RecallID,
+			"include_history":        recallResult.IncludeHistory,
 			"results":                recallResult.Candidates,
 			"result_ids":             recallResult.ResultIDs,
 			"opaque_result_ids":      recallResult.OpaqueResultIDs,
@@ -1289,6 +1294,9 @@ func cmdSearch(cfg store.Config) {
 	}
 
 	baselineOutcome = recallbaseline.OutcomeSuccess
+	if recallResult.IncludeHistory {
+		fmt.Println("Historical inspection includes superseded Memory; recorded dates and review state do not establish present applicability.")
+	}
 	fmt.Printf("Found %d Memory candidates (recall %s):\n\n", len(recallResult.Candidates), recallResult.RecallID)
 	for i, candidate := range recallResult.Candidates {
 		projectDisplay := ""
@@ -1297,6 +1305,11 @@ func cmdSearch(cfg store.Config) {
 		}
 		fmt.Printf("[%d] #%d (%s) — %s\n    %s\n    result: %s\n    scope: %s%s\n",
 			i+1, candidate.ID, candidate.Type, candidate.Title, candidate.Summary, candidate.ResultID, candidate.Scope, projectDisplay)
+		fmt.Printf("    Recorded: %s | Updated: %s | Review state: %s (separate from applicability)\n", candidate.CreatedAt, candidate.UpdatedAt, candidate.ReviewState)
+		if candidate.ReviewAfter != nil {
+			fmt.Printf("    Review after: %s\n", *candidate.ReviewAfter)
+		}
+		printRecallSupersessions(candidate.Supersessions, candidate.SupersessionsOmitted, "    ")
 		for _, conflict := range candidate.Conflicts {
 			fmt.Printf("    warning: unresolved conflict with #%d (%s) [%s]\n", conflict.MemoryID, conflict.Title, conflict.Status)
 		}
@@ -3568,7 +3581,7 @@ Commands:
   test [suite] [--quick] [--json]
                      Run isolated local reliability and performance self-tests
                        suites: reliability, performance (default: both)
-  search <query>     Search memories [--type TYPE] [--project PROJECT] [--scope SCOPE] [--limit N]
+  search <query>     Search memories [--type TYPE] [--project PROJECT] [--scope SCOPE] [--limit N] [--include-history]
                        [--all-projects] [--match-mode all|any]
                        [--host HOST --session-id ID --root-turn-id ID] [--json]
   save <title> <content>

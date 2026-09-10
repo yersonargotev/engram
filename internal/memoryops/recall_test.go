@@ -69,7 +69,7 @@ func TestRecallCandidatesDefaultsToFiveProjectResultsWithinFourKiB(t *testing.T)
 		if result.ResultIDs[index] != candidate.ID || result.OpaqueResultIDs[index] != candidate.ResultID {
 			t.Fatalf("additive result identity mapping at %d = %d/%q, candidate=%#v", index, result.ResultIDs[index], result.OpaqueResultIDs[index], candidate)
 		}
-		if !strings.HasSuffix(candidate.Summary, "…") {
+		if (index == 0 || candidate.Summary != "") && !strings.HasSuffix(candidate.Summary, "…") {
 			t.Fatalf("candidate summary was not byte-bounded: %q", candidate.Summary)
 		}
 		if !utf8.ValidString(candidate.Summary) {

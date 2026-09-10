@@ -58,7 +58,7 @@ For other docs:
 - **memory_checkpoint_references** — ordered, typed local-only references from a checkpoint to the immutable ID, sync ID, and project identity of every attached Memory. The table has no sync triggers and is excluded from normal Memory and replication surfaces.
 - **memory_proposals** — immutable local checkpoint audit evidence for `needs_review`. Stores only an Engram-derived ID, normalized project, redacted `title` and `content`, and creation time. It is separate from `observations`, has no FTS or sync triggers, and never enters Memory search, context, counts, export/import, sync, cloud, or Obsidian. No workflow converts a proposal into a Memory. Project rename, merge, and delete operations update or remove it together with its checkpoint reference.
 - **memory_checkpoint_proposal_references** — one local proposal reference per `needs_review` checkpoint. Stores only checkpoint ID, proposal ID, and normalized project; it is excluded from all Memory and replication surfaces.
-- **recall_runs / recall_results / recall_segments** — local-only, content-free operational identity and measurement for bounded Recall. Runs retain normalized project/scope authority plus result count, delivered UTF-8 bytes, monotonic latency, Protocol/binary provenance, optional per-install salted root-turn attribution, and a content-free start/completion timeline; results bind opaque result IDs to a selected Memory revision through its semantic revision counter and local apply generation; segments retain byte positions/limits/truncation plus delivered bytes, monotonic latency, and provenance. Latency/completion is finalized after the primary run or segment persistence succeeds, while interrupted pending measurements remain unknown. The tables store neither the query nor Memory content or content-derived hashes and have no FTS, export, sync, cloud, Obsidian, or Content-capture path. Databases carrying the pre-release `recall_results.content_hash` schema are rebuilt automatically: selections whose stored SHA-256 still matches current Memory content keep their operational identity and segments, while stale or orphaned selections are discarded rather than promoted to current revision authority.
+- **recall_runs / recall_results / recall_segments** — local-only, content-free operational identity and measurement for bounded Recall. Runs retain normalized project/scope authority, the `include_history` choice (default false), plus result count, delivered UTF-8 bytes, monotonic latency, Protocol/binary provenance, optional per-install salted root-turn attribution, and a content-free start/completion timeline; results bind opaque result IDs to a selected Memory revision through its semantic revision counter and local apply generation; segments retain byte positions/limits/truncation plus delivered bytes, monotonic latency, and provenance. Latency/completion is finalized after the primary run or segment persistence succeeds, while interrupted pending measurements remain unknown. The tables store neither the query nor Memory content or content-derived hashes and have no FTS, export, sync, cloud, Obsidian, or Content-capture path. Databases carrying the pre-release `recall_results.content_hash` schema are rebuilt automatically: selections whose stored SHA-256 still matches current Memory content keep their operational identity and segments, while stale or orphaned selections are discarded rather than promoted to current revision authority.
 - **recall_feedback_runs / recall_feedback_exposures / recall_feedback_labels / recall_false_empty_reviews** — local root-bound Recall attribution plus optional checkpoint-sidecar labels. Bound Recall snapshots per-install salted run, turn, and Memory keys so unknown cohorts survive Memory deletion without creating a label. Raw checkpoint, Recall, result, and Memory identities are validated transiently; only salted keys, explicit closed-vocabulary labels, run measurements, and timestamps are stored. The tables have no FTS or sync triggers and are excluded from Memory, Recall, context, statistics, ordinary export/import, cloud, Obsidian, Diagnostic capture, and retired candidate-evaluation or publishing pipelines. Only an aggregate, identity-free report is exposed.
 
 The opt-in Recall baseline does not add a table to this Memory database. Its
@@ -109,6 +109,7 @@ Core curated-memory operations:
 
 ```text
 engram search <query> [--project P|--all-projects] [--match-mode all|any]
+                      [--include-history]
                       [--host HOST --session-id ID --root-turn-id ID] [--json]
 engram save <title> <content> [--project P] [--topic-key K] [--json]
 engram save --title TITLE --content CONTENT [--project P] [--topic-key K] [--json]
@@ -1221,11 +1222,40 @@ salted turn key and makes later explicit Recall feedback eligible; omit all
 three when the caller cannot provide an exact root identity.
 
 Candidates contain bounded summaries rather than full Memory content. Core
-returns only active, in-scope, non-deleted, non-superseded Memories. Semantic
+by default returns only active, in-scope, non-deleted, non-superseded Memories. Semantic
 relevance/currentness rank first, pins move results only within the same tier,
 and recency breaks remaining ties. Pending relations and judged
 `conflicts_with` relations appear symmetrically in each candidate's structured
 `conflicts`; use `mem_get_observation` only for a selected candidate.
+
+For explicit historical inspection, pass `include_history: true` (CLI:
+`--include-history`). This admits superseded
+Memories while preserving active-review eligibility, deleted exclusion,
+project/scope authority, ranking, and all candidate/content limits. Core stores
+the boolean on the local Recall run and returns `include_history` on search/get.
+Opaque get uses the stored choice; it accepts no separate history override.
+The default remains false. This adds local operational state without changing
+the Memory lifecycle or reinterpreting Memory schema.
+
+Candidates and content expose `created_at`, `updated_at`, `review_state`, and
+`review_after`. These fields and Memory type are not proof of currentness;
+applicability depends on authored evidence and current source/runtime checks.
+Historical responses additionally expose up to three `supersessions` per Memory
+and `supersessions_omitted` for remaining hints. Each hint has direction
+`superseded_by` or `supersedes` and `endpoint_available`. Only eligible,
+authorized endpoints expose `memory_id`, `sync_id`, and a title bounded to 256
+UTF-8 bytes. Unavailable endpoints expose no identity or title.
+
+To inspect an available replacement, explicitly search its title or distinctive
+concept anchors within the same scope, verify the candidate's `id` matches the hint's `memory_id`, then
+get its own opaque `recall_id`/`result_id`. Hints neither select content nor widen
+authority. Improve generic legacy titles with the existing explicit update
+operation using evidence; do not infer renames, ownership, or applicability from
+metadata. Optional explicit Session summaries keep their existing curation role.
+
+This contract is additive within Protocol v2. Older binaries may reject the new
+flag; Protocol compatibility alone does not prove feature availability or a
+released compatible tuple. No distributable version changes are implied.
 
 Every success envelope exposes `recall_id`, legacy numeric `result_ids`, opaque
 `opaque_result_ids`, `result_count`, `delivered_utf8_bytes`,

@@ -30,6 +30,7 @@ const (
 // An explicit limit above five represents the deliberate follow-up allowed by
 // the Protocol; callers must not use it for the initial request.
 type RecallInput struct {
+	IncludeHistory  bool
 	Query           string
 	Type            string
 	Project         string
@@ -65,16 +66,22 @@ type RecallConflict struct {
 // RecallCandidate is the bounded discovery representation returned before a
 // deliberate complete-Memory follow-up.
 type RecallCandidate struct {
-	ResultID  string           `json:"result_id"`
-	ID        int64            `json:"id"`
-	SyncID    string           `json:"sync_id"`
-	Title     string           `json:"title"`
-	Type      string           `json:"type"`
-	Project   string           `json:"project,omitempty"`
-	Scope     string           `json:"scope"`
-	Pinned    bool             `json:"pinned"`
-	Summary   string           `json:"summary"`
-	Conflicts []RecallConflict `json:"conflicts,omitempty"`
+	Supersessions        []RecallSupersession `json:"supersessions,omitempty"`
+	SupersessionsOmitted int                  `json:"supersessions_omitted,omitempty"`
+	CreatedAt            string               `json:"created_at"`
+	UpdatedAt            string               `json:"updated_at"`
+	ReviewState          string               `json:"review_state"`
+	ReviewAfter          *string              `json:"review_after,omitempty"`
+	ResultID             string               `json:"result_id"`
+	ID                   int64                `json:"id"`
+	SyncID               string               `json:"sync_id"`
+	Title                string               `json:"title"`
+	Type                 string               `json:"type"`
+	Project              string               `json:"project,omitempty"`
+	Scope                string               `json:"scope"`
+	Pinned               bool                 `json:"pinned"`
+	Summary              string               `json:"summary"`
+	Conflicts            []RecallConflict     `json:"conflicts,omitempty"`
 }
 
 // RecallWarning is the single quiet actionable warning emitted when Recall
@@ -96,6 +103,7 @@ type RecallDiagnostic struct {
 // counts the JSON encoding of Candidates only; response metadata is outside the
 // 4 KiB candidate budget by contract.
 type RecallResult struct {
+	IncludeHistory     bool               `json:"include_history,omitempty"`
 	RecallID           string             `json:"recall_id"`
 	Candidates         []RecallCandidate  `json:"results"`
 	ResultIDs          []int64            `json:"result_ids"`
@@ -155,6 +163,7 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 	}
 	result := &RecallResult{
 		RecallID:           recallID,
+		IncludeHistory:     input.IncludeHistory,
 		Candidates:         []RecallCandidate{},
 		ResultIDs:          []int64{},
 		OpaqueResultIDs:    []string{},
@@ -185,13 +194,14 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 	}
 
 	search, err := s.recallCandidatesContext(ctx, SearchInput{
-		Query:       query,
-		Type:        input.Type,
-		Project:     input.Project,
-		Scope:       input.Scope,
-		Limit:       limit,
-		MatchMode:   input.MatchMode,
-		AllProjects: input.AllProjects,
+		Query:          query,
+		IncludeHistory: input.IncludeHistory,
+		Type:           input.Type,
+		Project:        input.Project,
+		Scope:          input.Scope,
+		Limit:          limit,
+		MatchMode:      input.MatchMode,
+		AllProjects:    input.AllProjects,
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -212,6 +222,7 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 	for index, item := range search.Observations {
 		observation := item.Observation
 		candidate := RecallCandidate{
+			CreatedAt: observation.CreatedAt, UpdatedAt: observation.UpdatedAt, ReviewState: observation.State(), ReviewAfter: observation.ReviewAfter,
 			ResultID:  recallResultID(recallID, observation.SyncID, index),
 			ID:        observation.ID,
 			SyncID:    observation.SyncID,
@@ -225,11 +236,23 @@ func (s *Service) RecallContext(ctx context.Context, input RecallInput) (*Recall
 		if observation.Project != nil {
 			candidate.Project = *observation.Project
 		}
+		if input.IncludeHistory {
+			candidate.Supersessions, candidate.SupersessionsOmitted, err = s.recallSupersessions(ctx, item.Relations, input.Project, input.Scope)
+			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return nil, err
+				}
+				result.Candidates = []RecallCandidate{}
+				setRecallUnavailable(result, "recall_store_failure", "recall_history_endpoints", err)
+				return result, nil
+			}
+		}
 		result.Candidates = append(result.Candidates, candidate)
 	}
 	result.Candidates = fitRecallCandidates(result.Candidates, RecallCandidateBudgetBytes)
 	record := store.RecallRunRecord{
-		RecallID: recallID, Project: input.Project, Scope: input.Scope, AllProjects: input.AllProjects,
+		IncludeHistory: input.IncludeHistory,
+		RecallID:       recallID, Project: input.Project, Scope: input.Scope, AllProjects: input.AllProjects,
 		TurnIdentity: input.TurnIdentity, StartedAtUnixNano: started.UnixNano(), MetricsPending: true,
 		Results: make([]store.RecallResultRecord, 0, len(result.Candidates)),
 	}

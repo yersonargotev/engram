@@ -16,6 +16,7 @@ const recallObservationSelectColumns = `o.id, ifnull(o.sync_id, '') as sync_id, 
 
 // RecallRunRecord is the content-free local boundary for one candidate Recall.
 type RecallRunRecord struct {
+	IncludeHistory      bool
 	RecallID            string
 	Project             string
 	Scope               string
@@ -56,6 +57,7 @@ type RecallResultRecord struct {
 
 // RecallSelection is the exact current Memory selected from one Recall run.
 type RecallSelection struct {
+	IncludeHistory            bool
 	Observation               *Observation
 	RevisionCount             int
 	LocalRevisionCount        int
@@ -141,6 +143,7 @@ func (s *Store) migrateRecallOperations() error {
 		table, name, definition string
 	}{
 		{table: "recall_runs", name: "delivered_utf8_bytes", definition: "INTEGER"},
+		{table: "recall_runs", name: "include_history", definition: "BOOLEAN NOT NULL DEFAULT 0"},
 		{table: "recall_runs", name: "result_count", definition: "INTEGER"},
 		{table: "recall_runs", name: "elapsed_monotonic_ms", definition: "INTEGER"},
 		{table: "recall_runs", name: "protocol_version", definition: "INTEGER"},
@@ -353,12 +356,12 @@ func (s *Store) RecordRecallRunContext(ctx context.Context, record RecallRunReco
 			INSERT INTO recall_runs (
 				recall_id, project, scope, all_projects, result_count, delivered_utf8_bytes,
 				elapsed_monotonic_ms, protocol_version, binary_version, binary_revision,
-				turn_key, started_at_unix_nano, completed_at_unix_nano
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				turn_key, started_at_unix_nano, completed_at_unix_nano, include_history
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			record.RecallID, record.Project, record.Scope, record.AllProjects,
 			len(record.Results), record.DeliveredUTF8Bytes, elapsedMonotonicMS, record.ProtocolVersion,
 			record.BinaryVersion, record.BinaryRevision, turnKey,
-			nullableNonZeroInt64(record.StartedAtUnixNano), completedAtUnixNano); err != nil {
+			nullableNonZeroInt64(record.StartedAtUnixNano), completedAtUnixNano, record.IncludeHistory); err != nil {
 			return fmt.Errorf("record recall run: %w", err)
 		}
 		if feedbackRunKey != "" {
@@ -391,7 +394,7 @@ func (s *Store) RecordRecallRunContext(ctx context.Context, record RecallRunReco
 				  AND o.title = ? AND o.type = ? AND o.content = ?
 				  AND LOWER(ifnull(o.project, '')) = ? AND o.scope = ? AND o.revision_count = ?
 				  AND o.deleted_at IS NULL AND o.scope = run.scope
-				  AND (run.all_projects = 1 OR LOWER(o.project) = run.project)`+searchEligibilitySQL("o", searchPolicy{activeOnly: true, excludeSuperseded: true}),
+				  AND (run.all_projects = 1 OR LOWER(o.project) = run.project)`+recallSelectionEligibilitySQL(),
 				record.RecallID, result.ResultID, result.Rank, record.RecallID,
 				snapshot.ID, snapshot.SyncID, snapshot.Title, snapshot.Type, snapshot.Content,
 				snapshot.Project, snapshot.Scope, snapshot.RevisionCount)
@@ -469,28 +472,29 @@ func nullableNonZeroInt64(value int64) any {
 }
 
 // RecallSelectionContext resolves only the result selected from the exact
-// stored scope. Deleted, stale, superseded, or boundary-mismatched Memories are
-// unavailable and never expose content.
+// stored scope and historical mode. Deleted, stale, or boundary-mismatched Memories
+// are unavailable; superseded Memories require a historical run.
 func (s *Store) RecallSelectionContext(ctx context.Context, recallID, resultID, project, scope string, allProjects bool) (*RecallSelection, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	project, _ = NormalizeProject(project)
 	scope = NormalizeObservationScope(scope)
-	query := `SELECT rr.revision_count, rr.local_revision_count, o.local_revision_count, ` + recallObservationSelectColumns + `
+	query := `SELECT run.include_history, rr.revision_count, rr.local_revision_count, o.local_revision_count, ` + recallObservationSelectColumns + `
 		FROM recall_results rr
 		JOIN recall_runs run ON run.recall_id = rr.recall_id
 		JOIN observations o ON o.id = rr.observation_id
 		WHERE rr.recall_id = ? AND rr.result_id = ?
 		  AND run.project = ? AND run.scope = ? AND run.all_projects = ?
 		  AND o.deleted_at IS NULL AND o.scope = run.scope`
-	query += searchEligibilitySQL("o", searchPolicy{activeOnly: true, excludeSuperseded: true})
+	query += recallSelectionEligibilitySQL()
 	if !allProjects {
 		query += " AND LOWER(o.project) = run.project"
 	}
 	row := s.db.QueryRowContext(ctx, query, recallID, resultID, project, scope, allProjects)
 	selection := &RecallSelection{Observation: &Observation{}}
 	if err := row.Scan(
+		&selection.IncludeHistory,
 		&selection.RevisionCount,
 		&selection.LocalRevisionCount,
 		&selection.CurrentLocalRevisionCount,
@@ -570,7 +574,7 @@ func (s *Store) RecordRecallSegmentContext(ctx context.Context, record RecallSeg
 			  AND rr.revision_count = ? AND o.revision_count = rr.revision_count
 			  AND rr.local_revision_count = ? AND o.local_revision_count = rr.local_revision_count
 			  AND o.deleted_at IS NULL AND o.scope = run.scope
-			  AND (run.all_projects = 1 OR LOWER(o.project) = run.project)`+searchEligibilitySQL("o", searchPolicy{activeOnly: true, excludeSuperseded: true}),
+			  AND (run.all_projects = 1 OR LOWER(o.project) = run.project)`+recallSelectionEligibilitySQL(),
 			record.Position, record.OriginalBytes, record.DeliveredBytes, record.LimitBytes,
 			record.Truncated, continuation, elapsedMonotonicMS, record.ProtocolVersion,
 			record.BinaryVersion, record.BinaryRevision,
@@ -601,7 +605,7 @@ func (s *Store) RecordRecallSegmentContext(ctx context.Context, record RecallSeg
 			  AND rr.local_revision_count = ? AND o.local_revision_count = rr.local_revision_count
 			  AND o.deleted_at IS NULL AND o.scope = run.scope
 			  AND (run.all_projects = 1 OR LOWER(o.project) = run.project)`+
-			searchEligibilitySQL("o", searchPolicy{activeOnly: true, excludeSuperseded: true}),
+			recallSelectionEligibilitySQL(),
 			record.RecallID, record.ResultID, record.Position, record.ObservationID,
 			record.RevisionCount, record.LocalRevisionCount).Scan(
 			&originalBytes, &deliveredBytes, &limitBytes, &truncated, &storedContinuation)
@@ -640,4 +644,10 @@ func (s *Store) CompleteRecallSegmentContext(ctx context.Context, recallID, resu
 		return ErrRecallSelectionUnavailable
 	}
 	return ctx.Err()
+}
+
+// The stored run, never a retrieval flag, authorizes superseded history.
+func recallSelectionEligibilitySQL() string {
+	return searchEligibilitySQL("o", searchPolicy{activeOnly: true}) +
+		" AND (run.include_history = 1 OR (1 = 1" + searchEligibilitySQL("o", searchPolicy{excludeSuperseded: true}) + "))"
 }

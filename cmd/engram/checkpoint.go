@@ -112,7 +112,7 @@ func cmdCheckpoint(cfg store.Config) {
 				outcome = recallbaseline.OutcomeConflict
 			}
 			recordRecallBaselineCheckpoint(cfg, opts.Host, opts.SessionID, opts.RootTurnID, outcome)
-			failCLI(opts.JSONMode, memoryops.CheckpointErrorCode(recordErr), recordErr.Error(), nil)
+			failCLI(opts.JSONMode, memoryops.CheckpointErrorCode(recordErr), memoryops.CheckpointErrorMessage(recordErr), memoryops.CheckpointErrorDetails(recordErr))
 			return
 		}
 		if opts.RecallFeedbackError != nil {

@@ -176,10 +176,14 @@ func checkpointToolJSON(value any) *mcppkg.CallToolResult {
 }
 
 func checkpointToolError(err error) *mcppkg.CallToolResult {
-	out, marshalErr := jsonMarshal(map[string]any{
+	envelope := map[string]any{
 		"code":    memoryops.CheckpointErrorCode(err),
-		"message": err.Error(),
-	})
+		"message": memoryops.CheckpointErrorMessage(err),
+	}
+	if details := memoryops.CheckpointErrorDetails(err); details != nil {
+		envelope["details"] = details
+	}
+	out, marshalErr := jsonMarshal(envelope)
 	if marshalErr != nil {
 		out = []byte(`{"code":"checkpoint_failed","message":"encode checkpoint error response"}`)
 	}

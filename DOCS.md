@@ -1073,6 +1073,53 @@ no review or retired candidate-evaluation workflow runs implicitly.
 
 The first call returns `idempotency: "created"`; replaying the same root-turn identity and disposition returns `idempotency: "already_recorded"` with the original checkpoint, references, proposal snapshot, and timestamps without creating Memories, proposals, or mutations again. Once the identity and disposition match, replay payload fields are ignored rather than revalidated, so retries cannot replace the original references or depend on payload availability. Invalid or empty sets on first finalization fail without changing state. Stable reference-validation codes are `invalid_checkpoint_references`, `checkpoint_memory_not_found`, and `checkpoint_project_mismatch`; terminal changes return `checkpoint_conflict`. Unknown skip reasons, including integration and processing failure labels, return `invalid_checkpoint_reason`.
 
+CLI and MCP preserve `checkpoint_project_mismatch` and expose an additive
+`details.cause` for ownership conflicts:
+
+| Cause | Project details | Meaning |
+| --- | --- | --- |
+| `session_project_binding` | `requested_project`, `session_project` | Inline Memories target a different project from the existing internal session. |
+| `memory_reference_ownership` | `requested_project`, `memory_project` | An existing Memory reference belongs to another project. An empty `memory_project` means the Memory has no project. |
+
+For example, a local session bound to `alpha` cannot create inline Memories for
+`beta` under the same host session identity:
+
+```json
+{
+  "code": "checkpoint_project_mismatch",
+  "message": "This session is associated with project \"alpha\"; inline Memories were requested for \"beta\". --project does not reassign the internal session. Cross-project inline Terminal Memory commits in this host session are not supported. Keep the original host identity and intended destination, and report the incomplete checkpoint; do not create independent Memories to bypass this limitation.",
+  "details": {
+    "cause": "session_project_binding",
+    "requested_project": "beta",
+    "session_project": "alpha"
+  }
+}
+```
+
+`--project` selects the intended destination; it does not reassign an internal
+session. Preserve the supplied host identity and intended destination and report
+the incomplete checkpoint when that limitation prevents an inline commit.
+Existing references must belong to the selected project. A references-only
+checkpoint can attach already-existing Memories there; do not create independent
+Memories solely to bypass Terminal Memory semantics. Both conflict causes roll
+back the entire new record, including a Mixed Memory proposal. Exact replay
+continues to return the original result before replacement payload validation.
+
+These diagnostics expose only project ownership metadata to the trusted local
+CLI/MCP Store caller, which already has local Store read access; the requested
+`project` is an ownership constraint, not an access credential. They contain no
+Memory content, proposal content, filesystem paths, or host identifiers, and
+checkpoint observers do not receive them. Other transports retain their existing
+access and error contracts; this change does not grant cross-project access.
+
+This is an additive Protocol v1 diagnostic: `code` and `message` remain strings,
+CLI failures still exit with status 1 and JSON on stderr, and MCP still returns
+JSON text with `isError: true`. Consumers may ignore optional `details` fields.
+Checkpoint identity, dispositions, persistence, replay and the supported Protocol
+range are unchanged; no Protocol version bump or historical fixture rewrite is
+required. CLI/MCP contract tests exercise both causes and legacy code/message
+consumers.
+
 Record mode also accepts optional `recall_feedback` for one exact Recall run.
 Each result names an exposed opaque `result_id`, at least one explicit
 `utility` or `quality`, and a source; empty runs may use `false_empty`. The

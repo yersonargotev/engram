@@ -875,3 +875,69 @@ func seedCheckpointParityMemories(t *testing.T, cfg store.Config, project string
 	}
 	return ids
 }
+
+func TestCheckpointCLIAndMCPProjectConflictDiagnostics(t *testing.T) {
+	stubExitWithPanic(t)
+	for _, disposition := range []string{"saved", "needs_review"} {
+		for _, cause := range []string{"session_project_binding", "memory_reference_ownership"} {
+			t.Run(disposition+"/"+cause, func(t *testing.T) {
+				cfg := testConfig(t)
+				ids := seedCheckpointParityMemories(t, cfg, "alpha", 1)
+				s := openCheckpointParityStore(t, cfg)
+				if err := s.CreateSession("bound-session", "alpha", ""); err != nil {
+					t.Fatal(err)
+				}
+				identity := checkpointParityIdentity{"codex", "bound-session", "rejected"}
+				args := []string{"engram", "checkpoint", "record", "--host", identity.host, "--session-id", identity.sessionID, "--root-turn-id", identity.rootTurnID, "--disposition", disposition, "--project", "beta", "--json"}
+				mcpArgs := checkpointParityIdentityArguments(identity)
+				mcpArgs["disposition"], mcpArgs["project"] = disposition, "beta"
+				want := map[string]any{"cause": cause, "requested_project": "beta"}
+				if cause == "session_project_binding" {
+					args = append(args, `--memory-json={"title":"Rejected","content":"Must not persist"}`)
+					mcpArgs["memories"] = []map[string]any{{"title": "Rejected", "content": "Must not persist"}}
+					want["session_project"] = "alpha"
+				} else {
+					args = append(args, "--memory-id", fmt.Sprint(ids[0]))
+					mcpArgs["memory_ids"] = ids
+					want["memory_project"] = "alpha"
+				}
+				if disposition == "needs_review" {
+					args = append(args, `--proposal-json={"title":"Uncertain","content":"Needs review"}`)
+					mcpArgs["proposal"] = map[string]any{"title": "Uncertain", "content": "Needs review"}
+				}
+				withArgs(t, args...)
+				stdout, stderr, recovered := captureOutputAndRecover(t, func() { cmdCheckpoint(cfg) })
+				if stdout != "" || recovered != exitCode(1) {
+					t.Fatalf("stdout=%q exit=%v stderr=%q", stdout, recovered, stderr)
+				}
+				cli := decodeCLIJSON(t, stderr)
+				mcp := callCheckpointMCP(t, engrammcp.CheckpointToolHandler(s), mcpArgs, true)
+				if !reflect.DeepEqual(cli, mcp) {
+					t.Fatalf("CLI=%#v MCP=%#v", cli, mcp)
+				}
+				if cli["code"] != "checkpoint_project_mismatch" || !reflect.DeepEqual(cli["details"], want) {
+					t.Fatalf("diagnostic=%#v, want details=%#v", cli, want)
+				}
+				humanArgs := make([]string, 0, len(args)-1)
+				for _, arg := range args {
+					if arg != "--json" {
+						humanArgs = append(humanArgs, arg)
+					}
+				}
+				withArgs(t, humanArgs...)
+				humanOut, humanError, humanExit := captureOutputAndRecover(t, func() { cmdCheckpoint(cfg) })
+				if humanOut != "" || humanExit != exitCode(1) || humanError != "error: "+cli["message"].(string)+"\n" {
+					t.Fatalf("human error=%q exit=%v", humanError, humanExit)
+				}
+				// A legacy consumer decoding only code/message remains supported.
+				var legacy struct {
+					Code    string
+					Message string
+				}
+				if err := json.Unmarshal([]byte(stderr), &legacy); err != nil || legacy.Code != "checkpoint_project_mismatch" || legacy.Message == "" {
+					t.Fatalf("legacy decode=%#v err=%v", legacy, err)
+				}
+			})
+		}
+	}
+}

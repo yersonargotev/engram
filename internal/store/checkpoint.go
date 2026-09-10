@@ -29,6 +29,25 @@ var (
 	ErrCheckpointNotFound          = errors.New("checkpoint not found")
 )
 
+// CheckpointProjectMismatchError identifies the conflicting owner without
+// changing the sentinel used by existing callers.
+type CheckpointProjectMismatchError struct {
+	RequestedProject string
+	SessionProject   *string
+	MemoryProject    *string
+}
+
+func (e *CheckpointProjectMismatchError) Error() string {
+	if e.SessionProject != nil {
+		return "checkpoint session belongs to a different project"
+	}
+	return ErrCheckpointProjectMismatch.Error()
+}
+
+func (e *CheckpointProjectMismatchError) Unwrap() error {
+	return ErrCheckpointProjectMismatch
+}
+
 // CheckpointIdentity is the opaque, host-provided idempotency key for one
 // settled root user turn. It is intentionally independent from Engram sessions.
 type CheckpointIdentity struct {
@@ -533,7 +552,7 @@ func (s *Store) attachCheckpointMemoriesTx(tx *sql.Tx, checkpointID int64, p che
 			memoryProject, _ = NormalizeProject(*memory.Project)
 		}
 		if memoryProject != p.Project {
-			return ErrCheckpointProjectMismatch
+			return &CheckpointProjectMismatchError{RequestedProject: p.Project, MemoryProject: &memoryProject}
 		}
 		references = append(references, CheckpointReference{
 			Kind: CheckpointReferenceKindMemory, MemoryID: memory.ID,
@@ -551,7 +570,7 @@ func (s *Store) attachCheckpointMemoriesTx(tx *sql.Tx, checkpointID int64, p che
 			return err
 		}
 		if storedProject != p.Project {
-			return ErrCheckpointProjectMismatch
+			return &CheckpointProjectMismatchError{RequestedProject: p.Project, SessionProject: &storedProject}
 		}
 		if err := s.enqueueSyncMutationTx(tx, SyncEntitySession, p.Identity.SessionID, SyncOpUpsert, syncSessionPayload{
 			ID: p.Identity.SessionID, Project: storedProject, Directory: storedDirectory, StartedAt: startedAt,

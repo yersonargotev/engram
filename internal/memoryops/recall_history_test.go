@@ -267,3 +267,34 @@ func TestRecallHistoryRedactsCrossProjectSupersessionEndpoint(t *testing.T) {
 		t.Fatalf("content=%#v %v", full, err)
 	}
 }
+
+func TestRecallHistoryPreservesSymmetricConflictsForSupersededCandidates(t *testing.T) {
+	service := newTestService(t)
+	old := saveObservation(t, service, "engram", "Conflict history diagnosis", "Original diagnosis.")
+	conflicting := saveObservation(t, service, "engram", "Conflict history alternative", "Alternative evidence.")
+	replacement := saveObservation(t, service, "engram", "Correction", "Replacement diagnosis.")
+	for _, comparison := range []CompareInput{
+		{MemoryIDA: old.ID, MemoryIDB: conflicting.ID, Relation: "conflicts_with", Confidence: 1, Reasoning: "Unresolved conflicting evidence", Model: "test"},
+		{MemoryIDA: replacement.ID, MemoryIDB: old.ID, Relation: "supersedes", Confidence: 1, Reasoning: "Corrected", Model: "test"},
+	} {
+		if _, err := service.Compare(comparison); err != nil {
+			t.Fatal(err)
+		}
+	}
+	result, err := service.Recall(RecallInput{Query: "Conflict history", Project: "engram", ProjectStrength: project.IdentityStrengthExplicit, IncludeHistory: true})
+	if err != nil || result.Warning != nil || result.ResultCount != 2 {
+		t.Fatalf("history=%#v %v", result, err)
+	}
+	for _, c := range result.Candidates {
+		if len(c.Conflicts) != 1 {
+			t.Fatalf("lost historical conflict: %#v", c)
+		}
+		want := old.ID
+		if c.ID == old.ID {
+			want = conflicting.ID
+		}
+		if c.Conflicts[0].MemoryID != want {
+			t.Fatalf("wrong conflict: %#v", c)
+		}
+	}
+}

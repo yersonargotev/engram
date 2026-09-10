@@ -39,7 +39,7 @@ func (s *Service) recallSupersessions(ctx context.Context, relations store.Obser
 	for _, endpoint := range endpoints {
 		ids = append(ids, endpoint.syncID)
 	}
-	eligible, err := s.store.RecallEligibleConflictTargetsContext(ctx, ids, store.SearchOptions{Project: project, Scope: scope, IncludeHistory: true})
+	eligible, err := s.store.RecallEligibleRelationTargetsContext(ctx, ids, store.SearchOptions{Project: project, Scope: scope, IncludeHistory: true})
 	if err != nil {
 		return nil, 0, err
 	}

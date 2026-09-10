@@ -365,7 +365,7 @@ func setRecallAuthorityRequired(result *RecallResult, input RecallInput) {
 	}}
 }
 
-func (s *Service) loadEligibleRecallConflictTargets(ctx context.Context, search *SearchResult, input RecallInput) (map[string]store.RecallConflictTarget, error) {
+func (s *Service) loadEligibleRecallConflictTargets(ctx context.Context, search *SearchResult, input RecallInput) (map[string]store.RecallRelationTarget, error) {
 	syncIDs := make([]string, 0)
 	for _, item := range search.Observations {
 		for _, relation := range item.Relations.AsSource {
@@ -379,13 +379,14 @@ func (s *Service) loadEligibleRecallConflictTargets(ctx context.Context, search 
 			}
 		}
 	}
-	return s.store.RecallEligibleConflictTargetsContext(ctx, syncIDs, store.SearchOptions{
-		Project: input.Project,
-		Scope:   input.Scope,
+	return s.store.RecallEligibleRelationTargetsContext(ctx, syncIDs, store.SearchOptions{
+		Project:        input.Project,
+		Scope:          input.Scope,
+		IncludeHistory: input.IncludeHistory,
 	})
 }
 
-func recallConflicts(relations store.ObservationRelations, eligible map[string]store.RecallConflictTarget) []RecallConflict {
+func recallConflicts(relations store.ObservationRelations, eligible map[string]store.RecallRelationTarget) []RecallConflict {
 	conflicts := make([]RecallConflict, 0)
 	for _, relation := range relations.AsSource {
 		if !isUnresolvedRecallConflict(relation) {
@@ -443,13 +444,32 @@ func fitRecallCandidates(candidates []RecallCandidate, budget int) []RecallCandi
 			result = trial
 			continue
 		}
+		summary := []rune(candidate.Summary)
 		candidate.Summary = ""
 		trial = append(result, candidate)
 		encoded, err = json.Marshal(trial)
 		if err != nil || len(encoded) > budget {
 			break
 		}
-		result = trial
+		// Retain the largest UTF-8 prefix that fits the actual JSON budget,
+		// including escaping and relation metadata, before omitting the claim.
+		low, high := 1, len(summary)-1
+		for low <= high {
+			mid := low + (high-low)/2
+			candidate.Summary = string(summary[:mid]) + "…"
+			trial = append(result, candidate)
+			encoded, err = json.Marshal(trial)
+			if err == nil && len(encoded) <= budget {
+				low = mid + 1
+			} else {
+				high = mid - 1
+			}
+		}
+		candidate.Summary = ""
+		if high > 0 {
+			candidate.Summary = string(summary[:high]) + "…"
+		}
+		result = append(result, candidate)
 	}
 	return result
 }

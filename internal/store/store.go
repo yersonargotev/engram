@@ -207,10 +207,10 @@ type SearchOptions struct {
 	MatchMode      string `json:"match_mode,omitempty"` // "all" (default) | "any"
 }
 
-// RecallConflictTarget is the safe candidate metadata for an unresolved
+// RecallRelationTarget is the safe candidate metadata for an unresolved
 // conflict counterpart that passed the same Recall eligibility and authority
 // boundary as the selected Memory.
-type RecallConflictTarget struct {
+type RecallRelationTarget struct {
 	ID     int64
 	SyncID string
 	Title  string
@@ -3438,12 +3438,12 @@ func (s *Store) RecallCandidatesContext(ctx context.Context, query string, opts 
 	})
 }
 
-// RecallEligibleConflictTargetsContext filters relation counterparts through
+// RecallEligibleRelationTargetsContext filters relation counterparts through
 // the same active-review scope boundary used for Recall candidates. IncludeHistory
 // admits superseded endpoints for deliberate history; deleted and out-of-scope
 // endpoint metadata remain unavailable.
-func (s *Store) RecallEligibleConflictTargetsContext(ctx context.Context, syncIDs []string, opts SearchOptions) (map[string]RecallConflictTarget, error) {
-	result := make(map[string]RecallConflictTarget)
+func (s *Store) RecallEligibleRelationTargetsContext(ctx context.Context, syncIDs []string, opts SearchOptions) (map[string]RecallRelationTarget, error) {
+	result := make(map[string]RecallRelationTarget)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -3493,7 +3493,7 @@ func (s *Store) RecallEligibleConflictTargetsContext(ctx context.Context, syncID
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var target RecallConflictTarget
+		var target RecallRelationTarget
 		if err := rows.Scan(&target.ID, &target.SyncID, &target.Title); err != nil {
 			return nil, err
 		}

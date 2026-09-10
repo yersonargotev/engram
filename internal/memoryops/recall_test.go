@@ -59,7 +59,7 @@ func TestRecallCandidatesDefaultsToFiveProjectResultsWithinFourKiB(t *testing.T)
 	if result.DeliveredUTF8Bytes > RecallCandidateBudgetBytes {
 		t.Fatalf("delivered_utf8_bytes = %d, budget = %d", result.DeliveredUTF8Bytes, RecallCandidateBudgetBytes)
 	}
-	if result.Provenance.ProtocolVersion != 1 || result.Provenance.BinaryVersion != "test-version" || result.Provenance.BinaryRevision != "test-revision" {
+	if result.Provenance.ProtocolVersion != 2 || result.Provenance.BinaryVersion != "test-version" || result.Provenance.BinaryRevision != "test-revision" {
 		t.Fatalf("provenance = %#v", result.Provenance)
 	}
 	if result.ElapsedMonotonicMS != 37 {

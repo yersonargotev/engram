@@ -372,6 +372,25 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 						"additionalProperties": false,
 					}),
 				),
+				mcp.WithArray("supersessions",
+					mcp.Description("Record-only, explicitly adjudicated same-project replacements, committed atomically with Memory and checkpoint. Choose exactly one replacement selector; input indices are zero-based. Use the target_version from preflight. Prose and similarity alone never supersede a Memory."),
+					mcp.Items(map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"replacement_memory_id":   map[string]any{"type": "integer", "minimum": 1},
+							"replacement_input_index": map[string]any{"type": "integer", "minimum": 0},
+							"target_memory_id":        map[string]any{"type": "integer", "minimum": 1},
+							"target_version":          map[string]any{"type": "string", "minLength": 1},
+							"reason":                  map[string]any{"type": "string", "minLength": 1},
+						},
+						"required": []string{"target_memory_id", "target_version", "reason"},
+						"oneOf": []any{
+							map[string]any{"required": []string{"replacement_memory_id"}},
+							map[string]any{"required": []string{"replacement_input_index"}},
+						},
+						"additionalProperties": false,
+					}),
+				),
 				mcp.WithObject("proposal",
 					mcp.Description("One local Memory proposal to create and attach atomically to a needs_review checkpoint"),
 					mcp.Properties(map[string]any{

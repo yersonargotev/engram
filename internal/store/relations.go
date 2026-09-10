@@ -792,35 +792,42 @@ func (s *Store) JudgeBySemantic(p JudgeBySemanticParams) (string, error) {
 	}
 
 	var resultSyncID string
+	if err := s.withTx(func(tx *sql.Tx) error { return s.judgeBySemanticTx(tx, p, &resultSyncID) }); err != nil {
+		return "", err
+	}
+	return resultSyncID, nil
+}
 
-	if err := s.withTx(func(tx *sql.Tx) error {
-		// Cross-project guard.
-		if err := validateCrossProjectGuard(tx, p.SourceID, p.TargetID); err != nil {
-			return err
-		}
+// judgeBySemanticTx shares relation persistence and enrollment-authorized sync
+// with atomic checkpoint writes. Its callers validate the supplied verdict.
+func (s *Store) judgeBySemanticTx(tx *sql.Tx, p JudgeBySemanticParams, resultSyncID *string) error {
+	// Cross-project guard.
+	if err := validateCrossProjectGuard(tx, p.SourceID, p.TargetID); err != nil {
+		return err
+	}
 
-		// Check whether a row already exists for this (source_id, target_id) pair
-		// in either direction.
-		var existingSyncID string
-		err := tx.QueryRow(`
+	// Check whether a row already exists for this (source_id, target_id) pair
+	// in either direction.
+	var existingSyncID string
+	err := tx.QueryRow(`
 			SELECT sync_id FROM memory_relations
 			WHERE (source_id = ? AND target_id = ?)
 			   OR (source_id = ? AND target_id = ?)
 			LIMIT 1
 		`, p.SourceID, p.TargetID, p.TargetID, p.SourceID).Scan(&existingSyncID)
 
-		confidence := p.Confidence
-		var modelPtr *string
-		if p.Model != "" {
-			modelPtr = &p.Model
-		}
-		actor := "engram"
-		kind := "system"
+	confidence := p.Confidence
+	var modelPtr *string
+	if p.Model != "" {
+		modelPtr = &p.Model
+	}
+	actor := "engram"
+	kind := "system"
 
-		if err == sql.ErrNoRows {
-			// Insert new row.
-			existingSyncID = newSyncID("rel")
-			if _, execErr := tx.Exec(`
+	if err == sql.ErrNoRows {
+		// Insert new row.
+		existingSyncID = newSyncID("rel")
+		if _, execErr := s.execHook(tx, `
 				INSERT INTO memory_relations
 					(sync_id, source_id, target_id, relation, judgment_status,
 					 confidence, reason,
@@ -828,16 +835,16 @@ func (s *Store) JudgeBySemantic(p JudgeBySemanticParams) (string, error) {
 					 created_at, updated_at)
 				VALUES (?, ?, ?, ?, 'judged', ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
 			`, existingSyncID, p.SourceID, p.TargetID, p.Relation,
-				confidence, p.Reasoning,
-				actor, kind, modelPtr,
-			); execErr != nil {
-				return fmt.Errorf("JudgeBySemantic: insert: %w", execErr)
-			}
-		} else if err != nil {
-			return fmt.Errorf("JudgeBySemantic: check existing: %w", err)
-		} else {
-			// Update existing row.
-			if _, execErr := tx.Exec(`
+			confidence, p.Reasoning,
+			actor, kind, modelPtr,
+		); execErr != nil {
+			return fmt.Errorf("JudgeBySemantic: insert: %w", execErr)
+		}
+	} else if err != nil {
+		return fmt.Errorf("JudgeBySemantic: check existing: %w", err)
+	} else {
+		// Update existing row.
+		if _, execErr := s.execHook(tx, `
 				UPDATE memory_relations
 				SET relation        = ?,
 				    judgment_status = 'judged',
@@ -849,84 +856,79 @@ func (s *Store) JudgeBySemantic(p JudgeBySemanticParams) (string, error) {
 				    updated_at      = datetime('now')
 				WHERE sync_id = ?
 			`, p.Relation, confidence, p.Reasoning,
-				actor, kind, modelPtr,
-				existingSyncID,
-			); execErr != nil {
-				return fmt.Errorf("JudgeBySemantic: update: %w", execErr)
-			}
+			actor, kind, modelPtr,
+			existingSyncID,
+		); execErr != nil {
+			return fmt.Errorf("JudgeBySemantic: update: %w", execErr)
 		}
+	}
 
-		resultSyncID = existingSyncID
+	*resultSyncID = existingSyncID
 
-		// ── Enqueue sync mutation when project is enrolled ─────────────────────
-		// Derive source project using the same session-fallback as the backfill
-		// SELECT: coalesce(nullif(obs.project,''), session.project, '').
-		// This prevents an empty Project in the enqueued payload when the
-		// observation's own project column is blank but the session carries it.
-		var srcProject, tgtProject string
-		_ = tx.QueryRow(
-			`SELECT coalesce(nullif(o.project,''), s.project, '')
+	// ── Enqueue sync mutation when project is enrolled ─────────────────────
+	// Derive source project using the same session-fallback as the backfill
+	// SELECT: coalesce(nullif(obs.project,''), session.project, '').
+	// This prevents an empty Project in the enqueued payload when the
+	// observation's own project column is blank but the session carries it.
+	var srcProject, tgtProject string
+	_ = tx.QueryRow(
+		`SELECT coalesce(nullif(o.project,''), s.project, '')
 			   FROM observations o
 			   LEFT JOIN sessions s ON s.id = o.session_id
 			  WHERE o.sync_id = ?`, p.SourceID,
-		).Scan(&srcProject)
-		_ = tx.QueryRow(
-			`SELECT coalesce(nullif(o.project,''), s.project, '')
+	).Scan(&srcProject)
+	_ = tx.QueryRow(
+		`SELECT coalesce(nullif(o.project,''), s.project, '')
 			   FROM observations o
 			   LEFT JOIN sessions s ON s.id = o.session_id
 			  WHERE o.sync_id = ?`, p.TargetID,
-		).Scan(&tgtProject)
+	).Scan(&tgtProject)
 
-		enrollCheckProject := srcProject
-		if enrollCheckProject == "" {
-			enrollCheckProject = tgtProject
-		}
-
-		var enrolled int
-		if err := tx.QueryRow(
-			`SELECT 1 FROM sync_enrolled_projects WHERE project = ? LIMIT 1`, enrollCheckProject,
-		).Scan(&enrolled); err != nil && err != sql.ErrNoRows {
-			return fmt.Errorf("JudgeBySemantic: check enrollment: %w", err)
-		}
-		if enrolled == 0 {
-			return nil // not enrolled — backfill will cover it on enrollment
-		}
-
-		// REQ-011: log at WARNING level when source observation is missing locally
-		// (project='' race condition). The server will reject with 400; this log
-		// is the local breadcrumb so the gap is not silently swallowed.
-		if srcProject == "" {
-			log.Printf("[store] WARNING: JudgeBySemantic enqueueing relation %s with project='' (source observation missing locally); server will reject", existingSyncID)
-		}
-
-		// Build payload from the freshly-written row.
-		rel, err := s.getRelationTx(tx, existingSyncID)
-		if err != nil {
-			return fmt.Errorf("JudgeBySemantic: read relation for enqueue: %w", err)
-		}
-		payload := syncRelationPayload{
-			SyncID:         rel.SyncID,
-			SourceID:       rel.SourceID,
-			TargetID:       rel.TargetID,
-			Relation:       rel.Relation,
-			Reason:         rel.Reason,
-			Evidence:       rel.Evidence,
-			Confidence:     rel.Confidence,
-			JudgmentStatus: rel.JudgmentStatus,
-			MarkedByActor:  rel.MarkedByActor,
-			MarkedByKind:   rel.MarkedByKind,
-			MarkedByModel:  rel.MarkedByModel,
-			SessionID:      rel.SessionID,
-			Project:        srcProject,
-			CreatedAt:      rel.CreatedAt,
-			UpdatedAt:      rel.UpdatedAt,
-		}
-		return s.enqueueSyncMutationTx(tx, SyncEntityRelation, rel.SyncID, SyncOpUpsert, payload)
-	}); err != nil {
-		return "", err
+	enrollCheckProject := srcProject
+	if enrollCheckProject == "" {
+		enrollCheckProject = tgtProject
 	}
 
-	return resultSyncID, nil
+	var enrolled int
+	if err := tx.QueryRow(
+		`SELECT 1 FROM sync_enrolled_projects WHERE project = ? LIMIT 1`, enrollCheckProject,
+	).Scan(&enrolled); err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("JudgeBySemantic: check enrollment: %w", err)
+	}
+	if enrolled == 0 {
+		return nil // not enrolled — backfill will cover it on enrollment
+	}
+
+	// REQ-011: log at WARNING level when source observation is missing locally
+	// (project='' race condition). The server will reject with 400; this log
+	// is the local breadcrumb so the gap is not silently swallowed.
+	if srcProject == "" {
+		log.Printf("[store] WARNING: JudgeBySemantic enqueueing relation %s with project='' (source observation missing locally); server will reject", existingSyncID)
+	}
+
+	// Build payload from the freshly-written row.
+	rel, err := s.getRelationTx(tx, existingSyncID)
+	if err != nil {
+		return fmt.Errorf("JudgeBySemantic: read relation for enqueue: %w", err)
+	}
+	payload := syncRelationPayload{
+		SyncID:         rel.SyncID,
+		SourceID:       rel.SourceID,
+		TargetID:       rel.TargetID,
+		Relation:       rel.Relation,
+		Reason:         rel.Reason,
+		Evidence:       rel.Evidence,
+		Confidence:     rel.Confidence,
+		JudgmentStatus: rel.JudgmentStatus,
+		MarkedByActor:  rel.MarkedByActor,
+		MarkedByKind:   rel.MarkedByKind,
+		MarkedByModel:  rel.MarkedByModel,
+		SessionID:      rel.SessionID,
+		Project:        srcProject,
+		CreatedAt:      rel.CreatedAt,
+		UpdatedAt:      rel.UpdatedAt,
+	}
+	return s.enqueueSyncMutationTx(tx, SyncEntityRelation, rel.SyncID, SyncOpUpsert, payload)
 }
 
 // getRelationTx is the transactional variant of GetRelation used within

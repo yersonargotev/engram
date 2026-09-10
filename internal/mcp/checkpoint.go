@@ -86,6 +86,9 @@ func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointOb
 			return checkpointToolError(err), nil
 		}
 		if operation == "preflight" {
+			if _, exists := req.GetArguments()["supersessions"]; exists {
+				return checkpointToolError(fmt.Errorf("%w: supersessions are record-only", store.ErrCheckpointInvalidSupersession)), nil
+			}
 			if checkpointStringArg(req, "host") != "" || checkpointStringArg(req, "session_id") != "" ||
 				checkpointStringArg(req, "root_turn_id") != "" || checkpointStringArg(req, "disposition") != "" ||
 				checkpointStringArg(req, "reason") != "" || len(memoryIDs) > 0 || req.GetArguments()["proposal"] != nil ||
@@ -106,6 +109,11 @@ func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointOb
 			finish(err)
 			return checkpointToolError(err), nil
 		}
+		supersessions, err := checkpointSupersessionsArg(req)
+		if err != nil {
+			finish(err)
+			return checkpointToolError(err), nil
+		}
 		proposal, err := checkpointProposalArg(req, "proposal")
 		if err != nil {
 			finish(err)
@@ -121,6 +129,7 @@ func CheckpointToolHandlerWithObserver(s *store.Store, observe func(CheckpointOb
 			Project:        checkpointStringArg(req, "project"),
 			MemoryIDs:      memoryIDs,
 			Memories:       memories,
+			Supersessions:  supersessions,
 			Proposal:       proposal,
 			RecallFeedback: feedback,
 			CWD:            currentWorkingDirectory(),
@@ -155,6 +164,9 @@ func queuedCheckpointToolHandler(q *writeQueue, h server.ToolHandlerFunc) server
 // for adapter-parity tests.
 func CheckpointStatusToolHandler(s *store.Store) server.ToolHandlerFunc {
 	return func(_ context.Context, req mcppkg.CallToolRequest) (*mcppkg.CallToolResult, error) {
+		if _, exists := req.GetArguments()["supersessions"]; exists {
+			return checkpointToolError(fmt.Errorf("%w: supersessions are record-only", store.ErrCheckpointInvalidSupersession)), nil
+		}
 		result, err := memoryops.New(s).CheckpointStatus(memoryops.CheckpointStatusInput{
 			Host:       checkpointStringArg(req, "host"),
 			SessionID:  checkpointStringArg(req, "session_id"),
@@ -276,4 +288,20 @@ func checkpointRecallFeedbackArg(req mcppkg.CallToolRequest, key string) (*memor
 		return nil, fmt.Errorf("Recall feedback must be a closed feedback object: %w", err)
 	}
 	return &feedback, nil
+}
+
+func checkpointSupersessionsArg(req mcppkg.CallToolRequest) ([]memoryops.CheckpointSupersessionInput, error) {
+	value, exists := req.GetArguments()["supersessions"]
+	if !exists {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil || value == nil {
+		return nil, fmt.Errorf("%w: supersessions must be an array of declaration objects", store.ErrCheckpointInvalidSupersession)
+	}
+	var declarations []memoryops.CheckpointSupersessionInput
+	if err := json.Unmarshal(encoded, &declarations); err != nil {
+		return nil, fmt.Errorf("%w: supersessions must be an array of closed declaration objects", store.ErrCheckpointInvalidSupersession)
+	}
+	return declarations, nil
 }

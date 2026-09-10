@@ -173,7 +173,7 @@ func TestRecallStudyCLIValidatesAndPlansCommittedStudyWithoutHeldOutAccess(t *te
 	dir := t.TempDir()
 	environmentPath := filepath.Join(dir, "environment.json")
 	consentPath := filepath.Join(dir, "consent.json")
-	writeRecallStudyTestJSON(t, environmentPath, recallStudyCompatibilityEvidence(study))
+	writeRecallStudyTestJSON(t, environmentPath, recallStudyCompatibilityEvidence(t, study))
 	writeRecallStudyTestJSON(t, consentPath, recallstudy.ConsentEvidence{
 		StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
 		CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: study.ConsentCommitment(&calibration.Manifest, &heldOut.Manifest),
@@ -253,7 +253,7 @@ func TestRecallStudyCLIReportDerivesAndWritesAggregateEvidence(t *testing.T) {
 	consentPath := filepath.Join(dir, "consent.json")
 	rowsPath := filepath.Join(dir, "rows.json")
 	reportPath := filepath.Join(dir, "shared", "report.json")
-	writeRecallStudyTestJSON(t, environmentPath, recallStudyCompatibilityEvidence(study))
+	writeRecallStudyTestJSON(t, environmentPath, recallStudyCompatibilityEvidence(t, study))
 	writeRecallStudyTestJSON(t, consentPath, recallstudy.ConsentEvidence{StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
 		CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: study.ConsentCommitment(&calibration.Manifest, &heldOut.Manifest)})
 	writeRecallStudyTestJSON(t, rowsPath, rows)
@@ -343,7 +343,7 @@ func TestRecallStudyCLIPublishesOneAggregateOnlyDisposition(t *testing.T) {
 	calibrationRowsPath := filepath.Join(dir, "calibration-rows.json")
 	heldOutRowsPath := filepath.Join(dir, "held-out-rows.json")
 	publicationPath := filepath.Join(dir, "shared", "publication.json")
-	writeRecallStudyTestJSON(t, environmentPath, recallStudyCompatibilityEvidence(study))
+	writeRecallStudyTestJSON(t, environmentPath, recallStudyCompatibilityEvidence(t, study))
 	writeRecallStudyTestJSON(t, consentPath, recallstudy.ConsentEvidence{
 		StudyID: study.Contract.StudyID, StudyVersion: study.Contract.StudyVersion,
 		CalibrationGranted: true, HeldOutGranted: true, ProofSHA256: study.ConsentCommitment(&calibration.Manifest, &heldOut.Manifest),
@@ -388,17 +388,19 @@ func writeRecallStudyTestJSON(t *testing.T, path string, value any) {
 	}
 }
 
-func recallStudyCompatibilityEvidence(study *recallstudy.Study) recallstudy.CompatibilityEvidence {
+func recallStudyCompatibilityEvidence(t *testing.T, study *recallstudy.Study) recallstudy.CompatibilityEvidence {
+	t.Helper()
 	rangeV1 := &protocolcontract.VersionRange{Minimum: 1, Maximum: 1}
 	provenance := "repository:https://github.com/yersonargotev/engram.git#revision:" + study.Contract.SourceRevision
-	return recallstudy.CompatibilityEvidence{
-		Revisions: study.Contract.Revisions,
-		Compatibility: protocolcontract.Evaluate(
-			protocolcontract.Declaration{Version: study.Contract.Revisions.ManagedPack.Version, Provenance: provenance, Supported: rangeV1},
-			protocolcontract.Declaration{Version: study.Contract.Revisions.EngramBinary.Version, Provenance: provenance, Supported: rangeV1},
-			protocolcontract.Declaration{Version: study.Contract.Revisions.CodexPlugin.Version, Provenance: provenance, Supported: rangeV1},
-		),
+	compatibility, err := protocolcontract.EvaluateAtVersion(1,
+		protocolcontract.Declaration{Version: study.Contract.Revisions.ManagedPack.Version, Provenance: provenance, Supported: rangeV1},
+		protocolcontract.Declaration{Version: study.Contract.Revisions.EngramBinary.Version, Provenance: provenance, Supported: rangeV1},
+		protocolcontract.Declaration{Version: study.Contract.Revisions.CodexPlugin.Version, Provenance: provenance, Supported: rangeV1},
+	)
+	if err != nil {
+		t.Fatal(err)
 	}
+	return recallstudy.CompatibilityEvidence{Revisions: study.Contract.Revisions, Compatibility: compatibility}
 }
 
 func recallStudyCompleteRows(t *testing.T, study *recallstudy.Study, manifest *recallstudy.Manifest) recallstudy.RowSet {

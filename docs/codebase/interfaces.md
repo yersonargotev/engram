@@ -92,3 +92,10 @@ The TUI uses Bubbletea and reads from the local store. The separation is classic
 ---
 
 [← Previous: Memory Core](memory-core.md) | [Next: Sync and Cloud →](sync-and-cloud.md)
+
+Checkpoint record accepts optional explicit `supersessions` in Protocol v2;
+CLI projects each declaration through `--supersession-json`. Core binds a
+replacement selector to a committed Memory, validates the evaluated target
+version from preflight, and owns all-or-nothing persistence. Adapters retain
+identity-first replay and expose the same stale/invalid declaration errors.
+See [the author contract](../../DOCS.md#mem_checkpoint).

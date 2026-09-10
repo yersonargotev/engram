@@ -58,7 +58,7 @@ func TestVersionedFixtureMatchesCoreAndDistributionMetadata(t *testing.T) {
 	if plugin["version"] != fixture.Distributions.CodexPlugin.Version {
 		t.Fatalf("Codex plugin version = %#v, fixture = %q", plugin["version"], fixture.Distributions.CodexPlugin.Version)
 	}
-	if !reflect.DeepEqual(plugin["engramProtocol"], map[string]any{"minimum": float64(1), "maximum": float64(1), "legacyCompatible": true}) {
+	if !reflect.DeepEqual(plugin["engramProtocol"], map[string]any{"minimum": float64(1), "maximum": float64(2), "legacyCompatible": true}) {
 		t.Fatalf("Codex plugin Protocol metadata = %#v", plugin["engramProtocol"])
 	}
 }
@@ -93,4 +93,40 @@ func packHasProtocolFixture(pack map[string]any, source string) bool {
 		}
 	}
 	return false
+}
+
+func TestParseFixtureAcceptsSupportedProtocolVersionsAndRejectsUnknownVersions(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "assets", "protocol-contract-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []int{0, 1, 2, 3} {
+		var fixture Fixture
+		if err := json.Unmarshal(raw, &fixture); err != nil {
+			t.Fatal(err)
+		}
+		fixture.Protocol.Version = version
+		candidate, err := json.Marshal(fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := ParseFixture(candidate)
+		if version == 1 || version == 2 {
+			if err != nil || parsed.Protocol.Version != version {
+				t.Fatalf("Protocol %d parse = %#v, %v", version, parsed, err)
+			}
+		} else if err == nil {
+			t.Fatalf("unsupported Protocol %d accepted", version)
+		}
+	}
+	for _, name := range []string{"protocol-contract-v1-pack-3.2.0.json", "protocol-contract-v1-pack-3.3.0.json"} {
+		raw, err := os.ReadFile(filepath.Join("..", "setup", "testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixture, err := ParseFixture(raw)
+		if err != nil || fixture.Protocol.Version != 1 {
+			t.Fatalf("legacy %s = %#v, %v", name, fixture, err)
+		}
+	}
 }

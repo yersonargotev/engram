@@ -194,7 +194,7 @@ func TestPrintCodexIntegrationStatusReportsTheFourVersionAxes(t *testing.T) {
 		"Managed Pack: 3.2.0; Protocol 1..1; pack:abc",
 		"Engram binary: 3.0.1; Protocol 1..1; binary:/opt/engram",
 		"Codex plugin: 0.1.6; Protocol 1..1; plugin:def",
-		"Protocol contract: 1; Protocol 1..1; engram-core",
+		"Protocol contract: 2; Protocol 1..2; engram-core",
 		"Protocol intersection: 1..1",
 		"Codex lifecycle treatment: cue_only_targeted_recall_exact_session (canary enabled: true; source: environment)",
 		"Activation cue: ready; injection limit: 4096 UTF-8 bytes",

@@ -53,6 +53,11 @@ func TestProtocolCompatibilityAcceptsVerifiedPreviousTupleDuringExpand(t *testin
 		skillSHA256 string
 	}{
 		{
+			name: "pack 3.3.1 original", version: "3.3.1",
+			manifest: "managed-pack-3.3.1.json", fixture: "protocol-contract-v1-pack-3.3.1.json",
+			skillSHA256: "b2168c0e0c627320443e655ede2fabeeea404af6048f2840af7ddcdd9f0670d4",
+		},
+		{
 			name: "pack 3.3.0", version: previousManagedPackVersion,
 			manifest: "managed-pack-3.3.0.json", fixture: "protocol-contract-v1-pack-3.3.0.json",
 			skillSHA256: previousManagedPackSkillSHA256,
@@ -279,5 +284,34 @@ func assertFileSHA256(t *testing.T, path, want string) {
 	digest := sha256.Sum256(raw)
 	if got := hex.EncodeToString(digest[:]); got != want {
 		t.Fatalf("sha256(%s) = %s, want %s", path, got, want)
+	}
+}
+
+func TestCurrentProtocolTupleSupportsV2AndPreservesV1Fallback(t *testing.T) {
+	resetSetupSeams(t)
+	bundleRoot := t.TempDir()
+	for _, item := range []struct{ source, target string }{
+		{"pack.json", "packs/engram/pack.json"}, {"assets/protocol-contract-v1.json", "assets/protocol-contract-v1.json"},
+	} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", item.source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeStatusTestFile(t, filepath.Join(bundleRoot, item.target), string(raw))
+	}
+	check := codexStatusCheck("skill", CodexCheckReady, "engram_skill_discovered", "ready",
+		codexEvidence("source", "standalone"), codexEvidence("path", filepath.Join(bundleRoot, "skills", "engram-memory-cli", "SKILL.md")),
+		codexEvidence("sha256", currentManagedPackSkillSHA256), codexEvidence("version", currentManagedPackVersion))
+	pack := inspectManagedPackProtocolDeclaration([]CodexIntegrationCheck{check})
+	binary := inspectEngramBinaryProtocolDeclaration("development", testReleaseCommit, "/opt/engram/bin/engram")
+	for _, maximum := range []int{1, 2} {
+		plugin := protocolcontract.Declaration{Version: "test", Provenance: "verified:test", Supported: &protocolcontract.VersionRange{Minimum: 1, Maximum: maximum}}
+		report := protocolcontract.Evaluate(pack, binary, plugin)
+		if report.Status != protocolcontract.CompatibilityReady || report.Intersection == nil || *report.Intersection != (protocolcontract.VersionRange{Minimum: 1, Maximum: maximum}) {
+			t.Fatalf("maximum %d compatibility = %#v", maximum, report)
+		}
+	}
+	if *protocolV1Range() != (protocolcontract.VersionRange{Minimum: 1, Maximum: 1}) {
+		t.Fatal("legacy declaration no longer denotes v1")
 	}
 }

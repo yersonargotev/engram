@@ -91,3 +91,11 @@ For schema details, use [DOCS.md — Database Schema](../../DOCS.md#database-sch
 ---
 
 [← Previous: Repository Map](repository-map.md) | [Next: Interfaces →](interfaces.md)
+
+Explicit checkpoint supersession shares the existing relation lifecycle. The
+new transaction validates the evaluated target snapshot and writes the directed
+relation with its settled replacement, local checkpoint, optional proposal, and
+eligible sync mutations. Replay returns the original terminal result before any
+fresh target validation. Prose-only replacements and independent historical
+truths do not change Recall eligibility. Protocol v2 adds this optional operation;
+v1 requests retain their previous behavior.

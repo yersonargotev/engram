@@ -139,6 +139,34 @@ Complete normal preservation when the exact root-turn identity returns `created`
 or same-disposition `already_recorded`; the record result is the routine
 completion signal.
 
+## Explicit atomic supersession
+
+Apply the canonical `engram-memory` replacement judgment. When the evaluated
+preflight candidate exposes `target_version` (Protocol v2), attach a repeatable
+`--supersession-json` declaration to the same `checkpoint record` that commits
+the replacement:
+
+```bash
+engram checkpoint record --host '<host>' --session-id '<session>' \
+  --root-turn-id '<root-turn>' --disposition saved --project '<project>' \
+  --memory-json '{"title":"<replacement>","content":"<verified current guidance>"}' \
+  --supersession-json '{"replacement_input_index":0,"target_memory_id":42,"target_version":"<preflight version>","reason":"<evaluated replacement rationale>"}' --json
+```
+
+`replacement_input_index` is zero-based within repeated `--memory-json` values.
+For an existing replacement, use `replacement_memory_id` instead and attach the
+same ID through `--memory-id`. Use exactly one selector. The target must belong
+to the checkpoint project and still match the evaluated version. A stale or
+invalid declaration rejects the complete new transaction; reevaluate before
+retrying the unchanged root identity. Exact replay returns the original result
+without applying new declarations. `needs_review` may include settled
+supersessions with its isolated proposal.
+
+Success preserves historical target content and the directed relationship while
+ordinary Recall excludes the superseded target. Prose alone does not retire it.
+Without `target_version`, report unavailable atomic support; independent curation
+is a separate maintenance workflow, not a post-checkpoint completion step.
+
 ## Cross-repository checkpoint examples
 
 When a conversation changes repositories, or record returns

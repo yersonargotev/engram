@@ -394,11 +394,18 @@ only through explicit inventory, access, export, and separately confirmed purge.
 
 ## Admin Observability (conflict layer)
 
-Phase 3 adds an admin-facing observability layer over the conflict/relation system. This is NOT for end users — end users continue to interact with conflicts via the normal agent conversation flow (Phase 1). The tools below are for operators and maintainers who need to inspect or audit the `memory_relations` and `sync_apply_deferred` tables directly.
+The conflict/relation observability tools support operators, maintainers, and
+authorized agents investigating Memory relations and deferred sync state.
+Specialized profiles control tool exposure, not whether an agent may operate
+them. Delegated authority must cover the requested operation; destructive
+maintenance retains its existing explicit confirmation controls.
 
 ### engram conflicts CLI
 
-The `engram conflicts <sub-command>` command provides read and scan access to the conflict layer from the terminal. It is intended for maintainers, not for agents or end users.
+The `engram conflicts <sub-command>` command provides read and scan access to
+the conflict layer from the terminal, including authorized agent workflows.
+Use supported JSON output for automation. The [management matrix](multi-project-memory-plan.md#agent-management-matrix)
+identifies CLI/MCP equivalents and the future grouped-checkpoint work.
 
 | Sub-command | What it does |
 |-------------|-------------|

@@ -715,7 +715,10 @@ Response:
 
 ### Conflict Audit CLI (admin)
 
-The `engram conflicts` sub-command provides admin/maintainer access to the conflict layer. It is NOT for end users — end users interact with conflicts via the normal agent conversation flow.
+The `engram conflicts` sub-command provides operational access to the conflict
+layer for maintainers and authorized agents. Tool profiles separate exposure,
+not human and agent roles; delegated task authority and existing explicit
+destructive-operation controls still apply.
 
 When `--project` is omitted, the cwd-detected project is used.
 

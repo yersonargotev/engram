@@ -13,6 +13,14 @@
 
 ---
 
+## Accepted design awaiting implementation
+
+[ADR-0012](adr/0012-group-terminal-memory-by-project.md) defines one atomic
+Terminal Memory commit across explicit project groups with Core-owned project
+persistence sessions. The [delivery plan](multi-project-memory-plan.md) separates
+implementation and migration approval. This is accepted future design; the
+runtime description below and current CLI/MCP remain single-project.
+
 ## How It Works
 
 <p align="center">

@@ -1,0 +1,41 @@
+{
+  "cohort": "held-out",
+  "units": [
+    {
+      "id": "h1",
+      "issue": "8801",
+      "concept": "invoice rounding",
+      "task": "Which rule governs fractional charges, and what corrected the penny mismatch?",
+      "reformulation": "fractional charges penny",
+      "invariant": "For invoice rounding in fictional ticket 8801, retain fractional charges until the final total; this invariant remains valid.",
+      "diagnosis": "At synthetic commit a8801 only, the penny mismatch was incorrectly attributed to exchange conversion. This diagnosis does not apply after the verified fix.",
+      "resolution": "Fictional ticket 8801: synthetic commit b8801 verified that summing unrounded line amounts before quantizing the final total fixes the penny mismatch.",
+      "editorial": "Fictional ticket 8801 invoice rounding: synthetic commit b8801 verified that summing unrounded line amounts before quantizing the final total fixes the penny mismatch.",
+      "rationale": "The invariant and resolution apply to present guidance. The diagnosis is stale after the fix. Historical deliveries are not useful."
+    },
+    {
+      "id": "h2",
+      "issue": "8802",
+      "concept": "image rotation",
+      "task": "How should portrait orientation be preserved, and what fixed sideways thumbnails?",
+      "reformulation": "portrait sideways thumbnails",
+      "invariant": "For image rotation in fictional ticket 8802, preserve portrait orientation when producing thumbnails; this invariant remains valid.",
+      "diagnosis": "At synthetic commit a8802 only, sideways thumbnails were incorrectly attributed to camera lens calibration. This diagnosis does not apply after the verified fix.",
+      "resolution": "Fictional ticket 8802: synthetic commit b8802 verified that applying the EXIF transform before resizing fixes sideways thumbnails.",
+      "editorial": "Fictional ticket 8802 image rotation: synthetic commit b8802 verified that applying the EXIF transform before resizing fixes sideways thumbnails.",
+      "rationale": "The invariant and resolution apply to present guidance. The diagnosis is stale after the fix. Historical deliveries are not useful."
+    },
+    {
+      "id": "h3",
+      "issue": "8803",
+      "concept": "parcel routing",
+      "task": "What destination rule applies to shipments, and what prevented misdirected consignments?",
+      "reformulation": "destination misdirected consignments",
+      "invariant": "For parcel routing in fictional ticket 8803, use the recipient postal district to choose the destination depot; this invariant remains valid.",
+      "diagnosis": "At synthetic commit a8803 only, misdirected consignments were incorrectly attributed to barcode scanner drift. This diagnosis does not apply after the verified fix.",
+      "resolution": "Fictional ticket 8803: synthetic commit b8803 verified that normalizing postal district whitespace before depot lookup prevents misdirected consignments.",
+      "editorial": "Fictional ticket 8803 parcel routing: synthetic commit b8803 verified that normalizing postal district whitespace before depot lookup prevents misdirected consignments.",
+      "rationale": "The invariant and resolution apply to present guidance. The diagnosis is stale after the fix. Historical deliveries are not useful."
+    }
+  ]
+}

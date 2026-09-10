@@ -168,6 +168,33 @@ candidates across the request. Preflight creates no Memory, proposal,
 checkpoint, relation, sync mutation, review state, or retired
 candidate-evaluation state.
 
+Successful CLI JSON and MCP preflight responses always include:
+
+```json
+"assessment": {
+  "exact_duplicates": "assessed",
+  "semantic_candidates": "assessed",
+  "session_project_compatibility": "not_assessed",
+  "final_record_eligibility": "not_assessed"
+}
+```
+
+`assessed` describes bounded lookup within the selected project, including empty
+or exact-only results; it does not claim exhaustive semantic matching.
+`not_assessed` means unknown, not compatible, incompatible, or authorized.
+Preflight accepts no identity, creates or reassigns no session, and reserves no
+state. A session bound to A can therefore pass project-only preflight for B and
+still fail an inline B record with `checkpoint_project_mismatch`. Final record
+validation and exact replay remain authoritative; success never guarantees a
+later commit or overrides write authority.
+
+This is an additive Protocol v1 response extension: existing fields, inputs,
+and supported Protocol ranges remain unchanged. Older responses without
+`assessment` provide no evidence of session compatibility or final eligibility.
+The response fixture is `internal/memoryops/testdata/checkpoint-preflight-v1.json`;
+CLI/MCP acceptance tests check its semantics while legacy result decoding stays
+supported. Distribution compatibility fixtures retain their existing coordinates.
+
 For `saved`, repeat `--memory-id` to attach Memories already saved during the
 turn. Repeat `--memory-json` to create and attach Memories during finalization;
 each JSON object accepts `title`, `content`, and the optional `type`, `tool_name`,

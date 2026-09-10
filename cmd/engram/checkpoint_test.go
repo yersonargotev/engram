@@ -812,3 +812,17 @@ func TestCheckpointVerifyStopReportsStoreFailureWithoutInventingDisposition(t *t
 		t.Fatalf("store failure invented a disposition: %s", stdout)
 	}
 }
+
+func TestCmdCheckpointPreflightHumanOutputStatesUnassessedConditions(t *testing.T) {
+	cfg := testConfig(t)
+	withArgs(t, "engram", "checkpoint", "preflight", "--project=engram", `--memory-json={"title":"Fixture","content":"Synthetic content"}`)
+	stdout, stderr := captureOutput(t, func() { cmdCheckpoint(cfg) })
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	for _, want := range []string{"Session-project compatibility and final-record eligibility were not assessed", "success does not guarantee a later commit"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("missing %q in %q", want, stdout)
+		}
+	}
+}

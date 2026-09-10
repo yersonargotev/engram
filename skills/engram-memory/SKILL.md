@@ -178,6 +178,14 @@ proposal, checkpoint, relation, sync mutation, review state, or retired
 candidate-evaluation state. It returns exact duplicate references and at most three full,
 same-project semantic candidates across the prospective set.
 
+Successful results include `assessment`: `exact_duplicates` and
+`semantic_candidates` are `assessed` within the existing project and candidate
+bounds; `session_project_compatibility` and `final_record_eligibility` are
+`not_assessed`. This coverage declaration also applies to empty and exact-only
+results. Treat `not_assessed` as unknown, never compatible, incompatible, or
+authorized. Preflight reserves no state and does not guarantee a later commit;
+final transaction validation and exact replay remain authoritative.
+
 Reuse every exact duplicate instead of creating it again. Compare every
 semantic candidate with the prospective Memory. A clear, low-risk duplicate,
 relation, or distinct outcome may settle directly. Choose `needs_review` when

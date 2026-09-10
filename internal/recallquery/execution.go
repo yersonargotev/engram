@@ -20,11 +20,13 @@ var variants = []string{"baseline", "editorial", "supersession", "editorial_supe
 // Execute opens held-out only after all calibration prerequisites pass. Every
 // cell owns a disposable Store, so neither user state nor another cell is read.
 func Execute(ctx context.Context, root string, includeHeldOut bool) (Report, error) {
-	report := Report{StudyID: "concept-versus-identifier", Version: "1", ContractSHA256: FrozenContractSHA256, Disposition: "evaluation_incomplete", Groups: []Group{}, ContentSelections: 0, LabelOmission: "retrieval_only", TaskTimeToUsefulAvailable: false}
+	report := Report{StudyID: "concept-versus-identifier", Version: "2", ContractSHA256: FrozenContractSHA256, Disposition: "evaluation_incomplete", Groups: []Group{}, ContentSelections: 0, LabelOmission: "retrieval_only", TaskTimeToUsefulAvailable: false}
 	c, err := Verify(root)
 	if err != nil {
 		return report, err
 	}
+	report.StudyID = c.StudyID
+	report.Version = c.Version
 	report.CoreSourceRevision = c.SourceRevision
 	report.Protocol = c.Protocol
 	calibration, err := loadCorpus(root, "calibration", c.CalibrationSHA256, c.UnitsPerCohort)
@@ -51,7 +53,7 @@ func Execute(ctx context.Context, root string, includeHeldOut bool) (Report, err
 	heldGroups := executeCohort(ctx, held, c)
 	report.Groups = append(report.Groups, heldGroups...)
 	if groupsPassed(heldGroups) {
-		report.Disposition = disposition(heldGroups)
+		report.Disposition = (Report{Groups: heldGroups}).Assess()
 	}
 	return report, nil
 }
@@ -87,6 +89,8 @@ func executeCohort(ctx context.Context, corpus Corpus, c Contract) []Group {
 			}
 			g.First.finish()
 			g.Cumulative.finish()
+			g.First.AcceptableEvidence.Unknown = g.OperationalFailures
+			g.Cumulative.AcceptableEvidence.Unknown = g.OperationalFailures
 			g.Labels = Labels{UnknownUtility: g.SuccessfulCallExposures, UnknownQuality: g.SuccessfulCallExposures, OmittedAssessments: g.SuccessfulCallExposures}
 			groups = append(groups, g)
 		}
@@ -124,11 +128,8 @@ func executeUnit(ctx context.Context, u Unit, variant, class string, c Contract)
 	case "task":
 		query = u.Task
 	}
-	keysSeen := []string{}
-	totalBytes := 0
-	totalLatency := 0.0
-	var discovery *float64
-	for attempt, q := range []string{query, u.Reformulation} {
+	calls := []SearchEvidence{}
+	for _, q := range []string{query, u.Reformulation} {
 		result.failure = "recall_failure"
 		started := time.Now()
 		found, callErr := service.RecallContext(ctx, memoryops.RecallInput{Query: q, Project: fixtureProject, Scope: "project", ProjectStrength: project.IdentityStrengthExplicit, Limit: c.CandidateLimit, MatchMode: "all", BinaryVersion: "source-evaluation", BinaryRevision: c.SourceRevision})
@@ -144,25 +145,20 @@ func executeUnit(ctx context.Context, u Unit, variant, class string, c Contract)
 		if encodeErr != nil || len(found.Candidates) > 5 || len(encoded) > 4096 || found.DeliveredUTF8Bytes != len(encoded) || found.ResultCount != len(found.Candidates) || found.IncludeHistory || found.Provenance.ProtocolVersion != c.Protocol {
 			return result, fmt.Errorf("Recall contract violation")
 		}
-		totalBytes += len(encoded)
-		totalLatency += latency
+		keysSeen := []string{}
 		for _, candidate := range found.Candidates {
 			key, ok := keys[candidate.ID]
 			if !ok || candidate.Project != fixtureProject || candidate.Scope != "project" || key == "outside" || key == "deleted" || (strings.Contains(variant, "supersession") && key == "diagnosis") {
 				return result, fmt.Errorf("Recall eligibility violation")
 			}
 			keysSeen = append(keysSeen, key)
-			if discovery == nil && relevant(key) {
-				value := totalLatency
-				discovery = &value
-			}
 		}
 		result.exposures += len(found.Candidates)
-		current := assess(keysSeen, totalBytes, totalLatency, discovery)
-		if attempt == 0 {
-			result.first = current
-		}
-		result.cumulative = current
+		calls = append(calls, SearchEvidence{Keys: keysSeen, CandidateBytes: len(encoded), LatencyMillis: latency})
+	}
+	result.first, result.cumulative, err = analyzeSearches(calls)
+	if err != nil {
+		return result, err
 	}
 	result.failure = ""
 	return result, nil
@@ -188,7 +184,7 @@ func seed(s *store.Store, u Unit, variant string) (map[int64]string, error) {
 		{"outside", u.Concept + " other project", u.Invariant, "2025-03-01 00:00:00", "synthetic-other-project", true},
 		{"deleted", u.Concept + " removed", u.Invariant, "2025-04-01 00:00:00", fixtureProject, false},
 	}
-	data := store.ExportData{Version: "1", Sessions: []store.Session{{ID: "synthetic-session", Project: fixtureProject, StartedAt: "2020-01-01 00:00:00"}}}
+	data := store.ExportData{Version: "2", Sessions: []store.Session{{ID: "synthetic-session", Project: fixtureProject, StartedAt: "2020-01-01 00:00:00"}}}
 	for _, m := range memories {
 		p := m.project
 		data.Observations = append(data.Observations, store.Observation{SyncID: "obs-synthetic-" + m.key, SessionID: "synthetic-session", Type: "decision", Title: m.title, Content: m.content, Project: &p, Scope: "project", CreatedAt: m.date, UpdatedAt: m.date})

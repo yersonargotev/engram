@@ -1,0 +1,3 @@
+package recallquery
+
+const FrozenContractSHA256 = "1e4f27241608eca3439c25d3baee6b4225779f3269bff1e788f8678f9337e959"

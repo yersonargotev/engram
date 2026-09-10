@@ -9,11 +9,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-const FrozenContractSHA256 = "688c7500cb040b900c75cc831d7584ae97e4ef97936da131b8eea850d76e4ff6"
-
 type Contract struct {
+	EvaluatorSHA256   string            `json:"evaluator_sha256"`
 	StudyID           string            `json:"study_id"`
 	Version           string            `json:"version"`
 	SourceRevision    string            `json:"source_revision"`
@@ -51,7 +51,14 @@ func Verify(root string) (Contract, error) {
 	if err := readCommitted(filepath.Join(root, "contract.json"), FrozenContractSHA256, &c); err != nil {
 		return c, err
 	}
-	_, err := loadCorpus(root, "calibration", c.CalibrationSHA256, c.UnitsPerCohort)
+	sourceRoot, err := repositoryRoot()
+	if err != nil {
+		return c, err
+	}
+	if err := VerifySource(root, sourceRoot); err != nil {
+		return c, err
+	}
+	_, err = loadCorpus(root, "calibration", c.CalibrationSHA256, c.UnitsPerCohort)
 	return c, err
 }
 
@@ -102,4 +109,61 @@ func loadCorpus(root, cohort, digest string, count int) (Corpus, error) {
 		}
 	}
 	return c, nil
+}
+
+// VerifySource binds fixture generation, execution and metric code to the study.
+// anchor.go contains only the compiled trust root and is intentionally separate.
+func VerifySource(root, sourceRoot string) error {
+	var c Contract
+	if err := readCommitted(filepath.Join(root, "contract.json"), FrozenContractSHA256, &c); err != nil {
+		return err
+	}
+	var sources map[string]string
+	if err := readCommitted(filepath.Join(root, "source.json"), c.EvaluatorSHA256, &sources); err != nil {
+		return err
+	}
+	discovered := 0
+	for _, dir := range []string{"internal/recallquery", "cmd/recall-query-eval"} {
+		files, err := filepath.Glob(filepath.Join(sourceRoot, dir, "*.go"))
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			if strings.HasSuffix(file, "_test.go") || filepath.Base(file) == "anchor.go" {
+				continue
+			}
+			discovered++
+		}
+	}
+	if discovered != len(sources) {
+		return fmt.Errorf("frozen evaluator source membership mismatch; new version required")
+	}
+	for name, digest := range sources {
+		raw, err := os.ReadFile(filepath.Join(sourceRoot, filepath.FromSlash(name)))
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(raw)
+		if hex.EncodeToString(sum[:]) != digest {
+			return fmt.Errorf("frozen evaluator source mismatch: %s; new version required", name)
+		}
+	}
+	return nil
+}
+
+func repositoryRoot() (string, error) {
+	current, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(current, "go.mod")); err == nil {
+			return current, nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("run from evaluator source checkout")
+		}
+		current = parent
+	}
 }

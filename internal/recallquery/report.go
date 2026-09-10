@@ -1,6 +1,7 @@
 package recallquery
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
@@ -44,6 +45,8 @@ type Labels struct {
 }
 
 type Summary struct {
+	EvidenceAvailable           bool                       `json:"evidence_available"`
+	SearchCalls                 int                        `json:"search_calls"`
 	Completed                   int                        `json:"completed_needs"`
 	Empty                       int                        `json:"empty"`
 	NonemptyMissingUseful       int                        `json:"nonempty_missing_useful"`
@@ -68,6 +71,7 @@ type outcome struct {
 	bytes     int
 	latency   float64
 	discovery *float64
+	calls     int
 }
 
 func assess(keys []string, bytes int, latency float64, discovery *float64) outcome {
@@ -78,6 +82,7 @@ func relevant(key string) bool { return key == "invariant" || key == "resolution
 
 func (s *Summary) add(o outcome) {
 	s.Completed++
+	s.SearchCalls += o.calls
 	s.RelevantCurrentDenominator += 2
 	s.Exposures += len(o.keys)
 	s.CandidateBytes += o.bytes
@@ -136,6 +141,7 @@ func (s *Summary) add(o outcome) {
 }
 
 func (s *Summary) finish() {
+	s.EvidenceAvailable = s.Completed > 0
 	if s.Completed > 0 {
 		s.Coverage = float64(s.RelevantCurrent) / float64(s.RelevantCurrentDenominator)
 		s.ReciprocalRank /= float64(s.Completed)
@@ -163,7 +169,12 @@ func wilson(successes, total int) (float64, float64) {
 	return math.Max(0, 100*(center-radius)), math.Min(100, 100*(center+radius))
 }
 
-func disposition(groups []Group) string {
+// Assess chooses the preregistered disposition from completed held-out groups.
+func (r Report) Assess() string {
+	groups := r.Groups
+	if !groupsPassed(groups) {
+		return "evaluation_incomplete"
+	}
 	byKey := map[string]Group{}
 	for _, g := range groups {
 		byKey[g.Variant+"/"+g.QueryClass] = g
@@ -194,4 +205,61 @@ func disposition(groups []Group) string {
 		return "ranking_investigation_requires_separate_approval"
 	}
 	return "no_ranking_change_indicated"
+}
+
+// SearchEvidence is synthetic retrieval evidence, never an explicit utility label.
+type SearchEvidence struct {
+	Keys           []string
+	CandidateBytes int
+	LatencyMillis  float64
+}
+
+// AnalyzeSearches reports one initial search and exactly one reformulation.
+func analyzeSearches(calls []SearchEvidence) (outcome, outcome, error) {
+	var first, cumulative outcome
+	if len(calls) != 2 {
+		return first, cumulative, fmt.Errorf("exactly one initial search and one reformulation required")
+	}
+	keys := []string{}
+	bytes := 0
+	latency := 0.0
+	var discovery *float64
+	for i, call := range calls {
+		if len(call.Keys) > 5 || call.CandidateBytes < 2 || call.CandidateBytes > 4096 || call.LatencyMillis < 0 || math.IsNaN(call.LatencyMillis) || math.IsInf(call.LatencyMillis, 0) {
+			return first, cumulative, fmt.Errorf("invalid bounded search evidence")
+		}
+		keys = append(keys, call.Keys...)
+		bytes += call.CandidateBytes
+		latency += call.LatencyMillis
+		for _, key := range call.Keys {
+			if key != "invariant" && key != "resolution" && key != "diagnosis" && key != "history1" && key != "history2" && key != "history3" && key != "distractor1" && key != "distractor2" {
+				return first, cumulative, fmt.Errorf("unknown or ineligible fixture key")
+			}
+			if discovery == nil && relevant(key) {
+				value := latency
+				discovery = &value
+			}
+		}
+		o := assess(keys, bytes, latency, discovery)
+		o.calls = i + 1
+		if i == 0 {
+			first = o
+		} else {
+			cumulative = o
+		}
+	}
+	return first, cumulative, nil
+}
+
+func AnalyzeSearches(calls []SearchEvidence) (Summary, Summary, error) {
+	var first, cumulative Summary
+	a, b, err := analyzeSearches(calls)
+	if err != nil {
+		return first, cumulative, err
+	}
+	first.add(a)
+	first.finish()
+	cumulative.add(b)
+	cumulative.finish()
+	return first, cumulative, nil
 }

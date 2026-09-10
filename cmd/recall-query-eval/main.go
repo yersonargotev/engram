@@ -37,7 +37,7 @@ func main() {
 }
 
 func run() error {
-	root := flag.String("root", "evals/recall-query/v1", "frozen study directory")
+	root := flag.String("root", "evals/recall-query/v2", "frozen study directory")
 	verify := flag.Bool("verify", false, "verify prerequisites without opening held-out")
 	held := flag.Bool("held-out", false, "execute held-out only after successful calibration")
 	flag.Parse()

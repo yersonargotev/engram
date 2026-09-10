@@ -298,7 +298,7 @@ false. Applying any disposition remains a separate protected delivery stage.
 
 ## Concept versus identifier diagnostic evaluation
 
-The independent [Recall query study v1](../evals/recall-query/v1/README.md)
+The independent [Recall query study v2](../evals/recall-query/v2/README.md)
 compares identifier, concept and task-language discovery on frozen synthetic
 fixtures. Its direct Core evaluator has separate cohorts, judgments and metrics;
 it does not reuse or rewrite the frozen exposure-strategy study's treatments,

@@ -422,3 +422,37 @@ func CheckpointErrorCode(err error) string {
 		return CheckpointErrorCodeFailed
 	}
 }
+
+// CheckpointErrorDetails projects project ownership metadata for the trusted
+// local Store caller. Project selection is an ownership constraint, not an ACL.
+// Transports must enforce their access boundary before invoking checkpoint work.
+func CheckpointErrorDetails(err error) map[string]any {
+	var mismatch *store.CheckpointProjectMismatchError
+	if !errors.As(err, &mismatch) {
+		return nil
+	}
+	details := map[string]any{"requested_project": mismatch.RequestedProject}
+	if mismatch.SessionProject != nil {
+		details["cause"] = "session_project_binding"
+		details["session_project"] = *mismatch.SessionProject
+	} else if mismatch.MemoryProject != nil {
+		details["cause"] = "memory_reference_ownership"
+		details["memory_project"] = *mismatch.MemoryProject
+	}
+	return details
+}
+
+// CheckpointErrorMessage owns actionable checkpoint guidance shared by adapters.
+func CheckpointErrorMessage(err error) string {
+	var mismatch *store.CheckpointProjectMismatchError
+	if !errors.As(err, &mismatch) {
+		return err.Error()
+	}
+	if mismatch.SessionProject != nil {
+		return fmt.Sprintf("This session is associated with project %q; inline Memories were requested for %q. --project does not reassign the internal session. Cross-project inline Terminal Memory commits in this host session are not supported. Keep the original host identity and intended destination, and report the incomplete checkpoint; do not create independent Memories to bypass this limitation.", *mismatch.SessionProject, mismatch.RequestedProject)
+	}
+	if mismatch.MemoryProject != nil {
+		return fmt.Sprintf("A referenced Memory belongs to project %q; the checkpoint requested project %q. Reference only Memories owned by the intended project, preserving the original host identity and destination.", *mismatch.MemoryProject, mismatch.RequestedProject)
+	}
+	return err.Error()
+}

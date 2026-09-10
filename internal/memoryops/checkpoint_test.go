@@ -2,7 +2,9 @@ package memoryops
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1073,4 +1075,147 @@ func TestNeedsReviewCheckpointAndProposalPersistAcrossReopen(t *testing.T) {
 		status.Checkpoint.Proposal.Content != input.Proposal.Content {
 		t.Fatalf("reopened proposal = %#v", status.Checkpoint.Proposal)
 	}
+}
+
+func TestCheckpointSessionConflictDiagnostic(t *testing.T) {
+	service := newTestService(t)
+	input := CheckpointRecordInput{
+		Host: "codex", SessionID: "bound-session", RootTurnID: "original",
+		Disposition: "saved", Project: "alpha",
+		Memories: []CheckpointMemoryInput{{Title: "Original", Content: "Original knowledge"}},
+	}
+	if _, err := service.RecordCheckpoint(input); err != nil {
+		t.Fatal(err)
+	}
+	input.RootTurnID = "rejected"
+	input.Project = "beta"
+	_, err := service.RecordCheckpoint(input)
+	if CheckpointErrorCode(err) != "checkpoint_project_mismatch" {
+		t.Fatalf("error = %v", err)
+	}
+	want := map[string]any{"cause": "session_project_binding", "requested_project": "beta", "session_project": "alpha"}
+	if got := CheckpointErrorDetails(err); !reflect.DeepEqual(got, want) {
+		t.Fatalf("details = %#v, want %#v", got, want)
+	}
+	if !strings.Contains(CheckpointErrorMessage(err), "--project does not reassign") {
+		t.Fatalf("missing session guidance: %v", err)
+	}
+}
+
+func TestCheckpointProjectConflictsPreserveStoreAndReplay(t *testing.T) {
+	for _, disposition := range []string{"saved", "needs_review"} {
+		for _, cause := range []string{"session_project_binding", "memory_reference_ownership"} {
+			t.Run(disposition+"/"+cause, func(t *testing.T) {
+				service := newTestService(t)
+				original, err := service.RecordCheckpoint(CheckpointRecordInput{
+					Host: "codex", SessionID: "bound-session", RootTurnID: "original", Disposition: disposition, Project: "alpha",
+					Memories: []CheckpointMemoryInput{{Title: "Original", Content: "Original knowledge"}},
+					Proposal: checkpointTestProposal(disposition),
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				valid := saveObservation(t, service, "beta", "Valid reference", "Already belongs to destination")
+				input := CheckpointRecordInput{
+					Host: "codex", SessionID: "bound-session", RootTurnID: "rejected", Disposition: disposition, Project: "beta",
+					MemoryIDs: []int64{valid.ID}, Memories: []CheckpointMemoryInput{{Title: "Rejected", Content: "Must not persist"}},
+					Proposal: checkpointTestProposal(disposition),
+				}
+				want := map[string]any{"cause": cause, "requested_project": "beta"}
+				if cause == "memory_reference_ownership" {
+					input.MemoryIDs = append(input.MemoryIDs, original.Checkpoint.References[0].MemoryID)
+					want["memory_project"] = "alpha"
+				} else {
+					want["session_project"] = "alpha"
+				}
+				before := checkpointStoreSnapshot(t, service.store)
+				_, err = service.RecordCheckpoint(input)
+				if !errors.Is(err, store.ErrCheckpointProjectMismatch) || CheckpointErrorCode(err) != "checkpoint_project_mismatch" {
+					t.Fatalf("error = %v", err)
+				}
+				// The persistence error is safe for transports that have not opted
+				// into trusted local project metadata projection.
+				if strings.Contains(err.Error(), "alpha") || strings.Contains(err.Error(), "beta") {
+					t.Fatalf("unprojected error exposed projects: %v", err)
+				}
+				if got := CheckpointErrorDetails(err); !reflect.DeepEqual(got, want) {
+					t.Fatalf("details = %#v, want %#v", got, want)
+				}
+				if after := checkpointStoreSnapshot(t, service.store); !reflect.DeepEqual(after, before) {
+					t.Fatal("rejection mutated Store")
+				}
+				_, err = service.CheckpointStatus(CheckpointStatusInput{Host: input.Host, SessionID: input.SessionID, RootTurnID: input.RootTurnID})
+				if !errors.Is(err, store.ErrCheckpointNotFound) {
+					t.Fatalf("rejected checkpoint exists: %v", err)
+				}
+				input.RootTurnID = "original"
+				input.Memories = []CheckpointMemoryInput{{}}
+				input.Proposal = nil
+				replay, err := service.RecordCheckpoint(input)
+				if err != nil || replay.Idempotency != "already_recorded" || !reflect.DeepEqual(replay.Checkpoint, original.Checkpoint) {
+					t.Fatalf("replay = %#v, error = %v", replay, err)
+				}
+				if after := checkpointStoreSnapshot(t, service.store); !reflect.DeepEqual(after, before) {
+					t.Fatal("replay mutated Store")
+				}
+			})
+		}
+	}
+}
+
+func checkpointTestProposal(disposition string) *CheckpointProposalInput {
+	if disposition == "needs_review" {
+		return &CheckpointProposalInput{Title: "Uncertain", Content: "Needs human review"}
+	}
+	return nil
+}
+
+// Snapshot every table through the Store's database interface: rollback must
+// preserve existing values as well as avoid adding checkpoint and sync rows.
+func checkpointStoreSnapshot(t *testing.T, s *store.Store) map[string][]string {
+	t.Helper()
+	names, err := s.DB().Query(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tables []string
+	for names.Next() {
+		var name string
+		if err := names.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		tables = append(tables, name)
+	}
+	if err := names.Err(); err != nil {
+		t.Fatal(err)
+	}
+	names.Close()
+	snapshot := make(map[string][]string)
+	for _, table := range tables {
+		rows, err := s.DB().Query(`SELECT * FROM "` + strings.ReplaceAll(table, `"`, `""`) + `"`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		columns, err := rows.Columns()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			values := make([]any, len(columns))
+			pointers := make([]any, len(columns))
+			for i := range values {
+				pointers[i] = &values[i]
+			}
+			if err := rows.Scan(pointers...); err != nil {
+				t.Fatal(err)
+			}
+			snapshot[table] = append(snapshot[table], fmt.Sprintf("%#v", values))
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		rows.Close()
+		slices.Sort(snapshot[table])
+	}
+	return snapshot
 }

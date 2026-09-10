@@ -185,12 +185,13 @@ var ProfileLifecycle = map[string]bool{
 	"mem_capture_passive": true,
 }
 
-// ProfileAdmin contains tools for TUI, dashboards, and manual administration.
+// ProfileAdmin contains destructive and operational maintenance tools.
+// Authorized agents may opt in; profile exposure does not grant task authority.
 var ProfileAdmin = map[string]bool{
-	"mem_delete":         true, // only in OpenCode's ENGRAM_TOOLS filter, not in any agent instructions
-	"mem_stats":          true, // only in OpenCode's ENGRAM_TOOLS filter, not in any agent instructions
-	"mem_timeline":       true, // only in OpenCode's ENGRAM_TOOLS filter, not in any agent instructions
-	"mem_merge_projects": true, // destructive curation tool — not for agent use
+	"mem_delete":         true,
+	"mem_stats":          true,
+	"mem_timeline":       true,
+	"mem_merge_projects": true, // requires authority for the destructive curation scope
 }
 
 // Profiles maps profile names to their tool sets.

@@ -12,6 +12,13 @@ Engram works with **any MCP-compatible agent**. Pick your agent below.
 > - `engram setup ...` installs MCP/plugin integrations only; it does **not** auto-run `engram cloud config/enroll/upgrade`.
 > - Cloud onboarding contract remains CLI-first until script-level cloud flows are explicitly implemented.
 
+Authorized agents may select specialized curation or admin tools for delegated
+Memory management. This does not require approval for every Memory and does
+not grant blanket destructive authority. See the
+[management matrix](multi-project-memory-plan.md#agent-management-matrix).
+The grouped checkpoint contract linked there is accepted future design, not
+an available setup capability today.
+
 ## Quick Reference
 
 | Agent         | One-liner                                                                                    | Manual Config                                      |

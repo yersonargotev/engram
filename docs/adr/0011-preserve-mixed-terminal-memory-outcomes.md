@@ -21,3 +21,8 @@ one-checkpoint-per-root-turn semantics, or the prohibition on automatically
 turning ambiguous knowledge into a Memory. Detailed behavior remains owned by
 [specification #98](https://github.com/yersonargotev/engram/issues/98) and
 [delivery ticket #104](https://github.com/yersonargotev/engram/issues/104).
+
+[ADR-0012](0012-group-terminal-memory-by-project.md) extends the accepted design
+to one proposal per explicit project group and Mixed outcomes across projects.
+The singular cardinality above still describes shipped legacy behavior; grouped
+runtime and lifecycle support await separate implementation/migration approval.

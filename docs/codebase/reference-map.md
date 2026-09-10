@@ -13,6 +13,9 @@
 | `CONTRIBUTING.md` | Contribution flow and general standards. |
 | `SECURITY.md` | Security reporting. |
 | `CHANGELOG.md` | Change history. |
+| `docs/adr/0012-group-terminal-memory-by-project.md` | Accepted future grouped Terminal Memory contract; not shipped runtime. |
+| `docs/multi-project-memory-plan.md` | Separately approvable implementation/migration scopes and agent management matrix. |
+| `docs/research/multi-project-terminal-memory-contract.md` | Retained investigation backing ADR-0012. |
 | `docs/ARCHITECTURE.md` | Existing architecture, lifecycle, CLI reference, cloud/dashboard routes. |
 | `docs/AGENT-SETUP.md` | Per-agent setup, project detection, compaction survival. |
 | `docs/PLUGINS.md` | OpenCode/Claude plugin details and current limits. |

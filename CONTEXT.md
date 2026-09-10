@@ -106,8 +106,25 @@ _Avoid_: Automatic save, mandatory memory
 
 **Mixed Memory checkpoint**:
 A `needs_review` Memory checkpoint that atomically references one or more settled
-Memories and exactly one unresolved Memory proposal.
+Memories and unresolved Memory proposals, each with one owning project.
+The legacy contract admits one proposal; the accepted grouped design admits at
+most one per project.
 _Avoid_: Partial save, proposal promotion
+
+**Checkpoint project group**:
+The settled knowledge and unresolved proposal assigned to one explicit owning
+project within the accepted multi-project Terminal Memory design.
+_Avoid_: Shared Memory, implicit destination
+
+**Host conversation identity**:
+The host-supplied identity of the conversation across its root user turns,
+independent of the projects whose knowledge those turns produce.
+_Avoid_: Project session, generated host identity
+
+**Project persistence session**:
+The project-owned provenance of Memories produced within a host conversation,
+distinct from that conversation's identity.
+_Avoid_: Host session, shared session
 
 **Terminal Memory commit**:
 The default act of creating or referencing settled Memories atomically with the

@@ -141,7 +141,7 @@ func TestCmdSearchReturnsBoundedRecallEnvelope(t *testing.T) {
 		t.Fatalf("elapsed_monotonic_ms=%v", payload["elapsed_monotonic_ms"])
 	}
 	provenance := payload["provenance"].(map[string]any)
-	if provenance["protocol_version"] != float64(1) || provenance["binary_version"] != "9.9.9-test" || provenance["binary_revision"] != "revision-test" {
+	if provenance["protocol_version"] != float64(2) || provenance["binary_version"] != "9.9.9-test" || provenance["binary_revision"] != "revision-test" {
 		t.Fatalf("provenance=%v", provenance)
 	}
 	candidate := payload["results"].([]any)[0].(map[string]any)

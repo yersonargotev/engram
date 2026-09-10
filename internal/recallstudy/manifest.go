@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/yersonargotev/engram/internal/protocolcontract"
@@ -254,8 +255,12 @@ func validCompatibilityEvidence(evidence CompatibilityEvidence, contract Contrac
 		}
 		declarations[index] = protocolcontract.Declaration{Version: axis.Version, Provenance: axis.Provenance, Supported: axis.Supported, Legacy: axis.Legacy}
 	}
-	want := protocolcontract.Evaluate(declarations[0], declarations[1], declarations[2])
-	return reflect.DeepEqual(report, want)
+	version, err := strconv.Atoi(contract.Revisions.ProtocolContract.Version)
+	if err != nil {
+		return false
+	}
+	want, err := protocolcontract.EvaluateAtVersion(version, declarations[0], declarations[1], declarations[2])
+	return err == nil && reflect.DeepEqual(report, want)
 }
 
 func (study *Study) verifyManifest(manifest *Manifest, cohort CohortContract) error {

@@ -1,11 +1,12 @@
 package protocolcontract
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
 
-func TestContractV1PublishesStableMachineSemantics(t *testing.T) {
+func TestContractV2PreservesV1MachineSemantics(t *testing.T) {
 	wantTools := []string{
 		"mem_current_project",
 		"mem_search",
@@ -13,10 +14,10 @@ func TestContractV1PublishesStableMachineSemantics(t *testing.T) {
 		"mem_checkpoint",
 		"mem_checkpoint_status",
 	}
-	if Version != 1 {
-		t.Fatalf("Version = %d, want 1", Version)
+	if Version != 2 {
+		t.Fatalf("Version = %d, want 2", Version)
 	}
-	if BinarySupportedRange() != (VersionRange{Minimum: 1, Maximum: 1}) {
+	if BinarySupportedRange() != (VersionRange{Minimum: 1, Maximum: 2}) {
 		t.Fatalf("BinarySupportedRange = %#v", BinarySupportedRange())
 	}
 	if !reflect.DeepEqual(IdentityFields(), []string{"host", "session_id", "root_turn_id"}) {
@@ -46,7 +47,7 @@ func TestEvaluateIntersectsRangesWithoutRequiringVersionEquality(t *testing.T) {
 	if report.Status != CompatibilityReady || report.ReasonCode != ReasonProtocolCompatible {
 		t.Fatalf("report = %#v", report)
 	}
-	if report.Intersection == nil || *report.Intersection != (VersionRange{Minimum: 1, Maximum: 1}) {
+	if report.Intersection == nil || *report.Intersection != (VersionRange{Minimum: 1, Maximum: 2}) {
 		t.Fatalf("intersection = %#v", report.Intersection)
 	}
 	if len(report.Axes) != 4 || report.Axes[0].Name != AxisManagedPack || report.Axes[3].Name != AxisProtocolContract {
@@ -119,4 +120,32 @@ func rangePtr(minimum, maximum int) *VersionRange {
 
 func validDeclaration(version string) Declaration {
 	return Declaration{Version: version, Provenance: "verified:" + version, Supported: rangePtr(1, 1)}
+}
+
+func TestEvaluateSupportsV2OnlyAndLegacyV1Distributions(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		declaration := Declaration{Version: "test", Provenance: "verified:test", Supported: rangePtr(version, version)}
+		report := Evaluate(declaration, Declaration{Version: "current", Provenance: "verified:current", Supported: rangePtr(1, 2)}, declaration)
+		if report.Status != CompatibilityReady || report.Intersection == nil || *report.Intersection != (VersionRange{Minimum: version, Maximum: version}) {
+			t.Fatalf("Protocol %d compatibility = %#v", version, report)
+		}
+	}
+}
+
+func TestEvaluateAtVersionPreservesHistoricalEvidence(t *testing.T) {
+	declaration := Declaration{Version: "test", Provenance: "verified:test", Supported: rangePtr(1, 2)}
+	for _, version := range []int{1, 2} {
+		report, err := EvaluateAtVersion(version, declaration, declaration, declaration)
+		if err != nil || report.Status != CompatibilityReady || report.Intersection == nil || *report.Intersection != (VersionRange{Minimum: version, Maximum: version}) {
+			t.Fatalf("version %d = %#v, %v", version, report, err)
+		}
+		if report.Axes[3].Version != fmt.Sprint(version) || *report.Axes[3].Supported != *report.Intersection {
+			t.Fatalf("historical axis = %#v", report.Axes[3])
+		}
+	}
+	for _, version := range []int{0, 3} {
+		if _, err := EvaluateAtVersion(version, declaration, declaration, declaration); err == nil {
+			t.Fatalf("unsupported version %d accepted", version)
+		}
+	}
 }

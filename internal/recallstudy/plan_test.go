@@ -358,14 +358,14 @@ func mustPlan(t *testing.T, study *Study, manifest *Manifest) []PlannedRun {
 func compatibleEvidence(study *Study) CompatibilityEvidence {
 	rangeV1 := &protocolcontract.VersionRange{Minimum: 1, Maximum: 1}
 	provenance := "repository:https://github.com/yersonargotev/engram.git#revision:" + study.Contract.SourceRevision
-	return CompatibilityEvidence{
-		Revisions: study.Contract.Revisions,
-		Compatibility: protocolcontract.Evaluate(
-			protocolcontract.Declaration{Version: study.Contract.Revisions.ManagedPack.Version, Provenance: provenance, Supported: rangeV1},
-			protocolcontract.Declaration{Version: study.Contract.Revisions.EngramBinary.Version, Provenance: provenance, Supported: rangeV1},
-			protocolcontract.Declaration{Version: study.Contract.Revisions.CodexPlugin.Version, Provenance: provenance, Supported: rangeV1},
-		),
+	report, err := protocolcontract.EvaluateAtVersion(1,
+		protocolcontract.Declaration{Version: study.Contract.Revisions.ManagedPack.Version, Provenance: provenance, Supported: rangeV1},
+		protocolcontract.Declaration{Version: study.Contract.Revisions.EngramBinary.Version, Provenance: provenance, Supported: rangeV1},
+		protocolcontract.Declaration{Version: study.Contract.Revisions.CodexPlugin.Version, Provenance: provenance, Supported: rangeV1})
+	if err != nil {
+		panic(err)
 	}
+	return CompatibilityEvidence{Revisions: study.Contract.Revisions, Compatibility: report}
 }
 
 func consentEvidence(study *Study, calibration, heldOut *Manifest) ConsentEvidence {

@@ -119,7 +119,8 @@ Full environment variable reference → [DOCS.md#environment-variables](DOCS.md#
 2. Agent preflights prospective Memories without writes and accounts for exact
    duplicates plus at most three same-project semantic candidates
 3. Agent commits one terminal saved, needs_review, or skipped checkpoint
-4. Engram atomically persists any attached Memory and indexes it with FTS5
+4. Engram atomically persists attached Memories and explicitly declared
+   supersessions; historical evidence remains inspectable
 5. The checkpoint may attach explicit local Recall feedback for a Recall bound
    to that exact root turn without changing terminal completion
 6. A later turn recalls Memory only when it can change the work

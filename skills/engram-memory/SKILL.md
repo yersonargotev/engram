@@ -201,6 +201,57 @@ rubric; it does not create the terminal checkpoint.
 }
 ```
 
+## Commit an explicitly evaluated replacement
+
+When a preflight candidate's current guidance is explicitly replaced, preserve
+its `reference.memory_id` and opaque `target_version` alongside the evaluated
+content. Similarity, recency, and a sentence saying “supersedes” are evidence for
+judgment only. Different versions or scopes may both remain useful: leave
+independent historical truths eligible. Reuse exact duplicates; keep material
+ambiguity under `needs_review`.
+
+For a settled replacement, include `supersessions` in the same terminal
+`mem_checkpoint` record as its replacement Memory. Each declaration contains
+`target_memory_id`, the returned `target_version`, a concise `reason`, and
+exactly one replacement selector: zero-based `replacement_input_index` into
+`memories`, or `replacement_memory_id` also present in `memory_ids`. This binds
+the relation to a settled Memory, including duplicate/reference reuse; a proposal
+cannot replace a Memory. A Mixed Memory checkpoint may carry settled
+supersessions alongside its isolated proposal.
+
+```json
+"supersessions": [{
+  "replacement_input_index": 0,
+  "target_memory_id": 42,
+  "target_version": "<opaque version returned by preflight>",
+  "reason": "The verified fix replaces the prior diagnosis as current guidance."
+}]
+```
+
+This optional operation requires Protocol v2 and a preflight response exposing
+`target_version`. If that evidence is absent, report unavailable atomic support;
+do not claim that a prose-only save or a second post-checkpoint curation write
+completed the replacement. Unrelated turns need no extra call.
+
+Core validates project/write authority, endpoints, and evaluated target freshness
+inside the new transaction. A stale target rejects the whole commit visibly:
+reinspect and reevaluate it before retrying with the original root identity.
+`created` commits the settled Memories, directed relations, checkpoint, optional
+proposal, and enrollment-authorized local sync mutations together. This guarantees
+local atomicity, not simultaneous cloud delivery. Default Recall excludes the
+target; deliberate historical inspection retains its content and relationship.
+Avoid a topic-key overwrite of the target, which would lose the evaluated history.
+A previously stored reverse-direction relation is rejected rather than silently
+reversing independent curation; inspect and resolve it through that separate
+maintenance workflow before reevaluating the replacement.
+
+After an ambiguous response loss, inspect the original checkpoint identity and
+retry it when absent. `already_recorded` returns the original terminal result
+without validating the changed target again, adding a relation, or accepting new
+payload. A disposition change remains a conflict. Independent curation remains
+available for separately authorized maintenance; it is not the completion path
+for a replacement created by this terminal commit.
+
 ## Author for future Recall
 
 Ask: **Will this prevent a specific repeated investigation or mistake?** Lead

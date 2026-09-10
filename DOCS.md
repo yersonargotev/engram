@@ -188,8 +188,8 @@ still fail an inline B record with `checkpoint_project_mismatch`. Final record
 validation and exact replay remain authoritative; success never guarantees a
 later commit or overrides write authority.
 
-This is an additive Protocol v1 response extension: existing fields, inputs,
-and supported Protocol ranges remain unchanged. Older responses without
+The preflight assessment fields were introduced as an additive Protocol v1 response extension: existing fields, inputs,
+and supported Protocol ranges were unchanged by that extension. Older responses without
 `assessment` provide no evidence of session compatibility or final eligibility.
 The response fixture is `internal/memoryops/testdata/checkpoint-preflight-v1.json`;
 CLI/MCP acceptance tests check its semantics while legacy result decoding stays
@@ -201,6 +201,32 @@ each JSON object accepts `title`, `content`, and the optional `type`, `tool_name
 `scope`, and `topic_key` fields. Both forms may be combined. All Memories must
 belong to `--project`. Creation of the session provenance, Memories, sync
 mutations, references, and terminal checkpoint is one transaction.
+
+For an explicitly evaluated replacement, add repeatable `--supersession-json`
+objects (MCP: `supersessions`) to that same record. Each has `target_memory_id`,
+`target_version` from the bounded preflight candidate, `reason`, and exactly one
+of `replacement_input_index` (zero-based index in inline `memories`) or
+`replacement_memory_id` (also attached in `memory_ids`). See the
+[canonical replacement workflow](skills/engram-memory/SKILL.md#commit-an-explicitly-evaluated-replacement).
+
+Core rejects stale targets with `checkpoint_supersession_stale`, and malformed
+or invalid declarations with `invalid_checkpoint_supersession`; project and
+write authority remain enforced. Rejection rolls back the new Memories,
+relations, checkpoint, proposal, and applicable local sync queue writes. Exact
+replay resolves the original checkpoint before revalidating a target or parsing
+a replacement payload. Default Recall excludes the explicitly superseded target;
+historical inspection retains the original content and directed relationship.
+Related and differently scoped truths remain eligible without an explicit judgment.
+
+Atomic supersession changes checkpoint persistence semantics and introduces
+Protocol **2**, following specification #98's versioning rule. Identity,
+dispositions, minimum tools, Recall defaults, and local-only audit semantics are
+unchanged. Core supports Protocol 1–2 during expansion; the fixture's
+`engram-protocol-contract-v1` name denotes its unchanged serialization schema.
+Existing calls without supersession keep their behavior. Authors require a
+preflight candidate with `target_version` before invoking this optional v2
+capability; v1 support alone cannot promise it. No release or deployment is
+implied by the source contract update.
 
 For `needs_review`, provide exactly one `--proposal-json` object containing only
 `title` and `content`, plus the enclosing `--project`. Optional `--memory-id` and
@@ -1088,6 +1114,12 @@ checkpoint for one settled root user turn.
 - `disposition: "saved"` requires an explicit `project` plus at least one existing `memory_ids` entry or inline `memories` object. The two arrays may be combined. Each inline Memory accepts required `title` and `content`, plus optional `type`, `tool_name`, `scope`, and `topic_key`.
 - `disposition: "needs_review"` requires an explicit `project` plus exactly one inline `proposal` object containing only `title` and `content`; zero or more settled `memory_ids` and inline `memories` may be attached.
 
+Record may also include explicit `supersessions` (Protocol v2), including with
+Mixed outcomes. Each declaration names the replacement selector, target ID,
+evaluated `target_version` from preflight, and reason. See the
+[atomic replacement workflow](skills/engram-memory/SKILL.md#commit-an-explicitly-evaluated-replacement)
+for freshness, rejection, and replay behavior.
+
 A saved result exposes an ordered `references` array containing `kind: "memory"`, `memory_id`, `memory_sync_id`, and `project`. Every referenced Memory must exist, remain active, and belong to the same normalized project. Inline Memories, their sync mutations, all references, and the checkpoint commit atomically.
 
 A needs-review result exposes ordered Memory references plus one immutable
@@ -1139,12 +1171,12 @@ Memory content, proposal content, filesystem paths, or host identifiers, and
 checkpoint observers do not receive them. Other transports retain their existing
 access and error contracts; this change does not grant cross-project access.
 
-This is an additive Protocol v1 diagnostic: `code` and `message` remain strings,
+The ownership details were introduced as an additive Protocol v1 diagnostic: `code` and `message` remain strings,
 CLI failures still exit with status 1 and JSON on stderr, and MCP still returns
 JSON text with `isError: true`. Consumers may ignore optional `details` fields.
 Checkpoint identity, dispositions, persistence, replay and the supported Protocol
-range are unchanged; no Protocol version bump or historical fixture rewrite is
-required. CLI/MCP contract tests exercise both causes and legacy code/message
+range were unchanged by those diagnostics; they required no Protocol version
+bump or historical fixture rewrite. CLI/MCP contract tests exercise both causes and legacy code/message
 consumers.
 
 Record mode also accepts optional `recall_feedback` for one exact Recall run.

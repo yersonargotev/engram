@@ -14,10 +14,10 @@ import (
 const (
 	currentManagedPackVersion         = "3.3.1"
 	currentManagedPackManifestSHA256  = "fa6732a12ce2de5e00b1e905e129aa079cb0e4ac51029ffe5499af9aaf2eb8a7"
-	currentManagedPackSkillSHA256     = "b2168c0e0c627320443e655ede2fabeeea404af6048f2840af7ddcdd9f0670d4"
-	currentManagedPackFixtureSHA256   = "f8c63946451c16a97d231e5519958a62ff76f552d7c283f6a539109afb99aa9f"
+	currentManagedPackSkillSHA256     = "fb286fd92ed40de0b632ec8dfb1542e1176e48c571364179da4e5179a77ea207"
+	currentManagedPackFixtureSHA256   = "28a670442cb1071fb3557e76a68f01825d572afa59d0f08d3ff5ced22a77034f"
 	currentCodexPluginVersion         = "0.1.7"
-	currentCodexPluginManifestSHA256  = "8fd6699d834beab9a8188ee51e273156f5db02aec4694bc3458db382a17a23b1"
+	currentCodexPluginManifestSHA256  = "b3b1d4bd2b9d61cc81e4b091c0bccaf483e327670e2da38e2407b2374cfe6d24"
 	previousManagedPackVersion        = "3.3.0"
 	previousManagedPackManifestSHA256 = "9bed746986c705191d806c4a298e480becf251bd12189a5b191a8c9862169a74"
 	previousManagedPackSkillSHA256    = "5e8e94eeea4dc6fb2d389999f0de92b1182784f6700bb89332f1040295c0b3a9"
@@ -44,9 +44,16 @@ type trustedManagedPackCoordinate struct {
 	legacy         bool
 }
 
-func trustedManagedPack(version string) (trustedManagedPackCoordinate, bool) {
+func trustedManagedPack(version, skillSHA256 string) (trustedManagedPackCoordinate, bool) {
 	switch version {
 	case currentManagedPackVersion:
+		if skillSHA256 == "b2168c0e0c627320443e655ede2fabeeea404af6048f2840af7ddcdd9f0670d4" {
+			return trustedManagedPackCoordinate{
+				manifestSHA256: currentManagedPackManifestSHA256,
+				skillSHA256:    "b2168c0e0c627320443e655ede2fabeeea404af6048f2840af7ddcdd9f0670d4",
+				fixtureSHA256:  "f8c63946451c16a97d231e5519958a62ff76f552d7c283f6a539109afb99aa9f",
+			}, true
+		}
 		return trustedManagedPackCoordinate{
 			manifestSHA256: currentManagedPackManifestSHA256,
 			skillSHA256:    currentManagedPackSkillSHA256,
@@ -135,11 +142,11 @@ func inspectManagedPackProtocolDeclaration(skillChecks []CodexIntegrationCheck) 
 
 		manifestDigest := sha256.Sum256(manifestRaw)
 		manifestSHA256 := hex.EncodeToString(manifestDigest[:])
-		trusted, trustedVersion := trustedManagedPack(manifest.Version)
+		skillHash := codexStatusEvidenceValue(check, "sha256")
+		trusted, trustedVersion := trustedManagedPack(manifest.Version, skillHash)
 		declaration := protocolcontract.Declaration{
 			Version: manifest.Version,
 		}
-		skillHash := codexStatusEvidenceValue(check, "sha256")
 		if !trustedVersion || manifestSHA256 != trusted.manifestSHA256 || skillHash != trusted.skillSHA256 {
 			candidates = append(candidates, declaration)
 			continue
@@ -232,5 +239,5 @@ func inspectCodexPluginProtocolDeclaration(plugin codexPluginInspection) protoco
 }
 
 func protocolV1Range() *protocolcontract.VersionRange {
-	return &protocolcontract.VersionRange{Minimum: protocolcontract.Version, Maximum: protocolcontract.Version}
+	return &protocolcontract.VersionRange{Minimum: 1, Maximum: 1}
 }

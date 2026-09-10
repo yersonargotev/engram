@@ -87,20 +87,22 @@ type RecordSkippedCheckpointParams struct {
 }
 
 type RecordSavedCheckpointParams struct {
-	Identity  CheckpointIdentity
-	Project   string
-	Directory string
-	MemoryIDs []int64
-	Memories  []AddObservationParams
+	Identity      CheckpointIdentity
+	Project       string
+	Directory     string
+	MemoryIDs     []int64
+	Memories      []AddObservationParams
+	Supersessions []CheckpointSupersession
 }
 
 type RecordNeedsReviewCheckpointParams struct {
-	Identity  CheckpointIdentity
-	Project   string
-	Directory string
-	MemoryIDs []int64
-	Memories  []AddObservationParams
-	Proposal  *MemoryProposalInput
+	Identity      CheckpointIdentity
+	Project       string
+	Directory     string
+	MemoryIDs     []int64
+	Memories      []AddObservationParams
+	Supersessions []CheckpointSupersession
+	Proposal      *MemoryProposalInput
 }
 
 // FindExactCheckpointMemory resolves an active same-project Memory whose
@@ -312,7 +314,7 @@ func (s *Store) RecordNeedsReviewCheckpoint(p RecordNeedsReviewCheckpointParams)
 		}
 		memorySet := checkpointMemorySet{
 			Identity: p.Identity, Project: project, Directory: p.Directory,
-			MemoryIDs: p.MemoryIDs, Memories: p.Memories,
+			MemoryIDs: p.MemoryIDs, Memories: p.Memories, Supersessions: p.Supersessions,
 		}
 		if err := validateCheckpointMemorySet(memorySet, false); err != nil {
 			return err
@@ -453,7 +455,7 @@ func (s *Store) RecordSavedCheckpoint(p RecordSavedCheckpointParams) (*MemoryChe
 		project, _ := NormalizeProject(p.Project)
 		memorySet := checkpointMemorySet{
 			Identity: p.Identity, Project: project, Directory: p.Directory,
-			MemoryIDs: p.MemoryIDs, Memories: p.Memories,
+			MemoryIDs: p.MemoryIDs, Memories: p.Memories, Supersessions: p.Supersessions,
 		}
 		if err := validateCheckpointMemorySet(memorySet, true); err != nil {
 			return err
@@ -506,11 +508,12 @@ func (s *Store) RecordSavedCheckpoint(p RecordSavedCheckpointParams) (*MemoryChe
 }
 
 type checkpointMemorySet struct {
-	Identity  CheckpointIdentity
-	Project   string
-	Directory string
-	MemoryIDs []int64
-	Memories  []AddObservationParams
+	Identity      CheckpointIdentity
+	Project       string
+	Directory     string
+	MemoryIDs     []int64
+	Memories      []AddObservationParams
+	Supersessions []CheckpointSupersession
 }
 
 func validateCheckpointMemorySet(p checkpointMemorySet, requireMemory bool) error {
@@ -536,6 +539,10 @@ func validateCheckpointMemorySet(p checkpointMemorySet, requireMemory bool) erro
 }
 
 func (s *Store) attachCheckpointMemoriesTx(tx *sql.Tx, checkpointID int64, p checkpointMemorySet) error {
+	targets, err := s.validateCheckpointSupersessionsTx(tx, p)
+	if err != nil {
+		return err
+	}
 	references := make([]CheckpointReference, 0, len(p.MemoryIDs)+len(p.Memories))
 	seenMemoryIDs := make(map[int64]struct{}, len(p.MemoryIDs)+len(p.Memories))
 	for _, memoryID := range p.MemoryIDs {
@@ -599,6 +606,27 @@ func (s *Store) attachCheckpointMemoriesTx(tx *sql.Tx, checkpointID int64, p che
 		})
 	}
 
+	for _, declaration := range p.Supersessions {
+		replacementID := declaration.ReplacementMemoryID
+		if declaration.ReplacementInputIndex != nil {
+			replacementID = references[len(p.MemoryIDs)+*declaration.ReplacementInputIndex].MemoryID
+		}
+		replacement, err := s.getObservationTx(tx, replacementID)
+		if err != nil {
+			return err
+		}
+		target := targets[declaration.TargetMemoryID]
+		if _, isTarget := targets[replacement.ID]; isTarget {
+			return ErrCheckpointInvalidSupersession
+		}
+		if err := validateCheckpointSupersessionPairTx(tx, replacement, target); err != nil {
+			return err
+		}
+		var relationID string
+		if err := s.judgeBySemanticTx(tx, JudgeBySemanticParams{SourceID: replacement.SyncID, TargetID: target.SyncID, Relation: RelationSupersedes, Confidence: 1, Reasoning: declaration.Reason}, &relationID); err != nil {
+			return err
+		}
+	}
 	for index, reference := range references {
 		if _, err := s.execHook(tx, `
 			INSERT INTO memory_checkpoint_references (

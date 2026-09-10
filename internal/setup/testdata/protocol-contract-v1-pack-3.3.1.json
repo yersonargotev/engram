@@ -1,7 +1,7 @@
 {
   "schema_version": "engram-protocol-contract-v1",
   "protocol": {
-    "version": 2,
+    "version": 1,
     "identity_fields": [
       "host",
       "session_id",
@@ -70,18 +70,18 @@
   "distributions": {
     "managed_pack": {
       "version": "3.3.1",
-      "skill_sha256": "fb286fd92ed40de0b632ec8dfb1542e1176e48c571364179da4e5179a77ea207",
+      "skill_sha256": "b2168c0e0c627320443e655ede2fabeeea404af6048f2840af7ddcdd9f0670d4",
       "legacy_compatible": true,
       "supported_protocol": {
         "minimum": 1,
-        "maximum": 2
+        "maximum": 1
       }
     },
     "engram_binary": {
       "legacy_compatible": true,
       "supported_protocol": {
         "minimum": 1,
-        "maximum": 2
+        "maximum": 1
       }
     },
     "codex_plugin": {
@@ -89,7 +89,7 @@
       "legacy_compatible": true,
       "supported_protocol": {
         "minimum": 1,
-        "maximum": 2
+        "maximum": 1
       }
     }
   },

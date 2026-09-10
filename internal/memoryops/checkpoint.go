@@ -16,15 +16,17 @@ const (
 	CheckpointIdempotencyAlreadyRecorded = "already_recorded"
 	CheckpointPreflightCandidateLimit    = 3
 
-	CheckpointErrorCodeInvalidDisposition = "invalid_checkpoint_disposition"
-	CheckpointErrorCodeInvalidIdentity    = "invalid_checkpoint_identity"
-	CheckpointErrorCodeInvalidReason      = "invalid_checkpoint_reason"
-	CheckpointErrorCodeInvalidReferences  = "invalid_checkpoint_references"
-	CheckpointErrorCodeMemoryNotFound     = "checkpoint_memory_not_found"
-	CheckpointErrorCodeProjectMismatch    = "checkpoint_project_mismatch"
-	CheckpointErrorCodeConflict           = "checkpoint_conflict"
-	CheckpointErrorCodeNotFound           = "checkpoint_not_found"
-	CheckpointErrorCodeFailed             = "checkpoint_failed"
+	CheckpointErrorCodeInvalidDisposition  = "invalid_checkpoint_disposition"
+	CheckpointErrorCodeInvalidIdentity     = "invalid_checkpoint_identity"
+	CheckpointErrorCodeInvalidReason       = "invalid_checkpoint_reason"
+	CheckpointErrorCodeInvalidReferences   = "invalid_checkpoint_references"
+	CheckpointErrorCodeMemoryNotFound      = "checkpoint_memory_not_found"
+	CheckpointErrorCodeProjectMismatch     = "checkpoint_project_mismatch"
+	CheckpointErrorCodeConflict            = "checkpoint_conflict"
+	CheckpointErrorCodeNotFound            = "checkpoint_not_found"
+	CheckpointErrorCodeFailed              = "checkpoint_failed"
+	CheckpointErrorCodeInvalidSupersession = "invalid_checkpoint_supersession"
+	CheckpointErrorCodeSupersessionStale   = "checkpoint_supersession_stale"
 )
 
 var ErrCheckpointInvalidDisposition = errors.New("invalid checkpoint disposition")
@@ -32,18 +34,22 @@ var ErrCheckpointInvalidDisposition = errors.New("invalid checkpoint disposition
 // CheckpointRecordInput is transport-neutral input for finalizing one root
 // user turn as saved, skipped, or needs_review.
 type CheckpointRecordInput struct {
-	Host           string                   `json:"host"`
-	SessionID      string                   `json:"session_id"`
-	RootTurnID     string                   `json:"root_turn_id"`
-	Disposition    string                   `json:"disposition"`
-	ReasonCode     string                   `json:"reason_code"`
-	Project        string                   `json:"project,omitempty"`
-	MemoryIDs      []int64                  `json:"memory_ids,omitempty"`
-	Memories       []CheckpointMemoryInput  `json:"memories,omitempty"`
-	Proposal       *CheckpointProposalInput `json:"proposal,omitempty"`
-	RecallFeedback *RecallFeedbackInput     `json:"recall_feedback,omitempty"`
-	CWD            string                   `json:"-"`
+	Host           string                        `json:"host"`
+	SessionID      string                        `json:"session_id"`
+	RootTurnID     string                        `json:"root_turn_id"`
+	Disposition    string                        `json:"disposition"`
+	ReasonCode     string                        `json:"reason_code"`
+	Project        string                        `json:"project,omitempty"`
+	MemoryIDs      []int64                       `json:"memory_ids,omitempty"`
+	Memories       []CheckpointMemoryInput       `json:"memories,omitempty"`
+	Supersessions  []CheckpointSupersessionInput `json:"supersessions,omitempty"`
+	Proposal       *CheckpointProposalInput      `json:"proposal,omitempty"`
+	RecallFeedback *RecallFeedbackInput          `json:"recall_feedback,omitempty"`
+	CWD            string                        `json:"-"`
 }
+
+// CheckpointSupersessionInput is an explicit same-project replacement verdict.
+type CheckpointSupersessionInput = store.CheckpointSupersession
 
 // CheckpointProposalInput is one local Memory proposal to retain atomically
 // for explicit review without creating or assessing a Memory.
@@ -114,14 +120,15 @@ type CheckpointPreflightDuplicate struct {
 }
 
 type CheckpointPreflightCandidate struct {
-	InputIndex int                       `json:"input_index"`
-	Reference  store.CheckpointReference `json:"reference"`
-	Type       string                    `json:"type"`
-	Title      string                    `json:"title"`
-	Content    string                    `json:"content"`
-	Scope      string                    `json:"scope"`
-	TopicKey   *string                   `json:"topic_key,omitempty"`
-	Score      float64                   `json:"score"`
+	TargetVersion string                    `json:"target_version"`
+	InputIndex    int                       `json:"input_index"`
+	Reference     store.CheckpointReference `json:"reference"`
+	Type          string                    `json:"type"`
+	Title         string                    `json:"title"`
+	Content       string                    `json:"content"`
+	Scope         string                    `json:"scope"`
+	TopicKey      *string                   `json:"topic_key,omitempty"`
+	Score         float64                   `json:"score"`
 }
 
 // CheckpointPreflightAssessment describes coverage, not compatibility or write authority.
@@ -213,7 +220,7 @@ func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointReco
 	switch input.Disposition {
 	case store.CheckpointDispositionSkipped:
 		if input.Project != "" || len(input.MemoryIDs) > 0 || len(input.Memories) > 0 ||
-			input.Proposal != nil {
+			input.Proposal != nil || len(input.Supersessions) > 0 {
 			return nil, store.ErrCheckpointInvalidReferences
 		}
 		checkpoint, alreadyRecorded, err = s.store.RecordSkippedCheckpoint(store.RecordSkippedCheckpointParams{
@@ -228,7 +235,7 @@ func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointReco
 		}
 		checkpoint, alreadyRecorded, err = s.store.RecordSavedCheckpoint(store.RecordSavedCheckpointParams{
 			Identity: identity, Project: input.Project, Directory: input.CWD,
-			MemoryIDs: input.MemoryIDs, Memories: checkpointStoreMemories(input.Memories),
+			MemoryIDs: input.MemoryIDs, Memories: checkpointStoreMemories(input.Memories), Supersessions: input.Supersessions,
 		})
 	case store.CheckpointDispositionNeedsReview:
 		if input.ReasonCode != "" {
@@ -242,7 +249,7 @@ func (s *Service) RecordCheckpoint(input CheckpointRecordInput) (*CheckpointReco
 		}
 		checkpoint, alreadyRecorded, err = s.store.RecordNeedsReviewCheckpoint(store.RecordNeedsReviewCheckpointParams{
 			Identity: identity, Project: input.Project, Directory: input.CWD,
-			MemoryIDs: input.MemoryIDs, Memories: checkpointStoreMemories(input.Memories), Proposal: proposal,
+			MemoryIDs: input.MemoryIDs, Memories: checkpointStoreMemories(input.Memories), Supersessions: input.Supersessions, Proposal: proposal,
 		})
 	default:
 		return nil, ErrCheckpointInvalidDisposition
@@ -329,16 +336,24 @@ func (s *Service) PreflightCheckpoint(input CheckpointPreflightInput) (*Checkpoi
 				if _, duplicate := seenCandidates[candidate.ID]; duplicate {
 					continue
 				}
+				evaluated, version, err := s.store.CheckpointSupersessionTarget(candidate.ID)
+				if err != nil {
+					return nil, fmt.Errorf("preflight checkpoint target: %w", err)
+				}
+				if evaluated.Project == nil || *evaluated.Project != project || evaluated.Scope != memories[group.inputIndex].Scope {
+					continue
+				}
+				candidate.Observation = *evaluated
 				seenCandidates[candidate.ID] = struct{}{}
 				result.Candidates = append(result.Candidates, CheckpointPreflightCandidate{
-					InputIndex: group.inputIndex,
-					Reference:  checkpointReference(&candidate.Observation, project),
-					Type:       candidate.Type,
-					Title:      candidate.Title,
-					Content:    candidate.Content,
-					Scope:      candidate.Scope,
-					TopicKey:   candidate.TopicKey,
-					Score:      candidate.Rank,
+					InputIndex: group.inputIndex, TargetVersion: version,
+					Reference: checkpointReference(&candidate.Observation, project),
+					Type:      candidate.Type,
+					Title:     candidate.Title,
+					Content:   candidate.Content,
+					Scope:     candidate.Scope,
+					TopicKey:  candidate.TopicKey,
+					Score:     candidate.Rank,
 				})
 				progressed = true
 				break
@@ -418,6 +433,10 @@ func (s *Service) VerifyCheckpoint(input CheckpointVerificationInput) (Checkpoin
 // shared by CLI and MCP adapters.
 func CheckpointErrorCode(err error) string {
 	switch {
+	case errors.Is(err, store.ErrCheckpointInvalidSupersession):
+		return CheckpointErrorCodeInvalidSupersession
+	case errors.Is(err, store.ErrCheckpointSupersessionStale):
+		return CheckpointErrorCodeSupersessionStale
 	case errors.Is(err, ErrCheckpointInvalidDisposition):
 		return CheckpointErrorCodeInvalidDisposition
 	case errors.Is(err, store.ErrCheckpointInvalidIdentity):

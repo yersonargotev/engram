@@ -13,7 +13,7 @@ import (
 
 const (
 	// Version is the monotonic Protocol contract version implemented by Core.
-	Version = 1
+	Version = 2
 
 	CheckpointPersistence        = "local_only"
 	RecallDefault                = "agent_initiated"
@@ -25,7 +25,7 @@ const (
 	RecallContinuationMode       = "explicit_position"
 
 	BinaryMinimumProtocolVersion = 1
-	BinaryMaximumProtocolVersion = 1
+	BinaryMaximumProtocolVersion = 2
 )
 
 var (
@@ -104,6 +104,19 @@ type CompatibilityReport struct {
 // intersection. Distribution versions are deliberately not compared for
 // equality: compatibility is established by attributable range overlap.
 func Evaluate(managedPack, binary, plugin Declaration) CompatibilityReport {
+	return evaluate(Version, BinarySupportedRange(), managedPack, binary, plugin)
+}
+
+// EvaluateAtVersion verifies an attributed historical tuple against its exact
+// supported Protocol version without substituting the running Core version.
+func EvaluateAtVersion(version int, managedPack, binary, plugin Declaration) (CompatibilityReport, error) {
+	if version < BinaryMinimumProtocolVersion || version > BinaryMaximumProtocolVersion {
+		return CompatibilityReport{}, fmt.Errorf("unsupported Protocol version %d", version)
+	}
+	return evaluate(version, VersionRange{Minimum: version, Maximum: version}, managedPack, binary, plugin), nil
+}
+
+func evaluate(version int, supported VersionRange, managedPack, binary, plugin Declaration) CompatibilityReport {
 	inputs := []struct {
 		name        string
 		declaration Declaration
@@ -120,10 +133,10 @@ func Evaluate(managedPack, binary, plugin Declaration) CompatibilityReport {
 		axes = append(axes, axis)
 		legacy = legacy || input.declaration.Legacy
 	}
-	contractRange := &VersionRange{Minimum: Version, Maximum: Version}
+	contractRange := &supported
 	axes = append(axes, CompatibilityAxis{
 		Name:       AxisProtocolContract,
-		Version:    fmt.Sprintf("%d", Version),
+		Version:    fmt.Sprintf("%d", version),
 		Provenance: "engram-core",
 		Supported:  contractRange,
 		Status:     CompatibilityReady,
@@ -286,8 +299,8 @@ func ParseFixture(raw []byte) (Fixture, error) {
 	if err := ensureJSONEOF(decoder); err != nil {
 		return Fixture{}, err
 	}
-	if fixture.SchemaVersion != "engram-protocol-contract-v1" || fixture.Protocol.Version != Version {
-		return Fixture{}, fmt.Errorf("Protocol fixture identity is not v%d", Version)
+	if fixture.SchemaVersion != "engram-protocol-contract-v1" || (fixture.Protocol.Version < BinaryMinimumProtocolVersion || fixture.Protocol.Version > BinaryMaximumProtocolVersion) {
+		return Fixture{}, fmt.Errorf("Protocol fixture schema or version is unsupported")
 	}
 	if !slices.Equal(fixture.Protocol.IdentityFields, identityFields) ||
 		!slices.Equal(fixture.Protocol.CheckpointDispositions, checkpointDispositions) ||

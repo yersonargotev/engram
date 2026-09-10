@@ -25,6 +25,7 @@ type checkpointCLIOptions struct {
 	Project             string
 	MemoryIDs           []int64
 	Memories            []memoryops.CheckpointMemoryInput
+	Supersessions       []memoryops.CheckpointSupersessionInput
 	Proposal            *memoryops.CheckpointProposalInput
 	RecallFeedback      *memoryops.RecallFeedbackInput
 	RecallFeedbackError error
@@ -103,6 +104,7 @@ func cmdCheckpoint(cfg store.Config) {
 			Project:        opts.Project,
 			MemoryIDs:      opts.MemoryIDs,
 			Memories:       opts.Memories,
+			Supersessions:  opts.Supersessions,
 			Proposal:       opts.Proposal,
 			RecallFeedback: opts.RecallFeedback,
 			CWD:            currentCWD(),
@@ -606,6 +608,15 @@ func parseCheckpointArgs(args []string) (checkpointCLIOptions, *checkpointArgume
 				}
 			}
 			opts.Memories = append(opts.Memories, memory)
+		case "--supersession-json":
+			if opts.Action != "record" {
+				return opts, &checkpointArgumentError{Code: memoryops.CheckpointErrorCodeInvalidSupersession, Message: "supersessions are record-only"}
+			}
+			var declaration memoryops.CheckpointSupersessionInput
+			if err := json.Unmarshal([]byte(token.Value), &declaration); err != nil {
+				return opts, &checkpointArgumentError{Code: memoryops.CheckpointErrorCodeInvalidSupersession, Message: "supersession must be a closed declaration object"}
+			}
+			opts.Supersessions = append(opts.Supersessions, declaration)
 		case "--proposal-id":
 			return opts, &checkpointArgumentError{
 				Code: memoryops.CheckpointErrorCodeInvalidReferences, Message: "invalid checkpoint references: proposal_id is not supported",
@@ -660,11 +671,11 @@ func printCheckpointUsage() {
 	  [--recall-feedback-json JSON] [--json]
 	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
 	  --disposition saved --project PROJECT \
-	  [--memory-id ID ...] [--memory-json JSON ...] \
+	  [--memory-id ID ...] [--memory-json JSON ...] [--supersession-json JSON ...] \
 	  [--recall-feedback-json JSON] [--json]
 	engram checkpoint record --host HOST --session-id ID --root-turn-id ID \
 	  --disposition needs_review --project PROJECT \
-	  [--memory-id ID ...] [--memory-json JSON ...] \
+	  [--memory-id ID ...] [--memory-json JSON ...] [--supersession-json JSON ...] \
 	  --proposal-json '{"title":"...","content":"..."}' \
 	  [--recall-feedback-json JSON] [--json]
 	engram checkpoint status --host HOST --session-id ID --root-turn-id ID [--json]

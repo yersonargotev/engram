@@ -16,7 +16,7 @@
   "mcpServers": "./.mcp.json",
   "engramProtocol": {
     "minimum": 1,
-    "maximum": 1,
+    "maximum": 2,
     "legacyCompatible": true
   }
 }

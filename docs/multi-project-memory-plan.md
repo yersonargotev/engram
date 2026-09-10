@@ -17,7 +17,7 @@ consent, promote proposals, repair historical sessions, or release a new binary.
 
 | Increment | Owner and observable completion |
 | --- | --- |
-| Persistence prerequisite | `internal/store`: the separately approved migration/lifecycle scope below preserves old evidence and supports grouped snapshots before grouped admission is enabled. |
+| Persistence prerequisite | `internal/store`: the separately approved migration/lifecycle scope below preserves old evidence and supports grouped snapshots before grouped record creation is enabled. |
 | One project, new provenance | `internal/store` and `internal/memoryops`: Core resolves `(host, session_id, project)` to a fresh internal session for new inline records, including legacy input. A then B then A succeeds without changing old sessions. Reference/proposal-only groups allocate no session. Matching directory provenance is verified or empty. |
 | Grouped transaction | `internal/memoryops` validates explicit destinations and normalizes groups; `internal/store` atomically persists associations, Memories, proposals, references, supersessions, ledger, and permitted sync mutations. Group-local indices, ordering, exact replay, collision handling, and rollback follow ADR-0012. |
 | Protocol and adapters | `cmd/engram` parses repeatable future `--project-json`; `internal/mcp` parses `projects`; both delegate to Core. Implement plural/singular projections, group-index errors, removed-content status/replay, and proposal-free `needs_review` rendering. Target Protocol 3 relative to the current Protocol 2 baseline. |
@@ -70,7 +70,7 @@ judgment-specific escalation and destructive confirmation controls remain;
 
 Objective: add local association storage, plural proposal references and grouped
 result/tombstone metadata without rewriting old evidence. Approval must cover
-this entire preservation boundary before grouped admission can be enabled.
+this entire preservation boundary before grouped record creation can be enabled.
 
 - Preserve historical checkpoint identities, dispositions, timestamps, proposal
   IDs/content, ordered references, sessions, and Memory foreign keys. Distinguish
@@ -86,7 +86,7 @@ this entire preservation boundary before grouped admission can be enabled.
 - Rename must update association ownership without changing internal IDs. Merge
   preserves all historical sessions/proposals and chooses a stable association
   for future writes when keys collide. Do not force historical merged proposals
-  into the new one-proposal-per-group admission rule.
+  into the new one-proposal-per-group record-creation rule.
 - For grouped records, deletion removes only authorized owned content/references;
   preserve other projects and terminal uniqueness. Persist `content_removed`
   and original `removed_group_indices` without removed project names/content.

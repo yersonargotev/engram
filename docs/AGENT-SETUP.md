@@ -495,6 +495,8 @@ The command reports four independent capabilities:
 
 Setup is complete only when all four checks are `ready`. If the Codex CLI, plugin, MCP manifest, activation cue, or verifier is absent, the command reports an incomplete result instead of claiming success.
 
+After writing the managed MCP configuration, setup checks `codex mcp list --json`. A missing, disabled, mismatched, or unavailable effective registration leaves setup incomplete and preserves existing legacy activation until the replacement is verified.
+
 ### Read-only integration status
 
 Inspect the current integration without rerunning setup:

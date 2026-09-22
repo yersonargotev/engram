@@ -1423,10 +1423,17 @@ func installCodexWithOptions(options InstallOptions) (*Result, error) {
 		}
 	}
 	if pluginCapabilities.MCPReady && mcpProtocolReady && codexMCPReady(path) {
+		hostRegistration := inspectCodexMCPHostRegistration(codexBin, inspectCodexMCPConfiguration(path))
+		status := CheckFailed
+		detail := hostRegistration.Reason
+		if hostRegistration.Status == CodexCheckReady {
+			status = CheckReady
+			detail = "MCP initialize/tools/list protocol and effective fail-fast Codex registration verified"
+		}
 		result.Checks = append(result.Checks, CapabilityCheck{
 			Capability: "mcp",
-			Status:     CheckReady,
-			Detail:     "MCP initialize/tools/list protocol and fail-fast Codex registration verified",
+			Status:     status,
+			Detail:     detail,
 		})
 	} else {
 		detail := "plugin MCP manifest or stable executable registration is invalid"

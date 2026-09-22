@@ -29,12 +29,12 @@ func TestOpenRejectsUnknownOperationalSchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sql.Open() error = %v", err)
 	}
-	if _, err := db.Exec(`PRAGMA user_version = 2`); err != nil {
+	if _, err := db.Exec(`PRAGMA user_version = 3`); err != nil {
 		t.Fatalf("set future schema: %v", err)
 	}
 	_ = db.Close()
 
-	if _, err := Open(Config{DataDir: dataDir}); err == nil || !strings.Contains(err.Error(), "unsupported recall baseline schema version 2") {
+	if _, err := Open(Config{DataDir: dataDir}); err == nil || !strings.Contains(err.Error(), "unsupported recall baseline schema version 3") {
 		t.Fatalf("Open(future schema) error = %v", err)
 	}
 }
@@ -70,7 +70,7 @@ func TestLoadOrCreateSaltRetriesConcurrentPartialKey(t *testing.T) {
 	}
 }
 
-func TestOperationalSchemaV1HasStableContentFreeColumns(t *testing.T) {
+func TestOperationalSchemaV2HasStableContentFreeColumns(t *testing.T) {
 	t.Parallel()
 
 	ledger, err := Open(Config{DataDir: t.TempDir()})
@@ -92,16 +92,137 @@ func TestOperationalSchemaV1HasStableContentFreeColumns(t *testing.T) {
 		}
 		columns = append(columns, column)
 	}
-	want := []string{"id", "schema_version", "occurred_at", "expires_at", "kind", "surface", "operation", "outcome", "link_key", "latency_micros", "delivered_utf8_bytes"}
+	want := []string{"id", "schema_version", "occurred_at", "expires_at", "kind", "surface", "operation", "outcome", "host_hint", "link_key", "latency_micros", "delivered_utf8_bytes"}
 	if strings.Join(columns, ",") != strings.Join(want, ",") {
 		t.Fatalf("baseline event columns = %v, want %v", columns, want)
 	}
-	for _, forbidden := range []string{"prompt", "query", "content", "assistant", "path", "diff", "credential", "host", "session", "turn", "memory_id"} {
+	for _, forbidden := range []string{"prompt", "query", "content", "assistant", "path", "diff", "credential", "client", "session", "turn", "memory_id"} {
 		for _, column := range columns {
 			if strings.Contains(column, forbidden) {
 				t.Fatalf("baseline event schema contains forbidden column %q", column)
 			}
 		}
+	}
+}
+
+func TestReportSeparatesMCPRuntimeMilestonesFromToolCallsAndAllowsOnlyHostEnums(t *testing.T) {
+	t.Parallel()
+
+	ledger, err := Open(Config{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer ledger.Close()
+
+	for _, event := range []Event{
+		{Kind: EventMCPRuntime, Surface: SurfaceMCP, Operation: "process", Outcome: OutcomeSuccess, Host: HostUnknown},
+		{Kind: EventMCPRuntime, Surface: SurfaceMCP, Operation: "initialize", Outcome: OutcomeSuccess, Host: HostCodex},
+		{Kind: EventMCPRuntime, Surface: SurfaceMCP, Operation: "tools_list", Outcome: OutcomeSuccess, Host: HostCodex},
+		{Kind: EventMCPRuntime, Surface: SurfaceMCP, Operation: "initialize", Outcome: OutcomeSuccess, Host: HostCursor},
+		{Kind: EventMCPRuntime, Surface: SurfaceMCP, Operation: "tools_list", Outcome: OutcomeSuccess, Host: HostCursor},
+		{Kind: EventMCPRuntime, Surface: SurfaceMCP, Operation: "initialize", Outcome: OutcomeSuccess, Host: HostSetupProbe},
+		{Kind: EventMCPRuntime, Surface: SurfaceMCP, Operation: "tools_list", Outcome: OutcomeSuccess, Host: HostSetupProbe},
+		{Kind: EventOperation, Surface: SurfaceMCP, Operation: "mem_search", Outcome: OutcomeSuccess, Host: HostCodex},
+	} {
+		if err := ledger.Record(event); err != nil {
+			t.Fatalf("Record(%+v) error = %v", event, err)
+		}
+	}
+	if err := ledger.Record(Event{
+		Kind: EventMCPRuntime, Surface: SurfaceMCP, Operation: "initialize", Outcome: OutcomeSuccess,
+		Host: Host("Cursor raw-client-sentinel"),
+	}); err == nil {
+		t.Fatal("Record() accepted an arbitrary host label")
+	}
+
+	report, err := ledger.Report(protocolcontract.CompatibilityReport{})
+	if err != nil {
+		t.Fatalf("Report() error = %v", err)
+	}
+	if len(report.MCPRuntime) != 7 {
+		t.Fatalf("MCP runtime groups = %+v", report.MCPRuntime)
+	}
+	if report.MCPRuntime[0].Event != "initialize" || report.MCPRuntime[0].Host != HostCodex ||
+		report.MCPRuntime[1].Event != "initialize" || report.MCPRuntime[1].Host != HostCursor ||
+		report.MCPRuntime[2].Event != "initialize" || report.MCPRuntime[2].Host != HostSetupProbe ||
+		report.MCPRuntime[3].Event != "process" || report.MCPRuntime[3].Host != HostUnknown ||
+		report.MCPRuntime[4].Event != "tools_list" || report.MCPRuntime[4].Host != HostCodex ||
+		report.MCPRuntime[5].Event != "tools_list" || report.MCPRuntime[5].Host != HostCursor ||
+		report.MCPRuntime[6].Event != "tools_list" || report.MCPRuntime[6].Host != HostSetupProbe {
+		t.Fatalf("MCP runtime report = %+v", report.MCPRuntime)
+	}
+	if len(report.Operations) != 1 || report.Operations[0].Operation != "mem_search" || report.Operations[0].Host != HostCodex {
+		t.Fatalf("tool-call operations = %+v", report.Operations)
+	}
+	if report.MCPActivation.Status != "tool_called" || report.MCPActivation.Processes != 1 ||
+		report.MCPActivation.Initializations != 2 || report.MCPActivation.ToolLists != 2 || report.MCPActivation.ToolCalls != 1 {
+		t.Fatalf("MCP activation summary = %+v", report.MCPActivation)
+	}
+	if len(report.MCPActivationByHost) != 3 {
+		t.Fatalf("MCP activation by host = %+v", report.MCPActivationByHost)
+	}
+	if report.MCPActivationByHost[0].Host != HostCodex || report.MCPActivationByHost[0].Status != "tool_called" ||
+		report.MCPActivationByHost[1].Host != HostCursor || report.MCPActivationByHost[1].Status != "tools_listed" ||
+		report.MCPActivationByHost[2].Host != HostUnknown || report.MCPActivationByHost[2].Status != "process_started" {
+		t.Fatalf("MCP activation by host = %+v", report.MCPActivationByHost)
+	}
+}
+
+func TestOpenMigratesV1EventsToUnknownHostWithoutLosingData(t *testing.T) {
+	t.Parallel()
+
+	dataDir := t.TempDir()
+	path := DatabasePath(dataDir)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE baseline_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		schema_version TEXT NOT NULL,
+		occurred_at TEXT NOT NULL,
+		expires_at TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		surface TEXT NOT NULL,
+		operation TEXT NOT NULL,
+		outcome TEXT NOT NULL,
+		link_key TEXT NOT NULL,
+		latency_micros INTEGER,
+		delivered_utf8_bytes INTEGER
+	) STRICT;
+	CREATE TABLE baseline_collection (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		schema_version TEXT NOT NULL,
+		occurred_at TEXT NOT NULL,
+		expires_at TEXT NOT NULL,
+		dropped_events INTEGER NOT NULL CHECK (dropped_events >= 0),
+		write_failures INTEGER NOT NULL CHECK (write_failures >= 0)
+	) STRICT;
+	PRAGMA user_version = 1;`)
+	if err != nil {
+		t.Fatalf("create v1 schema: %v", err)
+	}
+	now := time.Now().UTC()
+	_, err = db.Exec(`INSERT INTO baseline_events(
+		schema_version, occurred_at, expires_at, kind, surface, operation, outcome, link_key
+	) VALUES (?, ?, ?, ?, ?, ?, ?, '')`, "recall-baseline-events-v1", now.Format(time.RFC3339Nano),
+		now.Add(time.Hour).Format(time.RFC3339Nano), EventOperation, SurfaceMCP, "mem_search", OutcomeSuccess)
+	if err != nil {
+		t.Fatalf("insert v1 event: %v", err)
+	}
+	_ = db.Close()
+
+	ledger, err := Open(Config{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("Open(v1) error = %v", err)
+	}
+	defer ledger.Close()
+	report, err := ledger.Report(protocolcontract.CompatibilityReport{})
+	if err != nil {
+		t.Fatalf("Report() error = %v", err)
+	}
+	if len(report.Operations) != 1 || report.Operations[0].Host != HostUnknown || report.Operations[0].Events != 1 {
+		t.Fatalf("migrated operation report = %+v", report.Operations)
 	}
 }
 
@@ -178,6 +299,11 @@ func TestLedgerPersistsOnlyContentFreeSaltedEvents(t *testing.T) {
 		t.Fatalf("Stat(key) error = %v", err)
 	} else if info.Mode().Perm() != 0o600 {
 		t.Fatalf("install key mode = %o, want 600", info.Mode().Perm())
+	}
+	if info, err := os.Stat(DatabasePath(dataDir)); err != nil {
+		t.Fatalf("Stat(database) error = %v", err)
+	} else if info.Mode().Perm() != 0o600 {
+		t.Fatalf("baseline database mode = %o, want 600", info.Mode().Perm())
 	}
 	combined := string(reportJSON) + string(databaseBytes)
 	for _, sentinel := range sentinels {

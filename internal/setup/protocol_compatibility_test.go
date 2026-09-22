@@ -37,10 +37,14 @@ func TestProtocolFixtureMatchesSetupCompatibilityCoordinates(t *testing.T) {
 	assertFileSHA256(t, filepath.Join("..", "..", "skills", "engram-memory-cli", "SKILL.md"), currentManagedPackSkillSHA256)
 	assertFileSHA256(t, filepath.Join("..", "..", "assets", "protocol-contract-v1.json"), currentManagedPackFixtureSHA256)
 	assertFileSHA256(t, filepath.Join("..", "..", "plugin", "codex", ".codex-plugin", "plugin.json"), currentCodexPluginManifestSHA256)
-	assertFileSHA256(t, filepath.Join("testdata", "managed-pack-3.3.0.json"), previousManagedPackManifestSHA256)
-	assertFileSHA256(t, filepath.Join("testdata", "protocol-contract-v1-pack-3.3.0.json"), previousManagedPackFixtureSHA256)
-	assertFileSHA256(t, filepath.Join("testdata", "managed-pack-3.2.0.json"), earlierManagedPackManifestSHA256)
-	assertFileSHA256(t, filepath.Join("testdata", "protocol-contract-v1-pack-3.2.0.json"), earlierManagedPackFixtureSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "managed-pack-3.3.1.json"), previousManagedPackManifestSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "protocol-contract-v1-pack-3.3.1.json"), originalManagedPackFixtureSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "protocol-contract-v1-pack-3.3.1-protocol-2.json"), previousManagedPackFixtureSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "protocol-contract-v1-pack-3.3.1-checkpoint.json"), checkpointManagedPackFixtureSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "managed-pack-3.3.0.json"), earlierManagedPackManifestSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "protocol-contract-v1-pack-3.3.0.json"), earlierManagedPackFixtureSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "managed-pack-3.2.0.json"), priorManagedPackManifestSHA256)
+	assertFileSHA256(t, filepath.Join("testdata", "protocol-contract-v1-pack-3.2.0.json"), priorManagedPackFixtureSHA256)
 	assertFileSHA256(t, filepath.Join("testdata", "managed-pack-3.1.2.json"), legacyManagedPackManifestSHA256)
 }
 
@@ -51,21 +55,32 @@ func TestProtocolCompatibilityAcceptsVerifiedPreviousTupleDuringExpand(t *testin
 		manifest    string
 		fixture     string
 		skillSHA256 string
+		maximum     int
 	}{
 		{
-			name: "pack 3.3.1 original", version: "3.3.1",
+			name: "pack 3.3.1 protocol 2", version: previousManagedPackVersion,
+			manifest: "managed-pack-3.3.1.json", fixture: "protocol-contract-v1-pack-3.3.1-protocol-2.json",
+			skillSHA256: previousManagedPackSkillSHA256, maximum: 2,
+		},
+		{
+			name: "pack 3.3.1 original", version: previousManagedPackVersion,
 			manifest: "managed-pack-3.3.1.json", fixture: "protocol-contract-v1-pack-3.3.1.json",
-			skillSHA256: "b2168c0e0c627320443e655ede2fabeeea404af6048f2840af7ddcdd9f0670d4",
+			skillSHA256: originalManagedPackSkillSHA256, maximum: 1,
 		},
 		{
-			name: "pack 3.3.0", version: previousManagedPackVersion,
+			name: "pack 3.3.1 checkpoint", version: previousManagedPackVersion,
+			manifest: "managed-pack-3.3.1.json", fixture: "protocol-contract-v1-pack-3.3.1-checkpoint.json",
+			skillSHA256: checkpointManagedPackSkillSHA256, maximum: 1,
+		},
+		{
+			name: "pack 3.3.0", version: earlierManagedPackVersion,
 			manifest: "managed-pack-3.3.0.json", fixture: "protocol-contract-v1-pack-3.3.0.json",
-			skillSHA256: previousManagedPackSkillSHA256,
+			skillSHA256: earlierManagedPackSkillSHA256, maximum: 1,
 		},
 		{
-			name: "pack 3.2.0", version: earlierManagedPackVersion,
+			name: "pack 3.2.0", version: priorManagedPackVersion,
 			manifest: "managed-pack-3.2.0.json", fixture: "protocol-contract-v1-pack-3.2.0.json",
-			skillSHA256: earlierManagedPackSkillSHA256,
+			skillSHA256: priorManagedPackSkillSHA256, maximum: 1,
 		},
 	}
 	for _, tt := range tests {
@@ -103,25 +118,45 @@ func TestProtocolCompatibilityAcceptsVerifiedPreviousTupleDuringExpand(t *testin
 			if report.Status != protocolcontract.CompatibilityReady || report.ReasonCode != protocolcontract.ReasonLegacyCompatible || !report.Legacy {
 				t.Fatalf("previous compatibility = %#v", report)
 			}
-			if report.Intersection == nil || *report.Intersection != (protocolcontract.VersionRange{Minimum: 1, Maximum: 1}) {
+			if report.Intersection == nil || *report.Intersection != (protocolcontract.VersionRange{Minimum: 1, Maximum: tt.maximum}) {
 				t.Fatalf("previous intersection = %#v", report.Intersection)
 			}
 		})
 	}
 }
 
-func TestPreviousCodexPluginCoordinateRequiresExactManifest(t *testing.T) {
-	plugin := codexPluginInspection{
-		Revision: testReleaseCommit,
-		Capabilities: installedCodexPlugin{
-			Version:        previousCodexPluginVersion,
-			ManifestSHA256: strings.Repeat("0", 64),
-		},
+func TestPriorCodexPluginCoordinatesRequireExactManifest(t *testing.T) {
+	tests := []struct {
+		name     string
+		version  string
+		manifest string
+		maximum  int
+	}{
+		{name: "plugin 0.1.7 protocol 2", version: previousCodexPluginVersion, manifest: previousCodexPluginManifestSHA256, maximum: 2},
+		{name: "plugin 0.1.7 original", version: previousCodexPluginVersion, manifest: originalCodexPluginManifestSHA256, maximum: 1},
+		{name: "plugin 0.1.6", version: earlierCodexPluginVersion, manifest: earlierCodexPluginManifestSHA256, maximum: 1},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := codexPluginInspection{
+				Revision: testReleaseCommit,
+				Capabilities: installedCodexPlugin{
+					Version:        tt.version,
+					ManifestSHA256: tt.manifest,
+				},
+			}
 
-	declaration := inspectCodexPluginProtocolDeclaration(plugin)
-	if declaration.Supported != nil || declaration.Legacy {
-		t.Fatalf("untrusted previous plugin asserted Protocol compatibility: %#v", declaration)
+			declaration := inspectCodexPluginProtocolDeclaration(plugin)
+			if declaration.Supported == nil || declaration.Supported.Minimum != 1 || declaration.Supported.Maximum != tt.maximum || !declaration.Legacy {
+				t.Fatalf("verified prior plugin did not assert Protocol compatibility: %#v", declaration)
+			}
+
+			plugin.Capabilities.ManifestSHA256 = strings.Repeat("0", 64)
+			declaration = inspectCodexPluginProtocolDeclaration(plugin)
+			if declaration.Supported != nil || declaration.Legacy {
+				t.Fatalf("untrusted prior plugin asserted Protocol compatibility: %#v", declaration)
+			}
+		})
 	}
 }
 

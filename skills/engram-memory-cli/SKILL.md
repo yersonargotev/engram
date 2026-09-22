@@ -2,7 +2,7 @@
 name: engram-memory-cli
 description: Recall and finalize durable project Memory with Engram's CLI. Use for history-dependent work, Terminal Memory commits, explicit curation, or material loss-risk handoffs. Scope this skill to project memory.
 metadata:
-  version: "3.3.1"
+  version: "3.4.0"
 ---
 
 # Engram Memory CLI
@@ -12,20 +12,25 @@ work; the primary deliverable remains independent from memory availability.
 
 ## Best-effort protocol
 
-1. Confirm that `engram` is available. For tasks about Engram itself, keep a CLI
+1. For normal agent Memory work, prefer callable `mem_*` tools. If they are not
+   directly visible and the host offers deferred tool inventory or search,
+   resolve the Engram tools from that catalog before concluding MCP is
+   unavailable. Use the CLI fallback only after that check; an explicitly
+   requested CLI workflow may use the CLI directly.
+2. Confirm that `engram` is available. For tasks about Engram itself, keep a CLI
    failure as task evidence and diagnose it within scope. For other tasks,
    continue without memory when the CLI is unavailable or fails.
-2. Run `engram current-project --json` before the first project-scoped operation.
-3. Treat detection and authority separately. Automatic candidate Recall and
+3. Run `engram current-project --json` before the first project-scoped operation.
+4. Treat detection and authority separately. Automatic candidate Recall and
    writes require `project_strength` to be `strong` or `explicit`. Never turn a weak
    `git_root`, `git_child`, or `dir_basename` result into authority by copying it
    into `--project`. Ask the user for the exact project on an explicit memory
    task; otherwise skip the write and continue. When `project` is empty, ask the
    user to select from `available_projects` for an explicit memory task.
-4. Pass an exact project to every command that accepts it: use
+5. Pass an exact project to every command that accepts it: use
    `--project <project>` for project-scoped flags and positional `[project]` for
    `engram context`.
-5. Use `--json` for agent operations. Parse successful stdout as JSON and
+6. Use `--json` for agent operations. Parse successful stdout as JSON and
    non-zero stderr as `{"code","message","details?"}`.
 
 Complete this protocol when one exact project is known or memory use has been
@@ -33,7 +38,9 @@ skipped without delaying the primary deliverable.
 
 ## Recall
 
-Recall only when prior project knowledge could materially change the work.
+Recall before acting on history-dependent diagnosis, review, continuation,
+release, configuration, or prior-decision work. Routine self-contained work
+needs no search.
 
 Use Recall for relevant prior decisions, tracked work, release state,
 configuration, preferences, known failures, or an explicit request to remember.

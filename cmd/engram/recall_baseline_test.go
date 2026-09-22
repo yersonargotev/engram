@@ -109,10 +109,13 @@ func TestCheckpointCLIRecordsConflictingCoverage(t *testing.T) {
 	}
 }
 
-func TestRecallBaselineMCPObserverPersistsBoundedOperation(t *testing.T) {
-	t.Setenv("ENGRAM_RECALL_BASELINE", "1")
+func TestRecallBaselineMCPObserverPersistsBoundedRuntimeAndOperation(t *testing.T) {
+	t.Setenv("ENGRAM_RECALL_BASELINE", "")
 	cfg := store.Config{DataDir: t.TempDir()}
-	observe, observeCheckpoint, closeObserver := newRecallBaselineMCPObservers(cfg)
+	observeRuntime, observe, observeCheckpoint, closeObserver := newRecallBaselineMCPObservers(cfg)
+	if observeRuntime == nil {
+		t.Fatal("newRecallBaselineMCPObservers() returned nil runtime observer")
+	}
 	if observe == nil {
 		t.Fatal("newRecallBaselineMCPObservers() returned nil operation observer")
 	}
@@ -120,9 +123,11 @@ func TestRecallBaselineMCPObserverPersistsBoundedOperation(t *testing.T) {
 		t.Fatal("newRecallBaselineMCPObservers() returned nil checkpoint observer")
 	}
 	bytes := int64(21)
+	observeRuntime(engrammcp.RuntimeObservation{Event: engrammcp.RuntimeInitialize, Host: engrammcp.HostCodex})
+	observeRuntime(engrammcp.RuntimeObservation{Event: engrammcp.RuntimeToolsList, Host: engrammcp.HostCodex})
 	observe(engrammcp.OperationObservation{
 		Operation: "mem_search", Outcome: engrammcp.OperationSuccess,
-		Latency: 8 * time.Millisecond, DeliveredUTF8Bytes: &bytes,
+		Latency: 8 * time.Millisecond, DeliveredUTF8Bytes: &bytes, Host: engrammcp.HostCodex,
 	})
 	observeCheckpoint(engrammcp.CheckpointObservation{
 		Host: "codex", SessionID: "session-mcp-raw", RootTurnID: "turn-mcp-raw",
@@ -142,6 +147,9 @@ func TestRecallBaselineMCPObserverPersistsBoundedOperation(t *testing.T) {
 	if len(report.Operations) != 1 || report.Operations[0].Surface != recallbaseline.SurfaceMCP || report.Operations[0].TotalUTF8Bytes != 21 {
 		t.Fatalf("MCP operations = %+v", report.Operations)
 	}
+	if len(report.MCPRuntime) != 3 || report.MCPRuntime[0].Event != "initialize" || report.MCPRuntime[1].Event != "process" || report.MCPRuntime[2].Event != "tools_list" {
+		t.Fatalf("MCP runtime = %+v", report.MCPRuntime)
+	}
 	if report.Lifecycle.Checkpoints.EligibleTurns != 1 || report.Lifecycle.Checkpoints.Conflicting != 1 {
 		t.Fatalf("MCP checkpoint coverage = %+v", report.Lifecycle.Checkpoints)
 	}
@@ -152,11 +160,14 @@ func TestRecallBaselineMCPObserverPersistsBoundedOperation(t *testing.T) {
 	}
 }
 
-func TestRecallBaselineAutomaticCollectionIsOptIn(t *testing.T) {
-	t.Setenv("ENGRAM_RECALL_BASELINE", "")
+func TestRecallBaselineAutomaticCollectionIsDefaultOnWithExplicitOptOut(t *testing.T) {
+	t.Setenv("ENGRAM_RECALL_BASELINE", "0")
 	cfg := store.Config{DataDir: filepath.Join(t.TempDir(), "must-not-exist")}
 
-	observe, observeCheckpoint, closeObserver := newRecallBaselineMCPObservers(cfg)
+	observeRuntime, observe, observeCheckpoint, closeObserver := newRecallBaselineMCPObservers(cfg)
+	if observeRuntime != nil {
+		t.Fatal("newRecallBaselineMCPObservers() enabled runtime collection after opt-out")
+	}
 	if observe != nil {
 		t.Fatal("newRecallBaselineMCPObservers() enabled operation collection without opt-in")
 	}
@@ -170,6 +181,45 @@ func TestRecallBaselineAutomaticCollectionIsOptIn(t *testing.T) {
 	})
 	if _, err := os.Stat(cfg.DataDir); !os.IsNotExist(err) {
 		t.Fatalf("disabled automatic collection created state: %v", err)
+	}
+}
+
+func TestRecallBaselineManagementCommandsCannotObserveThemselves(t *testing.T) {
+	t.Setenv("ENGRAM_RECALL_BASELINE", "")
+	cfg := store.Config{DataDir: filepath.Join(t.TempDir(), "must-not-exist")}
+	withArgs(t, "engram", "recall-baseline", "report", "--json")
+
+	if recallBaselineCollectionEnabled() {
+		t.Fatal("recall-baseline management command enabled automatic collection")
+	}
+	recordRecallBaselineEvents(cfg, recallbaseline.Event{
+		Kind: recallbaseline.EventOperation, Surface: recallbaseline.SurfaceLifecycle,
+		Operation: "session_start", Outcome: recallbaseline.OutcomeSuccess,
+	})
+	if _, err := os.Stat(cfg.DataDir); !os.IsNotExist(err) {
+		t.Fatalf("self-observation guard created baseline state: %v", err)
+	}
+}
+
+func TestSessionStartBaselineFlushesWithoutAChildProcess(t *testing.T) {
+	t.Setenv("ENGRAM_RECALL_BASELINE", "")
+	withArgs(t, "engram", "lifecycle", "session-start")
+	cfg := store.Config{DataDir: t.TempDir()}
+
+	startCodexLifecycleBaseline(cfg, 7*time.Millisecond, 123)
+
+	ledger, err := recallbaseline.Open(recallbaseline.Config{DataDir: cfg.DataDir})
+	if err != nil {
+		t.Fatalf("Open() after synchronous lifecycle observation: %v", err)
+	}
+	defer ledger.Close()
+	report, err := ledger.Report(protocolcontract.CompatibilityReport{})
+	if err != nil {
+		t.Fatalf("Report() error = %v", err)
+	}
+	if len(report.Operations) != 1 || report.Operations[0].Operation != "session_start" ||
+		report.Operations[0].P50LatencyMillis != 7 || report.Operations[0].TotalUTF8Bytes != 123 {
+		t.Fatalf("synchronously flushed lifecycle report = %+v", report.Operations)
 	}
 }
 
@@ -372,5 +422,33 @@ func TestRecallBaselineCLIRecordsReportsAndPlansWithoutHeldOutInput(t *testing.T
 	_, stderr, recovered := captureOutputAndRecover(t, func() { cmdRecallBaseline(cfg) })
 	if recovered == nil || !strings.Contains(stderr, "unknown recall-baseline flag --held-out") {
 		t.Fatalf("held-out input rejection recovered=%v stderr=%q", recovered, stderr)
+	}
+}
+
+func TestRecallBaselineTextReportSeparatesActivationByHost(t *testing.T) {
+	stdout, stderr := captureOutput(t, func() {
+		printRecallBaselineReport(recallbaseline.Report{
+			SchemaVersion:      recallbaseline.ReportSchemaVersion,
+			EventSchemaVersion: recallbaseline.EventSchemaVersion,
+			MCPActivation: recallbaseline.MCPActivationReport{
+				Status: "tool_called", Initializations: 2, ToolLists: 2, ToolCalls: 1,
+			},
+			MCPActivationByHost: []recallbaseline.MCPHostActivationReport{
+				{Host: recallbaseline.HostCodex, MCPActivationReport: recallbaseline.MCPActivationReport{Status: "tool_called", Initializations: 1, ToolLists: 1, ToolCalls: 1}},
+				{Host: recallbaseline.HostCursor, MCPActivationReport: recallbaseline.MCPActivationReport{Status: "tools_listed", Initializations: 1, ToolLists: 1}},
+			},
+		})
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	for _, line := range []string{
+		"MCP activation: tool_called; processes 0; initialized 2; tools listed 2; tool calls 1",
+		"MCP activation codex: tool_called; processes 0; initialized 1; tools listed 1; tool calls 1",
+		"MCP activation cursor: tools_listed; processes 0; initialized 1; tools listed 1; tool calls 0",
+	} {
+		if !strings.Contains(stdout, line) {
+			t.Fatalf("text report missing %q:\n%s", line, stdout)
+		}
 	}
 }

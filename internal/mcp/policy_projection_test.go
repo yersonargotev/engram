@@ -51,6 +51,62 @@ func TestEditorialMemorySkillStatesTerminalCommitDefaultToolsAndCLIFallback(t *t
 	}
 }
 
+func TestEditorialMemorySkillActivatesRecallForHistoryDependentWork(t *testing.T) {
+	content := readPolicyProjection(t, filepath.Join("..", ".."), editorialMemorySkillPath)
+	description := skillFrontmatterDescription(t, content)
+	for _, required := range []string{"history-dependent", "diagnosis", "review", "continuation", "release", "configuration", "prior decisions"} {
+		if !strings.Contains(description, required) {
+			t.Errorf("editorial skill description is missing history-dependent trigger %q", required)
+		}
+	}
+
+	const cueStart = "<!-- engram:checkpoint-cue:start -->"
+	const cueEnd = "<!-- engram:checkpoint-cue:end -->"
+	start := strings.Index(content, cueStart)
+	end := strings.Index(content, cueEnd)
+	if start == -1 || end <= start {
+		t.Fatal("canonical skill is missing bounded activation cue markers")
+	}
+	activationCue := content[start:end]
+	if bytes := len([]byte(activationCue)); bytes > 4096 {
+		t.Fatalf("canonical Activation cue is %d bytes, want at most 4096", bytes)
+	}
+	for _, required := range []string{
+		"history-dependent",
+		"diagnosis",
+		"review",
+		"continuation",
+		"release",
+		"configuration",
+		"prior-decision",
+		"`mem_current_project`",
+		"`mem_search`",
+		"Self-contained work skips Recall",
+		"deferred-tool catalog",
+	} {
+		if !strings.Contains(activationCue, required) {
+			t.Errorf("canonical Activation cue is checkpoint-only; missing %q", required)
+		}
+	}
+}
+
+func TestEditorialMemorySkillChecksDeferredToolsBeforeCLIFallback(t *testing.T) {
+	root := filepath.Join("..", "..")
+	for _, path := range []string{editorialMemorySkillPath, "skills/engram-memory-cli/SKILL.md"} {
+		content := readPolicyProjection(t, root, path)
+		normalized := strings.Join(strings.Fields(content), " ")
+		for _, required := range []string{
+			"deferred tool inventory or search",
+			"resolve the Engram tools from that catalog",
+			"Use the CLI fallback only after that check",
+		} {
+			if !strings.Contains(normalized, required) {
+				t.Errorf("%s can fall back to CLI before deferred MCP discovery; missing %q", path, required)
+			}
+		}
+	}
+}
+
 func TestHostMemorySkillProjectionsMatchEditorialFile(t *testing.T) {
 	root := filepath.Join("..", "..")
 	editorial := fileSHA256(t, filepath.Join(root, filepath.FromSlash(editorialMemorySkillPath)))
@@ -140,7 +196,7 @@ func TestCanonicalAndRepositorySkillsShareTerminalMemoryAuthority(t *testing.T) 
 		"saved",
 		"needs_review",
 		"skipped(no_durable_knowledge)",
-		"Current user intent, maintained source, and runtime evidence override Memory",
+		"intent and evidence override Memory",
 	} {
 		if !strings.Contains(activationCue, required) {
 			t.Errorf("canonical Activation cue missing %q", required)
@@ -423,5 +479,25 @@ func skillFrontmatterName(t *testing.T, content string) string {
 		}
 	}
 	t.Fatal("editorial Memory skill frontmatter is missing name")
+	return ""
+}
+
+func skillFrontmatterDescription(t *testing.T, content string) string {
+	t.Helper()
+	if !strings.HasPrefix(content, "---\n") {
+		t.Fatal("editorial Memory skill is missing YAML frontmatter")
+	}
+	body := content[len("---\n"):]
+	end := strings.Index(body, "\n---")
+	if end == -1 {
+		t.Fatal("editorial Memory skill frontmatter is not closed")
+	}
+	for _, line := range strings.Split(body[:end], "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if ok && strings.TrimSpace(key) == "description" {
+			return strings.Trim(strings.TrimSpace(value), `"'`)
+		}
+	}
+	t.Fatal("editorial Memory skill frontmatter is missing description")
 	return ""
 }

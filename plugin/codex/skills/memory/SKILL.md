@@ -1,12 +1,12 @@
 ---
 name: engram-memory
-description: "Checkpoint each settled root user turn as saved, skipped(no_durable_knowledge), or needs_review. Use when the Engram checkpoint cue or checkpoint identity appears, or when finalizing durable knowledge."
+description: "Recall project Memory before history-dependent diagnosis, review, continuation, release, configuration, or work relying on prior decisions; checkpoint each settled root user turn."
 ---
 
 # Engram Memory checkpoint protocol
 
 <!-- engram:checkpoint-cue:start -->
-For every root user turn, use the engram-memory skill to make exactly one Terminal Memory commit after all causal work settles: `saved`, `skipped(no_durable_knowledge)`, or `needs_review`. Current user intent, maintained source, and runtime evidence override Memory. Reuse the supplied host checkpoint identity across continuations; subagents do not create checkpoints.
+For root user turns, use `engram-memory`. Before history-dependent diagnosis, review, continuation, release, configuration, or prior-decision work: resolve absent `mem_*` via the host's deferred-tool catalog; call `mem_current_project`; run one narrow `mem_search`. Self-contained work skips Recall. Current intent and evidence override Memory. After work settles, make one Terminal Memory commit: `saved`, `skipped(no_durable_knowledge)`, or `needs_review`. Reuse identity across continuations; subagents do not commit.
 <!-- engram:checkpoint-cue:end -->
 
 The cue above is the canonical model-visible activation text. Host adapters may
@@ -26,6 +26,12 @@ Use deferred curation, lifecycle, or admin profiles only for an explicit
 specialized workflow. `mem_save` is an independent curation operation, not the
 default commit. `mem_session_summary` is optional curation for an explicit
 handoff with material loss risk; it is not an agent lifecycle requirement.
+
+If a required `mem_*` tool is not directly visible but the host offers deferred
+tool inventory or search, resolve the Engram tools from that catalog before
+concluding that MCP is unavailable. Use the CLI fallback only after that check
+shows the required MCP operation is not callable. An explicitly requested CLI
+workflow may continue to use the CLI directly.
 
 ## Terminal Memory commit
 
@@ -121,12 +127,16 @@ Current user intent, maintained source, and runtime evidence override Memory.
 Memory is advisory; surface unresolved conflicts, and treat empty Recall as a
 successful result rather than inventing context.
 
-Recall only when prior decisions, tracked work, release state, configuration,
-preferences, or known failures can materially change the task, or when the user
-explicitly asks to remember prior work. A routine self-contained turn needs no
-search. Automatic Recall requires strong or explicit project identity from
-`mem_current_project`; a weak identity returns no candidates and one actionable
-warning.
+Recall is required before acting when project history can materially change a
+diagnosis, review, continuation, release, configuration task, or work relying on
+prior decisions, tracked work, preferences, or known failures. An explicit
+request to remember prior work is also history-dependent. A routine
+self-contained turn needs no search.
+
+For history-dependent work, first resolve deferred `mem_*` tools when necessary,
+then call `mem_current_project` and run one narrow project search before acting.
+Automatic Recall requires the returned project identity to be strong or
+explicit; a weak identity returns no candidates and one actionable warning.
 
 Start with one project-scoped `mem_search` using one to three narrow anchors.
 For a checkpoint-capable root turn, pass its exact `host`, `session_id`, and

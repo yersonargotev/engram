@@ -39,15 +39,18 @@ func InspectOperationReadOnly(cfg Config, surface Surface, operation string) (Op
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&schemaVersion); err != nil {
 		return OperationReport{}, false, fmt.Errorf("read recall baseline schema version: %w", err)
 	}
-	if schemaVersion != 1 {
+	if schemaVersion != 1 && schemaVersion != 2 {
 		return OperationReport{}, false, fmt.Errorf("unsupported recall baseline schema version %d", schemaVersion)
 	}
 	now := time.Now().UTC()
 	if cfg.Now != nil {
 		now = cfg.Now().UTC()
 	}
-	rows, err := db.Query(`SELECT outcome, latency_micros, delivered_utf8_bytes
-		FROM baseline_events
+	selectColumns := "outcome, latency_micros, delivered_utf8_bytes"
+	if schemaVersion == 2 {
+		selectColumns = "outcome, host_hint, latency_micros, delivered_utf8_bytes"
+	}
+	rows, err := db.Query(`SELECT `+selectColumns+` FROM baseline_events
 		WHERE kind = ? AND surface = ? AND operation = ? AND expires_at > ?
 		ORDER BY id`, EventOperation, surface, operation, now.Format(time.RFC3339Nano))
 	if err != nil {
@@ -58,11 +61,19 @@ func InspectOperationReadOnly(cfg Config, surface Surface, operation string) (Op
 	var latencies []float64
 	for rows.Next() {
 		var outcome Outcome
+		var host Host
 		var latency, delivered sql.NullInt64
-		if err := rows.Scan(&outcome, &latency, &delivered); err != nil {
-			return OperationReport{}, false, fmt.Errorf("decode recall baseline operation: %w", err)
+		var scanErr error
+		if schemaVersion == 1 {
+			scanErr = rows.Scan(&outcome, &latency, &delivered)
+		} else {
+			scanErr = rows.Scan(&outcome, &host, &latency, &delivered)
+		}
+		if scanErr != nil {
+			return OperationReport{}, false, fmt.Errorf("decode recall baseline operation: %w", scanErr)
 		}
 		report.Events++
+		report.Host = normalizedHost(surface, host)
 		switch outcome {
 		case OutcomeSuccess:
 			report.Succeeded++

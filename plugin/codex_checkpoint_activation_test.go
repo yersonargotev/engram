@@ -24,6 +24,23 @@ func TestCodexSessionStartEmitsOneCanonicalCueAsModelContextForEverySource(t *te
 	if words := len(strings.Fields(cue)); words == 0 || words > 60 {
 		t.Fatalf("canonical activation cue has %d words, want 1..60", words)
 	}
+	for _, required := range []string{
+		"history-dependent",
+		"diagnosis",
+		"review",
+		"continuation",
+		"release",
+		"configuration",
+		"prior-decision",
+		"`mem_current_project`",
+		"`mem_search`",
+		"Self-contained work skips Recall",
+		"deferred-tool catalog",
+	} {
+		if !strings.Contains(cue, required) {
+			t.Errorf("canonical SessionStart cue is checkpoint-only; missing %q", required)
+		}
+	}
 
 	manifest := readCodexHooksManifest(t, filepath.Join(pluginRoot, "hooks", "hooks.json"))
 	workspace := t.TempDir()

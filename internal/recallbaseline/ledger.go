@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	EventSchemaVersion  = "recall-baseline-events-v1"
-	ReportSchemaVersion = "recall-baseline-report-v1"
+	EventSchemaVersion  = "recall-baseline-events-v2"
+	ReportSchemaVersion = "recall-baseline-report-v2"
 	databaseFilename    = "recall-baseline-v1.db"
 	keyFilename         = "recall-baseline-v1.key"
 	defaultRetention    = 7 * 24 * time.Hour
@@ -39,6 +39,20 @@ const (
 	EventCapture      EventKind = "capture"
 	EventSubagentStop EventKind = "subagent_stop"
 	EventOperation    EventKind = "operation"
+	EventMCPRuntime   EventKind = "mcp_runtime"
+)
+
+type Host string
+
+const (
+	HostUnknown    Host = "unknown"
+	HostCodex      Host = "codex"
+	HostCursor     Host = "cursor"
+	HostClaudeCode Host = "claude_code"
+	HostOpenCode   Host = "opencode"
+	HostGemini     Host = "gemini"
+	HostSetupProbe Host = "setup_probe"
+	HostOther      Host = "other"
 )
 
 type Surface string
@@ -87,6 +101,7 @@ type Event struct {
 	OccurredAt         time.Time
 	Latency            *time.Duration
 	DeliveredUTF8Bytes *int64
+	Host               Host
 }
 
 func KnownLatency(value time.Duration) *time.Duration { return &value }
@@ -107,14 +122,17 @@ type Ledger struct {
 }
 
 type Report struct {
-	SchemaVersion      string                               `json:"schema_version"`
-	EventSchemaVersion string                               `json:"event_schema_version"`
-	GeneratedAt        string                               `json:"generated_at"`
-	Compatibility      protocolcontract.CompatibilityReport `json:"compatibility"`
-	Retention          RetentionReport                      `json:"retention"`
-	Collection         CollectionReport                     `json:"collection"`
-	Lifecycle          LifecycleReport                      `json:"lifecycle"`
-	Operations         []OperationReport                    `json:"operations"`
+	SchemaVersion       string                               `json:"schema_version"`
+	EventSchemaVersion  string                               `json:"event_schema_version"`
+	GeneratedAt         string                               `json:"generated_at"`
+	Compatibility       protocolcontract.CompatibilityReport `json:"compatibility"`
+	Retention           RetentionReport                      `json:"retention"`
+	Collection          CollectionReport                     `json:"collection"`
+	Lifecycle           LifecycleReport                      `json:"lifecycle"`
+	Operations          []OperationReport                    `json:"operations"`
+	MCPRuntime          []MCPRuntimeReport                   `json:"mcp_runtime"`
+	MCPActivation       MCPActivationReport                  `json:"mcp_activation"`
+	MCPActivationByHost []MCPHostActivationReport            `json:"mcp_activation_by_host"`
 }
 
 type RetentionReport struct {
@@ -169,6 +187,7 @@ type SubagentStopReport struct {
 type OperationReport struct {
 	Surface          Surface `json:"surface"`
 	Operation        string  `json:"operation"`
+	Host             Host    `json:"host"`
 	Events           int64   `json:"events"`
 	Succeeded        int64   `json:"succeeded"`
 	Failed           int64   `json:"failed"`
@@ -180,6 +199,25 @@ type OperationReport struct {
 	ByteSamples      int64   `json:"byte_samples"`
 	UnknownBytes     int64   `json:"unknown_bytes"`
 	TotalUTF8Bytes   int64   `json:"total_utf8_bytes"`
+}
+
+type MCPRuntimeReport struct {
+	Event  string `json:"event"`
+	Host   Host   `json:"host"`
+	Events int64  `json:"events"`
+}
+
+type MCPActivationReport struct {
+	Status          string `json:"status"`
+	Processes       int64  `json:"processes"`
+	Initializations int64  `json:"initializations"`
+	ToolLists       int64  `json:"tool_lists"`
+	ToolCalls       int64  `json:"tool_calls"`
+}
+
+type MCPHostActivationReport struct {
+	Host Host `json:"host"`
+	MCPActivationReport
 }
 
 func DatabasePath(dataDir string) string {
@@ -222,7 +260,7 @@ func Open(cfg Config) (*Ledger, error) {
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&schemaVersion); err != nil {
 		return cleanup(fmt.Errorf("read recall baseline schema version: %w", err))
 	}
-	if schemaVersion != 0 && schemaVersion != 1 {
+	if schemaVersion != 0 && schemaVersion != 1 && schemaVersion != 2 {
 		return cleanup(fmt.Errorf("unsupported recall baseline schema version %d", schemaVersion))
 	}
 	for _, statement := range []string{
@@ -237,6 +275,7 @@ func Open(cfg Config) (*Ledger, error) {
 			surface TEXT NOT NULL,
 			operation TEXT NOT NULL,
 			outcome TEXT NOT NULL,
+			host_hint TEXT NOT NULL DEFAULT '',
 			link_key TEXT NOT NULL,
 			latency_micros INTEGER,
 			delivered_utf8_bytes INTEGER
@@ -249,15 +288,28 @@ func Open(cfg Config) (*Ledger, error) {
 			dropped_events INTEGER NOT NULL CHECK (dropped_events >= 0),
 			write_failures INTEGER NOT NULL CHECK (write_failures >= 0)
 		) STRICT`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS baseline_checkpoint_link
-			ON baseline_events(kind, link_key) WHERE kind = 'checkpoint'`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			return cleanup(fmt.Errorf("initialize recall baseline schema: %w", err))
 		}
 	}
-	if schemaVersion == 0 {
-		if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
+	if schemaVersion < 2 {
+		hasHostHint, err := tableHasColumn(db, "baseline_events", "host_hint")
+		if err != nil {
+			return cleanup(fmt.Errorf("inspect recall baseline host hint migration: %w", err))
+		}
+		if !hasHostHint {
+			if _, err := db.Exec(`ALTER TABLE baseline_events ADD COLUMN host_hint TEXT NOT NULL DEFAULT ''`); err != nil {
+				return cleanup(fmt.Errorf("migrate recall baseline host hints: %w", err))
+			}
+		}
+	}
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS baseline_checkpoint_link
+		ON baseline_events(kind, link_key) WHERE kind = 'checkpoint'`); err != nil {
+		return cleanup(fmt.Errorf("initialize recall baseline checkpoint index: %w", err))
+	}
+	if schemaVersion < 2 {
+		if _, err := db.Exec(`PRAGMA user_version = 2`); err != nil {
 			return cleanup(fmt.Errorf("set recall baseline schema version: %w", err))
 		}
 	}
@@ -270,6 +322,24 @@ func Open(cfg Config) (*Ledger, error) {
 		return cleanup(err)
 	}
 	return &Ledger{db: db, now: cfg.Now, salt: salt, retention: cfg.Retention}, nil
+}
+
+func tableHasColumn(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func loadOrCreateSalt(dataDir string, source io.Reader) ([]byte, error) {
@@ -369,10 +439,11 @@ func (ledger *Ledger) Record(event Event) error {
 	if event.DeliveredUTF8Bytes != nil {
 		deliveredBytes = *event.DeliveredUTF8Bytes
 	}
+	host := normalizedHost(event.Surface, event.Host)
 	_, err = ledger.db.Exec(`INSERT INTO baseline_events(
-		schema_version, occurred_at, expires_at, kind, surface, operation, outcome, link_key,
+		schema_version, occurred_at, expires_at, kind, surface, operation, outcome, host_hint, link_key,
 		latency_micros, delivered_utf8_bytes
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(kind, link_key) WHERE kind = 'checkpoint' DO UPDATE SET
 		occurred_at = excluded.occurred_at,
 		expires_at = excluded.expires_at,
@@ -384,7 +455,7 @@ func (ledger *Ledger) Record(event Event) error {
 			ELSE baseline_events.outcome
 		END`,
 		EventSchemaVersion, now.Format(time.RFC3339Nano), now.Add(ledger.retention).Format(time.RFC3339Nano),
-		event.Kind, event.Surface, event.Operation, event.Outcome, linkKey, latencyMicros, deliveredBytes,
+		event.Kind, event.Surface, event.Operation, event.Outcome, host, linkKey, latencyMicros, deliveredBytes,
 	)
 	if err != nil {
 		return fmt.Errorf("record recall baseline event: %w", err)
@@ -436,6 +507,7 @@ func validateEvent(event Event) error {
 		EventCapture:      {SurfaceLifecycle, map[Outcome]bool{OutcomeEnabled: true, OutcomeDisabled: true, OutcomeUnknown: true}},
 		EventSubagentStop: {SurfaceLifecycle, map[Outcome]bool{OutcomeObserved: true, OutcomeSkipped: true, OutcomeUnknown: true}},
 		EventOperation:    {event.Surface, map[Outcome]bool{OutcomeSuccess: true, OutcomeError: true, OutcomeUnknown: true}},
+		EventMCPRuntime:   {SurfaceMCP, map[Outcome]bool{OutcomeSuccess: true, OutcomeError: true, OutcomeUnknown: true}},
 	}
 	contract, ok := allowed[event.Kind]
 	if !ok || !contract.outcomes[event.Outcome] {
@@ -447,6 +519,13 @@ func validateEvent(event Event) error {
 		}
 	} else if event.Surface != contract.surface {
 		return fmt.Errorf("recall baseline lifecycle event requires lifecycle surface")
+	}
+	if event.Surface == SurfaceMCP {
+		if !allowedHost(normalizedHost(event.Surface, event.Host)) {
+			return fmt.Errorf("unsupported recall baseline host hint")
+		}
+	} else if event.Host != "" {
+		return fmt.Errorf("recall baseline host hints are supported only for MCP events")
 	}
 	if !allowedOperation(event.Kind, event.Surface, event.Operation) {
 		return fmt.Errorf("unsupported recall baseline operation %q", event.Operation)
@@ -464,6 +543,8 @@ func allowedOperation(kind EventKind, surface Surface, operation string) bool {
 		return operation == "prompt" || operation == "subagent"
 	case EventSubagentStop:
 		return operation == "subagent_stop"
+	case EventMCPRuntime:
+		return surface == SurfaceMCP && (operation == "process" || operation == "initialize" || operation == "tools_list")
 	case EventOperation:
 		switch surface {
 		case SurfaceLifecycle:
@@ -475,6 +556,25 @@ func allowedOperation(kind EventKind, surface Surface, operation string) bool {
 		}
 	}
 	return false
+}
+
+func normalizedHost(surface Surface, host Host) Host {
+	if surface != SurfaceMCP {
+		return ""
+	}
+	if host == "" {
+		return HostUnknown
+	}
+	return host
+}
+
+func allowedHost(host Host) bool {
+	switch host {
+	case HostUnknown, HostCodex, HostCursor, HostClaudeCode, HostOpenCode, HostGemini, HostSetupProbe, HostOther:
+		return true
+	default:
+		return false
+	}
 }
 
 var boundedCLIOperations = map[string]bool{
@@ -528,6 +628,10 @@ func (ledger *Ledger) Report(compatibility protocolcontract.CompatibilityReport)
 	if err != nil {
 		return Report{}, err
 	}
+	runtime, err := ledger.mcpRuntimeReports()
+	if err != nil {
+		return Report{}, err
+	}
 	collection, err := ledger.collectionReport()
 	if err != nil {
 		return Report{}, err
@@ -541,7 +645,90 @@ func (ledger *Ledger) Report(compatibility protocolcontract.CompatibilityReport)
 			ExpiredCollectionRecordsPurged: purged.ExpiredCollectionRecordsPurged,
 		},
 		Collection: collection, Lifecycle: lifecycle, Operations: operations,
+		MCPRuntime: runtime, MCPActivation: summarizeMCPActivation(runtime, operations),
+		MCPActivationByHost: summarizeMCPActivationByHost(runtime, operations),
 	}, nil
+}
+
+func summarizeMCPActivation(runtime []MCPRuntimeReport, operations []OperationReport) MCPActivationReport {
+	report := MCPActivationReport{Status: "not_observed"}
+	for _, group := range runtime {
+		if group.Host == HostSetupProbe {
+			continue
+		}
+		switch group.Event {
+		case "process":
+			report.Processes += group.Events
+		case "initialize":
+			report.Initializations += group.Events
+		case "tools_list":
+			report.ToolLists += group.Events
+		}
+	}
+	for _, operation := range operations {
+		if operation.Surface == SurfaceMCP && operation.Host != HostSetupProbe {
+			report.ToolCalls += operation.Events
+		}
+	}
+	finalizeMCPActivationStatus(&report)
+	return report
+}
+
+func summarizeMCPActivationByHost(runtime []MCPRuntimeReport, operations []OperationReport) []MCPHostActivationReport {
+	groups := make(map[Host]*MCPActivationReport)
+	hosts := make([]string, 0)
+	groupFor := func(host Host) *MCPActivationReport {
+		group := groups[host]
+		if group == nil {
+			group = &MCPActivationReport{Status: "not_observed"}
+			groups[host] = group
+			hosts = append(hosts, string(host))
+		}
+		return group
+	}
+	for _, runtimeGroup := range runtime {
+		if runtimeGroup.Host == HostSetupProbe {
+			continue
+		}
+		group := groupFor(runtimeGroup.Host)
+		switch runtimeGroup.Event {
+		case "process":
+			group.Processes += runtimeGroup.Events
+		case "initialize":
+			group.Initializations += runtimeGroup.Events
+		case "tools_list":
+			group.ToolLists += runtimeGroup.Events
+		}
+	}
+	for _, operation := range operations {
+		if operation.Surface == SurfaceMCP && operation.Host != HostSetupProbe {
+			groupFor(operation.Host).ToolCalls += operation.Events
+		}
+	}
+	sort.Strings(hosts)
+	reports := make([]MCPHostActivationReport, 0, len(hosts))
+	for _, rawHost := range hosts {
+		host := Host(rawHost)
+		activation := *groups[host]
+		finalizeMCPActivationStatus(&activation)
+		reports = append(reports, MCPHostActivationReport{Host: host, MCPActivationReport: activation})
+	}
+	return reports
+}
+
+func finalizeMCPActivationStatus(report *MCPActivationReport) {
+	switch {
+	case report.ToolCalls > 0:
+		report.Status = "tool_called"
+	case report.ToolLists > 0:
+		report.Status = "tools_listed"
+	case report.Initializations > 0:
+		report.Status = "initialized"
+	case report.Processes > 0:
+		report.Status = "process_started"
+	default:
+		report.Status = "not_observed"
+	}
 }
 
 func (ledger *Ledger) collectionReport() (CollectionReport, error) {
@@ -659,7 +846,7 @@ func (ledger *Ledger) lifecycleReport() (LifecycleReport, error) {
 }
 
 func (ledger *Ledger) operationReports() ([]OperationReport, error) {
-	rows, err := ledger.db.Query(`SELECT surface, operation, outcome, latency_micros, delivered_utf8_bytes
+	rows, err := ledger.db.Query(`SELECT surface, operation, outcome, host_hint, latency_micros, delivered_utf8_bytes
 		FROM baseline_events WHERE kind = ? ORDER BY surface, operation, id`, EventOperation)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate recall baseline operations: %w", err)
@@ -675,14 +862,16 @@ func (ledger *Ledger) operationReports() ([]OperationReport, error) {
 		var surface Surface
 		var operation string
 		var outcome Outcome
+		var host Host
 		var latency, delivered sql.NullInt64
-		if err := rows.Scan(&surface, &operation, &outcome, &latency, &delivered); err != nil {
+		if err := rows.Scan(&surface, &operation, &outcome, &host, &latency, &delivered); err != nil {
 			return nil, fmt.Errorf("decode recall baseline operation: %w", err)
 		}
-		key := string(surface) + "\x00" + operation
+		host = normalizedHost(surface, host)
+		key := string(surface) + "\x00" + string(host) + "\x00" + operation
 		group := groups[key]
 		if group == nil {
-			group = &accumulator{report: OperationReport{Surface: surface, Operation: operation}}
+			group = &accumulator{report: OperationReport{Surface: surface, Operation: operation, Host: host}}
 			groups[key] = group
 			keys = append(keys, key)
 		}
@@ -719,6 +908,29 @@ func (ledger *Ledger) operationReports() ([]OperationReport, error) {
 		group.report.P50LatencyMillis = percentile(group.latencies, 0.50)
 		group.report.P95LatencyMillis = percentile(group.latencies, 0.95)
 		reports = append(reports, group.report)
+	}
+	return reports, nil
+}
+
+func (ledger *Ledger) mcpRuntimeReports() ([]MCPRuntimeReport, error) {
+	rows, err := ledger.db.Query(`SELECT operation, host_hint, COUNT(*)
+		FROM baseline_events WHERE kind = ?
+		GROUP BY operation, host_hint ORDER BY operation, host_hint`, EventMCPRuntime)
+	if err != nil {
+		return nil, fmt.Errorf("aggregate MCP runtime baseline: %w", err)
+	}
+	defer rows.Close()
+	reports := make([]MCPRuntimeReport, 0)
+	for rows.Next() {
+		var report MCPRuntimeReport
+		if err := rows.Scan(&report.Event, &report.Host, &report.Events); err != nil {
+			return nil, fmt.Errorf("decode MCP runtime baseline: %w", err)
+		}
+		report.Host = normalizedHost(SurfaceMCP, report.Host)
+		reports = append(reports, report)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("aggregate MCP runtime baseline rows: %w", err)
 	}
 	return reports, nil
 }

@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +62,7 @@ func TestInspectCodexStatusEmptyProfileIsConservativeAndReadOnly(t *testing.T) {
 		{"marketplace", CodexCheckMissing, "marketplace_missing"},
 		{"plugin", CodexCheckMissing, "plugin_missing"},
 		{"mcp_configuration", CodexCheckMissing, "mcp_configuration_missing"},
+		{"mcp_host_registration", CodexCheckMissing, "mcp_host_registration_not_inspectable"},
 		{"mcp_readiness", CodexCheckMissing, "mcp_not_configured"},
 		{"prompt_hook", CodexCheckMissing, "plugin_missing"},
 		{"session_hook", CodexCheckMissing, "plugin_missing"},
@@ -342,6 +346,34 @@ func TestInspectCodexStatusDiscoversRepositoryAndUserSkills(t *testing.T) {
 	}
 }
 
+func TestInspectCodexStatusDiscoversSkillsFromCodexHome(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	codexHome := filepath.Join(home, "custom-codex")
+	t.Setenv("CODEX_HOME", codexHome)
+	codexAdminSkillsDirFn = func() string { return filepath.Join(home, "admin-skills") }
+	repo := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	skillPath := filepath.Join(codexHome, "skills", "engram-memory", "SKILL.md")
+	writeStatusTestFile(t, skillPath, "---\nname: engram-memory\ndescription: Canonical memory.\n---\n")
+	osExecutable = func() (string, error) { return "/opt/engram/bin/engram", nil }
+	lookPathFn = func(name string) (string, error) { return "", errors.New("not found") }
+
+	status, err := InspectCodexStatus("2.2.1", repo)
+	if err != nil {
+		t.Fatalf("inspect CODEX_HOME skills: %v", err)
+	}
+	skills := statusChecksByCapability(status.Checks, "skill")
+	if len(skills) != 1 || skills[0].Status != CodexCheckReady || evidenceValue(skills[0], "scope") != "codex_home" {
+		t.Fatalf("CODEX_HOME skill checks = %#v", skills)
+	}
+	if evidenceValue(statusChecksByCapability(status.Checks, "marketplace")[0], "config_path") != filepath.Join(codexHome, "config.toml") {
+		t.Fatalf("status did not inspect CODEX_HOME config: %#v", status.Checks)
+	}
+}
+
 func TestInspectCodexStatusCompleteSupportedPluginIsCheckpointReady(t *testing.T) {
 	resetSetupSeams(t)
 	home := useTestHome(t)
@@ -362,16 +394,12 @@ ref = "v2.2.1"
 
 [plugins."engram@engram"]
 enabled = true
-
-[mcp_servers.engram]
-command = "/opt/engram/bin/engram"
-args = ["mcp", "--tools=agent"]
-`)
+`+"\n"+codexEngramBlockForCommand(engramPath)+"\n")
 
 	marketplaceRoot := t.TempDir()
 	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
 	writeCanonicalCodexActivationFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"))
-	installedPath := filepath.Join(home, ".codex", "plugins", "cache", "engram", "engram", "0.1.7")
+	installedPath := filepath.Join(home, ".codex", "plugins", "cache", "engram", "engram", "0.1.8")
 	writeCanonicalCodexActivationFixture(t, installedPath)
 
 	lookPathFn = func(name string) (string, error) {
@@ -394,18 +422,20 @@ args = ["mcp", "--tools=agent"]
 		case slices.Equal(args, []string{"--version"}):
 			return []byte("codex-cli 0.150.1\n"), nil
 		case slices.Equal(args, []string{"plugin", "list", "--json"}):
-			return []byte(fmt.Sprintf(`{"installed":[{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.7","installed":true,"enabled":true,"source":{"source":"local","path":%q},"marketplaceSource":{"sourceType":"git","source":"https://github.com/yersonargotev/engram.git"}}],"available":[]}`, filepath.Join(marketplaceRoot, "plugin", "codex"))), nil
+			return []byte(fmt.Sprintf(`{"installed":[{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.8","installed":true,"enabled":true,"source":{"source":"local","path":%q},"marketplaceSource":{"sourceType":"git","source":"https://github.com/yersonargotev/engram.git"}}],"available":[]}`, filepath.Join(marketplaceRoot, "plugin", "codex"))), nil
+		case slices.Equal(args, []string{"mcp", "list", "--json"}):
+			return codexMCPListFixture(engramPath), nil
 		default:
 			return nil, fmt.Errorf("unexpected Codex command: %v", args)
 		}
 	}
 	probeCalls := 0
-	runCodexCheckpointProbeFn = func(name string, args ...string) ([]byte, error) {
+	runCodexMCPProbeFn = func(name string, args []string, timeout time.Duration) (codexMCPProbeResult, error) {
 		probeCalls++
-		if name != engramPath || !slices.Equal(args, []string{"checkpoint", "--help"}) {
-			return nil, fmt.Errorf("unexpected checkpoint probe: %s %v", name, args)
+		if name != engramPath || !slices.Equal(args, []string{"mcp", "--tools=agent"}) || timeout != codexMCPProbeTimeout {
+			return codexMCPProbeResult{}, fmt.Errorf("unexpected MCP probe: %s %v", name, args)
 		}
-		return []byte("engram checkpoint record\nengram checkpoint status\nengram checkpoint verify-stop\n"), nil
+		return codexMCPProbeResult{ProtocolVersion: "2025-11-25", Tools: codexAgentToolNames()}, nil
 	}
 
 	before := snapshotStatusTestTree(t, home)
@@ -424,14 +454,14 @@ args = ["mcp", "--tools=agent"]
 		status.Compatibility.Intersection == nil || len(status.Compatibility.Axes) != 4 {
 		t.Fatalf("Protocol compatibility = %#v", status.Compatibility)
 	}
-	for _, capability := range []string{"marketplace", "plugin", "mcp_configuration", "mcp_readiness", "prompt_hook", "session_hook", "activation_cue", "stop_verifier", "subagent_hook", "prompt_capture", "subagent_capture"} {
+	for _, capability := range []string{"marketplace", "plugin", "mcp_configuration", "mcp_host_registration", "mcp_readiness", "prompt_hook", "session_hook", "activation_cue", "stop_verifier", "subagent_hook", "prompt_capture", "subagent_capture"} {
 		matches := statusChecksByCapability(status.Checks, capability)
 		if len(matches) != 1 || matches[0].Status != CodexCheckReady {
 			t.Fatalf("%s check = %#v", capability, matches)
 		}
 	}
 	plugin := statusChecksByCapability(status.Checks, "plugin")[0]
-	if evidenceValue(plugin, "installed_version") != "0.1.7" || evidenceValue(plugin, "installed_revision") != testReleaseCommit || evidenceValue(plugin, "enabled") != "true" {
+	if evidenceValue(plugin, "installed_version") != "0.1.8" || evidenceValue(plugin, "installed_revision") != testReleaseCommit || evidenceValue(plugin, "enabled") != "true" {
 		t.Fatalf("plugin provenance = %#v", plugin.Evidence)
 	}
 	pluginSkills := statusChecksByCapability(status.Checks, "skill")
@@ -439,9 +469,9 @@ args = ["mcp", "--tools=agent"]
 		t.Fatalf("plugin skill checks = %#v", pluginSkills)
 	}
 	if probeCalls != 1 {
-		t.Fatalf("checkpoint probe calls = %d, want 1", probeCalls)
+		t.Fatalf("MCP protocol probe calls = %d, want 1", probeCalls)
 	}
-	if !reflect.DeepEqual(commands, [][]string{{"--version"}, {"plugin", "list", "--json"}}) {
+	if !reflect.DeepEqual(commands, [][]string{{"--version"}, {"plugin", "list", "--json"}, {"mcp", "list", "--json"}}) {
 		t.Fatalf("Codex commands = %#v", commands)
 	}
 	after := snapshotStatusTestTree(t, home)
@@ -548,10 +578,7 @@ func TestInspectCodexStatusMCPOnlySeparatesConfigurationFromReadiness(t *testing
 	}
 	const engramPath = "/opt/engram/bin/engram"
 	osExecutable = func() (string, error) { return engramPath, nil }
-	writeStatusTestFile(t, filepath.Join(home, ".codex", "config.toml"), `[mcp_servers.engram]
-command = "/opt/engram/bin/engram"
-args = ["mcp", "--tools=agent"]
-`)
+	writeStatusTestFile(t, filepath.Join(home, ".codex", "config.toml"), codexEngramBlockForCommand(engramPath)+"\n")
 	lookPathFn = func(name string) (string, error) {
 		switch name {
 		case "codex":
@@ -566,6 +593,9 @@ args = ["mcp", "--tools=agent"]
 		if name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"--version"}) {
 			return []byte("codex-cli 0.150.1\n"), nil
 		}
+		if name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"mcp", "list", "--json"}) {
+			return codexMCPListFixture(engramPath), nil
+		}
 		t.Fatalf("MCP-only status executed unexpected command: %s %v", name, args)
 		return nil, nil
 	}
@@ -578,15 +608,174 @@ args = ["mcp", "--tools=agent"]
 		t.Fatalf("mode = %q, checks=%#v", status.Mode, status.Checks)
 	}
 	configuration := statusChecksByCapability(status.Checks, "mcp_configuration")[0]
+	hostRegistration := statusChecksByCapability(status.Checks, "mcp_host_registration")[0]
 	readiness := statusChecksByCapability(status.Checks, "mcp_readiness")[0]
 	if configuration.Status != CodexCheckReady || configuration.ReasonCode != "mcp_configuration_ready" {
 		t.Fatalf("MCP configuration = %#v", configuration)
 	}
-	if readiness.Status != CodexCheckReady || readiness.ReasonCode != "mcp_adapter_ready" {
+	if readiness.Status != CodexCheckReady || readiness.ReasonCode != "mcp_protocol_ready" {
 		t.Fatalf("MCP readiness = %#v", readiness)
+	}
+	if hostRegistration.Status != CodexCheckReady || hostRegistration.ReasonCode != "mcp_host_registration_ready" {
+		t.Fatalf("MCP host registration = %#v", hostRegistration)
 	}
 	if statusChecksByCapability(status.Checks, "plugin")[0].Status != CodexCheckMissing {
 		t.Fatalf("MCP-only profile reported plugin ready: %#v", status.Checks)
+	}
+}
+
+func TestRunCodexMCPProbeInitializesAndListsExactAgentProfileWithoutUsingConfiguredStore(t *testing.T) {
+	resetSetupSeams(t)
+	engramPath := buildRealEngramCLI(t)
+	realDataDir := filepath.Join(t.TempDir(), "must-not-be-created")
+	t.Setenv("ENGRAM_DATA_DIR", realDataDir)
+	t.Setenv("ENGRAM_CLOUD_AUTOSYNC", "1")
+	t.Setenv("ENGRAM_RECALL_BASELINE", "1")
+	probeDataDir := filepath.Join(t.TempDir(), "isolated-probe")
+	probeEnvironment := mcpProbeEnvironment(probeDataDir)
+	for key, want := range map[string]string{
+		"ENGRAM_DATA_DIR": probeDataDir, "ENGRAM_CLOUD_AUTOSYNC": "0", "ENGRAM_RECALL_BASELINE": "0",
+	} {
+		var values []string
+		for _, entry := range probeEnvironment {
+			name, value, _ := strings.Cut(entry, "=")
+			if strings.EqualFold(name, key) {
+				values = append(values, value)
+			}
+		}
+		if len(values) != 1 || values[0] != want {
+			t.Fatalf("probe environment %s = %v, want [%q]", key, values, want)
+		}
+	}
+
+	result, err := runCodexMCPProbe(engramPath, []string{"mcp", "--tools=agent"}, codexMCPProbeTimeout)
+	if err != nil {
+		t.Fatalf("probe real Engram MCP: %v", err)
+	}
+	sort.Strings(result.Tools)
+	if !slices.Equal(result.Tools, codexAgentToolNames()) {
+		t.Fatalf("tools = %v, want exact agent profile %v", result.Tools, codexAgentToolNames())
+	}
+	if result.ProtocolVersion == "" {
+		t.Fatal("initialize response omitted protocol version")
+	}
+	if _, err := os.Stat(realDataDir); !os.IsNotExist(err) {
+		t.Fatalf("probe touched configured real data directory %q: %v", realDataDir, err)
+	}
+}
+
+func TestRunCodexMCPProbeTimesOutAndStopsUnresponsiveServer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix helper command")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh unavailable")
+	}
+	started := time.Now()
+	_, err = runCodexMCPProbe(sh, []string{"-c", "while :; do :; done"}, 50*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("timeout probe error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("timeout probe took %s, want bounded shutdown", elapsed)
+	}
+}
+
+func TestInspectCodexStatusSeparatesDisabledHostRegistrationFromHealthyProtocol(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	repo := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	const engramPath = "/opt/engram/bin/engram"
+	writeStatusTestFile(t, filepath.Join(home, ".codex", "config.toml"), codexEngramBlockForCommand(engramPath)+"\n")
+	osExecutable = func() (string, error) { return engramPath, nil }
+	lookPathFn = func(name string) (string, error) {
+		switch name {
+		case "codex":
+			return "/opt/codex/bin/codex", nil
+		case engramPath:
+			return engramPath, nil
+		default:
+			return "", errors.New("not found")
+		}
+	}
+	runCommand = func(name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"--version"}):
+			return []byte("codex-cli 0.150.1\n"), nil
+		case name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"mcp", "list", "--json"}):
+			return []byte(fmt.Sprintf(`[{"name":"engram","enabled":false,"disabled_reason":"disabled","transport":{"type":"stdio","command":%q,"args":["mcp","--tools=agent"]},"startup_timeout_sec":10.0}]`, engramPath)), nil
+		default:
+			return nil, fmt.Errorf("unexpected command: %s %v", name, args)
+		}
+	}
+	runCodexMCPProbeFn = func(string, []string, time.Duration) (codexMCPProbeResult, error) {
+		return codexMCPProbeResult{ProtocolVersion: "2025-11-25", Tools: codexAgentToolNames()}, nil
+	}
+
+	status, err := InspectCodexStatus("2.2.1", repo)
+	if err != nil {
+		t.Fatalf("inspect disabled host registration: %v", err)
+	}
+	host := statusChecksByCapability(status.Checks, "mcp_host_registration")[0]
+	protocol := statusChecksByCapability(status.Checks, "mcp_readiness")[0]
+	if host.Status != CodexCheckInvalid || host.ReasonCode != "mcp_host_registration_mismatch" {
+		t.Fatalf("host registration = %#v", host)
+	}
+	if protocol.Status != CodexCheckReady || protocol.ReasonCode != "mcp_protocol_ready" {
+		t.Fatalf("protocol readiness = %#v", protocol)
+	}
+	if status.Mode == CodexModeMCPOnly || status.Mode == CodexModeCheckpointReady {
+		t.Fatalf("disabled host registration overstated mode %q", status.Mode)
+	}
+}
+
+func TestInspectCodexStatusRejectsInitializedMCPWithWrongToolCatalog(t *testing.T) {
+	resetSetupSeams(t)
+	home := useTestHome(t)
+	repo := filepath.Join(home, "workspace")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	const engramPath = "/opt/engram/bin/engram"
+	writeStatusTestFile(t, filepath.Join(home, ".codex", "config.toml"), codexEngramBlockForCommand(engramPath)+"\n")
+	osExecutable = func() (string, error) { return engramPath, nil }
+	lookPathFn = func(name string) (string, error) {
+		switch name {
+		case "codex":
+			return "/opt/codex/bin/codex", nil
+		case engramPath:
+			return engramPath, nil
+		default:
+			return "", errors.New("not found")
+		}
+	}
+	runCommand = func(name string, args ...string) ([]byte, error) {
+		if name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"--version"}) {
+			return []byte("codex-cli 0.150.1\n"), nil
+		}
+		if name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"mcp", "list", "--json"}) {
+			return codexMCPListFixture(engramPath), nil
+		}
+		return nil, fmt.Errorf("unexpected command: %s %v", name, args)
+	}
+	runCodexMCPProbeFn = func(string, []string, time.Duration) (codexMCPProbeResult, error) {
+		return codexMCPProbeResult{ProtocolVersion: "2025-11-25", Tools: []string{"mem_search"}}, nil
+	}
+
+	status, err := InspectCodexStatus("2.2.1", repo)
+	if err != nil {
+		t.Fatalf("inspect wrong catalog: %v", err)
+	}
+	readiness := statusChecksByCapability(status.Checks, "mcp_readiness")[0]
+	if readiness.Status != CodexCheckInvalid || readiness.ReasonCode != "mcp_tool_catalog_mismatch" {
+		t.Fatalf("readiness = %#v, want invalid catalog mismatch", readiness)
+	}
+	if evidenceValue(readiness, "observed_tools") != "mem_search" || evidenceValue(readiness, "expected_tools") == "" {
+		t.Fatalf("catalog evidence = %#v", readiness.Evidence)
 	}
 }
 
@@ -599,10 +788,7 @@ func TestInspectCodexStatusStaleMCPConfigurationIsNotReady(t *testing.T) {
 		t.Fatalf("create repository marker: %v", err)
 	}
 	osExecutable = func() (string, error) { return "/opt/engram/bin/engram", nil }
-	writeStatusTestFile(t, filepath.Join(home, ".codex", "config.toml"), `[mcp_servers.engram]
-command = "/missing/engram"
-args = ["mcp", "--tools=agent"]
-`)
+	writeStatusTestFile(t, filepath.Join(home, ".codex", "config.toml"), codexEngramBlockForCommand("/missing/engram")+"\n")
 	lookPathFn = func(name string) (string, error) {
 		if name == "codex" {
 			return "/opt/codex/bin/codex", nil
@@ -613,12 +799,15 @@ args = ["mcp", "--tools=agent"]
 		if name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"--version"}) {
 			return []byte("codex-cli 0.150.1\n"), nil
 		}
+		if name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"mcp", "list", "--json"}) {
+			return codexMCPListFixture("/missing/engram"), nil
+		}
 		t.Fatalf("stale MCP status executed unexpected command: %s %v", name, args)
 		return nil, nil
 	}
-	runCodexCheckpointProbeFn = func(string, ...string) ([]byte, error) {
+	runCodexMCPProbeFn = func(string, []string, time.Duration) (codexMCPProbeResult, error) {
 		t.Fatal("missing MCP executable must not be probed")
-		return nil, nil
+		return codexMCPProbeResult{}, nil
 	}
 
 	status, err := InspectCodexStatus("2.2.1", repo)
@@ -812,7 +1001,7 @@ enabled = false
 	marketplaceRoot := t.TempDir()
 	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
 	writeCanonicalCodexActivationFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"))
-	installedPath := filepath.Join(home, ".codex", "plugins", "cache", "engram", "engram", "0.1.7")
+	installedPath := filepath.Join(home, ".codex", "plugins", "cache", "engram", "engram", "0.1.8")
 	writeCanonicalCodexActivationFixture(t, installedPath)
 
 	lookPathFn = func(name string) (string, error) {
@@ -826,7 +1015,7 @@ enabled = false
 		case name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"--version"}):
 			return []byte("codex-cli 0.150.1\n"), nil
 		case name == "/opt/codex/bin/codex" && slices.Equal(args, []string{"plugin", "list", "--json"}):
-			return []byte(fmt.Sprintf(`{"installed":[{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.7","installed":true,"enabled":false,"source":{"source":"local","path":%q},"marketplaceSource":{"sourceType":"git","source":"https://github.com/yersonargotev/engram.git"}}]}`, filepath.Join(marketplaceRoot, "plugin", "codex"))), nil
+			return []byte(fmt.Sprintf(`{"installed":[{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.8","installed":true,"enabled":false,"source":{"source":"local","path":%q},"marketplaceSource":{"sourceType":"git","source":"https://github.com/yersonargotev/engram.git"}}]}`, filepath.Join(marketplaceRoot, "plugin", "codex"))), nil
 		default:
 			t.Fatalf("disabled plugin profile executed unexpected command: %s %v", name, args)
 			return nil, nil
@@ -846,7 +1035,7 @@ enabled = false
 		t.Fatalf("disabled plugin check = %#v", plugin)
 	}
 	if evidenceValue(plugin, "installed") != "true" || evidenceValue(plugin, "enabled") != "false" ||
-		evidenceValue(plugin, "installed_version") != "0.1.7" || evidenceValue(plugin, "installed_revision") != testReleaseCommit {
+		evidenceValue(plugin, "installed_version") != "0.1.8" || evidenceValue(plugin, "installed_revision") != testReleaseCommit {
 		t.Fatalf("disabled plugin evidence = %#v", plugin.Evidence)
 	}
 	if status.Mode != CodexModePartialPlugin {
@@ -876,6 +1065,12 @@ args = ["mcp", "--tools=agent"]
 command = "/opt/custom/bin/engram-wrapper"
 args = ["mcp", "--tools=custom"]
 `,
+			wantStatus: CodexCheckCustomized,
+			wantReason: "mcp_configuration_customized",
+		},
+		{
+			name:       "disabled tool overrides explicit agent catalog",
+			section:    codexEngramBlockForCommand("/opt/engram/bin/engram") + "\ndisabled_tools = [\"mem_search\"]\n",
 			wantStatus: CodexCheckCustomized,
 			wantReason: "mcp_configuration_customized",
 		},
@@ -1069,4 +1264,8 @@ func evidenceValue(check CodexIntegrationCheck, name string) string {
 		}
 	}
 	return ""
+}
+
+func codexMCPListFixture(command string) []byte {
+	return []byte(fmt.Sprintf(`[{"name":"engram","enabled":true,"disabled_reason":null,"transport":{"type":"stdio","command":%q,"args":["mcp","--tools=agent"]},"startup_timeout_sec":10.0}]`, command))
 }

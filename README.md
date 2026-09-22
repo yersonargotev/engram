@@ -434,7 +434,7 @@ Your production engram is fully untouched throughout.
 | `engram context [project]`                 | Recent session context                                           |
 | `engram activation-study verify\|run\|analyze` | Verify, execute, or analyze a frozen disposable Codex activation cohort |
 | `engram recall-study verify\|dry-run\|plan-calibration\|report\|run-calibration\|run-held-out\|publish` | Verify, execute, and publish the frozen paired Recall study without enabling rollout |
-| `engram recall-baseline record\|report\|power\|purge` | Collect and reproduce the opt-in content-free local Recall baseline |
+| `engram recall-baseline record\|report\|power\|purge` | Inspect the default-on, content-free local Recall/MCP runtime baseline |
 | `engram checkpoint preflight [flags]`      | Inspect prospective Memories without writing local or replicated state |
 | `engram checkpoint record [flags]`         | Record an idempotent local `saved`, `needs_review`, or `skipped` root-turn checkpoint |
 | `engram checkpoint status [flags]`         | Inspect one exact local root-turn checkpoint                 |
@@ -493,9 +493,10 @@ reproducible commands, privacy boundary, and published results live in
 
 ### Content-free Recall baseline
 
-`engram recall-baseline` owns an opt-in, local-only operational ledger for the
-current Codex Protocol. It aggregates checkpoint/Stop/Capture/SubagentStop and
-Recall-facing CLI/MCP behavior without storing prompts, queries, Memory or
+`engram recall-baseline` owns a default-on, local-only operational ledger for the
+current Protocol. It aggregates checkpoint/Stop/Capture/SubagentStop,
+MCP process/initialize/tool-list milestones, and Recall-facing CLI/MCP behavior
+without storing prompts, queries, raw MCP `clientInfo`, Memory or
 assistant content, paths, diffs, credentials, or raw lifecycle identifiers.
 See the [collection, privacy, retention, report, and power-analysis
 contract](docs/RECALL-BASELINE.md).
@@ -532,7 +533,7 @@ See the [frozen study contract and operator workflow](docs/RECALL-STUDY.md).
 | Variable                        | Description                                                                                                            | Default        |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | -------------- |
 | `ENGRAM_DATA_DIR`               | Override data directory                                                                                                | `~/.engram`    |
-| `ENGRAM_RECALL_BASELINE`        | Set to `1` to enable the content-free, local-only Codex Recall baseline                                                | (unset)        |
+| `ENGRAM_RECALL_BASELINE`        | Set to `0` to opt out of the content-free, local-only Recall/MCP runtime baseline; opt-out creates no baseline artifacts | enabled        |
 | `ENGRAM_RECALL_BASELINE_RETENTION_DAYS` | Recall-baseline retention from 1 through 30 days                                                             | `7`            |
 | `ENGRAM_CODEX_RECALL_CANARY`    | Opt into `targeted-recall` or `targeted-recall-exact-session`; unknown values are rejected and unset preserves the existing broad treatment | (unset) |
 | `ENGRAM_PORT`                   | Override HTTP server port                                                                                              | `7437`         |

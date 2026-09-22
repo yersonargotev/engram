@@ -20,9 +20,65 @@ func stubCursorInstallEnv(t *testing.T) string {
 		t.Fatalf("write stub engram binary: %v", err)
 	}
 	osExecutable = func() (string, error) { return bin, nil }
+	stubCursorMCPProbeReady(t)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("APPDATA", "")
 	return home
+}
+
+func TestInstallCursorReportsVerifiedCapabilities(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+
+	result, err := InstallWithOptions("cursor", InstallOptions{
+		Version: "2.2.1",
+		Commit:  testReleaseCommit,
+	})
+	if err != nil {
+		t.Fatalf("InstallWithOptions(cursor): %v", err)
+	}
+	if !result.Complete {
+		t.Fatalf("result = %#v, want complete after post-install inspection", result)
+	}
+	want := []string{"plugin", "skill", "mcp", "hooks"}
+	if len(result.Checks) != len(want) {
+		t.Fatalf("checks = %#v, want %v", result.Checks, want)
+	}
+	for i, capability := range want {
+		if result.Checks[i].Capability != capability || result.Checks[i].Status != CheckReady {
+			t.Fatalf("check[%d] = %#v, want ready %s", i, result.Checks[i], capability)
+		}
+	}
+	if result.Destination != filepath.Join(home, ".cursor", "plugins", "local", "engram") {
+		t.Fatalf("destination = %q", result.Destination)
+	}
+}
+
+func TestInstallCursorReportsPreservedHooksAsIncomplete(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	hooksPath := filepath.Join(home, ".cursor", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+		t.Fatalf("create hooks parent: %v", err)
+	}
+	if err := os.WriteFile(hooksPath, []byte("{not-json"), 0o644); err != nil {
+		t.Fatalf("write custom hooks: %v", err)
+	}
+
+	result, err := InstallWithOptions("cursor", InstallOptions{
+		Version: "2.2.1",
+		Commit:  testReleaseCommit,
+	})
+	if err != nil {
+		t.Fatalf("InstallWithOptions(cursor): %v", err)
+	}
+	if result.Complete {
+		t.Fatalf("result = %#v, want incomplete when hooks were preserved", result)
+	}
+	for _, check := range result.Checks {
+		if check.Capability == "hooks" && check.Status == CheckPreserved {
+			return
+		}
+	}
+	t.Fatalf("checks = %#v, want preserved hooks", result.Checks)
 }
 
 func TestInstallCursorWritesAgentPluginInLocalPluginDirectory(t *testing.T) {
@@ -380,6 +436,26 @@ func TestInstallCursorPreservesCustomNativeMCP(t *testing.T) {
 	}
 	if !slices.Contains(result.Preserved, "mcpServers.engram") {
 		t.Fatalf("result.Preserved = %v, want mcpServers.engram", result.Preserved)
+	}
+	if result.Complete {
+		t.Fatalf("result = %#v, want incomplete while custom MCP state is preserved", result)
+	}
+	preservedMCP := false
+	for _, check := range result.Checks {
+		if check.Capability == "mcp" && check.Status == CheckPreserved {
+			preservedMCP = true
+		}
+	}
+	if !preservedMCP {
+		t.Fatalf("checks = %#v, want preserved MCP capability", result.Checks)
+	}
+	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("InspectCursorStatus: %v", err)
+	}
+	mcpStatus := cursorCheck(t, status, "mcp")
+	if mcpStatus.Status != CursorCheckCustomized || mcpStatus.ReasonCode != "mcp_native_conflict" || status.Mode != CursorModePartial {
+		t.Fatalf("status = %#v, want partial native MCP conflict", status)
 	}
 
 	raw, err := os.ReadFile(native)

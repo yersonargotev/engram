@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEmbeddedOpenCodePluginMatchesSourceByteForByte(t *testing.T) {
@@ -32,7 +33,7 @@ func resetSetupSeams(t *testing.T) {
 	oldUserHomeDir := userHomeDir
 	oldLookPathFn := lookPathFn
 	oldRunCommand := runCommand
-	oldRunCodexCheckpointProbeFn := runCodexCheckpointProbeFn
+	oldRunCodexMCPProbeFn := runCodexMCPProbeFn
 	oldLinkFileFn := linkFileFn
 	oldRenameFileFn := renameFileFn
 	oldRemoveFileFn := removeFileFn
@@ -56,8 +57,8 @@ func resetSetupSeams(t *testing.T) {
 	oldCodexAdminSkillsDirFn := codexAdminSkillsDirFn
 	oldWriteClaudeCodeUserMCPFn := writeClaudeCodeUserMCPFn
 	oldResolveMiseNodeVersionFn := resolveMiseNodeVersionFn
-	runCodexCheckpointProbeFn = func(string, ...string) ([]byte, error) {
-		return []byte("engram checkpoint record\nengram checkpoint status\nengram checkpoint verify-stop\n"), nil
+	runCodexMCPProbeFn = func(string, []string, time.Duration) (codexMCPProbeResult, error) {
+		return codexMCPProbeResult{ProtocolVersion: "2025-11-25", Tools: codexAgentToolNames()}, nil
 	}
 
 	t.Cleanup(func() {
@@ -65,7 +66,7 @@ func resetSetupSeams(t *testing.T) {
 		userHomeDir = oldUserHomeDir
 		lookPathFn = oldLookPathFn
 		runCommand = oldRunCommand
-		runCodexCheckpointProbeFn = oldRunCodexCheckpointProbeFn
+		runCodexMCPProbeFn = oldRunCodexMCPProbeFn
 		linkFileFn = oldLinkFileFn
 		renameFileFn = oldRenameFileFn
 		removeFileFn = oldRemoveFileFn
@@ -94,6 +95,7 @@ func resetSetupSeams(t *testing.T) {
 
 func useTestHome(t *testing.T) string {
 	t.Helper()
+	t.Setenv("CODEX_HOME", "")
 	home := t.TempDir()
 	userHomeDir = func() (string, error) { return home, nil }
 	return home
@@ -103,6 +105,7 @@ func useTestHome(t *testing.T) string {
 // profile, including the Windows APPDATA paths used by Gemini and Codex.
 func useIsolatedProfile(t *testing.T) string {
 	t.Helper()
+	t.Setenv("CODEX_HOME", "")
 	profile := t.TempDir()
 	userHomeDir = func() (string, error) { return profile, nil }
 
@@ -1740,6 +1743,16 @@ func TestCodexBlockUsesAbsolutePath(t *testing.T) {
 			if !strings.Contains(block, `args = ["mcp", "--tools=agent"]`) {
 				t.Fatalf("expected args in codex block, got:\n%s", block)
 			}
+			for _, required := range []string{
+				`enabled = true`,
+				`required = true`,
+				`startup_timeout_sec = 10`,
+				`enabled_tools = ["mem_checkpoint","mem_checkpoint_status","mem_current_project","mem_get_observation","mem_search"]`,
+			} {
+				if !strings.Contains(block, required) {
+					t.Fatalf("expected %q in codex block, got:\n%s", required, block)
+				}
+			}
 			if block == codexEngramBlock {
 				t.Fatalf("expected absolute path, got bare-engram fallback block:\n%s", block)
 			}
@@ -1853,6 +1866,25 @@ func TestPathHelpersAcrossOSVariants(t *testing.T) {
 	}
 	if got := codexCompactPromptPath(); got != filepath.Join(filepath.Dir(codexConfigPath()), "engram-compact-prompt.md") {
 		t.Fatalf("unexpected codex compact prompt path: %s", got)
+	}
+}
+
+func TestCodexPathsHonorCodexHome(t *testing.T) {
+	resetSetupSeams(t)
+	userHomeDir = func() (string, error) { return "/home/tester", nil }
+	codexHome := filepath.Join(t.TempDir(), "custom-codex")
+	t.Setenv("CODEX_HOME", codexHome)
+	runtimeGOOS = "windows"
+	t.Setenv("APPDATA", "C:/AppData/Roaming")
+
+	if got := codexConfigPath(); got != filepath.Join(codexHome, "config.toml") {
+		t.Fatalf("codexConfigPath() = %q, want CODEX_HOME config", got)
+	}
+	if got := codexInstructionsPath(); got != filepath.Join(codexHome, "engram-instructions.md") {
+		t.Fatalf("codexInstructionsPath() = %q, want CODEX_HOME instructions", got)
+	}
+	if got := codexCompactPromptPath(); got != filepath.Join(codexHome, "engram-compact-prompt.md") {
+		t.Fatalf("codexCompactPromptPath() = %q, want CODEX_HOME compact prompt", got)
 	}
 }
 
@@ -2145,6 +2177,21 @@ func TestGeminiAndCodexHelpersErrorPaths(t *testing.T) {
 		output := upsertCodexEngramBlock("\n\n")
 		if output != codexEngramBlock+"\n" {
 			t.Fatalf("unexpected output for empty content:\n%s", output)
+		}
+	})
+
+	t.Run("upsertCodexEngramBlock migrates the previous owned contract", func(t *testing.T) {
+		resetSetupSeams(t)
+		osExecutable = func() (string, error) { return "/opt/engram/bin/engram", nil }
+		legacy := "[mcp_servers.engram]\ncommand = \"engram\"\nargs = [\"mcp\", \"--tools=agent\"]\n"
+
+		output := upsertCodexEngramBlock(legacy)
+
+		if !strings.Contains(output, `required = true`) || !strings.Contains(output, `enabled_tools = [`) {
+			t.Fatalf("legacy owned MCP section was not upgraded:\n%s", output)
+		}
+		if strings.Count(output, "[mcp_servers.engram]") != 1 {
+			t.Fatalf("legacy upgrade duplicated MCP section:\n%s", output)
 		}
 	})
 

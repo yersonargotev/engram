@@ -1045,11 +1045,11 @@ func cmdMCP(cfg store.Config) {
 	}
 	defer stopAutosync()
 
-	observeOperation, observeCheckpoint, closeObservers := newRecallBaselineMCPObservers(cfg)
+	observeRuntime, observeOperation, observeCheckpoint, closeObservers := newRecallBaselineMCPObservers(cfg)
 	defer closeObservers()
 	mcpCfg := mcp.MCPConfig{
 		DefaultProject: projectOverride, BinaryVersion: version, BinaryRevision: commit, ObserveOperation: observeOperation,
-		ObserveCheckpoint: observeCheckpoint,
+		ObserveRuntime: observeRuntime, ObserveCheckpoint: observeCheckpoint,
 	}
 	allowlist := resolveMCPTools(toolsFilter)
 	mcpSrv := newMCPServerWithConfig(s, mcpCfg, allowlist)
@@ -3360,16 +3360,20 @@ func cmdSetupInteractive(cfg store.Config, mode string, options setup.InstallOpt
 }
 
 func printSetupResult(result *setup.Result) {
-	if result.Agent != "codex" || len(result.Checks) == 0 {
+	if len(result.Checks) == 0 {
 		fmt.Printf("✓ Installed %s plugin (%d files)\n", result.Agent, result.Files)
 		fmt.Printf("  → %s\n", result.Destination)
 		return
 	}
 
+	agentName := result.Agent
+	if agentName != "" {
+		agentName = strings.ToUpper(agentName[:1]) + agentName[1:]
+	}
 	if result.Complete {
-		fmt.Printf("✓ Codex setup complete (%d files changed)\n", result.Files)
+		fmt.Printf("✓ %s setup complete (%d files changed)\n", agentName, result.Files)
 	} else {
-		fmt.Printf("⚠ Codex setup incomplete (%d files changed)\n", result.Files)
+		fmt.Printf("⚠ %s setup incomplete (%d files changed)\n", agentName, result.Files)
 	}
 	fmt.Printf("  → %s\n", result.Destination)
 	for _, check := range result.Checks {

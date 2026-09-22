@@ -59,12 +59,73 @@ func installCursorWithOptions(options InstallOptions) (*Result, error) {
 		return nil, err
 	}
 
-	return &Result{
+	result := &Result{
 		Agent:       "cursor",
 		Destination: dest,
 		Files:       files,
 		Preserved:   append(preserved, hookPreserved...),
-	}, nil
+	}
+	status, err := InspectCursorStatus(version, commit, "")
+	if err != nil {
+		return nil, fmt.Errorf("inspect installed Cursor integration: %w", err)
+	}
+	result.Checks = cursorSetupCapabilityChecks(status, result.Preserved)
+	result.Complete = checksReady(result.Checks)
+	return result, nil
+}
+
+func cursorSetupCapabilityChecks(status CursorIntegrationStatus, preserved []string) []CapabilityCheck {
+	checks := make([]CapabilityCheck, 0, 4)
+	for _, capability := range []string{"plugin", "skill", "mcp", "hooks"} {
+		var matched *CursorIntegrationCheck
+		for i := range status.Checks {
+			if status.Checks[i].Capability == capability {
+				matched = &status.Checks[i]
+				break
+			}
+		}
+		if matched == nil {
+			checks = append(checks, CapabilityCheck{Capability: capability, Status: CheckMissing, Detail: "post-install inspection did not report this capability"})
+			continue
+		}
+		if cursorCapabilityPreserved(capability, preserved) {
+			checks = append(checks, CapabilityCheck{
+				Capability: capability,
+				Status:     CheckPreserved,
+				Detail:     "custom activation state was preserved and may take precedence over the installed integration",
+			})
+			continue
+		}
+		setupStatus := CheckFailed
+		switch matched.Status {
+		case CursorCheckReady:
+			setupStatus = CheckReady
+		case CursorCheckMissing:
+			setupStatus = CheckMissing
+		case CursorCheckCustomized:
+			setupStatus = CheckPreserved
+		}
+		checks = append(checks, CapabilityCheck{Capability: capability, Status: setupStatus, Detail: matched.Reason})
+	}
+	return checks
+}
+
+func cursorCapabilityPreserved(capability string, preserved []string) bool {
+	want := ""
+	switch capability {
+	case "mcp":
+		want = "mcpServers.engram"
+	case "hooks":
+		want = "hooks"
+	default:
+		return false
+	}
+	for _, item := range preserved {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 func cursorReleaseIdentity(options InstallOptions) (string, string, error) {

@@ -64,8 +64,11 @@ remain explicit curation operations.
 ### Memory Protocol (injected via system prompt)
 
 The plugin injects the canonical terminal policy: selective Recall when prior
-Memory can change the work, followed by exactly one `saved`, `needs_review`, or
-`skipped(no_durable_knowledge)` checkpoint after the root turn settles.
+Memory can change the work. History-dependent diagnosis, review, continuation,
+release, configuration, and prior-decision work resolve the MCP tools, establish
+the current project, and run one narrow search before acting. Self-contained
+work remains search-free. Exactly one `saved`, `needs_review`, or
+`skipped(no_durable_knowledge)` checkpoint follows after the root turn settles.
 
 ### Three Layers of Memory Resilience
 
@@ -75,7 +78,7 @@ The OpenCode plugin uses a defense-in-depth strategy to ensure memories survive 
 |-------|-----------|---------------------|
 | **System Prompt** | `MEMORY_INSTRUCTIONS` concatenated into existing system prompt via `chat.system.transform` | Always present |
 | **Compaction Hook** | Injects session-bound context and preserves the same root-turn checkpoint cue | Fires during compaction |
-| **Canonical skill** | Keeps selective Recall optional and commits once only after the root turn settles | Always present |
+| **Canonical skill** | Requires bounded Recall for history-dependent work, skips it for self-contained work, and commits once only after the root turn settles | Always present |
 
 ---
 
@@ -183,6 +186,8 @@ PowerShell local override/testing example for locked-down Windows endpoints:
 - Uses selective Recall only when prior history can change the work: automatic
   project Recall requires strong/explicit identity, begins at five candidates
   and 4 KiB, and fails open visibly without blocking the task.
+- Resolves deferred `mem_*` tools through the host catalog before using the CLI
+  fallback.
 - Commits one terminal checkpoint per settled root user turn, including across compaction.
 - Reserves independent save and optional Session summary for explicit curation.
 

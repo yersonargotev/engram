@@ -745,10 +745,10 @@ func New(cfg Config) (*Store, error) {
 		}
 	}()
 
-	// SQLite performance pragmas
+	// Configure lock waiting before WAL, which can contend with another startup.
 	pragmas := []string{
-		"PRAGMA journal_mode = WAL",
 		"PRAGMA busy_timeout = 5000",
+		"PRAGMA journal_mode = WAL",
 		"PRAGMA synchronous = NORMAL",
 		"PRAGMA foreign_keys = ON",
 	}
@@ -788,8 +788,8 @@ func newWithoutRepair(cfg Config) (*Store, error) {
 	db.SetMaxOpenConns(1)
 
 	pragmas := []string{
-		"PRAGMA journal_mode = WAL",
 		"PRAGMA busy_timeout = 5000",
+		"PRAGMA journal_mode = WAL",
 		"PRAGMA synchronous = NORMAL",
 		"PRAGMA foreign_keys = ON",
 	}

@@ -12405,3 +12405,34 @@ func TestDeleteProjectHardDeleteRemovesOrphanSession(t *testing.T) {
 		t.Fatalf("expected orphan session to be deleted, got %d rows", count)
 	}
 }
+
+func TestNewWaitsForStartupDatabaseLock(t *testing.T) {
+	cfg := FallbackConfig(t.TempDir())
+	locker, err := sql.Open("sqlite", filepath.Join(cfg.DataDir, "engram.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer locker.Close()
+	locker.SetMaxOpenConns(1)
+	if _, err := locker.Exec("CREATE TABLE startup_fixture (id INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := locker.Exec("BEGIN EXCLUSIVE"); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan error, 1)
+	time.AfterFunc(100*time.Millisecond, func() {
+		_, err := locker.Exec("ROLLBACK")
+		released <- err
+	})
+	s, openErr := New(cfg)
+	if s != nil {
+		defer s.Close()
+	}
+	if err := <-released; err != nil {
+		t.Fatalf("release startup lock: %v", err)
+	}
+	if openErr != nil {
+		t.Fatalf("open store while another process briefly holds the startup lock: %v", openErr)
+	}
+}

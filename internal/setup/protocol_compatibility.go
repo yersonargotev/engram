@@ -12,29 +12,40 @@ import (
 )
 
 const (
-	currentManagedPackVersion         = "3.3.1"
-	currentManagedPackManifestSHA256  = "fa6732a12ce2de5e00b1e905e129aa079cb0e4ac51029ffe5499af9aaf2eb8a7"
-	currentManagedPackSkillSHA256     = "dce76832c44ca96a9bfc42173c96e4062479c2d2572744718a6008e5daf941ad"
-	currentManagedPackFixtureSHA256   = "0da1bb02698bacbc6dfdc9717b233a5e67a021e6e07f0f976f4fba2e9611b18b"
-	currentCodexPluginVersion         = "0.1.7"
-	currentCodexPluginManifestSHA256  = "b3b1d4bd2b9d61cc81e4b091c0bccaf483e327670e2da38e2407b2374cfe6d24"
-	previousManagedPackVersion        = "3.3.0"
-	previousManagedPackManifestSHA256 = "9bed746986c705191d806c4a298e480becf251bd12189a5b191a8c9862169a74"
-	previousManagedPackSkillSHA256    = "5e8e94eeea4dc6fb2d389999f0de92b1182784f6700bb89332f1040295c0b3a9"
-	previousManagedPackFixtureSHA256  = "d6998bc1e053878410487dddae05de39839590f0bd9335c73fcbdd7f5aff2c54"
-	earlierManagedPackVersion         = "3.2.0"
-	earlierManagedPackManifestSHA256  = "eea49916d97af47f8cf61ab7d40c7b11b1858c65d740dd663ee756766e064a6c"
-	earlierManagedPackSkillSHA256     = "817248be55234f3c7dbb31f4890886e251c1e430cc61d35dd60ef5215e8ec6a6"
-	earlierManagedPackFixtureSHA256   = "ee15977473bff7af95b92c68da61eb2bc6e9aafeb277a29421ecb48d166981e7"
-	previousCodexPluginVersion        = "0.1.6"
-	previousCodexPluginManifestSHA256 = "865cb2032025ca958d99f4adb073aa1d8e89081ffef53ed8cf736fb569ff3302"
-	legacyManagedPackVersion          = "3.1.2"
-	legacyManagedPackManifestSHA256   = "ce85707c61e7f1c59dddfb09cb8fdc4f460e62d48d9396dca9297da4552a2f09"
-	legacyManagedPackSHA256           = "2b570eda04db214ed496d14c09d287f5b1c0750dc2f0ff1928b8b314e257e20c"
-	legacyEngramBinaryVersion         = "3.0.0"
-	legacyCodexPluginVersion          = "0.1.5"
-	legacyCodexPluginManifestSHA256   = "b3ee231a8ba88ae54b018365af392d1976b1e8a02c2ea8c60d9e4464f824c4ed"
-	currentBinaryLegacyCompatible     = true
+	currentManagedPackVersion          = "3.4.0"
+	currentManagedPackManifestSHA256   = "0759b13cf9a8de81a550edbbe5b1c85058bc689e244f3bd9e81a9e52bf8a3137"
+	currentManagedPackSkillSHA256      = "846df158172cc8cb26502165ba0731ae561b5a125287389cd4aa2b1b6b286708"
+	currentManagedPackFixtureSHA256    = "aff0eaca29ff0f2bb8dd8cd3ca49920c72b571930fa970a9b89886fe8fc95fcf"
+	currentCodexPluginVersion          = "0.1.8"
+	currentCodexPluginManifestSHA256   = "fefd2de39a9434b6cf47ad99fe43e1d9649e7c46054fabc8383233477a54fffc"
+	previousManagedPackVersion         = "3.3.1"
+	previousManagedPackManifestSHA256  = "fa6732a12ce2de5e00b1e905e129aa079cb0e4ac51029ffe5499af9aaf2eb8a7"
+	previousManagedPackSkillSHA256     = "dce76832c44ca96a9bfc42173c96e4062479c2d2572744718a6008e5daf941ad"
+	previousManagedPackFixtureSHA256   = "0da1bb02698bacbc6dfdc9717b233a5e67a021e6e07f0f976f4fba2e9611b18b"
+	originalManagedPackSkillSHA256     = "b2168c0e0c627320443e655ede2fabeeea404af6048f2840af7ddcdd9f0670d4"
+	originalManagedPackFixtureSHA256   = "f8c63946451c16a97d231e5519958a62ff76f552d7c283f6a539109afb99aa9f"
+	checkpointManagedPackSkillSHA256   = "e37b45dbfa8c26c398d7cdbf996354433f1505f6054a1129122c48a2b830009f"
+	checkpointManagedPackFixtureSHA256 = "f07359a3a85176e760aab858bf14e2f9a914ed86a3c7bdd4526385bd49862ace"
+	earlierManagedPackVersion          = "3.3.0"
+	earlierManagedPackManifestSHA256   = "9bed746986c705191d806c4a298e480becf251bd12189a5b191a8c9862169a74"
+	earlierManagedPackSkillSHA256      = "5e8e94eeea4dc6fb2d389999f0de92b1182784f6700bb89332f1040295c0b3a9"
+	earlierManagedPackFixtureSHA256    = "d6998bc1e053878410487dddae05de39839590f0bd9335c73fcbdd7f5aff2c54"
+	priorManagedPackVersion            = "3.2.0"
+	priorManagedPackManifestSHA256     = "eea49916d97af47f8cf61ab7d40c7b11b1858c65d740dd663ee756766e064a6c"
+	priorManagedPackSkillSHA256        = "817248be55234f3c7dbb31f4890886e251c1e430cc61d35dd60ef5215e8ec6a6"
+	priorManagedPackFixtureSHA256      = "ee15977473bff7af95b92c68da61eb2bc6e9aafeb277a29421ecb48d166981e7"
+	previousCodexPluginVersion         = "0.1.7"
+	previousCodexPluginManifestSHA256  = "b3b1d4bd2b9d61cc81e4b091c0bccaf483e327670e2da38e2407b2374cfe6d24"
+	originalCodexPluginManifestSHA256  = "8fd6699d834beab9a8188ee51e273156f5db02aec4694bc3458db382a17a23b1"
+	earlierCodexPluginVersion          = "0.1.6"
+	earlierCodexPluginManifestSHA256   = "865cb2032025ca958d99f4adb073aa1d8e89081ffef53ed8cf736fb569ff3302"
+	legacyManagedPackVersion           = "3.1.2"
+	legacyManagedPackManifestSHA256    = "ce85707c61e7f1c59dddfb09cb8fdc4f460e62d48d9396dca9297da4552a2f09"
+	legacyManagedPackSHA256            = "2b570eda04db214ed496d14c09d287f5b1c0750dc2f0ff1928b8b314e257e20c"
+	legacyEngramBinaryVersion          = "3.0.0"
+	legacyCodexPluginVersion           = "0.1.5"
+	legacyCodexPluginManifestSHA256    = "b3ee231a8ba88ae54b018365af392d1976b1e8a02c2ea8c60d9e4464f824c4ed"
+	currentBinaryLegacyCompatible      = true
 )
 
 type trustedManagedPackCoordinate struct {
@@ -47,29 +58,45 @@ type trustedManagedPackCoordinate struct {
 func trustedManagedPack(version, skillSHA256 string) (trustedManagedPackCoordinate, bool) {
 	switch version {
 	case currentManagedPackVersion:
-		if skillSHA256 == "b2168c0e0c627320443e655ede2fabeeea404af6048f2840af7ddcdd9f0670d4" {
-			return trustedManagedPackCoordinate{
-				manifestSHA256: currentManagedPackManifestSHA256,
-				skillSHA256:    "b2168c0e0c627320443e655ede2fabeeea404af6048f2840af7ddcdd9f0670d4",
-				fixtureSHA256:  "f8c63946451c16a97d231e5519958a62ff76f552d7c283f6a539109afb99aa9f",
-			}, true
-		}
 		return trustedManagedPackCoordinate{
 			manifestSHA256: currentManagedPackManifestSHA256,
 			skillSHA256:    currentManagedPackSkillSHA256,
 			fixtureSHA256:  currentManagedPackFixtureSHA256,
 		}, true
 	case previousManagedPackVersion:
-		return trustedManagedPackCoordinate{
-			manifestSHA256: previousManagedPackManifestSHA256,
-			skillSHA256:    previousManagedPackSkillSHA256,
-			fixtureSHA256:  previousManagedPackFixtureSHA256,
-		}, true
+		switch skillSHA256 {
+		case previousManagedPackSkillSHA256:
+			return trustedManagedPackCoordinate{
+				manifestSHA256: previousManagedPackManifestSHA256,
+				skillSHA256:    previousManagedPackSkillSHA256,
+				fixtureSHA256:  previousManagedPackFixtureSHA256,
+			}, true
+		case originalManagedPackSkillSHA256:
+			return trustedManagedPackCoordinate{
+				manifestSHA256: previousManagedPackManifestSHA256,
+				skillSHA256:    originalManagedPackSkillSHA256,
+				fixtureSHA256:  originalManagedPackFixtureSHA256,
+			}, true
+		case checkpointManagedPackSkillSHA256:
+			return trustedManagedPackCoordinate{
+				manifestSHA256: previousManagedPackManifestSHA256,
+				skillSHA256:    checkpointManagedPackSkillSHA256,
+				fixtureSHA256:  checkpointManagedPackFixtureSHA256,
+			}, true
+		default:
+			return trustedManagedPackCoordinate{}, false
+		}
 	case earlierManagedPackVersion:
 		return trustedManagedPackCoordinate{
 			manifestSHA256: earlierManagedPackManifestSHA256,
 			skillSHA256:    earlierManagedPackSkillSHA256,
 			fixtureSHA256:  earlierManagedPackFixtureSHA256,
+		}, true
+	case priorManagedPackVersion:
+		return trustedManagedPackCoordinate{
+			manifestSHA256: priorManagedPackManifestSHA256,
+			skillSHA256:    priorManagedPackSkillSHA256,
+			fixtureSHA256:  priorManagedPackFixtureSHA256,
 		}, true
 	case legacyManagedPackVersion:
 		return trustedManagedPackCoordinate{
@@ -227,6 +254,16 @@ func inspectCodexPluginProtocolDeclaration(plugin codexPluginInspection) protoco
 	}
 	if declaration.Version == previousCodexPluginVersion &&
 		plugin.Capabilities.ManifestSHA256 == previousCodexPluginManifestSHA256 {
+		declaration.Supported = protocolV1V2Range()
+		declaration.Legacy = true
+	}
+	if declaration.Version == previousCodexPluginVersion &&
+		plugin.Capabilities.ManifestSHA256 == originalCodexPluginManifestSHA256 {
+		declaration.Supported = protocolV1Range()
+		declaration.Legacy = true
+	}
+	if declaration.Version == earlierCodexPluginVersion &&
+		plugin.Capabilities.ManifestSHA256 == earlierCodexPluginManifestSHA256 {
 		declaration.Supported = protocolV1Range()
 		declaration.Legacy = true
 	}
@@ -240,4 +277,8 @@ func inspectCodexPluginProtocolDeclaration(plugin codexPluginInspection) protoco
 
 func protocolV1Range() *protocolcontract.VersionRange {
 	return &protocolcontract.VersionRange{Minimum: 1, Maximum: 1}
+}
+
+func protocolV1V2Range() *protocolcontract.VersionRange {
+	return &protocolcontract.VersionRange{Minimum: 1, Maximum: 2}
 }

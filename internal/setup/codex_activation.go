@@ -104,6 +104,11 @@ func validCodexCheckpointSkill(skill string) bool {
 	for _, required := range []string{
 		"root user turn",
 		"engram-memory",
+		"history-dependent",
+		"mem_current_project",
+		"mem_search",
+		"Self-contained work skips Recall",
+		"deferred-tool catalog",
 		"`saved`",
 		"`skipped(no_durable_knowledge)`",
 		"`needs_review`",

@@ -489,11 +489,13 @@ Stable setup is tied to the Engram binary that runs it. The command derives a re
 The command reports four independent capabilities:
 
 - `plugin`: the marketplace authority, release commit, and installed plugin identity are verified.
-- `mcp`: both the plugin MCP manifest and `[mcp_servers.engram]` are valid, the configured executable advertises `checkpoint record`, `checkpoint status`, and `checkpoint verify-stop`, and the MCP agent profile exposes `mem_checkpoint` plus `mem_checkpoint_status`. Homebrew installs use the stable `bin/engram` symlink instead of a versioned Cellar or Caskroom path.
+- `mcp`: both the plugin MCP manifest and `[mcp_servers.engram]` are valid, Codex reports the intended stdio registration as enabled, and the configured executable completes MCP `initialize` plus `tools/list` with exactly the five agent-profile tools. Homebrew installs use the stable `bin/engram` symlink instead of a versioned Cellar or Caskroom path.
 - `activation-cue`: the installed plugin contains the complete canonical checkpoint skill, projects its single short cue through the same direct Core command on Unix and Windows, limits complete model-visible `SessionStart.additionalContext` to 4 KiB, and covers `startup`, `resume`, `clear`, and `compact` exactly once.
 - `verifier`: the installed plugin provides the exact synchronous Engram `Stop` commands for Unix and Windows, a three-second timeout, and the canonical `scripts/stop.sh` Unix launcher from the verified plugin tree. Windows delegates directly to the Engram CLI without an intermediate script.
 
 Setup is complete only when all four checks are `ready`. If the Codex CLI, plugin, MCP manifest, activation cue, or verifier is absent, the command reports an incomplete result instead of claiming success.
+
+After writing the managed MCP configuration, setup checks `codex mcp list --json`. A missing, disabled, mismatched, or unavailable effective registration leaves setup incomplete and preserves existing legacy activation until the replacement is verified.
 
 ### Read-only integration status
 
@@ -504,14 +506,14 @@ engram setup status codex
 engram setup status codex --json
 ```
 
-The command does not install, upgrade, repair, start an MCP server, rewrite configuration, or save Memory. It uses bounded read-only probes (`--version`, plugin inventory, filesystem/configuration inspection, and `checkpoint --help`) and reports these surfaces independently:
+The command does not install, upgrade, repair, rewrite configuration, or save Memory. In addition to read-only inventory and filesystem inspection, it starts the configured MCP command in a temporary data directory, disables autosync and baseline collection for that child, and performs a bounded `initialize` plus `tools/list` probe. It reports these surfaces independently:
 
 - `compatibility`: the Managed Pack version, Engram binary version, Codex plugin version, and monotonic Protocol contract version are separate axes. Each distributable reports attributable provenance and an inclusive `supported_protocol` range. Readiness uses the intersection of those ranges, never equality between the three distributable versions.
 
 - `engram_cli` and `codex_cli`: availability, resolved executable path, and version. The Engram binary also reports its embedded source revision when available; the real CLI path fails compatibility provenance closed when that revision is malformed.
 - `skill`: every relevant repository, user, administrator, or plugin-provided Engram memory skill, including scope, resolved path, SHA-256 identity, optional version, and disabled state when configured. A standalone `engram-memory-cli` copy is leftover compatibility evidence, not the canonical skill and not Codex activation.
 - `marketplace` and `plugin`: registration is kept separate from installed/enabled plugin state; attributable source, requested ref, installed version, and resolved revision are included when known.
-- `mcp_configuration` and `mcp_readiness`: a present registration is kept separate from an executable that passes the non-starting checkpoint CLI preflight. Missing, invalid, customized, and unavailable states remain distinct; status does not claim that a live stdio transport was contacted.
+- `mcp_configuration`, `mcp_host_registration`, and `mcp_readiness`: the owned TOML policy, Codex's effective registration inventory, and a live isolated stdio protocol probe are separate checks. The protocol probe requires exactly `mem_current_project`, `mem_search`, `mem_get_observation`, `mem_checkpoint`, and `mem_checkpoint_status`. Missing, invalid, customized, unavailable, and protocol-failing states remain distinct.
 - `prompt_hook`, `session_hook`, `subagent_hook`, `activation_cue`, and `stop_verifier`: each canonical plugin contract is verified separately. The separate content-free `subagent_capture` object reports `default_disabled`, `consented`, `expired`, or `unavailable` without reading captured content or exposing session identifiers.
 - `lifecycle_canary`: the selected treatment, default/environment source, canonical cue readiness, injection limit, and content-free aggregate SessionStart latency/injected bytes. Missing observations remain `not_observed`; status never enables collection, Capture, or the canary.
 
@@ -520,17 +522,17 @@ The stable `mode` field is conservative:
 | Mode | Meaning |
 | --- | --- |
 | `manual_skill_cli` | Engram and Codex CLIs plus at least one enabled standalone skill other than leftover `engram-memory-cli` are available, without an attributable plugin or MCP registration. |
-| `mcp_only` | The supported MCP registration and non-starting executable preflight are ready, but the complete plugin contract is not. |
+| `mcp_only` | The supported MCP registration, Codex inventory, and isolated protocol probe are ready, but the complete plugin contract is not. |
 | `partial_plugin` | Attributable plugin state exists, but one or more required capabilities are missing, unavailable, or unverified. |
 | `checkpoint_ready` | The attributable Managed Pack, binary, plugin, and Protocol ranges intersect, and the plugin, MCP configuration/readiness, prompt/session/subagent hooks, activation cue, and Stop verifier are all ready. |
 | `unknown` | The observed combination does not safely match another mode, including marketplace-only and customized states. |
 
 JSON output uses the additive schema `codex-integration-status-v1`. Its `compatibility` object uses `protocol-compatibility-v1`, contains all four axes and their provenance, and returns either `protocol_compatible`, `legacy_compatible`, or a stable incompatible reason such as `managed_pack_missing`, `managed_pack_unprovenanced`, `managed_pack_protocol_range_malformed`, or `no_protocol_intersection`. Every capability check contains `capability`, `status`, `reason_code`, a bounded human reason, and bounded named evidence. Output is deterministic for unchanged local state.
 
-The expand path recognizes the exact legacy Managed Pack `3.1.2` and Codex plugin `0.1.5` fingerprints as Protocol v1 declarations. It also preserves the verified previous Packs `3.3.0` and `3.2.0` plus plugin `0.1.6` coordinates. The current Managed Pack `3.3.1`, binary contract, and Codex plugin `0.1.7` project the terminal Memory policy and five-tool agent profile while still declaring `legacy_compatible`; later Capture and lifecycle slices remain independently staged. The current source contract supports Protocol 1–2; explicit atomic checkpoint supersession requires v2 and an evaluated `target_version` from preflight. A mixed upgrade remains ready while every attributable range still intersects. Status does not rewrite that installation, and an unknown artifact with the same version is not admitted by version alone. Remove the legacy flag only after every remaining projection satisfies the target contract.
+The expand path recognizes the exact legacy Managed Pack `3.1.2` and Codex plugin `0.1.5` fingerprints as Protocol v1 declarations. It also preserves every immutable verified `3.3.1` coordinate, the previous Packs `3.3.0` and `3.2.0`, and plugin `0.1.7` and `0.1.6` coordinates. The current Managed Pack `3.4.0`, binary contract, and Codex plugin `0.1.8` project Recall activation, the terminal Memory policy, and the five-tool agent profile while still declaring `legacy_compatible`. The current source contract supports Protocol 1–2; explicit atomic checkpoint supersession requires v2 and an evaluated `target_version` from preflight. A mixed upgrade remains ready while every attributable range still intersects. Status does not rewrite that installation, and an unknown artifact with the same version is not admitted by version alone. Remove the legacy flag only after every remaining projection satisfies the target contract.
 
 The frozen v1 evaluation selected `continue_canary`, so the applied distribution
-outcome pins that current legacy-compatible tuple as a unit and authorizes no
+outcome pins that evaluated legacy-compatible tuple as a unit and authorizes no
 release, rollout, downgrade, or legacy-path contraction. Use the read-only
 `engram recall-study verify-distribution` command described in
 [`RECALL-STUDY.md`](RECALL-STUDY.md) to verify its exact Git revision and source
@@ -539,7 +541,7 @@ history nor network access. That source-outcome check does not claim anything
 about the current installation: verify post-install readiness independently with
 `engram setup status codex --json`.
 
-Status describes installed capability only. It is not evidence that Codex loaded or invoked a skill, that hooks ran in the current session, or that the model created a Memory. Use session and checkpoint evidence for those claims.
+Status proves configuration, host inventory, and server protocol capability at probe time. It is not evidence that an existing Codex session admitted or invoked the tools, loaded a skill, ran hooks, or created a Memory. Use the content-free Recall baseline and checkpoint evidence for those claims.
 
 ### Checkpoint activation contract
 
@@ -548,7 +550,12 @@ rubric lives only in the installed `engram-memory` skill. The cue is a marked
 short paragraph inside that same file; `SessionStart` hooks extract it instead
 of carrying another protocol copy. Hook output uses
 `hookSpecificOutput.additionalContext`, so the cue reaches the model rather than
-appearing only as a UI warning.
+appearing only as a UI warning. The cue makes Recall explicit before
+history-dependent diagnosis, review, continuation, release, configuration, or
+prior-decision work while leaving self-contained work search-free. If the
+default `mem_*` tools are deferred, the agent must resolve them through the
+host's tool catalog before treating MCP as unavailable and falling back to the
+CLI.
 
 The canary is disabled by default, preserving the current bounded broad-context
 treatment. To select the cue-only treatment for a Codex process, set:
@@ -835,7 +842,9 @@ engram setup status cursor
 engram setup status cursor --json
 ```
 
-The command does not install, repair, start an MCP server, or read captured content. It reports `plugin`, `skill`, `MCP`, and `hooks` as independent file-checkable capabilities. `user_rules` stays `unknown` because setup cannot inspect the Settings store. Missing, stale, customized, and ready states stay distinct. An empty or MCP-only profile is not `checkpoint_ready`. Leftover user skill copies, including Packy `engram-memory-cli`, are reported and are not treated as the canonical plugin skill. Run `engram setup cursor` to install the editorial rubric; Packy may remain for compatibility.
+The command does not install, repair, rewrite configuration, or read captured content. It reports `plugin`, `skill`, `MCP`, and `hooks` independently. For MCP it starts the configured command against a temporary Engram data directory, disables autosync and baseline collection for that child, and requires a bounded `initialize` plus `tools/list` round trip with exactly the five agent-profile tools. `user_rules` stays `unknown` because setup cannot inspect the Settings store. Missing, stale, customized, protocol-failing, and ready states stay distinct. An empty or MCP-only profile is not `checkpoint_ready`. Leftover user skill copies, including Packy `engram-memory-cli`, are reported and are not treated as the canonical plugin skill. Run `engram setup cursor` to install the editorial rubric; Packy may remain for compatibility.
+
+Cursor status proves that the installed command can speak the expected protocol; it cannot prove that the already-running editor has reloaded or admitted the local plugin. The default-on content-free baseline distinguishes server process, initialization, tool discovery, and actual calls after the editor starts it.
 
 **Manual** — copy `plugin/engram/` to `~/.cursor/plugins/local/engram`, place the Engram binary at `bin/engram`, rewrite the installed `mcp.json` command from `./bin/engram` to that binary's absolute path, and add user-level `sessionStart` / `stop` hook entries in `~/.cursor/hooks.json` that call that binary (`lifecycle session-start --host=cursor` and `checkpoint verify-stop --host=cursor`). Then restart Cursor or run Developer: Reload Window.
 
@@ -971,7 +980,7 @@ one terminal Memory checkpoint. Recall prior Memory only when it can change the 
 `sessionStart` re-delivers this short activation cue from the installed `engram-memory` skill after compaction. Do not paste the full Memory rubric into User Rules or a global `.mdc` file.
 
 ```markdown
-For every root user turn, use the engram-memory skill to make exactly one Terminal Memory commit after all causal work settles: `saved`, `skipped(no_durable_knowledge)`, or `needs_review`. Current user intent, maintained source, and runtime evidence override Memory. Reuse the supplied host checkpoint identity across continuations; subagents do not create checkpoints.
+For root user turns, use `engram-memory`. Before history-dependent diagnosis, review, continuation, release, configuration, or prior-decision work: resolve absent `mem_*` via the host's deferred-tool catalog; call `mem_current_project`; run one narrow `mem_search`. Self-contained work skips Recall. Current intent and evidence override Memory. After work settles, make one Terminal Memory commit: `saved`, `skipped(no_durable_knowledge)`, or `needs_review`. Reuse identity across continuations; subagents do not commit.
 ```
 
 **For Windsurf** (`.windsurfrules`):

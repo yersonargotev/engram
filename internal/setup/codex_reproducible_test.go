@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testReleaseCommit = "7417bbcc5da4d0946f5746eed5c1b63ed9f0ca6c"
@@ -222,6 +223,8 @@ func TestInstallCodexReportsIndependentCapabilities(t *testing.T) {
 	}
 	runCommand = func(_ string, args ...string) ([]byte, error) {
 		switch {
+		case slices.Equal(args, []string{"mcp", "list", "--json"}):
+			return codexMCPListFixture(resolveEngramCommand()), nil
 		case len(args) >= 4 && slices.Equal(args[:4], []string{"plugin", "marketplace", "add", codexMarketplace}):
 			return []byte(fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)), nil
 		case len(args) >= 3 && slices.Equal(args[:3], []string{"plugin", "add", "engram@engram"}):
@@ -284,10 +287,12 @@ func TestInstallCodexReportsCanonicalCheckpointCapabilitiesWithoutSharedInstruct
 	}
 	runCommand = func(_ string, args ...string) ([]byte, error) {
 		switch {
+		case slices.Equal(args, []string{"mcp", "list", "--json"}):
+			return codexMCPListFixture(resolveEngramCommand()), nil
 		case len(args) >= 4 && slices.Equal(args[:4], []string{"plugin", "marketplace", "add", codexMarketplace}):
 			return []byte(fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)), nil
 		case len(args) >= 3 && slices.Equal(args[:3], []string{"plugin", "add", "engram@engram"}):
-			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.7","installedPath":%q}`, installedPlugin)), nil
+			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.8","installedPath":%q}`, installedPlugin)), nil
 		default:
 			return nil, fmt.Errorf("unexpected codex command: %v", args)
 		}
@@ -465,8 +470,8 @@ func TestInstallCodexPreservesOwnedLegacyActivationWhenCheckpointAdaptersAreUnav
 	home := useTestHome(t)
 	osExecutable = func() (string, error) { return "/usr/local/bin/engram", nil }
 	stubCanonicalCodexCLI(t)
-	runCodexCheckpointProbeFn = func(string, ...string) ([]byte, error) {
-		return []byte("checkpoint command unavailable"), errors.New("exit 1")
+	runCodexMCPProbeFn = func(string, []string, time.Duration) (codexMCPProbeResult, error) {
+		return codexMCPProbeResult{}, errors.New("MCP protocol unavailable")
 	}
 
 	configPath := filepath.Join(home, ".codex", "config.toml")
@@ -493,8 +498,8 @@ func TestInstallCodexPreservesOwnedLegacyActivationWhenCheckpointAdaptersAreUnav
 		t.Fatalf("setup completed without checkpoint adapters: %+v", result.Checks)
 	}
 	mcpCheck, ok := result.Check("mcp")
-	if !ok || mcpCheck.Status != CheckFailed || !strings.Contains(mcpCheck.Detail, "checkpoint") {
-		t.Fatalf("mcp check = %+v, want actionable checkpoint-adapter failure", mcpCheck)
+	if !ok || mcpCheck.Status != CheckFailed || !strings.Contains(mcpCheck.Detail, "initialize/tools/list") {
+		t.Fatalf("mcp check = %+v, want actionable MCP protocol failure", mcpCheck)
 	}
 	config, err := os.ReadFile(configPath)
 	if err != nil {
@@ -753,7 +758,7 @@ func TestInstallCodexDoesNotReportActivationReadyForIncompleteCanonicalSkill(t *
 		case len(args) >= 4 && slices.Equal(args[:4], []string{"plugin", "marketplace", "add", codexMarketplace}):
 			return []byte(fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)), nil
 		case len(args) >= 3 && slices.Equal(args[:3], []string{"plugin", "add", "engram@engram"}):
-			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.7","installedPath":%q}`, installedPlugin)), nil
+			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.8","installedPath":%q}`, installedPlugin)), nil
 		default:
 			return nil, fmt.Errorf("unexpected codex command: %v", args)
 		}
@@ -1033,7 +1038,7 @@ func TestInstallCodexPreservesCustomInstructionsAfterPluginVerification(t *testi
 
 	marketplaceRoot := t.TempDir()
 	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
-	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.7")
+	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.8")
 	writeCanonicalCodexActivationFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"))
 	writeCanonicalCodexActivationFixture(t, installedPlugin)
 	lookPathFn = func(file string) (string, error) {
@@ -1044,10 +1049,12 @@ func TestInstallCodexPreservesCustomInstructionsAfterPluginVerification(t *testi
 	}
 	runCommand = func(_ string, args ...string) ([]byte, error) {
 		switch {
+		case slices.Equal(args, []string{"mcp", "list", "--json"}):
+			return codexMCPListFixture(resolveEngramCommand()), nil
 		case len(args) >= 4 && slices.Equal(args[:4], []string{"plugin", "marketplace", "add", codexMarketplace}):
 			return []byte(fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)), nil
 		case len(args) >= 3 && slices.Equal(args[:3], []string{"plugin", "add", "engram@engram"}):
-			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.7","installedPath":%q}`, installedPlugin)), nil
+			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.8","installedPath":%q}`, installedPlugin)), nil
 		default:
 			return nil, fmt.Errorf("unexpected codex command: %v", args)
 		}
@@ -1199,17 +1206,17 @@ func TestInstallCodexIsolatedHomeAcceptance(t *testing.T) {
 	engramPath := buildRealEngramCLI(t)
 	osExecutable = func() (string, error) { return engramPath, nil }
 	probeCalls := 0
-	runCodexCheckpointProbeFn = func(name string, args ...string) ([]byte, error) {
+	runCodexMCPProbeFn = func(name string, args []string, timeout time.Duration) (codexMCPProbeResult, error) {
 		probeCalls++
-		if name != engramPath || !slices.Equal(args, []string{"checkpoint", "--help"}) {
-			return nil, fmt.Errorf("unexpected checkpoint probe: %s %v", name, args)
+		if name != engramPath || !slices.Equal(args, []string{"mcp", "--tools=agent"}) || timeout != codexMCPProbeTimeout {
+			return codexMCPProbeResult{}, fmt.Errorf("unexpected MCP probe: %s %v", name, args)
 		}
-		return exec.Command(name, args...).CombinedOutput()
+		return runCodexMCPProbe(name, args, timeout)
 	}
 
 	marketplaceRoot := t.TempDir()
 	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
-	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.7")
+	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.8")
 	writeCanonicalCodexActivationFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"))
 	writeCanonicalCodexActivationFixture(t, installedPlugin)
 	commandLog := filepath.Join(t.TempDir(), "codex.log")
@@ -1337,16 +1344,17 @@ func readFiles(t *testing.T, paths []string) map[string][]byte {
 func writeFakeCodexCLI(t *testing.T, dir, marketplaceRoot, installedPlugin string) {
 	t.Helper()
 	addJSON := fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)
-	pluginJSON := fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.7","installedPath":%q}`, installedPlugin)
+	pluginJSON := fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.8","installedPath":%q}`, installedPlugin)
 	script := fmt.Sprintf(`#!/bin/sh
 set -eu
 printf '%%s\n' "$*" >> "$FAKE_CODEX_LOG"
 case "$1 $2 $3" in
   "plugin marketplace add") printf '%%s\n' '%s' ;;
   "plugin add engram@engram") printf '%%s\n' '%s' ;;
+  "mcp list --json") printf '%%s\n' '%s' ;;
   *) printf 'unexpected command: %%s\n' "$*" >&2; exit 2 ;;
 esac
-`, addJSON, pluginJSON)
+`, addJSON, pluginJSON, codexMCPListFixture(resolveEngramCommand()))
 	path := filepath.Join(dir, "codex")
 	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
 		t.Fatalf("write simulated Codex CLI: %v", err)
@@ -1369,6 +1377,8 @@ func stubVerifiedCodexCLI(t *testing.T, includeStop bool) *[][]string {
 	runCommand = func(name string, args ...string) ([]byte, error) {
 		commands = append(commands, append([]string{name}, args...))
 		switch {
+		case slices.Equal(args, []string{"mcp", "list", "--json"}):
+			return codexMCPListFixture(resolveEngramCommand()), nil
 		case len(args) >= 4 && slices.Equal(args[:4], []string{"plugin", "marketplace", "add", codexMarketplace}):
 			return []byte(fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)), nil
 		case len(args) >= 3 && slices.Equal(args[:3], []string{"plugin", "add", "engram@engram"}):
@@ -1384,7 +1394,7 @@ func stubCanonicalCodexCLI(t *testing.T) *[][]string {
 	t.Helper()
 	marketplaceRoot := t.TempDir()
 	writeMarketplaceIdentity(t, marketplaceRoot, testReleaseCommit)
-	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.7")
+	installedPlugin := filepath.Join(t.TempDir(), "engram", "0.1.8")
 	writeCanonicalCodexActivationFixture(t, filepath.Join(marketplaceRoot, "plugin", "codex"))
 	writeCanonicalCodexActivationFixture(t, installedPlugin)
 	lookPathFn = func(file string) (string, error) {
@@ -1397,10 +1407,12 @@ func stubCanonicalCodexCLI(t *testing.T) *[][]string {
 	runCommand = func(name string, args ...string) ([]byte, error) {
 		commands = append(commands, append([]string{name}, args...))
 		switch {
+		case slices.Equal(args, []string{"mcp", "list", "--json"}):
+			return codexMCPListFixture(resolveEngramCommand()), nil
 		case len(args) >= 4 && slices.Equal(args[:4], []string{"plugin", "marketplace", "add", codexMarketplace}):
 			return []byte(fmt.Sprintf(`{"marketplaceName":"engram","installedRoot":%q,"alreadyAdded":false}`, marketplaceRoot)), nil
 		case len(args) >= 3 && slices.Equal(args[:3], []string{"plugin", "add", "engram@engram"}):
-			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.7","installedPath":%q}`, installedPlugin)), nil
+			return []byte(fmt.Sprintf(`{"pluginId":"engram@engram","name":"engram","marketplaceName":"engram","version":"0.1.8","installedPath":%q}`, installedPlugin)), nil
 		default:
 			return nil, fmt.Errorf("unexpected codex command: %v", args)
 		}
@@ -1921,5 +1933,57 @@ func TestVerifyCodexMarketplaceAssetsRejectsDirtyTree(t *testing.T) {
 	}
 	if err := verifyCodexMarketplaceAssets("/tmp/marketplace"); err == nil || !strings.Contains(err.Error(), "differs from verified commit") {
 		t.Fatalf("dirty marketplace verification error = %v", err)
+	}
+}
+
+func TestInstallCodexRequiresEffectiveMCPRegistrationBeforeRetiringLegacyActivation(t *testing.T) {
+	for _, state := range []string{"disabled", "missing", "unavailable", "ready"} {
+		t.Run(state, func(t *testing.T) {
+			resetSetupSeams(t)
+			useTestHome(t)
+			osExecutable = func() (string, error) { return "/usr/local/bin/engram", nil }
+			stubCanonicalCodexCLI(t)
+			originalRun := runCommand
+			inspected := false
+			runCommand = func(name string, args ...string) ([]byte, error) {
+				if slices.Equal(args, []string{"mcp", "list", "--json"}) {
+					inspected = true
+					if !codexMCPReady(codexConfigPath()) {
+						t.Fatal("effective registration inspected before publishing managed configuration")
+					}
+					switch state {
+					case "missing":
+						return []byte(`[]`), nil
+					case "unavailable":
+						return nil, errors.New("host inventory unavailable")
+					case "disabled":
+						return bytes.Replace(codexMCPListFixture(resolveEngramCommand()), []byte(`"enabled":true`), []byte(`"enabled":false`), 1), nil
+					default:
+						return codexMCPListFixture(resolveEngramCommand()), nil
+					}
+				}
+				return originalRun(name, args...)
+			}
+			config := fmt.Sprintf("model_instructions_file = %q\n", codexInstructionsPath())
+			writeStatusTestFile(t, codexConfigPath(), config)
+			writeStatusTestFile(t, codexInstructionsPath(), memoryProtocolMarkdown)
+			result, err := InstallWithOptions("codex", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+			if err != nil {
+				t.Fatal(err)
+			}
+			check, ok := result.Check("mcp")
+			if !inspected || !ok || result.Complete != (state == "ready") || (check.Status == CheckReady) != (state == "ready") {
+				t.Fatalf("inspected=%v complete=%v mcp=%+v for host state %s", inspected, result.Complete, check, state)
+			}
+			if state != "ready" {
+				assertFileBytes(t, codexInstructionsPath(), []byte(memoryProtocolMarkdown))
+				updated, err := os.ReadFile(codexConfigPath())
+				if err != nil || !strings.Contains(string(updated), config) {
+					t.Fatalf("unverified host retired legacy activation: %s (%v)", updated, err)
+				}
+			} else if _, err := os.Stat(codexInstructionsPath()); !os.IsNotExist(err) {
+				t.Fatalf("verified replacement did not retire legacy activation: %v", err)
+			}
+		})
 	}
 }

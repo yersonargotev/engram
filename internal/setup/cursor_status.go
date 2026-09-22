@@ -5,9 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
 
 // CursorIntegrationStatusSchemaVersion identifies the additive JSON contract
@@ -30,12 +33,23 @@ const (
 type CursorCheckStatus string
 
 const (
-	CursorCheckReady      CursorCheckStatus = "ready"
-	CursorCheckMissing    CursorCheckStatus = "missing"
-	CursorCheckStale      CursorCheckStatus = "stale"
-	CursorCheckCustomized CursorCheckStatus = "customized"
-	CursorCheckUnknown    CursorCheckStatus = "unknown"
+	CursorCheckReady       CursorCheckStatus = "ready"
+	CursorCheckMissing     CursorCheckStatus = "missing"
+	CursorCheckStale       CursorCheckStatus = "stale"
+	CursorCheckCustomized  CursorCheckStatus = "customized"
+	CursorCheckUnavailable CursorCheckStatus = "unavailable"
+	CursorCheckUnknown     CursorCheckStatus = "unknown"
 )
+
+var runCursorMCPProbeFn = probeCursorMCP
+
+var requiredCursorAgentTools = []string{
+	"mem_current_project",
+	"mem_search",
+	"mem_get_observation",
+	"mem_checkpoint",
+	"mem_checkpoint_status",
+}
 
 // CursorIntegrationEvidence is one bounded, named fact supporting a check.
 type CursorIntegrationEvidence struct {
@@ -61,8 +75,10 @@ type CursorIntegrationStatus struct {
 	Checks        []CursorIntegrationCheck `json:"checks"`
 }
 
-// InspectCursorStatus inspects the active Cursor integration without
-// installing, repairing, starting, or persisting anything.
+// InspectCursorStatus inspects the active Cursor integration without installing
+// or repairing it. An attributable MCP registration is actively probed in a
+// short-lived subprocess so readiness means protocol availability, not file
+// presence alone.
 func InspectCursorStatus(runningVersion, runningRevision, workingDirectory string) (CursorIntegrationStatus, error) {
 	plugin := inspectCursorPluginStatus(runningVersion, runningRevision)
 	skills := inspectCursorSkillStatus(plugin)
@@ -287,13 +303,10 @@ func inspectCursorMCPStatus(plugin cursorPluginInspection) CursorIntegrationChec
 		raw, err := readFileFn(path)
 		if err == nil {
 			if cursorPluginMCPOwned(plugin.Root, raw) {
-				return cursorStatusCheck(
-					"mcp", CursorCheckReady, "mcp_ready",
-					"MCP registration comes from the installed Agent Plugin.",
-					cursorEvidence("path", path),
-					cursorEvidence("source", "plugin"),
-					cursorEvidence("command", cursorHookBinary(plugin.Root)),
-				)
+				if conflict := inspectCursorNativeMCPConflict(path); conflict != nil {
+					return *conflict
+				}
+				return inspectCursorMCPRuntime(path, "plugin", cursorHookBinary(plugin.Root), []string{"mcp", "--tools=agent"})
 			}
 			if len(raw) > 0 {
 				return cursorStatusCheck(
@@ -339,13 +352,133 @@ func inspectCursorMCPStatus(plugin cursorPluginInspection) CursorIntegrationChec
 		)
 	}
 	command, _ := entry["command"].(string)
-	return cursorStatusCheck(
-		"mcp", CursorCheckReady, "mcp_native_only",
-		"An Engram MCP registration exists only as a native Cursor entry, not as plugin activation.",
-		cursorEvidence("path", nativePath),
-		cursorEvidence("source", "native"),
-		cursorEvidence("command", command),
+	args := cursorMCPEntryArgs(entry)
+	return inspectCursorMCPRuntime(nativePath, "native", command, args)
+}
+
+func inspectCursorNativeMCPConflict(pluginPath string) *CursorIntegrationCheck {
+	nativePath := cursorMCPPath()
+	raw, err := readFileFn(nativePath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		check := cursorStatusCheck(
+			"mcp", CursorCheckCustomized, "mcp_native_conflict",
+			"The native Cursor MCP file cannot be inspected and may take precedence over the plugin registration.",
+			cursorEvidence("path", pluginPath), cursorEvidence("native_path", nativePath),
+		)
+		return &check
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &document); err != nil {
+		check := cursorStatusCheck(
+			"mcp", CursorCheckCustomized, "mcp_native_conflict",
+			"The native Cursor MCP file is not attributable JSON and may take precedence over the plugin registration.",
+			cursorEvidence("path", pluginPath), cursorEvidence("native_path", nativePath),
+		)
+		return &check
+	}
+	_, found, owned := cursorNativeMCPEntry(raw)
+	if !found {
+		return nil
+	}
+	reason := "A custom native Engram MCP registration may take precedence over the plugin registration."
+	if owned {
+		reason = "Both plugin and native Engram MCP registrations are present; rerun setup to retire the duplicate native entry."
+	}
+	check := cursorStatusCheck(
+		"mcp", CursorCheckCustomized, "mcp_native_conflict", reason,
+		cursorEvidence("path", pluginPath), cursorEvidence("native_path", nativePath),
 	)
+	return &check
+}
+
+func inspectCursorMCPRuntime(configPath, source, command string, args []string) CursorIntegrationCheck {
+	evidence := []CursorIntegrationEvidence{
+		cursorEvidence("path", configPath),
+		cursorEvidence("source", source),
+		cursorEvidence("command", command),
+	}
+	resolved, err := lookPathFn(command)
+	if err != nil || strings.TrimSpace(resolved) == "" {
+		return cursorStatusCheck(
+			"mcp", CursorCheckUnavailable, "mcp_executable_missing",
+			"The configured Engram MCP executable cannot be resolved as an executable file.", evidence...,
+		)
+	}
+	evidence = append(evidence, cursorEvidence("resolved_path", resolved), cursorEvidence("transport", "stdio"))
+	tools, err := runCursorMCPProbeFn(resolved, args...)
+	if err != nil {
+		return cursorStatusCheck(
+			"mcp", CursorCheckUnavailable, "mcp_protocol_unavailable",
+			"The configured executable did not complete MCP initialize and tools/list.", evidence...,
+		)
+	}
+	missing, unexpected := cursorAgentToolCatalogDifference(tools)
+	evidence = append(evidence, cursorEvidence("tool_count", fmt.Sprintf("%d", len(tools))))
+	if len(missing) > 0 || len(unexpected) > 0 || len(tools) != len(requiredCursorAgentTools) {
+		evidence = append(evidence, cursorEvidence("missing_tools", strings.Join(missing, ",")))
+		evidence = append(evidence, cursorEvidence("unexpected_tools", strings.Join(unexpected, ",")))
+		return cursorStatusCheck(
+			"mcp", CursorCheckUnavailable, "mcp_tools_incomplete",
+			"MCP initialize and tools/list succeeded, but the tool catalog does not exactly match the five-tool agent profile.", evidence...,
+		)
+	}
+	reasonCode := "mcp_ready"
+	reason := "The configured executable completed MCP initialize and tools/list with all five agent tools."
+	if source == "native" {
+		reasonCode = "mcp_native_only"
+		reason = "A native Cursor MCP entry completed initialize and tools/list with all five agent tools; plugin activation is absent."
+	}
+	return cursorStatusCheck("mcp", CursorCheckReady, reasonCode, reason, evidence...)
+}
+
+func cursorMCPEntryArgs(entry map[string]any) []string {
+	raw, _ := entry["args"].([]any)
+	args := make([]string, 0, len(raw))
+	for _, value := range raw {
+		arg, ok := value.(string)
+		if !ok {
+			return nil
+		}
+		args = append(args, arg)
+	}
+	return args
+}
+
+func cursorAgentToolCatalogDifference(tools []string) ([]string, []string) {
+	present := make(map[string]bool, len(tools))
+	for _, tool := range tools {
+		present[tool] = true
+	}
+	var missing []string
+	for _, required := range requiredCursorAgentTools {
+		if !present[required] {
+			missing = append(missing, required)
+		}
+	}
+	required := make(map[string]bool, len(requiredCursorAgentTools))
+	for _, tool := range requiredCursorAgentTools {
+		required[tool] = true
+	}
+	var unexpected []string
+	for _, tool := range tools {
+		if !required[tool] {
+			unexpected = append(unexpected, tool)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(unexpected)
+	return missing, unexpected
+}
+
+func probeCursorMCP(command string, args ...string) ([]string, error) {
+	result, err := runStdioMCPProbe(command, args, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	return result.Tools, nil
 }
 
 func inspectCursorHooksStatus(plugin cursorPluginInspection) CursorIntegrationCheck {

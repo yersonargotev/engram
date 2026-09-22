@@ -1,13 +1,145 @@
 package setup
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
+
+var cursorAgentToolNames = []string{
+	"mem_current_project",
+	"mem_search",
+	"mem_get_observation",
+	"mem_checkpoint",
+	"mem_checkpoint_status",
+}
+
+func stubCursorMCPProbeReady(t *testing.T) {
+	t.Helper()
+	old := runCursorMCPProbeFn
+	runCursorMCPProbeFn = func(command string, args ...string) ([]string, error) {
+		return append([]string(nil), cursorAgentToolNames...), nil
+	}
+	t.Cleanup(func() { runCursorMCPProbeFn = old })
+}
+
+func TestProbeCursorMCPPerformsInitializeAndToolsList(t *testing.T) {
+	t.Setenv("ENGRAM_RECALL_BASELINE", "1")
+	realDataDir := filepath.Join(t.TempDir(), "must-not-be-created")
+	t.Setenv("ENGRAM_DATA_DIR", realDataDir)
+	t.Setenv("ENGRAM_CLOUD_AUTOSYNC", "1")
+	environmentReport := filepath.Join(t.TempDir(), "probe-environment")
+	t.Setenv("CURSOR_MCP_PROBE_ENV_REPORT", environmentReport)
+	tools, err := probeCursorMCP(os.Args[0], "-test.run=^TestCursorMCPProbeHelperProcess$", "--", "--cursor-mcp-helper")
+	if err != nil {
+		t.Fatalf("probeCursorMCP: %v", err)
+	}
+	if !reflect.DeepEqual(tools, cursorAgentToolNames) {
+		t.Fatalf("tools = %v, want %v", tools, cursorAgentToolNames)
+	}
+	if _, err := os.Stat(realDataDir); !os.IsNotExist(err) {
+		t.Fatalf("real data directory was touched: %v", err)
+	}
+	isolatedDataDirRaw, err := os.ReadFile(environmentReport)
+	if err != nil {
+		t.Fatalf("read probe environment report: %v", err)
+	}
+	isolatedDataDir := string(isolatedDataDirRaw)
+	if isolatedDataDir == "" || isolatedDataDir == realDataDir {
+		t.Fatalf("isolated data directory = %q", isolatedDataDir)
+	}
+	if _, err := os.Stat(isolatedDataDir); !os.IsNotExist(err) {
+		t.Fatalf("isolated data directory was not cleaned up: %v", err)
+	}
+}
+
+func TestStdioMCPProbeBoundsServerStderr(t *testing.T) {
+	payload := "probe stderr: " + strings.Repeat("x", 8192) + "-must-be-truncated"
+	t.Setenv("CURSOR_MCP_PROBE_STDERR", payload)
+
+	_, err := runStdioMCPProbe(
+		os.Args[0],
+		[]string{"-test.run=^TestCursorMCPProbeHelperProcess$", "--", "--cursor-mcp-helper"},
+		5*time.Second,
+	)
+	if err == nil {
+		t.Fatal("runStdioMCPProbe succeeded after helper exited before initialize")
+	}
+	if !strings.Contains(err.Error(), "probe stderr:") {
+		t.Fatalf("probe error omitted bounded stderr: %v", err)
+	}
+	if strings.Contains(err.Error(), "must-be-truncated") {
+		t.Fatalf("probe error included stderr beyond the bound: %v", err)
+	}
+	if len(err.Error()) > 5000 {
+		t.Fatalf("probe error length = %d, want bounded output", len(err.Error()))
+	}
+}
+
+func TestCursorMCPProbeHelperProcess(t *testing.T) {
+	if len(os.Args) == 0 || os.Args[len(os.Args)-1] != "--cursor-mcp-helper" {
+		return
+	}
+	if stderr := os.Getenv("CURSOR_MCP_PROBE_STDERR"); stderr != "" {
+		_, _ = os.Stderr.WriteString(stderr)
+		return
+	}
+	if os.Getenv("ENGRAM_RECALL_BASELINE") != "0" || os.Getenv("ENGRAM_CLOUD_AUTOSYNC") != "0" {
+		return
+	}
+	dataDir := os.Getenv("ENGRAM_DATA_DIR")
+	if dataDir == "" {
+		return
+	}
+	if _, err := os.Stat(dataDir); err != nil {
+		return
+	}
+	if report := os.Getenv("CURSOR_MCP_PROBE_ENV_REPORT"); report != "" {
+		if err := os.WriteFile(report, []byte(dataDir), 0o600); err != nil {
+			return
+		}
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	encoder := json.NewEncoder(os.Stdout)
+	for scanner.Scan() {
+		var request struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Method  string          `json:"method"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &request); err != nil {
+			return
+		}
+		switch request.Method {
+		case "initialize":
+			_ = encoder.Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request.ID,
+				"result": map[string]any{
+					"protocolVersion": "2025-06-18",
+					"capabilities":    map[string]any{"tools": map[string]any{}},
+					"serverInfo":      map[string]any{"name": "cursor-probe-test", "version": "1"},
+				},
+			})
+		case "tools/list":
+			tools := make([]map[string]any, 0, len(cursorAgentToolNames))
+			for _, name := range cursorAgentToolNames {
+				tools = append(tools, map[string]any{"name": name, "inputSchema": map[string]any{"type": "object"}})
+			}
+			_ = encoder.Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      request.ID,
+				"result":  map[string]any{"tools": tools},
+			})
+		}
+	}
+}
 
 func TestInspectCursorStatusEmptyProfileIsConservativeAndReadOnly(t *testing.T) {
 	resetSetupSeams(t)
@@ -97,6 +229,88 @@ func TestInspectCursorStatusCompleteInstallIsCheckpointReady(t *testing.T) {
 	}
 }
 
+func TestInspectCursorStatusMCPRequiresProtocolHandshake(t *testing.T) {
+	home := installPinnedCursor(t)
+	runCursorMCPProbeFn = func(command string, args ...string) ([]string, error) {
+		return nil, errors.New("initialize: connection closed")
+	}
+
+	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("InspectCursorStatus: %v", err)
+	}
+	mcp := cursorCheck(t, status, "mcp")
+	if mcp.Status != CursorCheckUnavailable || mcp.ReasonCode != "mcp_protocol_unavailable" {
+		t.Fatalf("mcp = %#v, want unavailable protocol", mcp)
+	}
+	if status.Mode == CursorModeCheckpointReady {
+		t.Fatalf("mode = %q, must not be ready after failed handshake", status.Mode)
+	}
+}
+
+func TestInspectCursorStatusMCPRequiresAllAgentTools(t *testing.T) {
+	home := installPinnedCursor(t)
+	runCursorMCPProbeFn = func(command string, args ...string) ([]string, error) {
+		return cursorAgentToolNames[:4], nil
+	}
+
+	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("InspectCursorStatus: %v", err)
+	}
+	mcp := cursorCheck(t, status, "mcp")
+	if mcp.Status != CursorCheckUnavailable || mcp.ReasonCode != "mcp_tools_incomplete" {
+		t.Fatalf("mcp = %#v, want incomplete tools", mcp)
+	}
+	if got := cursorEvidenceValue(mcp, "missing_tools"); got != "mem_checkpoint_status" {
+		t.Fatalf("missing_tools = %q", got)
+	}
+}
+
+func TestInspectCursorStatusMCPRejectsAdditionalTools(t *testing.T) {
+	home := installPinnedCursor(t)
+	runCursorMCPProbeFn = func(command string, args ...string) ([]string, error) {
+		return append(append([]string(nil), cursorAgentToolNames...), "mem_save"), nil
+	}
+
+	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("InspectCursorStatus: %v", err)
+	}
+	mcp := cursorCheck(t, status, "mcp")
+	if mcp.Status != CursorCheckUnavailable || mcp.ReasonCode != "mcp_tools_incomplete" {
+		t.Fatalf("mcp = %#v, want exact catalog mismatch", mcp)
+	}
+	if got := cursorEvidenceValue(mcp, "unexpected_tools"); got != "mem_save" {
+		t.Fatalf("unexpected_tools = %q", got)
+	}
+}
+
+func TestInspectCursorStatusMCPRequiresExecutable(t *testing.T) {
+	home := installPinnedCursor(t)
+	pluginRoot := filepath.Join(home, ".cursor", "plugins", "local", "engram")
+	if err := os.Remove(cursorHookBinary(pluginRoot)); err != nil {
+		t.Fatalf("remove plugin binary: %v", err)
+	}
+	called := false
+	runCursorMCPProbeFn = func(command string, args ...string) ([]string, error) {
+		called = true
+		return cursorAgentToolNames, nil
+	}
+
+	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("InspectCursorStatus: %v", err)
+	}
+	mcp := cursorCheck(t, status, "mcp")
+	if mcp.Status != CursorCheckUnavailable || mcp.ReasonCode != "mcp_executable_missing" {
+		t.Fatalf("mcp = %#v, want missing executable", mcp)
+	}
+	if called {
+		t.Fatal("missing executable was probed")
+	}
+}
+
 func TestInspectCursorStatusMCPOnlyIsNotCheckpointReady(t *testing.T) {
 	resetSetupSeams(t)
 	home := useTestHome(t)
@@ -108,6 +322,13 @@ func TestInspectCursorStatusMCPOnlyIsNotCheckpointReady(t *testing.T) {
     }
   }
 }`)
+	lookPathFn = func(name string) (string, error) {
+		if name != "engram" {
+			return "", errors.New("not found")
+		}
+		return "/opt/engram/bin/engram", nil
+	}
+	stubCursorMCPProbeReady(t)
 
 	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, home)
 	if err != nil {

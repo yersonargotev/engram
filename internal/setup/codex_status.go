@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -261,6 +262,7 @@ func inspectCodexStatus(runningVersion, runningRevision, workingDirectory string
 
 	mcpConfiguration := inspectCodexMCPConfiguration(configPath)
 	checks = append(checks, mcpConfiguration)
+	checks = append(checks, inspectCodexMCPHostRegistration(codexPath, mcpConfiguration))
 	checks = append(checks, inspectCodexMCPReadiness(mcpConfiguration))
 	checks = append(checks,
 		codexPluginCapabilityCheck(plugin, "prompt_hook", plugin.Capabilities.PromptHookReady),
@@ -676,10 +678,11 @@ func inspectCodexStandaloneSkills(workingDirectory, configPath string) []CodexIn
 		path  string
 		scope string
 	}
-	roots := make([]skillRoot, 0, 5)
+	roots := make([]skillRoot, 0, 6)
 	for _, path := range codexRepositorySkillRoots(workingDirectory) {
 		roots = append(roots, skillRoot{path: path, scope: "repo"})
 	}
+	roots = append(roots, skillRoot{path: filepath.Join(filepath.Dir(configPath), "skills"), scope: "codex_home"})
 	if home, err := userHomeDir(); err == nil && strings.TrimSpace(home) != "" {
 		roots = append(roots, skillRoot{path: filepath.Join(home, ".agents", "skills"), scope: "user"})
 	}
@@ -1123,7 +1126,7 @@ func inspectCodexPluginSkill(installedPath string, enabled bool) *CodexIntegrati
 }
 
 func inspectCodexMCPReadiness(configuration CodexIntegrationCheck) CodexIntegrationCheck {
-	if configuration.Status != CodexCheckReady {
+	if !codexMCPConfigurationProbeable(configuration) {
 		status := CodexCheckMissing
 		if configuration.Status != CodexCheckMissing {
 			status = CodexCheckUnavailable
@@ -1134,6 +1137,13 @@ func inspectCodexMCPReadiness(configuration CodexIntegrationCheck) CodexIntegrat
 		)
 	}
 	command := codexStatusEvidenceValue(configuration, "command")
+	var args []string
+	if err := json.Unmarshal([]byte(codexStatusEvidenceValue(configuration, "args")), &args); err != nil {
+		return codexStatusCheck(
+			"mcp_readiness", CodexCheckUnavailable, "mcp_probe_input_invalid",
+			"The configured MCP command arguments could not be prepared for a protocol probe.",
+		)
+	}
 	resolved, err := lookPathFn(command)
 	if err != nil || strings.TrimSpace(resolved) == "" {
 		return codexStatusCheck(
@@ -1141,23 +1151,141 @@ func inspectCodexMCPReadiness(configuration CodexIntegrationCheck) CodexIntegrat
 			"The configured Engram MCP executable cannot be resolved.", codexEvidence("command", command),
 		)
 	}
-	ready, detail := codexCheckpointAdaptersReadyFor(resolved)
-	if !ready {
+	probe, err := runCodexMCPProbeFn(resolved, args, codexMCPProbeTimeout)
+	if err != nil {
 		return codexStatusCheck(
-			"mcp_readiness", CodexCheckUnavailable, "mcp_adapter_unavailable",
-			detail,
+			"mcp_readiness", CodexCheckUnavailable, "mcp_protocol_probe_failed",
+			"The configured MCP server did not complete the bounded stdio initialize and tools/list probe.",
 			codexEvidence("command", command),
 			codexEvidence("resolved_path", resolved),
 			codexEvidence("transport", "stdio"),
+			codexEvidence("probe", "initialize,tools/list"),
+			codexEvidence("detail", err.Error()),
+		)
+	}
+	sort.Strings(probe.Tools)
+	want := codexAgentToolNames()
+	if !slicesEqual(probe.Tools, want) {
+		return codexStatusCheck(
+			"mcp_readiness", CodexCheckInvalid, "mcp_tool_catalog_mismatch",
+			"The configured MCP server initialized but did not expose exactly the five agent tools.",
+			codexEvidence("command", command),
+			codexEvidence("resolved_path", resolved),
+			codexEvidence("transport", "stdio"),
+			codexEvidence("probe", "initialize,tools/list"),
+			codexEvidence("protocol_version", probe.ProtocolVersion),
+			codexEvidence("expected_tools", strings.Join(want, ",")),
+			codexEvidence("observed_tools", strings.Join(probe.Tools, ",")),
 		)
 	}
 	return codexStatusCheck(
-		"mcp_readiness", CodexCheckReady, "mcp_adapter_ready",
-		"The configured MCP executable resolves and exposes the checkpoint CLI contract.",
+		"mcp_readiness", CodexCheckReady, "mcp_protocol_ready",
+		"The configured MCP server completed initialize and exposed exactly the five agent tools.",
 		codexEvidence("command", command),
 		codexEvidence("resolved_path", resolved),
 		codexEvidence("transport", "stdio"),
+		codexEvidence("probe", "initialize,tools/list"),
+		codexEvidence("protocol_version", probe.ProtocolVersion),
+		codexEvidence("tools", strings.Join(probe.Tools, ",")),
+		codexEvidence("isolated_data_dir", "true"),
 	)
+}
+
+type codexMCPListEntry struct {
+	Name           string  `json:"name"`
+	Enabled        bool    `json:"enabled"`
+	DisabledReason *string `json:"disabled_reason"`
+	Transport      struct {
+		Type    string   `json:"type"`
+		Command string   `json:"command"`
+		Args    []string `json:"args"`
+	} `json:"transport"`
+	StartupTimeoutSec *float64 `json:"startup_timeout_sec"`
+}
+
+func inspectCodexMCPHostRegistration(codexPath string, configuration CodexIntegrationCheck) CodexIntegrationCheck {
+	if !codexMCPConfigurationProbeable(configuration) {
+		status := CodexCheckUnavailable
+		if configuration.Status == CodexCheckMissing {
+			status = CodexCheckMissing
+		}
+		return codexStatusCheck(
+			"mcp_host_registration", status, "mcp_host_registration_not_inspectable",
+			"The effective Codex MCP registration cannot be inspected until the static registration matches the supported contract.",
+		)
+	}
+	if strings.TrimSpace(codexPath) == "" {
+		return codexStatusCheck(
+			"mcp_host_registration", CodexCheckUnavailable, "mcp_host_registration_cli_missing",
+			"The effective MCP registration cannot be inspected because the Codex CLI is unavailable.",
+		)
+	}
+	output, err := runCommand(codexPath, "mcp", "list", "--json")
+	if err != nil {
+		return codexStatusCheck(
+			"mcp_host_registration", CodexCheckUnavailable, "mcp_host_registration_list_failed",
+			"Codex could not report its effective MCP registrations.",
+		)
+	}
+	var listed []codexMCPListEntry
+	if err := json.Unmarshal(output, &listed); err != nil {
+		return codexStatusCheck(
+			"mcp_host_registration", CodexCheckInvalid, "mcp_host_registration_list_invalid",
+			"Codex returned an invalid MCP registration inventory.",
+		)
+	}
+	var match *codexMCPListEntry
+	for i := range listed {
+		if listed[i].Name != "engram" {
+			continue
+		}
+		if match != nil {
+			return codexStatusCheck(
+				"mcp_host_registration", CodexCheckInvalid, "mcp_host_registration_duplicate",
+				"Codex reported duplicate effective Engram MCP registrations.",
+			)
+		}
+		match = &listed[i]
+	}
+	if match == nil {
+		return codexStatusCheck(
+			"mcp_host_registration", CodexCheckMissing, "mcp_host_registration_missing",
+			"The static Engram registration exists, but Codex does not report it in the effective MCP inventory.",
+		)
+	}
+	var expectedArgs []string
+	_ = json.Unmarshal([]byte(codexStatusEvidenceValue(configuration, "args")), &expectedArgs)
+	expectedCommand := codexStatusEvidenceValue(configuration, "command")
+	evidence := []CodexIntegrationEvidence{
+		codexEvidence("source", "codex_mcp_list"),
+		codexEvidence("enabled", strconv.FormatBool(match.Enabled)),
+		codexEvidence("transport", match.Transport.Type),
+		codexEvidence("command", match.Transport.Command),
+	}
+	if match.StartupTimeoutSec != nil {
+		evidence = append(evidence, codexEvidence("startup_timeout_sec", strconv.FormatFloat(*match.StartupTimeoutSec, 'f', -1, 64)))
+	}
+	if match.DisabledReason != nil {
+		evidence = append(evidence, codexEvidence("disabled_reason", *match.DisabledReason))
+	}
+	if !match.Enabled || match.Transport.Type != "stdio" || match.Transport.Command != expectedCommand ||
+		!slicesEqual(match.Transport.Args, expectedArgs) || match.StartupTimeoutSec == nil || *match.StartupTimeoutSec != 10 {
+		return codexStatusCheck(
+			"mcp_host_registration", CodexCheckInvalid, "mcp_host_registration_mismatch",
+			"Codex's effective Engram registration does not match the enabled stdio command, arguments, and startup timeout written by setup.",
+			evidence...,
+		)
+	}
+	return codexStatusCheck(
+		"mcp_host_registration", CodexCheckReady, "mcp_host_registration_ready",
+		"Codex reports the expected enabled Engram stdio registration and startup timeout.",
+		evidence...,
+	)
+}
+
+func codexMCPConfigurationProbeable(configuration CodexIntegrationCheck) bool {
+	return configuration.Status == CodexCheckReady ||
+		(configuration.Status == CodexCheckPartial && configuration.ReasonCode == "mcp_configuration_legacy")
 }
 
 func codexPluginCapabilityCheck(plugin codexPluginInspection, capability string, ready bool) CodexIntegrationCheck {
@@ -1235,12 +1363,27 @@ func inspectCodexMCPConfiguration(configPath string) CodexIntegrationCheck {
 			codexEvidence("config_path", configPath),
 		)
 	}
+	encodedArgs, _ := json.Marshal(args)
+	if !codexMCPSectionOwnedCurrent(section) {
+		return codexStatusCheck(
+			"mcp_configuration", CodexCheckPartial, "mcp_configuration_legacy",
+			"The Engram MCP registration predates the explicit fail-fast and five-tool policy; rerun engram setup codex.",
+			codexEvidence("config_path", configPath),
+			codexEvidence("command", command),
+			codexEvidence("args", string(encodedArgs)),
+		)
+	}
 	return codexStatusCheck(
 		"mcp_configuration", CodexCheckReady, "mcp_configuration_ready",
-		"The Engram MCP registration matches the supported contract.",
+		"The Engram MCP registration matches the explicit enabled, required, timeout, and five-tool contract.",
 		codexEvidence("config_path", configPath),
 		codexEvidence("command", command),
+		codexEvidence("args", string(encodedArgs)),
 		codexEvidence("transport", "stdio"),
+		codexEvidence("enabled", "true"),
+		codexEvidence("required", "true"),
+		codexEvidence("startup_timeout_sec", "10"),
+		codexEvidence("enabled_tools", strings.Join(codexAgentToolNames(), ",")),
 	)
 }
 
@@ -1253,7 +1396,7 @@ func deriveCodexOperatingMode(checks []CodexIntegrationCheck) CodexOperatingMode
 		}
 		return false
 	}
-	checkpointCapabilities := []string{"engram_cli", "codex_cli", "plugin", "mcp_configuration", "mcp_readiness", "prompt_hook", "session_hook", "activation_cue", "stop_verifier", "subagent_hook"}
+	checkpointCapabilities := []string{"engram_cli", "codex_cli", "plugin", "mcp_configuration", "mcp_host_registration", "mcp_readiness", "prompt_hook", "session_hook", "activation_cue", "stop_verifier", "subagent_hook"}
 	checkpointReady := true
 	for _, capability := range checkpointCapabilities {
 		checkpointReady = checkpointReady && ready(capability)
@@ -1264,7 +1407,7 @@ func deriveCodexOperatingMode(checks []CodexIntegrationCheck) CodexOperatingMode
 	if ready("plugin") || (ready("marketplace") && codexCapabilityPresent(checks, "plugin")) {
 		return CodexModePartialPlugin
 	}
-	if ready("mcp_configuration") && ready("mcp_readiness") {
+	if ready("mcp_configuration") && ready("mcp_host_registration") && ready("mcp_readiness") {
 		return CodexModeMCPOnly
 	}
 	if ready("engram_cli") && ready("codex_cli") && ready("skill") && !ready("plugin") && !ready("mcp_configuration") {

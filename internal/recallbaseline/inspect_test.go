@@ -2,12 +2,58 @@ package recallbaseline
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 )
+
+func TestInspectOperationReadOnlySupportsV1WithoutMigrating(t *testing.T) {
+	dataDir := t.TempDir()
+	path := DatabasePath(dataDir)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	_, err = db.Exec(`CREATE TABLE baseline_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		schema_version TEXT NOT NULL,
+		occurred_at TEXT NOT NULL,
+		expires_at TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		surface TEXT NOT NULL,
+		operation TEXT NOT NULL,
+		outcome TEXT NOT NULL,
+		link_key TEXT NOT NULL,
+		latency_micros INTEGER,
+		delivered_utf8_bytes INTEGER
+	) STRICT;
+	PRAGMA user_version = 1;`)
+	if err != nil {
+		t.Fatalf("create v1 schema: %v", err)
+	}
+	now := time.Now().UTC()
+	_, err = db.Exec(`INSERT INTO baseline_events(
+		schema_version, occurred_at, expires_at, kind, surface, operation, outcome, link_key, latency_micros, delivered_utf8_bytes
+	) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?)`, "recall-baseline-events-v1", now.Format(time.RFC3339Nano),
+		now.Add(time.Hour).Format(time.RFC3339Nano), EventOperation, SurfaceLifecycle, "session_start", OutcomeSuccess, 9000, 55)
+	if err != nil {
+		t.Fatalf("insert v1 event: %v", err)
+	}
+	_ = db.Close()
+	before := snapshotBaselineInspectionDir(t, dataDir)
+
+	report, observed, err := InspectOperationReadOnly(Config{DataDir: dataDir, Now: func() time.Time { return now }}, SurfaceLifecycle, "session_start")
+	if err != nil || !observed || report.Events != 1 || report.P50LatencyMillis != 9 || report.TotalUTF8Bytes != 55 {
+		t.Fatalf("v1 lifecycle metrics = %+v observed=%t err=%v", report, observed, err)
+	}
+	after := snapshotBaselineInspectionDir(t, dataDir)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("read-only v1 inspection migrated baseline files:\nbefore=%#v\nafter=%#v", before, after)
+	}
+}
 
 func TestInspectOperationReadOnlyReportsLifecycleLatencyAndInjectedBytesWithoutMutation(t *testing.T) {
 	dataDir := t.TempDir()

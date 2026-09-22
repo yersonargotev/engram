@@ -69,8 +69,8 @@
   },
   "distributions": {
     "managed_pack": {
-      "version": "3.4.0",
-      "skill_sha256": "846df158172cc8cb26502165ba0731ae561b5a125287389cd4aa2b1b6b286708",
+      "version": "3.3.1",
+      "skill_sha256": "dce76832c44ca96a9bfc42173c96e4062479c2d2572744718a6008e5daf941ad",
       "legacy_compatible": true,
       "supported_protocol": {
         "minimum": 1,
@@ -85,7 +85,7 @@
       }
     },
     "codex_plugin": {
-      "version": "0.1.8",
+      "version": "0.1.7",
       "legacy_compatible": true,
       "supported_protocol": {
         "minimum": 1,

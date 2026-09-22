@@ -76,6 +76,45 @@ func TestOperationMiddlewareReportsUnknownBytesForTransportError(t *testing.T) {
 	}
 }
 
+func TestServerReportsMCPRuntimeMilestonesWithoutRawClientInfo(t *testing.T) {
+	t.Parallel()
+
+	var observed []RuntimeObservation
+	srv := NewServerWithConfig(nil, MCPConfig{
+		ObserveRuntime: func(value RuntimeObservation) {
+			observed = append(observed, value)
+		},
+	}, ResolveTools("agent"))
+
+	_ = srv.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+			"protocolVersion":"2025-06-18",
+			"capabilities":{},
+			"clientInfo":{"name":"Cursor raw-client-sentinel","version":"private-version-sentinel"}
+		}
+	}`))
+	_ = srv.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}
+	}`))
+
+	if len(observed) != 2 {
+		t.Fatalf("runtime observations = %+v, want initialize and tools_list", observed)
+	}
+	if observed[0].Event != RuntimeInitialize || observed[0].Host != HostCursor {
+		t.Fatalf("initialize observation = %+v", observed[0])
+	}
+	if observed[1].Event != RuntimeToolsList {
+		t.Fatalf("tools/list observation = %+v", observed[1])
+	}
+	encoded, err := json.Marshal(observed)
+	if err != nil {
+		t.Fatalf("json.Marshal(observed): %v", err)
+	}
+	if strings.Contains(string(encoded), "raw-client-sentinel") || strings.Contains(string(encoded), "private-version-sentinel") {
+		t.Fatalf("runtime observation leaked clientInfo: %s", encoded)
+	}
+}
+
 func newMCPTestStoreWithMaxContentLength(t *testing.T, maxContentLength int) *store.Store {
 	s, _ := newMCPTestStoreWithOptions(t, maxContentLength)
 	return s

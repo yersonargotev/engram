@@ -16,7 +16,7 @@ import (
 	"github.com/yersonargotev/engram/internal/store"
 )
 
-func TestCodexCoreLifecycleHooksRecordOnlyContentFreeOptInMetrics(t *testing.T) {
+func TestCodexCoreLifecycleHooksRecordContentFreeDefaultOnMetricsWithExplicitOptOut(t *testing.T) {
 	root := repoRoot(t)
 	pluginRoot := filepath.Join(root, "plugin", "codex")
 	manifest := readCodexHooksManifest(t, filepath.Join(pluginRoot, "hooks", "hooks.json"))
@@ -93,7 +93,7 @@ func TestCodexCoreLifecycleHooksRecordOnlyContentFreeOptInMetrics(t *testing.T) 
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"ENGRAM_DATA_DIR="+disabledDir,
 		"ENGRAM_PROJECT=engram",
-		"ENGRAM_RECALL_BASELINE=",
+		"ENGRAM_RECALL_BASELINE=0",
 	)
 	runCodexBaselineManifest(t, singleCodexHookCommand(t, manifest, "UserPromptSubmit"),
 		`{"session_id":"missing","turn_id":"turn","prompt":"disabled baseline"}`, pluginRoot, disabledEnv)

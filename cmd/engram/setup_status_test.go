@@ -281,6 +281,30 @@ func TestCmdSetupStatusCursorJSONDoesNotInstall(t *testing.T) {
 	}
 }
 
+func TestPrintSetupResultCursorDoesNotClaimGenericSuccessWhenIncomplete(t *testing.T) {
+	stdout, stderr, recovered := captureOutputAndRecover(t, func() {
+		printSetupResult(&setup.Result{
+			Agent:       "cursor",
+			Destination: "/tmp/cursor-plugin",
+			Files:       7,
+			Complete:    false,
+			Checks: []setup.CapabilityCheck{
+				{Capability: "plugin", Status: setup.CheckReady, Detail: "verified"},
+				{Capability: "mcp", Status: setup.CheckFailed, Detail: "initialize failed"},
+			},
+		})
+	})
+	if recovered != nil || stderr != "" {
+		t.Fatalf("print setup result: recovered=%v stderr=%q", recovered, stderr)
+	}
+	if !strings.Contains(stdout, "Cursor setup incomplete") || !strings.Contains(stdout, "mcp: failed") {
+		t.Fatalf("stdout = %q, want honest incomplete result", stdout)
+	}
+	if strings.Contains(stdout, "✓ Installed cursor plugin") {
+		t.Fatalf("stdout = %q, must not claim generic success", stdout)
+	}
+}
+
 func TestSetupStatusCursorRunsBeforeUpdateChecksAndStoreResolution(t *testing.T) {
 	stubRuntimeHooks(t)
 	stubExitWithPanic(t)

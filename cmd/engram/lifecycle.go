@@ -9,13 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/yersonargotev/engram/internal/codexlifecycle"
 	projectpkg "github.com/yersonargotev/engram/internal/project"
+	"github.com/yersonargotev/engram/internal/recallbaseline"
 	"github.com/yersonargotev/engram/internal/store"
 )
 
@@ -197,29 +197,18 @@ func cmdCodexLifecycleSessionStart(cfg store.Config, pluginRoot string, input io
 	response.HookSpecificOutput.HookEventName = "SessionStart"
 	response.HookSpecificOutput.AdditionalContext = modelContext
 	_ = writeCLIJSON(response)
-	startCodexLifecycleBaseline(time.Since(started), len(modelContext))
+	startCodexLifecycleBaseline(cfg, time.Since(started), len(modelContext))
 }
 
-func startCodexLifecycleBaseline(latency time.Duration, deliveredBytes int) {
+func startCodexLifecycleBaseline(cfg store.Config, latency time.Duration, deliveredBytes int) {
 	if !recallBaselineCollectionEnabled() {
 		return
 	}
-	executable, err := os.Executable()
-	if err != nil {
-		return
-	}
-	latencyMillis := strconv.FormatFloat(float64(latency)/float64(time.Millisecond), 'f', 6, 64)
-	command := exec.Command(executable,
-		"recall-baseline", "record",
-		"--kind", "operation", "--surface", "lifecycle", "--operation", "session_start", "--outcome", "success",
-		"--latency-ms", latencyMillis, "--delivered-bytes", strconv.Itoa(deliveredBytes),
-	)
-	command.Stdin = nil
-	command.Stdout = nil
-	command.Stderr = nil
-	if err := command.Start(); err == nil {
-		_ = command.Process.Release()
-	}
+	recordRecallBaselineEvents(cfg, recallbaseline.Event{
+		Kind: recallbaseline.EventOperation, Surface: recallbaseline.SurfaceLifecycle,
+		Operation: "session_start", Outcome: recallbaseline.OutcomeSuccess,
+		Latency: recallbaseline.KnownLatency(latency), DeliveredUTF8Bytes: recallbaseline.KnownBytes(int64(deliveredBytes)),
+	})
 }
 
 func codexLifecycleSource(source string) bool {

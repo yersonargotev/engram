@@ -50,6 +50,10 @@ type MCPConfig struct {
 	// ObserveOperation receives bounded post-call metadata. It never receives
 	// request arguments or tool content and cannot alter the handler result.
 	ObserveOperation func(OperationObservation)
+	// ObserveRuntime receives only allowlisted MCP lifecycle milestones and an
+	// allowlisted host hint. It never receives raw clientInfo or protocol
+	// request data and cannot alter the server result.
+	ObserveRuntime func(RuntimeObservation)
 	// ObserveCheckpoint receives only the opaque checkpoint identity and a
 	// bounded terminal attempt outcome. It never receives Memory or proposal
 	// payloads and cannot alter the handler result.
@@ -84,6 +88,33 @@ type OperationObservation struct {
 	Outcome            OperationOutcome
 	Latency            time.Duration
 	DeliveredUTF8Bytes *int64
+	Host               HostHint
+}
+
+type HostHint string
+
+const (
+	HostUnknown    HostHint = "unknown"
+	HostCodex      HostHint = "codex"
+	HostCursor     HostHint = "cursor"
+	HostClaudeCode HostHint = "claude_code"
+	HostOpenCode   HostHint = "opencode"
+	HostGemini     HostHint = "gemini"
+	HostSetupProbe HostHint = "setup_probe"
+	HostOther      HostHint = "other"
+)
+
+type RuntimeEvent string
+
+const (
+	RuntimeProcess    RuntimeEvent = "process"
+	RuntimeInitialize RuntimeEvent = "initialize"
+	RuntimeToolsList  RuntimeEvent = "tools_list"
+)
+
+type RuntimeObservation struct {
+	Event RuntimeEvent
+	Host  HostHint
 }
 
 type CheckpointOutcome string
@@ -283,6 +314,9 @@ func newServerWithActivity(s *store.Store, cfg MCPConfig, allowlist map[string]b
 	if cfg.ObserveOperation != nil {
 		options = append(options, server.WithToolHandlerMiddleware(operationObservationMiddleware(cfg.ObserveOperation)))
 	}
+	if cfg.ObserveRuntime != nil {
+		options = append(options, server.WithHooks(runtimeObservationHooks(cfg.ObserveRuntime)))
+	}
 	srv := server.NewMCPServer(
 		"engram",
 		"0.1.0",
@@ -302,6 +336,7 @@ func operationObservationMiddleware(observe func(OperationObservation)) server.T
 				Operation: request.Params.Name,
 				Outcome:   OperationSuccess,
 				Latency:   time.Since(started),
+				Host:      hostHintFromContext(ctx),
 			}
 			if err != nil || (result != nil && result.IsError) {
 				observation.Outcome = OperationError
@@ -319,6 +354,58 @@ func operationObservationMiddleware(observe func(OperationObservation)) server.T
 			}()
 			return result, err
 		}
+	}
+}
+
+func runtimeObservationHooks(observe func(RuntimeObservation)) *server.Hooks {
+	hooks := &server.Hooks{}
+	hooks.AddAfterInitialize(func(_ context.Context, _ any, request *mcp.InitializeRequest, _ *mcp.InitializeResult) {
+		host := HostUnknown
+		if request != nil {
+			host = classifyHost(request.Params.ClientInfo.Name)
+		}
+		safeObserveRuntime(observe, RuntimeObservation{Event: RuntimeInitialize, Host: host})
+	})
+	hooks.AddAfterListTools(func(ctx context.Context, _ any, _ *mcp.ListToolsRequest, _ *mcp.ListToolsResult) {
+		safeObserveRuntime(observe, RuntimeObservation{Event: RuntimeToolsList, Host: hostHintFromContext(ctx)})
+	})
+	return hooks
+}
+
+func safeObserveRuntime(observe func(RuntimeObservation), observation RuntimeObservation) {
+	defer func() { _ = recover() }()
+	observe(observation)
+}
+
+func hostHintFromContext(ctx context.Context) HostHint {
+	session := server.ClientSessionFromContext(ctx)
+	withClientInfo, ok := session.(server.SessionWithClientInfo)
+	if !ok {
+		return HostUnknown
+	}
+	return classifyHost(withClientInfo.GetClientInfo().Name)
+}
+
+func classifyHost(clientName string) HostHint {
+	name := strings.ToLower(strings.TrimSpace(clientName))
+	if name == "" {
+		return HostUnknown
+	}
+	switch {
+	case name == "engram-setup-probe":
+		return HostSetupProbe
+	case strings.Contains(name, "cursor"):
+		return HostCursor
+	case strings.Contains(name, "codex"):
+		return HostCodex
+	case strings.Contains(name, "claude"):
+		return HostClaudeCode
+	case strings.Contains(name, "opencode"):
+		return HostOpenCode
+	case strings.Contains(name, "gemini"):
+		return HostGemini
+	default:
+		return HostOther
 	}
 }
 

@@ -355,23 +355,34 @@ func cliJSONBytes(value any) *int64 {
 }
 
 func recallBaselineCollectionEnabled() bool {
-	return strings.TrimSpace(os.Getenv("ENGRAM_RECALL_BASELINE")) == "1"
+	if strings.TrimSpace(os.Getenv("ENGRAM_RECALL_BASELINE")) == "0" {
+		return false
+	}
+	return len(os.Args) < 2 || !strings.EqualFold(strings.TrimSpace(os.Args[1]), "recall-baseline")
 }
 
 func newRecallBaselineMCPObservers(cfg store.Config) (
+	func(engrammcp.RuntimeObservation),
 	func(engrammcp.OperationObservation),
 	func(engrammcp.CheckpointObservation),
 	func(),
 ) {
 	if !recallBaselineCollectionEnabled() {
-		return nil, nil, func() {}
+		return nil, nil, nil, func() {}
 	}
 	ledger, err := openRecallBaselineLedger(cfg)
 	if err != nil {
 		log.Printf("[engram] recall baseline telemetry unavailable: %v", err)
-		return nil, nil, func() {}
+		return nil, nil, nil, func() {}
 	}
 	recorder := recallbaseline.NewAsyncRecorder(ledger, 1024)
+	observeRuntime := func(observation engrammcp.RuntimeObservation) {
+		recorder.Record(recallbaseline.Event{
+			Kind: recallbaseline.EventMCPRuntime, Surface: recallbaseline.SurfaceMCP,
+			Operation: string(observation.Event), Outcome: recallbaseline.OutcomeSuccess,
+			Host: recallbaseline.Host(observation.Host),
+		})
+	}
 	observe := func(observation engrammcp.OperationObservation) {
 		outcome := recallbaseline.OutcomeSuccess
 		if observation.Outcome == engrammcp.OperationError {
@@ -380,6 +391,7 @@ func newRecallBaselineMCPObservers(cfg store.Config) (
 		recorder.Record(recallbaseline.Event{
 			Kind: recallbaseline.EventOperation, Surface: recallbaseline.SurfaceMCP,
 			Operation: observation.Operation, Outcome: outcome,
+			Host:    recallbaseline.Host(observation.Host),
 			Latency: recallbaseline.KnownLatency(observation.Latency), DeliveredUTF8Bytes: observation.DeliveredUTF8Bytes,
 		})
 	}
@@ -404,7 +416,8 @@ func newRecallBaselineMCPObservers(cfg store.Config) (
 			log.Printf("[engram] recall baseline telemetry close failed: %v", err)
 		}
 	}
-	return observe, observeCheckpoint, closeObserver
+	observeRuntime(engrammcp.RuntimeObservation{Event: engrammcp.RuntimeProcess, Host: engrammcp.HostUnknown})
+	return observeRuntime, observe, observeCheckpoint, closeObserver
 }
 
 func newRecallBaselineFlagSet(subcommand string) *flag.FlagSet {
@@ -444,6 +457,17 @@ func printRecallBaselineReport(report recallbaseline.Report) {
 	}
 	fmt.Printf("Collection loss: %d dropped events; %d write failures\n",
 		report.Collection.DroppedEvents, report.Collection.WriteFailures)
+	fmt.Printf("MCP activation: %s; processes %d; initialized %d; tools listed %d; tool calls %d\n",
+		report.MCPActivation.Status, report.MCPActivation.Processes, report.MCPActivation.Initializations,
+		report.MCPActivation.ToolLists, report.MCPActivation.ToolCalls)
+	for _, activation := range report.MCPActivationByHost {
+		fmt.Printf("MCP activation %s: %s; processes %d; initialized %d; tools listed %d; tool calls %d\n",
+			activation.Host, activation.Status, activation.Processes, activation.Initializations,
+			activation.ToolLists, activation.ToolCalls)
+	}
+	for _, runtime := range report.MCPRuntime {
+		fmt.Printf("MCP runtime %s/%s: %d events\n", runtime.Host, runtime.Event, runtime.Events)
+	}
 	fmt.Printf("Checkpoint denominator: %d; completed %d; missing %d; conflicting %d; unknown %d\n",
 		report.Lifecycle.Checkpoints.EligibleTurns, report.Lifecycle.Checkpoints.Completed,
 		report.Lifecycle.Checkpoints.Missing, report.Lifecycle.Checkpoints.Conflicting, report.Lifecycle.Checkpoints.Unknown)
@@ -457,8 +481,12 @@ func printRecallBaselineReport(report recallbaseline.Report) {
 		report.Lifecycle.SubagentStop.Events, report.Lifecycle.SubagentStop.Observed,
 		report.Lifecycle.SubagentStop.Skipped, report.Lifecycle.SubagentStop.Unknown)
 	for _, operation := range report.Operations {
+		surface := string(operation.Surface)
+		if operation.Host != "" {
+			surface += "/" + string(operation.Host)
+		}
 		fmt.Printf("%s/%s: %d operations; latency p50 %.3f ms p95 %.3f ms (%d unknown); %d UTF-8 bytes (%d unknown)\n",
-			operation.Surface, operation.Operation, operation.Events, operation.P50LatencyMillis,
+			surface, operation.Operation, operation.Events, operation.P50LatencyMillis,
 			operation.P95LatencyMillis, operation.UnknownLatency, operation.TotalUTF8Bytes, operation.UnknownBytes)
 	}
 }

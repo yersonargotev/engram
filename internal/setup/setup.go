@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	atomicfile "github.com/natefinch/atomic"
 	"github.com/yersonargotev/engram/internal/mcp"
@@ -45,13 +46,11 @@ var (
 	runCommand            = func(name string, args ...string) ([]byte, error) {
 		return exec.Command(name, args...).CombinedOutput()
 	}
-	runCodexCheckpointProbeFn = func(name string, args ...string) ([]byte, error) {
-		return exec.Command(name, args...).CombinedOutput()
-	}
-	linkFileFn   = os.Link
-	renameFileFn = os.Rename
-	removeFileFn = os.Remove
-	gitStatusFn  = func(root string) ([]byte, error) {
+	runCodexMCPProbeFn = runCodexMCPProbe
+	linkFileFn         = os.Link
+	renameFileFn       = os.Rename
+	removeFileFn       = os.Remove
+	gitStatusFn        = func(root string) ([]byte, error) {
 		return exec.Command("git", "--no-optional-locks", "-C", root, "status", "--porcelain=v1", "--untracked-files=all", "--ignored=matching", "--", ".agents/plugins/marketplace.json", "plugin/codex").CombinedOutput()
 	}
 	gitResolveRefFn = func(root, ref string) ([]byte, error) {
@@ -80,6 +79,10 @@ var (
 	// Returns an empty string when the version cannot be determined.
 	resolveMiseNodeVersionFn = resolveMiseNodeVersion
 )
+
+const codexMCPProbeTimeout = 10 * time.Second
+
+type codexMCPProbeResult = mcpProbeResult
 
 //go:embed plugins/opencode/*
 var openCodeFS embed.FS
@@ -179,18 +182,40 @@ func claudeCodePermissionTools(agentTools map[string]bool) []string {
 }
 
 // codexEngramBlock is the canonical Codex TOML MCP block.
-// Command is always the bare "engram" name in this constant because
+// Command is always the bare "engram" name in this baseline block because
 // upsertCodexEngramBlock generates the actual content via codexEngramBlockStr()
 // which uses resolveEngramCommand() at runtime. This constant is kept for tests
 // that verify idempotency against the already-written string when os.Executable
 // returns "engram" (fallback path).
-const codexEngramBlock = "[mcp_servers.engram]\ncommand = \"engram\"\nargs = [\"mcp\", \"--tools=agent\"]"
+var codexEngramBlock = codexEngramBlockForCommand("engram")
 
 // codexEngramBlockStr returns the Codex TOML block for the engram MCP server,
 // using the resolved absolute binary path from os.Executable().
 func codexEngramBlockStr() string {
-	cmd := resolveEngramCommand()
-	return "[mcp_servers.engram]\ncommand = " + fmt.Sprintf("%q", cmd) + "\nargs = [\"mcp\", \"--tools=agent\"]"
+	return codexEngramBlockForCommand(resolveEngramCommand())
+}
+
+func codexEngramBlockForCommand(command string) string {
+	enabledTools, _ := json.Marshal(codexAgentToolNames())
+	return "[mcp_servers.engram]\n" +
+		"command = " + fmt.Sprintf("%q", command) + "\n" +
+		"args = [\"mcp\", \"--tools=agent\"]\n" +
+		"enabled = true\n" +
+		"required = true\n" +
+		"startup_timeout_sec = 10\n" +
+		"enabled_tools = " + string(enabledTools)
+}
+
+func codexAgentToolNames() []string {
+	resolved := mcp.ResolveTools("agent")
+	names := make([]string, 0, len(resolved))
+	for name, enabled := range resolved {
+		if enabled {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 const memoryProtocolMarkdown = `## Engram Persistent Memory — Protocol
@@ -1391,17 +1416,24 @@ func installCodexWithOptions(options InstallOptions) (*Result, error) {
 		Detail:     fmt.Sprintf("verified %s at %s (%s)", marketplaceIdentity.Source, marketplaceIdentity.Commit, pluginCapabilities.Version),
 	})
 
-	checkpointAdaptersReady, checkpointAdaptersDetail := codexCheckpointAdaptersReady()
-	if pluginCapabilities.MCPReady && checkpointAdaptersReady {
+	mcpProtocolReady, mcpProtocolDetail := codexMCPProtocolReady()
+	if pluginCapabilities.MCPReady && mcpProtocolReady {
 		if err := injectCodexMCPFn(path); err != nil {
 			return nil, err
 		}
 	}
-	if pluginCapabilities.MCPReady && checkpointAdaptersReady && codexMCPReady(path) {
+	if pluginCapabilities.MCPReady && mcpProtocolReady && codexMCPReady(path) {
+		hostRegistration := inspectCodexMCPHostRegistration(codexBin, inspectCodexMCPConfiguration(path))
+		status := CheckFailed
+		detail := hostRegistration.Reason
+		if hostRegistration.Status == CodexCheckReady {
+			status = CheckReady
+			detail = "MCP initialize/tools/list protocol and effective fail-fast Codex registration verified"
+		}
 		result.Checks = append(result.Checks, CapabilityCheck{
 			Capability: "mcp",
-			Status:     CheckReady,
-			Detail:     "CLI and MCP checkpoint adapters plus stable executable registration verified",
+			Status:     status,
+			Detail:     detail,
 		})
 	} else {
 		detail := "plugin MCP manifest or stable executable registration is invalid"
@@ -1409,8 +1441,8 @@ func installCodexWithOptions(options InstallOptions) (*Result, error) {
 		if mcpRegistrationPreserved {
 			status = CheckPreserved
 			detail = "custom or unrecognized mcp_servers.engram registration was preserved byte-for-byte"
-		} else if pluginCapabilities.MCPReady && !checkpointAdaptersReady {
-			detail = checkpointAdaptersDetail
+		} else if pluginCapabilities.MCPReady && !mcpProtocolReady {
+			detail = mcpProtocolDetail
 		}
 		result.Checks = append(result.Checks, CapabilityCheck{
 			Capability: "mcp",
@@ -2668,8 +2700,9 @@ func codexMCPReady(configPath string) bool {
 	if !found {
 		return false
 	}
-	values, present, valid := codexTOMLTable(string(data[start:end]), "mcp_servers.engram")
-	if !present || !valid || len(values) != 2 {
+	section := string(data[start:end])
+	values, present, valid := codexTOMLTable(section, "mcp_servers.engram")
+	if !present || !valid || !codexMCPSectionOwnedCurrent(section) {
 		return false
 	}
 	command, commandOK := decodeTOMLString(values["command"])
@@ -2687,33 +2720,25 @@ func codexMCPRegistrationPreserved(configPath string) bool {
 	return found && !codexMCPSectionOwned(string(data[start:end]))
 }
 
-func codexCheckpointAdaptersReady() (bool, string) {
-	return codexCheckpointAdaptersReadyFor(resolveEngramCommand())
+func codexMCPProtocolReady() (bool, string) {
+	return codexMCPProtocolReadyFor(resolveEngramCommand(), []string{"mcp", "--tools=agent"})
 }
 
-func codexCheckpointAdaptersReadyFor(command string) (bool, string) {
-	tools := mcp.ResolveTools("agent")
-	for _, tool := range []string{"mem_checkpoint", "mem_checkpoint_status"} {
-		if !tools[tool] {
-			return false, "configured MCP agent profile does not provide " + tool
-		}
-	}
-
-	output, err := runCodexCheckpointProbeFn(command, "checkpoint", "--help")
+func codexMCPProtocolReadyFor(command string, args []string) (bool, string) {
+	probe, err := runCodexMCPProbeFn(command, args, codexMCPProbeTimeout)
 	if err != nil {
-		detail := strings.TrimSpace(string(output))
-		if detail == "" {
-			detail = err.Error()
-		}
-		return false, "configured Engram executable failed the checkpoint CLI capability probe: " + detail
+		return false, "configured Engram MCP server failed the stdio initialize/tools/list probe: " + err.Error()
 	}
-	usage := string(output)
-	for _, command := range []string{"checkpoint record", "checkpoint status", "checkpoint verify-stop"} {
-		if !strings.Contains(usage, command) {
-			return false, "configured Engram executable does not advertise " + command
-		}
+	want := codexAgentToolNames()
+	sort.Strings(probe.Tools)
+	if !slicesEqual(probe.Tools, want) {
+		return false, fmt.Sprintf("configured Engram MCP server exposed tools %q; want exactly %q", probe.Tools, want)
 	}
 	return true, ""
+}
+
+func runCodexMCPProbe(command string, args []string, timeout time.Duration) (codexMCPProbeResult, error) {
+	return runStdioMCPProbe(command, args, timeout)
 }
 
 func codexPreservedLegacySettings(configPath string) []string {
@@ -3012,12 +3037,11 @@ func tomlSectionBounds(content, table string) (start, end int, found bool) {
 func codexMCPSectionOwned(section string) bool {
 	normalized := strings.TrimSpace(strings.ReplaceAll(section, "\r\n", "\n"))
 	lines := strings.Split(normalized, "\n")
-	if len(lines) != 3 || strings.TrimSpace(lines[0]) != "[mcp_servers.engram]" ||
-		!strings.HasPrefix(lines[1], "command = ") || lines[2] != `args = ["mcp", "--tools=agent"]` {
+	if (len(lines) != 3 && len(lines) != 7) || strings.TrimSpace(lines[0]) != "[mcp_servers.engram]" {
 		return false
 	}
 	values, present, valid := codexTOMLTable(section, "mcp_servers.engram")
-	if !present || !valid || len(values) != 2 {
+	if !present || !valid || (len(values) != 2 && len(values) != 6) {
 		return false
 	}
 	command, commandOK := decodeTOMLString(values["command"])
@@ -3025,7 +3049,27 @@ func codexMCPSectionOwned(section string) bool {
 	argsOK := json.Unmarshal([]byte(values["args"]), &args) == nil
 	normalizedCommand := strings.ReplaceAll(command, "\\", "/")
 	base := strings.ToLower(filepath.Base(normalizedCommand))
-	return commandOK && argsOK && (base == "engram" || base == "engram.exe") && slicesEqual(args, []string{"mcp", "--tools=agent"})
+	if !commandOK || !argsOK || (base != "engram" && base != "engram.exe") || !slicesEqual(args, []string{"mcp", "--tools=agent"}) {
+		return false
+	}
+	if len(values) == 2 {
+		return true
+	}
+	return codexMCPPolicyCurrent(values)
+}
+
+func codexMCPSectionOwnedCurrent(section string) bool {
+	values, present, valid := codexTOMLTable(section, "mcp_servers.engram")
+	return present && valid && len(values) == 6 && codexMCPSectionOwned(section) && codexMCPPolicyCurrent(values)
+}
+
+func codexMCPPolicyCurrent(values map[string]string) bool {
+	var enabledTools []string
+	toolsOK := json.Unmarshal([]byte(values["enabled_tools"]), &enabledTools) == nil
+	return strings.TrimSpace(values["enabled"]) == "true" &&
+		strings.TrimSpace(values["required"]) == "true" &&
+		strings.TrimSpace(values["startup_timeout_sec"]) == "10" &&
+		toolsOK && slicesEqual(enabledTools, codexAgentToolNames())
 }
 
 func tomlTableHeader(line string) (string, bool) {
@@ -3073,6 +3117,9 @@ func geminiEnvPath() string {
 }
 
 func codexConfigPath() string {
+	if codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME")); codexHome != "" {
+		return filepath.Join(codexHome, "config.toml")
+	}
 	home, _ := userHomeDir()
 
 	switch runtimeGOOS {

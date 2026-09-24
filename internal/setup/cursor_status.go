@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -183,13 +184,53 @@ func inspectCursorPluginStatus(runningVersion, runningRevision string) cursorPlu
 	)
 	runningVersion = strings.TrimPrefix(strings.TrimSpace(runningVersion), "v")
 	runningRevision = strings.ToLower(strings.TrimSpace(runningRevision))
+	evidence = append(evidence,
+		cursorEvidence("running_version", runningVersion),
+		cursorEvidence("running_commit", runningRevision),
+	)
 	if binaryErr != nil {
+		if os.IsNotExist(binaryErr) {
+			return cursorPluginInspection{Check: cursorStatusCheck(
+				"plugin", CursorCheckMissing, "plugin_binary_missing",
+				"The Agent Plugin is missing its pinned Engram binary.",
+				append(evidence, cursorEvidence("binary_state", "missing"))...,
+			), Root: root}
+		}
 		return cursorPluginInspection{Check: cursorStatusCheck(
-			"plugin", CursorCheckCustomized, "plugin_customized",
-			"The Agent Plugin is missing its pinned Engram binary.",
+			"plugin", CursorCheckUnavailable, "plugin_binary_unavailable",
+			"The Agent Plugin binary could not be inspected.",
 			evidence...,
 		), Root: root}
 	}
+	currentBinary, err := osExecutable()
+	if err != nil {
+		return cursorPluginInspection{Check: cursorStatusCheck(
+			"plugin", CursorCheckUnavailable, "plugin_binary_unavailable",
+			"The running Engram binary could not be resolved for comparison.", evidence...,
+		), Root: root}
+	}
+	installedDigest, err := cursorBinaryDigest(binaryPath)
+	if err != nil {
+		return cursorPluginInspection{Check: cursorStatusCheck(
+			"plugin", CursorCheckUnavailable, "plugin_binary_unavailable",
+			"The Agent Plugin binary could not be read for comparison.", evidence...,
+		), Root: root}
+	}
+	runningDigest, err := cursorBinaryDigest(currentBinary)
+	if err != nil {
+		return cursorPluginInspection{Check: cursorStatusCheck(
+			"plugin", CursorCheckUnavailable, "plugin_binary_unavailable",
+			"The running Engram binary could not be read for comparison.", evidence...,
+		), Root: root}
+	}
+	if installedDigest != runningDigest {
+		return cursorPluginInspection{Check: cursorStatusCheck(
+			"plugin", CursorCheckStale, "plugin_binary_stale",
+			"The Agent Plugin MCP binary differs from the running Engram binary; rerun setup cursor to refresh it.",
+			append(evidence, cursorEvidence("binary_state", "stale"))...,
+		), Root: root}
+	}
+	evidence = append(evidence, cursorEvidence("binary_state", "current"))
 	if runningVersion != "" && version != runningVersion || runningRevision != "" && commit != runningRevision {
 		return cursorPluginInspection{Check: cursorStatusCheck(
 			"plugin", CursorCheckStale, "plugin_stale",
@@ -205,6 +246,21 @@ func inspectCursorPluginStatus(runningVersion, runningRevision string) cursorPlu
 		),
 		Root: root,
 	}
+}
+
+func cursorBinaryDigest(path string) ([sha256.Size]byte, error) {
+	var digest [sha256.Size]byte
+	file, err := os.Open(path)
+	if err != nil {
+		return digest, err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return digest, err
+	}
+	copy(digest[:], hash.Sum(nil))
+	return digest, nil
 }
 
 func inspectCursorSkillStatus(plugin cursorPluginInspection) []CursorIntegrationCheck {

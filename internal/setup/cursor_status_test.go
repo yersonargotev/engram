@@ -207,6 +207,9 @@ func TestInspectCursorStatusCompleteInstallIsCheckpointReady(t *testing.T) {
 	if plugin.Status != CursorCheckReady || plugin.ReasonCode != "plugin_ready" {
 		t.Fatalf("plugin = %#v", plugin)
 	}
+	if got := cursorEvidenceValue(plugin, "binary_state"); got != "current" {
+		t.Fatalf("binary_state = %q, want current", got)
+	}
 	skill := cursorCheck(t, status, "skill")
 	if skill.Status != CursorCheckReady || skill.ReasonCode != "skill_ready" {
 		t.Fatalf("skill = %#v", skill)
@@ -230,6 +233,105 @@ func TestInspectCursorStatusCompleteInstallIsCheckpointReady(t *testing.T) {
 	userRules := cursorCheck(t, status, "user_rules")
 	if userRules.Status != CursorCheckUnknown || userRules.ReasonCode != "user_rules_unknown" {
 		t.Fatalf("user_rules = %#v, want unknown", userRules)
+	}
+}
+
+func TestInspectCursorStatusDetectsStaleBinaryDespiteMatchingReleaseStamp(t *testing.T) {
+	home := installPinnedCursor(t)
+	pluginBin := cursorHookBinary(filepath.Join(home, ".cursor", "plugins", "local", "engram"))
+	if err := os.WriteFile(pluginBin, []byte("older Engram MCP binary"), 0o755); err != nil {
+		t.Fatalf("replace plugin binary: %v", err)
+	}
+
+	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("InspectCursorStatus: %v", err)
+	}
+	plugin := cursorCheck(t, status, "plugin")
+	if plugin.Status != CursorCheckStale || plugin.ReasonCode != "plugin_binary_stale" {
+		t.Fatalf("plugin = %#v, want stale binary", plugin)
+	}
+	if got := cursorEvidenceValue(plugin, "binary_state"); got != "stale" {
+		t.Fatalf("binary_state = %q, want stale", got)
+	}
+	if status.Mode == CursorModeCheckpointReady {
+		t.Fatal("stale plugin binary claimed checkpoint readiness")
+	}
+}
+
+func TestInspectCursorStatusDoesNotClaimFreshnessWhenRunningBinaryCannotBeRead(t *testing.T) {
+	home := installPinnedCursor(t)
+	osExecutable = func() (string, error) { return filepath.Join(home, "missing-running-binary"), nil }
+
+	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("InspectCursorStatus: %v", err)
+	}
+	plugin := cursorCheck(t, status, "plugin")
+	if plugin.Status != CursorCheckUnavailable || plugin.ReasonCode != "plugin_binary_unavailable" {
+		t.Fatalf("plugin = %#v, want unavailable binary comparison", plugin)
+	}
+	if status.Mode == CursorModeCheckpointReady {
+		t.Fatal("unverifiable plugin binary claimed checkpoint readiness")
+	}
+}
+
+func TestInspectCursorStatusReportsBinaryInspectionFailures(t *testing.T) {
+	tests := []struct {
+		name        string
+		breakBinary func(t *testing.T, binaryPath string)
+		reason      string
+	}{
+		{
+			name: "stat plugin binary",
+			breakBinary: func(t *testing.T, binaryPath string) {
+				originalStat := statFn
+				statFn = func(path string) (os.FileInfo, error) {
+					if path == binaryPath {
+						return nil, errors.New("cannot stat plugin binary")
+					}
+					return originalStat(path)
+				}
+			},
+			reason: "The Agent Plugin binary could not be inspected.",
+		},
+		{
+			name: "resolve running binary",
+			breakBinary: func(t *testing.T, binaryPath string) {
+				osExecutable = func() (string, error) { return "", errors.New("cannot resolve executable") }
+			},
+			reason: "The running Engram binary could not be resolved for comparison.",
+		},
+		{
+			name: "read plugin binary",
+			breakBinary: func(t *testing.T, binaryPath string) {
+				if err := os.Remove(binaryPath); err != nil {
+					t.Fatalf("remove plugin binary: %v", err)
+				}
+				if err := os.Mkdir(binaryPath, 0o755); err != nil {
+					t.Fatalf("replace plugin binary with directory: %v", err)
+				}
+			},
+			reason: "The Agent Plugin binary could not be read for comparison.",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home := installPinnedCursor(t)
+			binaryPath := cursorHookBinary(filepath.Join(home, ".cursor", "plugins", "local", "engram"))
+			test.breakBinary(t, binaryPath)
+			status, err := InspectCursorStatus("2.2.1", testReleaseCommit, home)
+			if err != nil {
+				t.Fatalf("InspectCursorStatus: %v", err)
+			}
+			plugin := cursorCheck(t, status, "plugin")
+			if plugin.Status != CursorCheckUnavailable || plugin.ReasonCode != "plugin_binary_unavailable" || plugin.Reason != test.reason {
+				t.Fatalf("plugin = %#v, want unavailable: %s", plugin, test.reason)
+			}
+			if status.Mode == CursorModeCheckpointReady {
+				t.Fatal("unverifiable plugin binary claimed checkpoint readiness")
+			}
+		})
 	}
 }
 
@@ -377,6 +479,10 @@ func TestInspectCursorStatusDistinguishesStalePluginAndSkill(t *testing.T) {
 	plugin := cursorCheck(t, status, "plugin")
 	if plugin.Status != CursorCheckStale || plugin.ReasonCode != "plugin_stale" {
 		t.Fatalf("stale plugin = %#v", plugin)
+	}
+	if cursorEvidenceValue(plugin, "installed_version") != "1.0.0" || cursorEvidenceValue(plugin, "running_version") != "2.2.1" ||
+		cursorEvidenceValue(plugin, "installed_commit") != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" || cursorEvidenceValue(plugin, "running_commit") != testReleaseCommit {
+		t.Fatalf("stale plugin omitted release mismatch evidence: %#v", plugin)
 	}
 	if status.Mode == CursorModeCheckpointReady {
 		t.Fatalf("stale plugin claimed checkpoint readiness: %#v", status)
@@ -588,8 +694,11 @@ func TestInspectCursorStatusDistinguishesCustomizedAndIncompletePlugin(t *testin
 		t.Fatalf("inspect plugin without binary: %v", err)
 	}
 	plugin = cursorCheck(t, status, "plugin")
-	if plugin.Status != CursorCheckCustomized || plugin.ReasonCode != "plugin_customized" {
+	if plugin.Status != CursorCheckMissing || plugin.ReasonCode != "plugin_binary_missing" {
 		t.Fatalf("plugin without binary = %#v", plugin)
+	}
+	if got := cursorEvidenceValue(plugin, "binary_state"); got != "missing" {
+		t.Fatalf("binary_state = %q, want missing", got)
 	}
 }
 

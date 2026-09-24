@@ -2,12 +2,19 @@ package setup
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	mcpclient "github.com/mark3labs/mcp-go/client"
+	mcppkg "github.com/mark3labs/mcp-go/mcp"
 )
 
 func stubCursorInstallEnv(t *testing.T) string {
@@ -248,6 +255,104 @@ func TestInstallCursorRefreshReplacesOwnedPluginAndPreservesNeighbors(t *testing
 	if !strings.Contains(string(skill), "Terminal Memory commit") {
 		t.Fatalf("refreshed skill missing editorial rubric: %s", skill)
 	}
+}
+
+func TestInstallCursorRefreshesStaleBinary(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	options := InstallOptions{Version: "2.2.1", Commit: testReleaseCommit}
+	if _, err := InstallWithOptions("cursor", options); err != nil {
+		t.Fatalf("initial Cursor setup: %v", err)
+	}
+	pluginBin := cursorHookBinary(filepath.Join(home, ".cursor", "plugins", "local", "engram"))
+	if err := os.WriteFile(pluginBin, []byte("old MCP schema"), 0o755); err != nil {
+		t.Fatalf("replace plugin binary: %v", err)
+	}
+
+	before, err := InspectCursorStatus(options.Version, options.Commit, home)
+	if err != nil {
+		t.Fatalf("inspect stale binary: %v", err)
+	}
+	if plugin := cursorCheck(t, before, "plugin"); plugin.ReasonCode != "plugin_binary_stale" {
+		t.Fatalf("plugin before refresh = %#v", plugin)
+	}
+
+	result, err := InstallWithOptions("cursor", options)
+	if err != nil {
+		t.Fatalf("refresh Cursor setup: %v", err)
+	}
+	if !result.Complete {
+		t.Fatalf("refreshed setup = %#v, want complete", result)
+	}
+	after, err := InspectCursorStatus(options.Version, options.Commit, home)
+	if err != nil {
+		t.Fatalf("inspect refreshed binary: %v", err)
+	}
+	if plugin := cursorCheck(t, after, "plugin"); plugin.Status != CursorCheckReady || cursorEvidenceValue(plugin, "binary_state") != "current" {
+		t.Fatalf("plugin after refresh = %#v", plugin)
+	}
+}
+
+func TestInstallCursorRefreshRestoresCheckpointToolSchema(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	source := filepath.Join(t.TempDir(), "engram")
+	build := exec.Command("go", "build", "-o", source, "../../cmd/engram")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build Engram binary: %v\n%s", err, output)
+	}
+	osExecutable = func() (string, error) { return source, nil }
+	runCursorMCPProbeFn = probeCursorMCP
+	options := InstallOptions{Version: "dev", Commit: "dev", Development: true}
+	if _, err := InstallWithOptions("cursor", options); err != nil {
+		t.Fatalf("initial Cursor setup: %v", err)
+	}
+	pluginBin := cursorHookBinary(filepath.Join(home, ".cursor", "plugins", "local", "engram"))
+	if err := os.WriteFile(pluginBin, []byte("old MCP schema"), 0o755); err != nil {
+		t.Fatalf("replace plugin binary: %v", err)
+	}
+	if _, err := InstallWithOptions("cursor", options); err != nil {
+		t.Fatalf("refresh Cursor setup: %v", err)
+	}
+
+	installedSchema := cursorCheckpointToolSchema(t, pluginBin)
+	runningSchema := cursorCheckpointToolSchema(t, source)
+	if string(installedSchema) != string(runningSchema) {
+		t.Fatalf("installed mem_checkpoint schema differs from running Engram:\ninstalled %s\nrunning %s", installedSchema, runningSchema)
+	}
+	if !strings.Contains(string(installedSchema), `"supersessions"`) {
+		t.Fatalf("refreshed mem_checkpoint schema lacks supersessions: %s", installedSchema)
+	}
+}
+
+func cursorCheckpointToolSchema(t *testing.T, command string) []byte {
+	t.Helper()
+	client, err := mcpclient.NewStdioMCPClient(command, mcpProbeEnvironment(t.TempDir()), "mcp", "--tools=agent")
+	if err != nil {
+		t.Fatalf("start MCP server %s: %v", command, err)
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := client.Initialize(ctx, mcppkg.InitializeRequest{Params: mcppkg.InitializeParams{
+		ProtocolVersion: mcppkg.LATEST_PROTOCOL_VERSION,
+		ClientInfo:      mcppkg.Implementation{Name: "cursor-refresh-test", Version: "1"},
+	}}); err != nil {
+		t.Fatalf("initialize MCP server %s: %v", command, err)
+	}
+	listed, err := client.ListTools(ctx, mcppkg.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("list MCP tools from %s: %v", command, err)
+	}
+	for _, tool := range listed.Tools {
+		if tool.Name == "mem_checkpoint" {
+			raw, err := json.Marshal(tool.InputSchema)
+			if err != nil {
+				t.Fatalf("marshal mem_checkpoint schema: %v", err)
+			}
+			return raw
+		}
+	}
+	t.Fatalf("mem_checkpoint absent from tools/list for %s", command)
+	return nil
 }
 
 func TestInstallCursorDevelopmentAllowsUnpinnedIdentity(t *testing.T) {

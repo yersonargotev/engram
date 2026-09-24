@@ -46,6 +46,8 @@ func cmdLifecycle(cfg store.Config) {
 		cmdLifecycleSessionStart(cfg, os.Args[3:], os.Stdin)
 	case "session-end":
 		cmdLifecycleSessionEnd(cfg, os.Args[3:], os.Stdin)
+	case "prompt-submit":
+		cmdLifecyclePromptSubmit(os.Args[3:], os.Stdin)
 	default:
 		writeEmptyHookResponse()
 	}
@@ -112,7 +114,7 @@ func cmdLifecycleSessionStart(cfg store.Config, args []string, input io.Reader) 
 	}
 }
 
-type cursorLifecycleStartResponse struct {
+type cursorHookContextResponse struct {
 	AdditionalContext string `json:"additional_context,omitempty"`
 }
 
@@ -133,7 +135,62 @@ func cmdCursorLifecycleSessionStart(pluginRoot string, input io.Reader) {
 		return
 	}
 	modelContext, _ := codexlifecycle.BuildModelContext(cue, "", codexlifecycle.MaxInjectedUTF8Bytes)
-	_ = writeCLIJSON(cursorLifecycleStartResponse{AdditionalContext: modelContext})
+	_ = writeCLIJSON(cursorHookContextResponse{AdditionalContext: modelContext})
+}
+
+type cursorPromptSubmitEvent struct {
+	ConversationID *string `json:"conversation_id"`
+	SessionID      *string `json:"session_id"`
+	GenerationID   *string `json:"generation_id"`
+}
+
+func cmdLifecyclePromptSubmit(args []string, input io.Reader) {
+	set := flag.NewFlagSet("lifecycle prompt-submit", flag.ContinueOnError)
+	set.SetOutput(io.Discard)
+	host := ""
+	set.StringVar(&host, "host", "", "hook host")
+	if err := set.Parse(args); err != nil || set.NArg() != 0 || strings.ToLower(strings.TrimSpace(host)) != "cursor" {
+		writeEmptyHookResponse()
+		return
+	}
+	raw, err := io.ReadAll(io.LimitReader(input, maxCodexLifecycleInputBytes+1))
+	if err != nil || len(raw) > maxCodexLifecycleInputBytes || !utf8.Valid(raw) {
+		writeEmptyHookResponse()
+		return
+	}
+	var event cursorPromptSubmitEvent
+	if err := json.Unmarshal(raw, &event); err != nil {
+		writeEmptyHookResponse()
+		return
+	}
+	identity, ok := cursorHostIdentity(event.ConversationID, event.SessionID, event.GenerationID)
+	if !ok {
+		writeEmptyHookResponse()
+		return
+	}
+	encoded, err := json.Marshal(identity)
+	if err != nil {
+		writeEmptyHookResponse()
+		return
+	}
+	context := "Engram checkpoint identity for this root user turn: " + string(encoded) + ". Pass these opaque values unchanged to mem_checkpoint or engram checkpoint record."
+	if len(context) > maxPromptHookAdditionalContextBytes {
+		writeEmptyHookResponse()
+		return
+	}
+	_ = writeCLIJSON(cursorHookContextResponse{AdditionalContext: context})
+}
+
+func cursorHostIdentity(conversationID, sessionID, generationID *string) (store.CheckpointIdentity, bool) {
+	session := firstNonEmptyString(conversationID, sessionID)
+	rootTurn := ""
+	if generationID != nil {
+		rootTurn = strings.TrimSpace(*generationID)
+	}
+	if session == "" || rootTurn == "" {
+		return store.CheckpointIdentity{}, false
+	}
+	return store.CheckpointIdentity{Host: "cursor", SessionID: session, RootTurnID: rootTurn}, true
 }
 
 func firstNonEmptyString(values ...*string) string {

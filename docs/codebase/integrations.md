@@ -43,7 +43,7 @@ is either:
   writes TOML, Gemini CLI cleans up legacy env state, Cursor installs the portable
   Agent Plugin into `~/.cursor/plugins/local/engram`, rewrites the installed
   MCP command to the copied binary's absolute path, and writes user-level
-  `~/.cursor/hooks.json` cue and stop adapters), or
+  `~/.cursor/hooks.json` cue, identity, and stop adapters), or
 - **declarative** — just an MCP path + format (`mcpServers` / `servers` / OpenCode's
   `mcp` object) and instruction surfaces; the generic `injectMCP` / `writeInstruction`
   driver in `registry.go` does the writes. Antigravity CLI, Windsurf, Qwen, Kiro,

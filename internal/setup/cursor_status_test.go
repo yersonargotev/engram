@@ -223,6 +223,10 @@ func TestInspectCursorStatusCompleteInstallIsCheckpointReady(t *testing.T) {
 	if hooks.Status != CursorCheckReady || hooks.ReasonCode != "hooks_ready" {
 		t.Fatalf("hooks = %#v", hooks)
 	}
+	pluginBin := cursorHookBinary(pluginRoot)
+	if got := cursorEvidenceValue(hooks, "prompt_submit"); got != pluginBin+" lifecycle prompt-submit --host=cursor" {
+		t.Fatalf("identity delivery evidence = %q, want prompt-submit from plugin binary", got)
+	}
 	userRules := cursorCheck(t, status, "user_rules")
 	if userRules.Status != CursorCheckUnknown || userRules.ReasonCode != "user_rules_unknown" {
 		t.Fatalf("user_rules = %#v, want unknown", userRules)
@@ -457,6 +461,33 @@ func TestInspectCursorStatusDistinguishesCustomizedMCPAndHooks(t *testing.T) {
 	}
 	if status.Mode == CursorModeCheckpointReady {
 		t.Fatalf("customized hooks claimed checkpoint readiness: %#v", status)
+	}
+}
+
+func TestInspectCursorStatusReportsMissingIdentityHook(t *testing.T) {
+	home := installPinnedCursor(t)
+	pluginBin := cursorHookBinary(filepath.Join(home, ".cursor", "plugins", "local", "engram"))
+	writeCursorStatusFile(t, filepath.Join(home, ".cursor", "hooks.json"), `{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [{"command": "`+pluginBin+` lifecycle session-start --host=cursor --plugin-root=`+filepath.Join(home, ".cursor", "plugins", "local", "engram")+`"}],
+    "stop": [{"command": "`+pluginBin+` checkpoint verify-stop --host=cursor", "loop_limit": 1}]
+  }
+}`)
+
+	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, home)
+	if err != nil {
+		t.Fatalf("inspect hooks without identity: %v", err)
+	}
+	hooks := cursorCheck(t, status, "hooks")
+	if hooks.Status != CursorCheckCustomized || hooks.ReasonCode != "hooks_customized" {
+		t.Fatalf("hooks without identity = %#v, want customized", hooks)
+	}
+	if cursorEvidenceValue(hooks, "prompt_submit") != "" {
+		t.Fatalf("missing identity hook reported prompt_submit evidence: %#v", hooks)
+	}
+	if status.Mode == CursorModeCheckpointReady {
+		t.Fatalf("missing identity delivery claimed checkpoint readiness: %#v", status)
 	}
 }
 

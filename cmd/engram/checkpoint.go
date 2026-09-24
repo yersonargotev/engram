@@ -476,26 +476,28 @@ func cmdCheckpointVerifyStopCursor(cfg store.Config, input io.Reader) {
 	if event.LoopCount != nil {
 		loopCount = *event.LoopCount
 	}
-	sessionID := firstNonEmptyString(event.ConversationID, event.SessionID)
+	identity, ok := cursorHostIdentity(event.ConversationID, event.SessionID, event.GenerationID)
+	if !ok {
+		writeCursorStop(cursorStopResponse{})
+		return
+	}
 	outcome, err := memoryops.New(s).VerifyCheckpoint(memoryops.CheckpointVerificationInput{
-		Host:           "cursor",
-		SessionID:      sessionID,
-		RootTurnID:     strings.TrimSpace(*event.GenerationID),
+		Host:           identity.Host,
+		SessionID:      identity.SessionID,
+		RootTurnID:     identity.RootTurnID,
 		RecoveryActive: loopCount > 0,
 	})
 	if err != nil || outcome != memoryops.CheckpointVerificationContinuationRequired {
 		writeCursorStop(cursorStopResponse{})
 		return
 	}
-	identity, marshalErr := json.Marshal(store.CheckpointIdentity{
-		Host: "cursor", SessionID: sessionID, RootTurnID: strings.TrimSpace(*event.GenerationID),
-	})
+	encoded, marshalErr := json.Marshal(identity)
 	if marshalErr != nil {
 		writeCursorStop(cursorStopResponse{})
 		return
 	}
 	writeCursorStop(cursorStopResponse{
-		FollowupMessage: "Finalize the missing Engram checkpoint for the original root user turn " + string(identity) + " using the Engram memory skill. Preserve this identity unchanged; do not checkpoint this continuation.",
+		FollowupMessage: "Finalize the missing Engram checkpoint for the original root user turn " + string(encoded) + " using the Engram memory skill. Preserve this identity unchanged; do not checkpoint this continuation.",
 	})
 }
 
@@ -512,8 +514,7 @@ func decodeCursorStopEvent(input io.Reader) (cursorStopEvent, error) {
 		}
 		return event, err
 	}
-	sessionID := firstNonEmptyString(event.ConversationID, event.SessionID)
-	if sessionID == "" || event.GenerationID == nil || strings.TrimSpace(*event.GenerationID) == "" {
+	if _, ok := cursorHostIdentity(event.ConversationID, event.SessionID, event.GenerationID); !ok {
 		return event, fmt.Errorf("incomplete Cursor Stop input")
 	}
 	return event, nil

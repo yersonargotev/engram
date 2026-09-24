@@ -122,7 +122,7 @@ func agentAdapters() []agentAdapter {
 			postInstall: []string{
 				"Restart Cursor, or run Developer: Reload Window, so the local Agent Plugin and user hooks are loaded",
 				"Verify ~/.cursor/plugins/local/engram contains plugin.json, mcp.json, and skills/engram-memory",
-				"Verify ~/.cursor/hooks.json has Engram sessionStart cue and stop follow-up entries",
+				"Verify ~/.cursor/hooks.json has Engram sessionStart cue, beforeSubmitPrompt identity, and stop follow-up entries",
 				"MCP tools come from that plugin; setup does not write a second ~/.cursor/mcp.json activation entry",
 			},
 		},

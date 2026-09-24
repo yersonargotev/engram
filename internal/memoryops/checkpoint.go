@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 
 	"github.com/yersonargotev/engram/internal/store"
 )
@@ -15,6 +16,7 @@ const (
 	CheckpointIdempotencyCreated         = "created"
 	CheckpointIdempotencyAlreadyRecorded = "already_recorded"
 	CheckpointPreflightCandidateLimit    = 3
+	checkpointPreflightSearchLimit       = 20
 
 	CheckpointErrorCodeInvalidDisposition  = "invalid_checkpoint_disposition"
 	CheckpointErrorCodeInvalidIdentity     = "invalid_checkpoint_identity"
@@ -318,11 +320,17 @@ func (s *Service) PreflightCheckpoint(input CheckpointPreflightInput) (*Checkpoi
 	groups := make([]candidateGroup, 0, len(nonExactInputs))
 	for _, inputIndex := range nonExactInputs {
 		memory := memories[inputIndex]
-		candidateQuery := strings.TrimSpace(memory.Title + " " + memory.Content)
-		candidates, err := s.store.Search(candidateQuery, store.SearchOptions{
+		terms := checkpointTopicTerms(memory.Title)
+		if len(terms) == 0 {
+			terms = checkpointTopicTerms(memory.Content)
+		}
+		if len(terms) == 0 {
+			continue
+		}
+		candidates, err := s.store.SearchCheckpointCandidates(strings.Join(terms, " "), store.SearchOptions{
 			Project: project, Scope: memory.Scope,
-			Limit: CheckpointPreflightCandidateLimit + len(exactMemoryIDs), MatchMode: "any",
-		})
+			Limit: checkpointPreflightSearchLimit, MatchMode: "any",
+		}, memory.Type == "session_summary")
 		if err != nil {
 			return nil, fmt.Errorf("preflight checkpoint candidates: %w", err)
 		}
@@ -338,6 +346,9 @@ func (s *Service) PreflightCheckpoint(input CheckpointPreflightInput) (*Checkpoi
 				candidate := group.candidates[group.cursor]
 				group.cursor++
 				if _, duplicate := seenCandidates[candidate.ID]; duplicate {
+					continue
+				}
+				if !checkpointCandidateOnTopic(memories[group.inputIndex], candidate.Observation) {
 					continue
 				}
 				evaluated, version, err := s.store.CheckpointSupersessionTarget(candidate.ID)
@@ -371,6 +382,65 @@ func (s *Service) PreflightCheckpoint(input CheckpointPreflightInput) (*Checkpoi
 		}
 	}
 	return result, nil
+}
+
+var checkpointTopicStopWords = map[string]bool{
+	"a": true, "an": true, "and": true, "by": true, "for": true, "from": true,
+	"in": true, "of": true, "on": true, "the": true, "to": true, "with": true,
+	"candidate": true, "decision": true, "feat": true, "fix": true, "issue": true,
+	"memory": true, "notes": true, "pr": true, "prospective": true, "pull": true,
+	"release": true, "request": true, "session": true, "summary": true, "tag": true, "version": true,
+}
+
+func checkpointTopicTerms(text string) []string {
+	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	seen := make(map[string]bool, len(words))
+	terms := make([]string, 0, len(words))
+	for _, word := range words {
+		if len(word) < 3 || checkpointTopicStopWords[word] || seen[word] {
+			continue
+		}
+		if strings.IndexFunc(word, unicode.IsDigit) >= 0 {
+			continue
+		}
+		seen[word] = true
+		terms = append(terms, word)
+	}
+	return terms
+}
+
+func checkpointCandidateOnTopic(proposed store.AddObservationParams, candidate store.Observation) bool {
+	if proposed.Type != "session_summary" && candidate.Type == "session_summary" {
+		return false
+	}
+	proposedTerms := checkpointTopicTerms(proposed.Title)
+	candidateTerms := checkpointTopicTerms(candidate.Title)
+	if len(proposedTerms) == 0 {
+		proposedTerms = checkpointTopicTerms(proposed.Content)
+	}
+	if len(candidateTerms) == 0 {
+		candidateTerms = checkpointTopicTerms(candidate.Content)
+	}
+	shared := 0
+	longShared := false
+	for _, term := range candidateTerms {
+		for _, proposedTerm := range proposedTerms {
+			if term == proposedTerm {
+				shared++
+				longShared = longShared || len(term) >= 9
+				break
+			}
+		}
+	}
+	if shared >= 2 {
+		return true
+	}
+	if shared == 1 && len(proposedTerms) == 1 && len(candidateTerms) == 1 {
+		return true
+	}
+	return shared == 1 && longShared
 }
 
 func checkpointStoreMemories(memories []CheckpointMemoryInput) []store.AddObservationParams {

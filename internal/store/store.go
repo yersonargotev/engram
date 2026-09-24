@@ -217,9 +217,10 @@ type RecallRelationTarget struct {
 }
 
 type searchPolicy struct {
-	activeOnly        bool
-	excludeSuperseded bool
-	recallOrdering    bool
+	activeOnly              bool
+	excludeSuperseded       bool
+	excludeSessionSummaries bool
+	recallOrdering          bool
 }
 
 type AddObservationParams struct {
@@ -3421,6 +3422,14 @@ func (s *Store) Search(query string, opts SearchOptions) ([]SearchResult, error)
 	return s.SearchContext(context.Background(), query, opts)
 }
 
+// SearchCheckpointCandidates excludes session recaps from a specific Memory's
+// preflight pool before the bounded search result is ranked and returned.
+func (s *Store) SearchCheckpointCandidates(query string, opts SearchOptions, includeSessionSummaries bool) ([]SearchResult, error) {
+	return s.searchContext(context.Background(), query, opts, searchPolicy{
+		excludeSessionSummaries: !includeSessionSummaries,
+	})
+}
+
 // SearchContext searches observations while honoring cancellation from the
 // caller, including while materializing rows.
 func (s *Store) SearchContext(ctx context.Context, query string, opts SearchOptions) ([]SearchResult, error) {
@@ -3697,6 +3706,9 @@ func buildSearchFTSQueryWithPolicy(ftsQuery string, opts SearchOptions, limit in
 
 func searchEligibilitySQL(alias string, policy searchPolicy) string {
 	var sql strings.Builder
+	if policy.excludeSessionSummaries {
+		fmt.Fprintf(&sql, " AND %s.type != 'session_summary'", alias)
+	}
 	if policy.activeOnly {
 		fmt.Fprintf(&sql, " AND (datetime(%s.review_after) IS NULL OR datetime(%s.review_after) > datetime('now'))", alias, alias)
 	}

@@ -1108,9 +1108,9 @@ Preflight prospective Memories without writes, or record the terminal Memory
 checkpoint for one settled root user turn.
 
 - `operation: "preflight"` requires an explicit `project` and one or more inline
-  `memories`. It accepts no terminal identity or disposition fields. The result
-  contains exact duplicate references and at most three full same-project
-  semantic candidates across the request.
+  `memories`. It accepts no terminal identity, disposition fields, or
+  `supersessions`. The result contains exact duplicate references and at most
+  three full same-project semantic candidates across the request.
 - Record mode is the default; `host`, `session_id`, `root_turn_id`, and
   `disposition` are required for a first finalization.
 
@@ -1119,8 +1119,21 @@ checkpoint for one settled root user turn.
 - `disposition: "needs_review"` requires an explicit `project` plus exactly one inline `proposal` object containing only `title` and `content`; zero or more settled `memory_ids` and inline `memories` may be attached.
 
 Record may also include explicit `supersessions` (Protocol v2), including with
-Mixed outcomes. Each declaration names the replacement selector, target ID,
-evaluated `target_version` from preflight, and reason. See the
+Mixed outcomes. `supersessions` is record-only. Each declaration requires
+`target_memory_id`, evaluated `target_version` from preflight, `reason`, and
+exactly one of `replacement_input_index` (zero-based index in inline `memories`)
+or `replacement_memory_id` (also attached in `memory_ids`):
+
+```json
+{
+  "target_memory_id": 42,
+  "target_version": "<version returned by preflight>",
+  "reason": "The verified fix replaces the prior guidance.",
+  "replacement_input_index": 0
+}
+```
+
+See the
 [atomic replacement workflow](skills/engram-memory/SKILL.md#commit-an-explicitly-evaluated-replacement)
 for freshness, rejection, and replay behavior.
 

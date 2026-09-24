@@ -353,6 +353,49 @@ func TestCheckpointToolSchemaExposesOnlyMinimalInlineNeedsReviewProposal(t *test
 	}
 }
 
+func TestCheckpointToolSchemaNamesSupersessionDeclarationFields(t *testing.T) {
+	s := newMCPTestStore(t)
+	tool := NewServerWithTools(s, map[string]bool{"mem_checkpoint": true}).GetTool("mem_checkpoint")
+	if tool == nil {
+		t.Fatal("mem_checkpoint not registered")
+	}
+	supersessions, ok := tool.Tool.InputSchema.Properties["supersessions"].(map[string]any)
+	if !ok {
+		t.Fatalf("mem_checkpoint supersessions schema = %#v", tool.Tool.InputSchema.Properties["supersessions"])
+	}
+	description, _ := supersessions["description"].(string)
+	for _, field := range []string{
+		"target_memory_id", "target_version", "reason",
+		"replacement_input_index", "replacement_memory_id",
+	} {
+		if !strings.Contains(description, field) {
+			t.Fatalf("supersessions description omits %q: %q", field, description)
+		}
+	}
+	if !strings.Contains(description, `"target_memory_id": 42`) {
+		t.Fatalf("supersessions description omits a minimal declaration example: %q", description)
+	}
+}
+
+func TestCheckpointToolSchemaStatesPreflightAcceptsOnlyProjectAndMemories(t *testing.T) {
+	s := newMCPTestStore(t)
+	tool := NewServerWithTools(s, map[string]bool{"mem_checkpoint": true}).GetTool("mem_checkpoint")
+	if tool == nil {
+		t.Fatal("mem_checkpoint not registered")
+	}
+	operation, ok := tool.Tool.InputSchema.Properties["operation"].(map[string]any)
+	if !ok {
+		t.Fatalf("mem_checkpoint operation schema = %#v", tool.Tool.InputSchema.Properties["operation"])
+	}
+	description, _ := operation["description"].(string)
+	if !strings.Contains(description, "preflight accepts only project and memories") {
+		t.Fatalf("operation description omits preflight argument restriction: %q", description)
+	}
+	if !strings.Contains(description, "supersessions is record-only") {
+		t.Fatalf("operation description omits record-only supersessions: %q", description)
+	}
+}
+
 func TestCheckpointToolRecordsOptionalRecallFeedbackWithoutChangingCheckpointSuccess(t *testing.T) {
 	s := newMCPTestStore(t)
 	identity := store.CheckpointIdentity{

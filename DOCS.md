@@ -166,7 +166,9 @@ ambiguity with CLI options.
 Before finalization, repeat `--memory-json` with `checkpoint preflight` to inspect
 prospective Memories without persisting anything. The result reuses exact
 same-project duplicates and returns at most three full, same-project semantic
-candidates across the request. Preflight creates no Memory, proposal,
+candidates across the request. Candidate search excludes session summaries unless
+the prospective Memory is a session summary, and shared issue, PR, or version
+identifiers alone do not make candidates relevant. Preflight creates no Memory, proposal,
 checkpoint, relation, sync mutation, review state, or retired
 candidate-evaluation state.
 

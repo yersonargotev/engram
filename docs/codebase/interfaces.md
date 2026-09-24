@@ -32,7 +32,11 @@ Important points:
   candidate semantics.
 - Normal writes should not pass `project` as an arbitrary override.
 - `mem_checkpoint` preflight is a bounded read-only operation over one explicit
-  project. Its `assessment` declares bounded exact-duplicate and semantic-candidate
+  project. It returns exact duplicates first, then at most three same-project
+  semantic candidates with matching subject terms. Session summaries are excluded
+  from the search pool unless the prospective Memory is a session summary;
+  shared issue, PR, or version numbers alone do not make a candidate relevant.
+  Its `assessment` declares bounded exact-duplicate and semantic-candidate
   lookup as `assessed`, and session-project compatibility and final-record
   eligibility as `not_assessed`, even when no candidates are returned. Success
   reserves no state and does not authorize or guarantee a later commit.

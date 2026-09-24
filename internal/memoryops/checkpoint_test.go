@@ -293,6 +293,95 @@ func TestCheckpointPreflightReusesExactDuplicatesBoundsCandidatesAndDoesNotPersi
 	}
 }
 
+func TestCheckpointPreflightKeepsCandidatesOnTopic(t *testing.T) {
+	service := newTestService(t)
+	seed := func(typ, title, content string) *store.Observation {
+		t.Helper()
+		result, err := service.Save(SaveInput{
+			SessionID: "session-" + title, CWD: "/work/engram", Project: "engram",
+			Type: typ, Title: title, Content: content,
+			CandidateOptions: store.CandidateOptions{SkipInsert: true},
+		})
+		if err != nil || result.Observation == nil {
+			t.Fatalf("seed %q: result=%#v err=%v", title, result, err)
+		}
+		return result.Observation
+	}
+	exact := seed("decision", "Cursor binary freshness", "Compare copied MCP binary hashes during setup.")
+	for index := 0; index < 25; index++ {
+		seed("session_summary", fmt.Sprintf("Session summary PR 174 #%d", index),
+			"PR 174 shipped several changes, including Cursor setup and checkpoint documentation.")
+	}
+	seed("decision", "PR 174 release notes", "PR 174 updated the unrelated cloud billing policy.")
+	material := seed("bugfix", "Cursor setup detects stale copied MCP binary",
+		"Compare the plugin MCP executable hash with the running Engram executable and refresh the copy.")
+
+	result, err := service.PreflightCheckpoint(CheckpointPreflightInput{
+		Project: "engram",
+		Memories: []CheckpointMemoryInput{
+			{Type: exact.Type, Title: exact.Title, Content: exact.Content},
+			{Type: "decision", Title: "PR 174 Cursor setup binary freshness",
+				Content: "Cursor setup compares the copied plugin MCP binary hash with the running Engram executable."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if len(result.ExactDuplicates) != 1 || result.ExactDuplicates[0].Reference.MemoryID != exact.ID {
+		t.Fatalf("exact duplicates = %#v", result.ExactDuplicates)
+	}
+	if len(result.Candidates) != 1 || result.Candidates[0].Reference.MemoryID != material.ID {
+		t.Fatalf("semantic candidates = %#v, want only material Memory %d", result.Candidates, material.ID)
+	}
+}
+
+func TestCheckpointPreflightCanMatchSessionSummariesWhenProposedIsSummary(t *testing.T) {
+	service := newTestService(t)
+	result, err := service.Save(SaveInput{
+		SessionID: "session-summary-existing", CWD: "/work/engram", Project: "engram",
+		Type: "session_summary", Title: "Session summary: Cursor rollout",
+		Content:          "Cursor rollout verified the copied MCP executable.",
+		CandidateOptions: store.CandidateOptions{SkipInsert: true},
+	})
+	if err != nil || result.Observation == nil {
+		t.Fatalf("seed summary: result=%#v err=%v", result, err)
+	}
+	preflight, err := service.PreflightCheckpoint(CheckpointPreflightInput{
+		Project: "engram", Memories: []CheckpointMemoryInput{{
+			Type: "session_summary", Title: "Session summary: Cursor rollout complete",
+			Content: "Cursor rollout refreshed the plugin MCP executable.",
+		}},
+	})
+	if err != nil || len(preflight.Candidates) != 1 || preflight.Candidates[0].Reference.MemoryID != result.Observation.ID {
+		t.Fatalf("summary preflight = %#v, err=%v", preflight, err)
+	}
+}
+
+func TestCheckpointPreflightIgnoresSharedVersionTag(t *testing.T) {
+	service := newTestService(t)
+	result, err := service.Save(SaveInput{
+		SessionID: "session-old-release", CWD: "/work/engram", Project: "engram",
+		Type: "decision", Title: "Release v12.5.1",
+		Content:          "The old release updated cloud billing controls.",
+		CandidateOptions: store.CandidateOptions{SkipInsert: true},
+	})
+	if err != nil || result.Observation == nil {
+		t.Fatalf("seed old release: result=%#v err=%v", result, err)
+	}
+	preflight, err := service.PreflightCheckpoint(CheckpointPreflightInput{
+		Project: "engram", Memories: []CheckpointMemoryInput{{
+			Type: "decision", Title: "Release v12.5.1",
+			Content: "The current release refreshed Cursor setup binaries.",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	if len(preflight.Candidates) != 0 {
+		t.Fatalf("version tag alone produced candidates: %#v", preflight.Candidates)
+	}
+}
+
 func TestCheckpointPreflightDefaultsToProjectScopeAndKeepsProspectiveInputsRepresented(t *testing.T) {
 	service := newTestService(t)
 	for index := 0; index < 3; index++ {

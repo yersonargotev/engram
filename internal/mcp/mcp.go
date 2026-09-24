@@ -432,7 +432,7 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 				mcp.WithDestructiveHintAnnotation(false),
 				mcp.WithIdempotentHintAnnotation(true),
 				mcp.WithOpenWorldHintAnnotation(false),
-				mcp.WithString("operation", mcp.Description("Operation: record (default) or read-only preflight")),
+				mcp.WithString("operation", mcp.Description("Operation: record (default) or read-only preflight; preflight accepts only project and memories; supersessions is record-only.")),
 				mcp.WithString("host", mcp.Description("Required for record: host adapter identifier, for example codex")),
 				mcp.WithString("session_id", mcp.Description("Required for record: opaque host session identifier")),
 				mcp.WithString("root_turn_id", mcp.Description("Required for record: opaque root user turn identifier retained across continuations")),
@@ -461,7 +461,7 @@ func registerTools(srv *server.MCPServer, s *store.Store, cfg MCPConfig, allowli
 					}),
 				),
 				mcp.WithArray("supersessions",
-					mcp.Description("Record-only, explicitly adjudicated same-project replacements, committed atomically with Memory and checkpoint. Choose exactly one replacement selector; input indices are zero-based. Use the target_version from preflight. Prose and similarity alone never supersede a Memory."),
+					mcp.Description(`Record-only, explicitly adjudicated same-project replacements, committed atomically with Memory and checkpoint. Each declaration requires target_memory_id, target_version from preflight, reason, and exactly one replacement selector: replacement_input_index (zero-based into memories) or replacement_memory_id (also in memory_ids). Prose and similarity alone never supersede a Memory. Example: {"target_memory_id": 42, "target_version": "<version returned by preflight>", "reason": "The verified fix replaces the prior guidance.", "replacement_input_index": 0}`),
 					mcp.Items(map[string]any{
 						"type": "object",
 						"properties": map[string]any{

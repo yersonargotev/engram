@@ -148,8 +148,11 @@ _Avoid_: Memory judge, automatic save
 
 **Checkpoint guarantee**:
 The promise that a host makes one bounded, identity-preserving attempt to obtain
-a missing terminal Memory checkpoint and never hides an incomplete result. It
-guarantees visible enforcement, not indefinite blocking or successful persistence.
+a missing terminal Memory checkpoint and never hides an incomplete result. The
+attempt occurs only when that root turn received host conversation identity; if
+identity was never delivered, the incomplete checkpoint stays visible without a
+user-looking follow-up. It guarantees visible enforcement, not indefinite
+blocking or successful persistence.
 _Avoid_: Mandatory completion barrier, retry loop
 
 **Activation cue**:

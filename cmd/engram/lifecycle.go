@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/yersonargotev/engram/internal/codexlifecycle"
+	"github.com/yersonargotev/engram/internal/memoryops"
 	projectpkg "github.com/yersonargotev/engram/internal/project"
 	"github.com/yersonargotev/engram/internal/recallbaseline"
 	"github.com/yersonargotev/engram/internal/store"
@@ -47,7 +48,7 @@ func cmdLifecycle(cfg store.Config) {
 	case "session-end":
 		cmdLifecycleSessionEnd(cfg, os.Args[3:], os.Stdin)
 	case "prompt-submit":
-		cmdLifecyclePromptSubmit(os.Args[3:], os.Stdin)
+		cmdLifecyclePromptSubmit(cfg, os.Args[3:], os.Stdin)
 	default:
 		writeEmptyHookResponse()
 	}
@@ -142,9 +143,10 @@ type cursorPromptSubmitEvent struct {
 	ConversationID *string `json:"conversation_id"`
 	SessionID      *string `json:"session_id"`
 	GenerationID   *string `json:"generation_id"`
+	Prompt         *string `json:"prompt"`
 }
 
-func cmdLifecyclePromptSubmit(args []string, input io.Reader) {
+func cmdLifecyclePromptSubmit(cfg store.Config, args []string, input io.Reader) {
 	set := flag.NewFlagSet("lifecycle prompt-submit", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	host := ""
@@ -168,6 +170,10 @@ func cmdLifecyclePromptSubmit(args []string, input io.Reader) {
 		writeEmptyHookResponse()
 		return
 	}
+	if event.Prompt != nil && isCursorCheckpointFollowupPrompt(*event.Prompt) {
+		writeEmptyHookResponse()
+		return
+	}
 	encoded, err := json.Marshal(identity)
 	if err != nil {
 		writeEmptyHookResponse()
@@ -175,6 +181,17 @@ func cmdLifecyclePromptSubmit(args []string, input io.Reader) {
 	}
 	context := "Engram checkpoint identity for this root user turn: " + string(encoded) + ". Pass these opaque values unchanged to mem_checkpoint or engram checkpoint record."
 	if len(context) > maxPromptHookAdditionalContextBytes {
+		writeEmptyHookResponse()
+		return
+	}
+	s, err := storeNew(cfg)
+	if err != nil {
+		writeEmptyHookResponse()
+		return
+	}
+	recordErr := memoryops.New(s).RecordCheckpointIdentityDelivery(identity)
+	_ = s.Close()
+	if recordErr != nil {
 		writeEmptyHookResponse()
 		return
 	}

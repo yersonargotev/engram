@@ -19,11 +19,13 @@ func TestCloudPayloadRejectsLocalOnlyCaptureEntities(t *testing.T) {
 		`{"sessions":[],"observations":[],"mutations":[{"entity":"memory_checkpoint_reference","entity_key":"ref-1","op":"upsert","payload":"{}"}]}`,
 		`{"sessions":[],"observations":[],"mutations":[{"entity":"memory_checkpoint_proposal_reference","entity_key":"proposal-ref-1","op":"upsert","payload":"{}"}]}`,
 		`{"sessions":[],"observations":[],"mutations":[{"entity":"memory_proposal","entity_key":"proposal-1","op":"upsert","payload":"{}"}]}`,
+		`{"sessions":[],"observations":[],"mutations":[{"entity":"checkpoint_identity_delivery","entity_key":"turn-1","op":"upsert","payload":"{}"}]}`,
 		`{"sessions":[],"observations":[],"diagnostic_captures":[{"id":"capture-1"}]}`,
 		`{"sessions":[],"observations":[],"memory_checkpoints":[{"id":1}]}`,
 		`{"sessions":[],"observations":[],"memory_checkpoint_references":[{"id":1}]}`,
 		`{"sessions":[],"observations":[],"memory_checkpoint_proposal_references":[{"id":1}]}`,
 		`{"sessions":[],"observations":[],"memory_proposals":[{"id":"proposal-1"}]}`,
+		`{"sessions":[],"observations":[],"checkpoint_identity_deliveries":[{"host":"cursor"}]}`,
 	}
 
 	for _, payload := range tests {
@@ -40,6 +42,7 @@ func TestCloudPayloadRejectsLocalOnlyCollectionKeysCaseInsensitive(t *testing.T)
 		`{"Capture_Consents":[{"project":"proj-a"}]}`,
 		`{"Memory_Checkpoints":[{"root_turn_id":"turn-secret"}]}`,
 		`{"Memory_Proposals":[{"content":"proposal secret"}]}`,
+		`{"Checkpoint_Identity_Deliveries":[{"session_id":"conv-secret"}]}`,
 	}
 	for _, payload := range tests {
 		if err := ValidateCloudPayload([]byte(payload)); !errors.Is(err, ErrLocalOnlyContent) {
@@ -55,6 +58,7 @@ func TestCloudPayloadRejectsLocalOnlyEntitiesInMixedCaseMutationKeys(t *testing.
 		`{"mUtAtIoNs":[{"entity":"capture_consent","payload":"{\"project\":\"secret\"}"}]}`,
 		`{"mUtAtIoNs":[{"entity":"MeMoRy_ChEcKpOiNt","payload":"{\"root_turn_id\":\"secret\"}"}]}`,
 		`{"mUtAtIoNs":[{"entity":"MeMoRy_PrOpOsAl","payload":"{\"content\":\"secret\"}"}]}`,
+		`{"mUtAtIoNs":[{"entity":"ChEcKpOiNt_IdEnTiTy_DeLiVeRy","payload":"{\"session_id\":\"secret\"}"}]}`,
 	}
 	for _, payload := range tests {
 		if err := ValidateCloudPayload([]byte(payload)); !errors.Is(err, ErrLocalOnlyContent) {

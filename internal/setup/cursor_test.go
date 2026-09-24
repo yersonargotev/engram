@@ -515,8 +515,14 @@ func TestInstallCursorWritesUserHooksForCueAndStop(t *testing.T) {
 	if !strings.Contains(string(raw), `"stop"`) {
 		t.Fatalf("hooks.json missing stop: %s", raw)
 	}
+	if !strings.Contains(string(raw), `"beforeSubmitPrompt"`) {
+		t.Fatalf("hooks.json missing beforeSubmitPrompt: %s", raw)
+	}
 	if !strings.Contains(string(raw), "lifecycle session-start --host=cursor") {
 		t.Fatalf("sessionStart hook is not the Cursor lifecycle adapter: %s", raw)
+	}
+	if !strings.Contains(string(raw), "lifecycle prompt-submit --host=cursor") {
+		t.Fatalf("beforeSubmitPrompt hook is not the Cursor identity adapter: %s", raw)
 	}
 	if !strings.Contains(string(raw), "checkpoint verify-stop --host=cursor") {
 		t.Fatalf("stop hook is not the Cursor checkpoint verifier: %s", raw)
@@ -547,7 +553,6 @@ func TestInstallCursorLeavesPromptAndSubagentCaptureOff(t *testing.T) {
 		t.Fatalf("read user Cursor hooks: %v", err)
 	}
 	for _, forbidden := range []string{
-		"beforeSubmitPrompt",
 		"subagentStart",
 		"subagentStop",
 		"capture prompt",
@@ -556,6 +561,9 @@ func TestInstallCursorLeavesPromptAndSubagentCaptureOff(t *testing.T) {
 		if strings.Contains(string(raw), forbidden) {
 			t.Fatalf("hooks.json enabled capture surface %q: %s", forbidden, raw)
 		}
+	}
+	if !strings.Contains(string(raw), "lifecycle prompt-submit --host=cursor") {
+		t.Fatalf("hooks.json omitted identity delivery: %s", raw)
 	}
 }
 
@@ -612,6 +620,9 @@ func TestInstallCursorRefreshUpdatesOwnedHooksAndPreservesUserHooks(t *testing.T
 	}
 	if !strings.Contains(string(raw), "lifecycle session-start --host=cursor") {
 		t.Fatalf("owned sessionStart hook was not written: %s", raw)
+	}
+	if !strings.Contains(string(raw), "lifecycle prompt-submit --host=cursor") {
+		t.Fatalf("owned beforeSubmitPrompt hook was not written: %s", raw)
 	}
 	if !strings.Contains(string(raw), "checkpoint verify-stop --host=cursor") {
 		t.Fatalf("owned stop hook was not written: %s", raw)

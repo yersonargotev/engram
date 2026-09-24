@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/yersonargotev/engram/internal/codexlifecycle"
+	"github.com/yersonargotev/engram/internal/memoryops"
 	"github.com/yersonargotev/engram/internal/store"
 )
 
@@ -357,6 +358,182 @@ func TestCursorLifecycleSessionStartInvalidInputReturnsEmptyObject(t *testing.T)
 	if strings.TrimSpace(stdout) != "{}" {
 		t.Fatalf("invalid Cursor sessionStart stdout = %q, want empty object", stdout)
 	}
+}
+
+func TestCursorLifecyclePromptSubmitForwardsStableRootTurnIdentityAsModelContext(t *testing.T) {
+	stubRuntimeHooks(t)
+	cfg := store.FallbackConfig(t.TempDir())
+	sessionID := "conv-cursor:opaque/value"
+	rootTurnID := "gen-cursor:opaque/value"
+	input := `{
+  "conversation_id": ` + quoteLifecycleJSON(t, sessionID) + `,
+  "generation_id": ` + quoteLifecycleJSON(t, rootTurnID) + `,
+  "hook_event_name": "beforeSubmitPrompt",
+  "workspace_roots": [` + quoteLifecycleJSON(t, t.TempDir()) + `],
+  "prompt": "Implement issue 175"
+}`
+	first, firstErr := captureOutput(t, func() {
+		cmdLifecyclePromptSubmit([]string{"--host=cursor"}, strings.NewReader(input))
+	})
+	second, secondErr := captureOutput(t, func() {
+		cmdLifecyclePromptSubmit([]string{"--host=cursor"}, strings.NewReader(input))
+	})
+	if firstErr != "" || secondErr != "" || first != second {
+		t.Fatalf("identity context changed: first=%q/%q second=%q/%q", first, firstErr, second, secondErr)
+	}
+
+	context := decodeCursorHookContext(t, first)
+	wantIdentity := `{"host":"cursor","session_id":` + quoteLifecycleJSON(t, sessionID) + `,"root_turn_id":` + quoteLifecycleJSON(t, rootTurnID) + `}`
+	if !strings.Contains(context, wantIdentity) {
+		t.Fatalf("model context does not carry the exact root-turn identity %s\ncontext: %s", wantIdentity, context)
+	}
+	for _, forbidden := range []string{"Implement issue 175", "checkpoint-cue", "disposition", "no_durable_knowledge"} {
+		if strings.Contains(first, forbidden) {
+			t.Fatalf("prompt-submit leaked or invented %q: %s", forbidden, first)
+		}
+	}
+
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("open identity record store: %v", err)
+	}
+	defer s.Close()
+	if _, err := memoryops.New(s).RecordCheckpoint(memoryops.CheckpointRecordInput{
+		Host: "cursor", SessionID: sessionID, RootTurnID: rootTurnID,
+		Disposition: store.CheckpointDispositionSkipped, ReasonCode: store.CheckpointSkipReasonNoDurableKnowledge,
+	}); err != nil {
+		t.Fatalf("record with delivered identity: %v", err)
+	}
+}
+
+func TestCursorLifecyclePromptSubmitIgnoresCwdAndProjectWhenFormingIdentity(t *testing.T) {
+	stubRuntimeHooks(t)
+	t.Setenv("ENGRAM_PROJECT", "project-a")
+	const identity = `{"host":"cursor","session_id":"conv-stable","root_turn_id":"gen-stable"}`
+	first, firstErr := captureOutput(t, func() {
+		cmdLifecyclePromptSubmit([]string{"--host=cursor"}, strings.NewReader(`{
+  "conversation_id": "conv-stable",
+  "generation_id": "gen-stable",
+  "workspace_roots": ["/work/project-a"],
+  "prompt": "first cwd"
+}`))
+	})
+	t.Setenv("ENGRAM_PROJECT", "project-b")
+	second, secondErr := captureOutput(t, func() {
+		cmdLifecyclePromptSubmit([]string{"--host=cursor"}, strings.NewReader(`{
+  "conversation_id": "conv-stable",
+  "session_id": "must-not-override-conversation",
+  "generation_id": "gen-stable",
+  "cwd": "/work/project-b",
+  "workspace_roots": ["/work/project-b"],
+  "prompt": "second cwd"
+}`))
+	})
+	if firstErr != "" || secondErr != "" {
+		t.Fatalf("stderr first=%q second=%q", firstErr, secondErr)
+	}
+	context := decodeCursorHookContext(t, first)
+	if context != decodeCursorHookContext(t, second) {
+		t.Fatalf("cwd/project changed identity\nfirst:  %s\nsecond: %s", first, second)
+	}
+	if !strings.Contains(context, identity) || strings.Contains(context, "must-not-override-conversation") {
+		t.Fatalf("identity drifted from conversation_id: %s", context)
+	}
+}
+
+func TestCursorLifecyclePromptSubmitDoesNotInventCheckpointIdentity(t *testing.T) {
+	stubRuntimeHooks(t)
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		input string
+	}{
+		{name: "malformed input", input: "{"},
+		{name: "missing conversation", input: `{"generation_id":"gen-175","prompt":"hello"}`},
+		{name: "missing generation", input: `{"conversation_id":"conv-175","prompt":"hello"}`},
+		{name: "numeric conversation", input: `{"conversation_id":175,"generation_id":"gen-175"}`},
+		{name: "numeric generation", input: `{"conversation_id":"conv-175","generation_id":175}`},
+		{name: "blank conversation", input: `{"conversation_id":"  ","generation_id":"gen-175"}`},
+		{name: "blank generation", input: `{"conversation_id":"conv-175","generation_id":"  "}`},
+		{name: "unsupported host", args: []string{"--host=codex"}, input: `{"conversation_id":"conv-175","generation_id":"gen-175"}`},
+		{name: "extra args", args: []string{"--host=cursor", "extra"}, input: `{"conversation_id":"conv-175","generation_id":"gen-175"}`},
+		{name: "oversized input", args: []string{"--host=cursor"}, input: `{"conversation_id":"` + strings.Repeat("c", maxCodexLifecycleInputBytes) + `","generation_id":"gen-175"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := tc.args
+			if args == nil {
+				args = []string{"--host=cursor"}
+			}
+			stdout, stderr := captureOutput(t, func() {
+				cmdLifecyclePromptSubmit(args, strings.NewReader(tc.input))
+			})
+			if stderr != "" {
+				t.Fatalf("stderr = %q", stderr)
+			}
+			if strings.TrimSpace(stdout) != "{}" {
+				t.Fatalf("invalid input produced checkpoint identity context: %s", stdout)
+			}
+		})
+	}
+}
+
+func TestCursorLifecyclePromptSubmitAcceptsSessionIDAlias(t *testing.T) {
+	stubRuntimeHooks(t)
+	stdout, stderr := captureOutput(t, func() {
+		cmdLifecyclePromptSubmit([]string{"--host=cursor"}, strings.NewReader(`{
+  "session_id": "conv-alias",
+  "generation_id": "gen-alias"
+}`))
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	wantIdentity := `{"host":"cursor","session_id":"conv-alias","root_turn_id":"gen-alias"}`
+	if !strings.Contains(decodeCursorHookContext(t, stdout), wantIdentity) {
+		t.Fatalf("session_id alias was not forwarded: %s", stdout)
+	}
+}
+
+func TestCursorLifecyclePromptSubmitNeverPersistsCapture(t *testing.T) {
+	stubRuntimeHooks(t)
+	cfg := store.FallbackConfig(t.TempDir())
+	stdout, stderr := captureOutput(t, func() {
+		cmdLifecyclePromptSubmit([]string{"--host=cursor"}, strings.NewReader(`{
+  "conversation_id": "conv-no-capture",
+  "generation_id": "gen-no-capture",
+  "prompt": "PRIVATE-PROMPT-MUST-STAY-UNCAPTURED"
+}`))
+	})
+	if stderr != "" || !strings.Contains(decodeCursorHookContext(t, stdout), `"host":"cursor"`) {
+		t.Fatalf("identity stdout=%q stderr=%q", stdout, stderr)
+	}
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("open capture-off store: %v", err)
+	}
+	defer s.Close()
+	for _, table := range []string{"diagnostic_captures", "observations", "memory_proposals", "memory_checkpoints"} {
+		var count int
+		if err := s.DB().QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+			t.Errorf("%s count=%d err=%v, want zero", table, count, err)
+		}
+	}
+}
+
+func decodeCursorHookContext(t *testing.T, raw string) string {
+	t.Helper()
+	var response map[string]any
+	if err := json.Unmarshal([]byte(raw), &response); err != nil {
+		t.Fatalf("decode Cursor hook response: %v\n%s", err, raw)
+	}
+	if _, ok := response["hookSpecificOutput"]; ok {
+		t.Fatalf("Cursor hook used Codex hookSpecificOutput: %s", raw)
+	}
+	context, _ := response["additional_context"].(string)
+	if context == "" {
+		t.Fatalf("additional_context missing: %s", raw)
+	}
+	return context
 }
 
 func writeCursorLifecycleTestPlugin(t *testing.T) string {

@@ -301,6 +301,7 @@ func installCursorUserHooks(pluginRoot string) ([]string, error) {
 		spec  cursorHookSpec
 	}{
 		{event: "sessionStart", spec: cursorHookSpec{Command: cursorSessionStartCommand(pluginRoot)}},
+		{event: "beforeSubmitPrompt", spec: cursorHookSpec{Command: cursorPromptSubmitCommand(pluginRoot)}},
 		{event: "stop", spec: cursorHookSpec{Command: cursorStopCommand(pluginRoot), LoopLimit: &loopLimit}},
 	}
 	if config.Hooks == nil {
@@ -369,12 +370,18 @@ func cursorOwnedHookCommand(command string) bool {
 	if !strings.Contains(command, "--host=cursor") && !strings.Contains(command, "--host cursor") {
 		return false
 	}
-	return strings.Contains(command, "lifecycle session-start") || strings.Contains(command, "checkpoint verify-stop")
+	return strings.Contains(command, "lifecycle session-start") ||
+		strings.Contains(command, "lifecycle prompt-submit") ||
+		strings.Contains(command, "checkpoint verify-stop")
 }
 
 func cursorSessionStartCommand(pluginRoot string) string {
 	return quoteCursorHookArg(cursorHookBinary(pluginRoot)) +
 		" lifecycle session-start --host=cursor --plugin-root=" + quoteCursorHookArg(pluginRoot)
+}
+
+func cursorPromptSubmitCommand(pluginRoot string) string {
+	return quoteCursorHookArg(cursorHookBinary(pluginRoot)) + " lifecycle prompt-submit --host=cursor"
 }
 
 func cursorStopCommand(pluginRoot string) string {

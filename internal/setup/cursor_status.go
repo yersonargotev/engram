@@ -487,7 +487,7 @@ func inspectCursorHooksStatus(plugin cursorPluginInspection) CursorIntegrationCh
 	if os.IsNotExist(err) {
 		return cursorStatusCheck(
 			"hooks", CursorCheckMissing, "hooks_missing",
-			"Cursor user hooks for the activation cue and stop follow-up are not installed.",
+			"Cursor user hooks for the activation cue, root-turn identity, and stop follow-up are not installed.",
 			cursorEvidence("path", path),
 		)
 	}
@@ -508,11 +508,12 @@ func inspectCursorHooksStatus(plugin cursorPluginInspection) CursorIntegrationCh
 	}
 
 	sessionStart, sessionOwned := cursorOwnedHook(config.Hooks["sessionStart"], "lifecycle session-start")
+	promptSubmit, promptOwned := cursorOwnedHook(config.Hooks["beforeSubmitPrompt"], "lifecycle prompt-submit")
 	stop, stopOwned := cursorOwnedHook(config.Hooks["stop"], "checkpoint verify-stop")
-	if !sessionOwned && !stopOwned {
+	if !sessionOwned && !promptOwned && !stopOwned {
 		return cursorStatusCheck(
 			"hooks", CursorCheckMissing, "hooks_missing",
-			"Cursor user hooks exist, but no Engram-owned cue or stop entries were found.",
+			"Cursor user hooks exist, but no Engram-owned cue, identity, or stop entries were found.",
 			cursorEvidence("path", path),
 		)
 	}
@@ -520,25 +521,30 @@ func inspectCursorHooksStatus(plugin cursorPluginInspection) CursorIntegrationCh
 	if sessionStart != "" {
 		evidence = append(evidence, cursorEvidence("session_start", sessionStart))
 	}
+	if promptSubmit != "" {
+		evidence = append(evidence, cursorEvidence("prompt_submit", promptSubmit))
+	}
 	if stop != "" {
 		evidence = append(evidence, cursorEvidence("stop", stop))
 	}
 	expectedStart := ""
+	expectedPrompt := ""
 	expectedStop := ""
 	if plugin.Root != "" {
 		expectedStart = cursorSessionStartCommand(plugin.Root)
+		expectedPrompt = cursorPromptSubmitCommand(plugin.Root)
 		expectedStop = cursorStopCommand(plugin.Root)
 	}
-	if plugin.Root == "" || sessionStart != expectedStart || stop != expectedStop {
+	if plugin.Root == "" || sessionStart != expectedStart || promptSubmit != expectedPrompt || stop != expectedStop {
 		return cursorStatusCheck(
 			"hooks", CursorCheckCustomized, "hooks_customized",
-			"Engram-named Cursor hooks exist but do not match the supported cue and stop contract.",
+			"Engram-named Cursor hooks exist but do not match the supported cue, identity, and stop contract.",
 			evidence...,
 		)
 	}
 	return cursorStatusCheck(
 		"hooks", CursorCheckReady, "hooks_ready",
-		"Cursor user hooks deliver the activation cue and stop follow-up from the installed plugin binary.",
+		"Cursor user hooks deliver the activation cue, root-turn identity, and stop follow-up from the installed plugin binary.",
 		evidence...,
 	)
 }

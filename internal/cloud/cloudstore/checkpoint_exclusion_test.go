@@ -23,6 +23,13 @@ func TestCloudMaterializationExcludesMemoryCheckpointEntities(t *testing.T) {
 			Op:        store.SyncOpUpsert,
 			Payload:   json.RawMessage(`{"content":"proposal-cloud-canary"}`),
 		},
+		{
+			Project:   "engram",
+			Entity:    "checkpoint_identity_delivery",
+			EntityKey: "turn-identity-canary",
+			Op:        store.SyncOpUpsert,
+			Payload:   json.RawMessage(`{"host":"cursor"}`),
+		},
 	})
 	if err != nil {
 		t.Fatalf("materialize checkpoint entity: %v", err)

@@ -164,15 +164,19 @@ const (
 	CheckpointVerificationComplete             CheckpointVerificationOutcome = "complete"
 	CheckpointVerificationContinuationRequired CheckpointVerificationOutcome = "continuation_required"
 	CheckpointVerificationRecoveryExhausted    CheckpointVerificationOutcome = "recovery_exhausted"
+	CheckpointVerificationIdentityNotDelivered CheckpointVerificationOutcome = "identity_not_delivered"
 )
 
 // CheckpointVerificationInput identifies one root turn and whether its single
-// recovery continuation is already active.
+// recovery continuation is already active. RequireDeliveredIdentity is the
+// Cursor host capability: follow-up is allowed only after that identity
+// reached the agent.
 type CheckpointVerificationInput struct {
-	Host           string
-	SessionID      string
-	RootTurnID     string
-	RecoveryActive bool
+	Host                     string
+	SessionID                string
+	RootTurnID               string
+	RecoveryActive           bool
+	RequireDeliveredIdentity bool
 }
 
 // ReplayCheckpoint returns an existing immutable checkpoint when identity and
@@ -408,6 +412,24 @@ func (s *Service) CheckpointStatus(input CheckpointStatusInput) (*CheckpointStat
 	return &CheckpointStatusResult{Checkpoint: checkpoint}, nil
 }
 
+// RecordCheckpointIdentityDelivery records that the adapter delivered the
+// opaque host identity for one root user turn.
+func (s *Service) RecordCheckpointIdentityDelivery(identity store.CheckpointIdentity) error {
+	if err := s.requireStore(); err != nil {
+		return err
+	}
+	return s.store.RecordCheckpointIdentityDelivery(identity)
+}
+
+// CheckpointIdentityWasDelivered reports whether that exact identity reached
+// the root agent. A missing delivery is not a missing checkpoint.
+func (s *Service) CheckpointIdentityWasDelivered(identity store.CheckpointIdentity) (bool, error) {
+	if err := s.requireStore(); err != nil {
+		return false, err
+	}
+	return s.store.HasCheckpointIdentityDelivery(identity)
+}
+
 // VerifyCheckpoint enforces the one-recovery rule against the Store-owned
 // terminal checkpoint ledger. Adapters only translate the returned outcome to
 // their host protocol.
@@ -425,6 +447,17 @@ func (s *Service) VerifyCheckpoint(input CheckpointVerificationInput) (Checkpoin
 	}
 	if input.RecoveryActive {
 		return CheckpointVerificationRecoveryExhausted, nil
+	}
+	if input.RequireDeliveredIdentity {
+		delivered, deliveryErr := s.CheckpointIdentityWasDelivered(store.CheckpointIdentity{
+			Host: input.Host, SessionID: input.SessionID, RootTurnID: input.RootTurnID,
+		})
+		if deliveryErr != nil {
+			return "", deliveryErr
+		}
+		if !delivered {
+			return CheckpointVerificationIdentityNotDelivered, nil
+		}
 	}
 	return CheckpointVerificationContinuationRequired, nil
 }

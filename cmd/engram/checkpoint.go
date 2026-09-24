@@ -482,10 +482,11 @@ func cmdCheckpointVerifyStopCursor(cfg store.Config, input io.Reader) {
 		return
 	}
 	outcome, err := memoryops.New(s).VerifyCheckpoint(memoryops.CheckpointVerificationInput{
-		Host:           identity.Host,
-		SessionID:      identity.SessionID,
-		RootTurnID:     identity.RootTurnID,
-		RecoveryActive: loopCount > 0,
+		Host:                     identity.Host,
+		SessionID:                identity.SessionID,
+		RootTurnID:               identity.RootTurnID,
+		RecoveryActive:           loopCount > 0,
+		RequireDeliveredIdentity: true,
 	})
 	if err != nil || outcome != memoryops.CheckpointVerificationContinuationRequired {
 		writeCursorStop(cursorStopResponse{})

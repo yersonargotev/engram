@@ -195,6 +195,95 @@ func TestCheckpointLedgerContainsOnlyBoundedOperationalFields(t *testing.T) {
 	}
 }
 
+func TestCheckpointIdentityDeliveryIsIdempotentAndExcludedFromMemorySurfaces(t *testing.T) {
+	cfg := mustDefaultConfig(t)
+	cfg.DataDir = t.TempDir()
+	s, err := New(cfg)
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	identity := CheckpointIdentity{
+		Host: "cursor", SessionID: "conv-delivery-canary", RootTurnID: "gen-delivery-canary",
+	}
+	if err := s.RecordCheckpointIdentityDelivery(identity); err != nil {
+		t.Fatalf("record identity delivery: %v", err)
+	}
+	if err := s.RecordCheckpointIdentityDelivery(identity); err != nil {
+		t.Fatalf("replay identity delivery: %v", err)
+	}
+	delivered, err := s.HasCheckpointIdentityDelivery(identity)
+	if err != nil || !delivered {
+		t.Fatalf("delivered = %t, err=%v", delivered, err)
+	}
+	missing, err := s.HasCheckpointIdentityDelivery(CheckpointIdentity{
+		Host: "cursor", SessionID: "conv-delivery-canary", RootTurnID: "gen-other-turn",
+	})
+	if err != nil || missing {
+		t.Fatalf("other turn delivered = %t, err=%v", missing, err)
+	}
+
+	wantColumns := []string{"host", "session_id", "root_turn_id", "created_at"}
+	rows, err := s.db.Query(`PRAGMA table_info(checkpoint_identity_deliveries)`)
+	if err != nil {
+		t.Fatalf("identity delivery table info: %v", err)
+	}
+	defer rows.Close()
+	var gotColumns []string
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, typ string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatalf("scan identity delivery column: %v", err)
+		}
+		gotColumns = append(gotColumns, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("identity delivery columns: %v", err)
+	}
+	if !reflect.DeepEqual(gotColumns, wantColumns) {
+		t.Fatalf("identity delivery columns = %v, want %v", gotColumns, wantColumns)
+	}
+
+	var syncTriggerCount int
+	if err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'trigger' AND tbl_name = 'checkpoint_identity_deliveries'
+		  AND lower(sql) LIKE '%sync_mutations%'`).Scan(&syncTriggerCount); err != nil {
+		t.Fatalf("query identity delivery sync triggers: %v", err)
+	}
+	if syncTriggerCount != 0 {
+		t.Fatalf("identity delivery table has %d sync triggers, want 0", syncTriggerCount)
+	}
+
+	assertCheckpointExcludedFromMemorySurfaces(t, s, "delivery-canary")
+	if err := s.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	reopened, err := New(cfg)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	delivered, err = reopened.HasCheckpointIdentityDelivery(identity)
+	if err != nil || !delivered {
+		t.Fatalf("reopened delivered = %t, err=%v", delivered, err)
+	}
+	assertCheckpointExcludedFromMemorySurfaces(t, reopened, "delivery-canary")
+}
+
+func TestCheckpointIdentityDeliveryRejectsInvalidIdentity(t *testing.T) {
+	s := newTestStore(t)
+	err := s.RecordCheckpointIdentityDelivery(CheckpointIdentity{Host: "cursor", SessionID: "conv", RootTurnID: ""})
+	if !errors.Is(err, ErrCheckpointInvalidIdentity) {
+		t.Fatalf("blank root turn err = %v, want invalid identity", err)
+	}
+	delivered, err := s.HasCheckpointIdentityDelivery(CheckpointIdentity{})
+	if delivered || !errors.Is(err, ErrCheckpointInvalidIdentity) {
+		t.Fatalf("blank identity delivered = %t err = %v", delivered, err)
+	}
+}
+
 func TestNeedsReviewProposalIsRedactedAndExcludedFromMemorySurfacesAfterReopen(t *testing.T) {
 	cfg := mustDefaultConfig(t)
 	cfg.DataDir = t.TempDir()

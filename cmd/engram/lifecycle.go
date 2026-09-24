@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/yersonargotev/engram/internal/codexlifecycle"
+	"github.com/yersonargotev/engram/internal/memoryops"
 	projectpkg "github.com/yersonargotev/engram/internal/project"
 	"github.com/yersonargotev/engram/internal/recallbaseline"
 	"github.com/yersonargotev/engram/internal/store"
@@ -47,7 +48,7 @@ func cmdLifecycle(cfg store.Config) {
 	case "session-end":
 		cmdLifecycleSessionEnd(cfg, os.Args[3:], os.Stdin)
 	case "prompt-submit":
-		cmdLifecyclePromptSubmit(os.Args[3:], os.Stdin)
+		cmdLifecyclePromptSubmit(cfg, os.Args[3:], os.Stdin)
 	default:
 		writeEmptyHookResponse()
 	}
@@ -144,7 +145,7 @@ type cursorPromptSubmitEvent struct {
 	GenerationID   *string `json:"generation_id"`
 }
 
-func cmdLifecyclePromptSubmit(args []string, input io.Reader) {
+func cmdLifecyclePromptSubmit(cfg store.Config, args []string, input io.Reader) {
 	set := flag.NewFlagSet("lifecycle prompt-submit", flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	host := ""
@@ -178,7 +179,13 @@ func cmdLifecyclePromptSubmit(args []string, input io.Reader) {
 		writeEmptyHookResponse()
 		return
 	}
-	_ = writeCLIJSON(cursorHookContextResponse{AdditionalContext: context})
+	if err := writeCLIJSON(cursorHookContextResponse{AdditionalContext: context}); err != nil {
+		return
+	}
+	if s, err := storeNew(cfg); err == nil {
+		_ = memoryops.New(s).RecordCheckpointIdentityDelivery(identity)
+		_ = s.Close()
+	}
 }
 
 func cursorHostIdentity(conversationID, sessionID, generationID *string) (store.CheckpointIdentity, bool) {

@@ -92,6 +92,45 @@ func TestVerifyCheckpointStopOwnsSingleRecoveryDecision(t *testing.T) {
 	}
 }
 
+func TestVerifyCheckpointRequiresDeliveredIdentityBeforeContinuation(t *testing.T) {
+	service := newTestService(t)
+	identity := CheckpointVerificationInput{
+		Host: "cursor", SessionID: "conv-verify-undelivered", RootTurnID: "gen-verify-undelivered",
+		RequireDeliveredIdentity: true,
+	}
+
+	undelivered, err := service.VerifyCheckpoint(identity)
+	if err != nil {
+		t.Fatalf("verify undelivered identity: %v", err)
+	}
+	if undelivered != CheckpointVerificationIdentityNotDelivered {
+		t.Fatalf("undelivered outcome = %q, want %q", undelivered, CheckpointVerificationIdentityNotDelivered)
+	}
+
+	if err := service.RecordCheckpointIdentityDelivery(store.CheckpointIdentity{
+		Host: identity.Host, SessionID: identity.SessionID, RootTurnID: identity.RootTurnID,
+	}); err != nil {
+		t.Fatalf("record identity delivery: %v", err)
+	}
+	missing, err := service.VerifyCheckpoint(identity)
+	if err != nil {
+		t.Fatalf("verify delivered missing checkpoint: %v", err)
+	}
+	if missing != CheckpointVerificationContinuationRequired {
+		t.Fatalf("delivered missing outcome = %q, want %q", missing, CheckpointVerificationContinuationRequired)
+	}
+
+	codexMissing, err := service.VerifyCheckpoint(CheckpointVerificationInput{
+		Host: "codex", SessionID: "session-codex-undelivered", RootTurnID: "turn-codex-undelivered",
+	})
+	if err != nil {
+		t.Fatalf("verify Codex without delivery ledger: %v", err)
+	}
+	if codexMissing != CheckpointVerificationContinuationRequired {
+		t.Fatalf("Codex outcome = %q, want continuation without a delivery ledger", codexMissing)
+	}
+}
+
 func TestVerifyCheckpointAcceptsEveryTerminalDisposition(t *testing.T) {
 	service := newTestService(t)
 	memory := saveObservation(t, service, "engram", "Terminal saved checkpoint", "Durable acceptance evidence.")
@@ -197,7 +236,7 @@ func TestCheckpointPreflightReusesExactDuplicatesBoundsCandidatesAndDoesNotPersi
 	tables := []string{
 		"sessions", "observations", "observations_fts", "memory_relations", "sync_mutations",
 		"memory_proposals", "memory_checkpoints", "memory_checkpoint_references",
-		"memory_checkpoint_proposal_references",
+		"memory_checkpoint_proposal_references", "checkpoint_identity_deliveries",
 	}
 	before := checkpointTableCounts(t, service, tables)
 	fullBefore := checkpointStoreSnapshot(t, service.store)

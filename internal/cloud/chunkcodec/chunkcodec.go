@@ -36,7 +36,8 @@ func IsLocalOnlyEntity(entity string) bool {
 func IsCheckpointAuditEntity(entity string) bool {
 	switch strings.ToLower(strings.TrimSpace(entity)) {
 	case "memory_checkpoint", "memory_checkpoint_reference",
-		"memory_checkpoint_proposal_reference", "memory_proposal":
+		"memory_checkpoint_proposal_reference", "memory_proposal",
+		"checkpoint_identity_delivery":
 		return true
 	default:
 		return false
@@ -59,6 +60,8 @@ func localOnlyCollectionKey(key string) string {
 		return "memory_checkpoint_proposal_references"
 	case "memory_proposals":
 		return "memory_proposals"
+	case "checkpoint_identity_deliveries":
+		return "checkpoint_identity_deliveries"
 	default:
 		return ""
 	}
@@ -131,7 +134,8 @@ func RedactLocalOnlyContent(payload []byte) ([]byte, error) {
 		case "prompts":
 			doc[key] = []any{}
 		case "diagnostic_captures", "capture_consents", "memory_checkpoints",
-			"memory_checkpoint_references", "memory_checkpoint_proposal_references", "memory_proposals":
+			"memory_checkpoint_references", "memory_checkpoint_proposal_references", "memory_proposals",
+			"checkpoint_identity_deliveries":
 			delete(doc, key)
 		}
 	}

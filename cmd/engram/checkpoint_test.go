@@ -711,8 +711,31 @@ func TestCheckpointVerifyStopCursorAbortedDoesNotFollowUp(t *testing.T) {
 	}
 }
 
+func TestCheckpointVerifyStopCursorDoesNotFollowUpWhenIdentityWasNeverDelivered(t *testing.T) {
+	cfg := testConfig(t)
+	stdout, stderr := captureOutput(t, func() {
+		cmdCheckpointVerifyStop(cfg, "cursor", strings.NewReader(`{
+  "conversation_id": "conv-cursor-undelivered",
+  "generation_id": "gen-cursor-undelivered",
+  "status": "completed",
+  "loop_count": 0
+}`))
+	})
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	response := decodeCLIJSON(t, stdout)
+	if response["followup_message"] != nil {
+		t.Fatalf("undelivered identity requested a follow-up: %#v", response)
+	}
+	if strings.Contains(stdout, store.CheckpointDispositionSkipped) || strings.Contains(stdout, store.CheckpointSkipReasonNoDurableKnowledge) {
+		t.Fatalf("undelivered identity invented a disposition: %s", stdout)
+	}
+}
+
 func TestCheckpointVerifyStopCursorRequestsFollowUpWhenCheckpointMissing(t *testing.T) {
 	cfg := testConfig(t)
+	recordCursorIdentityDelivery(t, cfg, "conv-cursor-missing", "gen-cursor-missing")
 	stdout, stderr := captureOutput(t, func() {
 		cmdCheckpointVerifyStop(cfg, "cursor", strings.NewReader(`{
   "conversation_id": "conv-cursor-missing",
@@ -739,6 +762,7 @@ func TestCheckpointVerifyStopCursorRequestsFollowUpWhenCheckpointMissing(t *test
 
 func TestCheckpointVerifyStopCursorSilentWhenCheckpointExists(t *testing.T) {
 	cfg := testConfig(t)
+	recordCursorIdentityDelivery(t, cfg, "conv-cursor-done", "gen-cursor-done")
 	s, err := store.New(cfg)
 	if err != nil {
 		t.Fatalf("open checkpoint store: %v", err)
@@ -772,6 +796,7 @@ func TestCheckpointVerifyStopCursorSilentWhenCheckpointExists(t *testing.T) {
 
 func TestCheckpointVerifyStopCursorDoesNotFollowUpAfterOneRecovery(t *testing.T) {
 	cfg := testConfig(t)
+	recordCursorIdentityDelivery(t, cfg, "conv-cursor-replay", "gen-cursor-replay")
 	stdout, stderr := captureOutput(t, func() {
 		cmdCheckpointVerifyStop(cfg, "cursor", strings.NewReader(`{
   "conversation_id": "conv-cursor-replay",
@@ -824,5 +849,19 @@ func TestCmdCheckpointPreflightHumanOutputStatesUnassessedConditions(t *testing.
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("missing %q in %q", want, stdout)
 		}
+	}
+}
+
+func recordCursorIdentityDelivery(t *testing.T, cfg store.Config, sessionID, rootTurnID string) {
+	t.Helper()
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("open identity delivery store: %v", err)
+	}
+	defer s.Close()
+	if err := memoryops.New(s).RecordCheckpointIdentityDelivery(store.CheckpointIdentity{
+		Host: "cursor", SessionID: sessionID, RootTurnID: rootTurnID,
+	}); err != nil {
+		t.Fatalf("record identity delivery: %v", err)
 	}
 }

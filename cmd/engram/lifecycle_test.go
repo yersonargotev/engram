@@ -373,10 +373,10 @@ func TestCursorLifecyclePromptSubmitForwardsStableRootTurnIdentityAsModelContext
   "prompt": "Implement issue 175"
 }`
 	first, firstErr := captureOutput(t, func() {
-		cmdLifecyclePromptSubmit([]string{"--host=cursor"}, strings.NewReader(input))
+		cmdLifecyclePromptSubmit(cfg, []string{"--host=cursor"}, strings.NewReader(input))
 	})
 	second, secondErr := captureOutput(t, func() {
-		cmdLifecyclePromptSubmit([]string{"--host=cursor"}, strings.NewReader(input))
+		cmdLifecyclePromptSubmit(cfg, []string{"--host=cursor"}, strings.NewReader(input))
 	})
 	if firstErr != "" || secondErr != "" || first != second {
 		t.Fatalf("identity context changed: first=%q/%q second=%q/%q", first, firstErr, second, secondErr)
@@ -406,12 +406,59 @@ func TestCursorLifecyclePromptSubmitForwardsStableRootTurnIdentityAsModelContext
 	}
 }
 
+func TestCursorLifecyclePromptSubmitEnablesExactlyOneIdentityPreservingStopFollowUp(t *testing.T) {
+	stubRuntimeHooks(t)
+	cfg := testConfig(t)
+	promptStdout, promptErr := captureOutput(t, func() {
+		cmdLifecyclePromptSubmit(cfg, []string{"--host=cursor"}, strings.NewReader(`{
+  "conversation_id": "conv-cursor-follow-up",
+  "generation_id": "gen-cursor-follow-up"
+}`))
+	})
+	if promptErr != "" || !strings.Contains(decodeCursorHookContext(t, promptStdout), `"root_turn_id":"gen-cursor-follow-up"`) {
+		t.Fatalf("identity delivery stdout=%q stderr=%q", promptStdout, promptErr)
+	}
+
+	missing, missingErr := captureOutput(t, func() {
+		cmdCheckpointVerifyStop(cfg, "cursor", strings.NewReader(`{
+  "conversation_id": "conv-cursor-follow-up",
+  "generation_id": "gen-cursor-follow-up",
+  "status": "completed",
+  "loop_count": 0
+}`))
+	})
+	if missingErr != "" {
+		t.Fatalf("first stop stderr = %q", missingErr)
+	}
+	followup, _ := decodeCLIJSON(t, missing)["followup_message"].(string)
+	wantIdentity := `{"host":"cursor","session_id":"conv-cursor-follow-up","root_turn_id":"gen-cursor-follow-up"}`
+	if !strings.Contains(followup, wantIdentity) {
+		t.Fatalf("delivered identity follow-up = %q", missing)
+	}
+
+	replayed, replayedErr := captureOutput(t, func() {
+		cmdCheckpointVerifyStop(cfg, "cursor", strings.NewReader(`{
+  "conversation_id": "conv-cursor-follow-up",
+  "generation_id": "gen-cursor-follow-up",
+  "status": "completed",
+  "loop_count": 1
+}`))
+	})
+	if replayedErr != "" {
+		t.Fatalf("recovery stop stderr = %q", replayedErr)
+	}
+	if decodeCLIJSON(t, replayed)["followup_message"] != nil {
+		t.Fatalf("recovery continuation requested a second follow-up: %s", replayed)
+	}
+}
+
 func TestCursorLifecyclePromptSubmitIgnoresCwdAndProjectWhenFormingIdentity(t *testing.T) {
 	stubRuntimeHooks(t)
+	cfg := testConfig(t)
 	t.Setenv("ENGRAM_PROJECT", "project-a")
 	const identity = `{"host":"cursor","session_id":"conv-stable","root_turn_id":"gen-stable"}`
 	first, firstErr := captureOutput(t, func() {
-		cmdLifecyclePromptSubmit([]string{"--host=cursor"}, strings.NewReader(`{
+		cmdLifecyclePromptSubmit(cfg, []string{"--host=cursor"}, strings.NewReader(`{
   "conversation_id": "conv-stable",
   "generation_id": "gen-stable",
   "workspace_roots": ["/work/project-a"],
@@ -420,7 +467,7 @@ func TestCursorLifecyclePromptSubmitIgnoresCwdAndProjectWhenFormingIdentity(t *t
 	})
 	t.Setenv("ENGRAM_PROJECT", "project-b")
 	second, secondErr := captureOutput(t, func() {
-		cmdLifecyclePromptSubmit([]string{"--host=cursor"}, strings.NewReader(`{
+		cmdLifecyclePromptSubmit(cfg, []string{"--host=cursor"}, strings.NewReader(`{
   "conversation_id": "conv-stable",
   "session_id": "must-not-override-conversation",
   "generation_id": "gen-stable",
@@ -465,7 +512,7 @@ func TestCursorLifecyclePromptSubmitDoesNotInventCheckpointIdentity(t *testing.T
 				args = []string{"--host=cursor"}
 			}
 			stdout, stderr := captureOutput(t, func() {
-				cmdLifecyclePromptSubmit(args, strings.NewReader(tc.input))
+				cmdLifecyclePromptSubmit(testConfig(t), args, strings.NewReader(tc.input))
 			})
 			if stderr != "" {
 				t.Fatalf("stderr = %q", stderr)
@@ -480,7 +527,7 @@ func TestCursorLifecyclePromptSubmitDoesNotInventCheckpointIdentity(t *testing.T
 func TestCursorLifecyclePromptSubmitAcceptsSessionIDAlias(t *testing.T) {
 	stubRuntimeHooks(t)
 	stdout, stderr := captureOutput(t, func() {
-		cmdLifecyclePromptSubmit([]string{"--host=cursor"}, strings.NewReader(`{
+		cmdLifecyclePromptSubmit(testConfig(t), []string{"--host=cursor"}, strings.NewReader(`{
   "session_id": "conv-alias",
   "generation_id": "gen-alias"
 }`))
@@ -498,7 +545,7 @@ func TestCursorLifecyclePromptSubmitNeverPersistsCapture(t *testing.T) {
 	stubRuntimeHooks(t)
 	cfg := store.FallbackConfig(t.TempDir())
 	stdout, stderr := captureOutput(t, func() {
-		cmdLifecyclePromptSubmit([]string{"--host=cursor"}, strings.NewReader(`{
+		cmdLifecyclePromptSubmit(cfg, []string{"--host=cursor"}, strings.NewReader(`{
   "conversation_id": "conv-no-capture",
   "generation_id": "gen-no-capture",
   "prompt": "PRIVATE-PROMPT-MUST-STAY-UNCAPTURED"
@@ -517,6 +564,12 @@ func TestCursorLifecyclePromptSubmitNeverPersistsCapture(t *testing.T) {
 		if err := s.DB().QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
 			t.Errorf("%s count=%d err=%v, want zero", table, count, err)
 		}
+	}
+	delivered, err := memoryops.New(s).CheckpointIdentityWasDelivered(store.CheckpointIdentity{
+		Host: "cursor", SessionID: "conv-no-capture", RootTurnID: "gen-no-capture",
+	})
+	if err != nil || !delivered {
+		t.Fatalf("identity delivery recorded = %t, err=%v", delivered, err)
 	}
 }
 

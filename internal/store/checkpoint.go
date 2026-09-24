@@ -149,8 +149,9 @@ func (s *Store) FindExactCheckpointMemory(p AddObservationParams) (*Observation,
 	return memory, nil
 }
 
-// migrateMemoryCheckpoints creates the local-only checkpoint ledger. The table
-// deliberately has no sync triggers and is not part of ExportData.
+// migrateMemoryCheckpoints creates the local-only checkpoint ledger and the
+// identity-delivery record used by host verifiers. These tables deliberately
+// have no sync triggers and are not part of ExportData.
 func (s *Store) migrateMemoryCheckpoints() error {
 	_, err := s.execHook(s.db, `
 		CREATE TABLE IF NOT EXISTS memory_proposals (
@@ -194,6 +195,14 @@ func (s *Store) migrateMemoryCheckpoints() error {
 			checkpoint_id INTEGER PRIMARY KEY REFERENCES memory_checkpoints(id) ON DELETE CASCADE,
 			proposal_id   TEXT NOT NULL REFERENCES memory_proposals(id) ON DELETE RESTRICT,
 			project       TEXT NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS checkpoint_identity_deliveries (
+			host         TEXT NOT NULL CHECK (length(host) BETWEEN 1 AND 64),
+			session_id   TEXT NOT NULL CHECK (length(session_id) BETWEEN 1 AND 255),
+			root_turn_id TEXT NOT NULL CHECK (length(root_turn_id) BETWEEN 1 AND 255),
+			created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+			PRIMARY KEY (host, session_id, root_turn_id)
 		);
 	`)
 	if err != nil {
@@ -638,6 +647,46 @@ func (s *Store) attachCheckpointMemoriesTx(tx *sql.Tx, checkpointID int64, p che
 		}
 	}
 	return nil
+}
+
+// RecordCheckpointIdentityDelivery records that one opaque host identity was
+// delivered to the root agent. Replay of the same identity is idempotent.
+func (s *Store) RecordCheckpointIdentityDelivery(identity CheckpointIdentity) error {
+	if err := validateCheckpointIdentity(identity); err != nil {
+		return err
+	}
+	_, err := s.execHook(s.db, `
+		INSERT INTO checkpoint_identity_deliveries (host, session_id, root_turn_id)
+		VALUES (?, ?, ?)
+		ON CONFLICT(host, session_id, root_turn_id) DO NOTHING`,
+		identity.Host, identity.SessionID, identity.RootTurnID,
+	)
+	if err != nil {
+		return fmt.Errorf("record checkpoint identity delivery: %w", err)
+	}
+	return nil
+}
+
+// HasCheckpointIdentityDelivery reports whether that exact root-turn identity
+// was delivered to the agent. Missing rows stay false rather than inventing
+// a checkpoint or follow-up.
+func (s *Store) HasCheckpointIdentityDelivery(identity CheckpointIdentity) (bool, error) {
+	if err := validateCheckpointIdentity(identity); err != nil {
+		return false, err
+	}
+	var present int
+	err := s.db.QueryRow(`
+		SELECT 1 FROM checkpoint_identity_deliveries
+		WHERE host = ? AND session_id = ? AND root_turn_id = ?`,
+		identity.Host, identity.SessionID, identity.RootTurnID,
+	).Scan(&present)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect checkpoint identity delivery: %w", err)
+	}
+	return true, nil
 }
 
 // GetMemoryCheckpoint returns the terminal checkpoint for an exact root-turn

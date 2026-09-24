@@ -143,6 +143,7 @@ type cursorPromptSubmitEvent struct {
 	ConversationID *string `json:"conversation_id"`
 	SessionID      *string `json:"session_id"`
 	GenerationID   *string `json:"generation_id"`
+	Prompt         *string `json:"prompt"`
 }
 
 func cmdLifecyclePromptSubmit(cfg store.Config, args []string, input io.Reader) {
@@ -169,6 +170,10 @@ func cmdLifecyclePromptSubmit(cfg store.Config, args []string, input io.Reader) 
 		writeEmptyHookResponse()
 		return
 	}
+	if event.Prompt != nil && isCursorCheckpointFollowupPrompt(*event.Prompt) {
+		writeEmptyHookResponse()
+		return
+	}
 	encoded, err := json.Marshal(identity)
 	if err != nil {
 		writeEmptyHookResponse()
@@ -179,13 +184,18 @@ func cmdLifecyclePromptSubmit(cfg store.Config, args []string, input io.Reader) 
 		writeEmptyHookResponse()
 		return
 	}
-	if err := writeCLIJSON(cursorHookContextResponse{AdditionalContext: context}); err != nil {
+	s, err := storeNew(cfg)
+	if err != nil {
+		writeEmptyHookResponse()
 		return
 	}
-	if s, err := storeNew(cfg); err == nil {
-		_ = memoryops.New(s).RecordCheckpointIdentityDelivery(identity)
-		_ = s.Close()
+	recordErr := memoryops.New(s).RecordCheckpointIdentityDelivery(identity)
+	_ = s.Close()
+	if recordErr != nil {
+		writeEmptyHookResponse()
+		return
 	}
+	_ = writeCLIJSON(cursorHookContextResponse{AdditionalContext: context})
 }
 
 func cursorHostIdentity(conversationID, sessionID, generationID *string) (store.CheckpointIdentity, bool) {

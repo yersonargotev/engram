@@ -492,14 +492,26 @@ func cmdCheckpointVerifyStopCursor(cfg store.Config, input io.Reader) {
 		writeCursorStop(cursorStopResponse{})
 		return
 	}
-	encoded, marshalErr := json.Marshal(identity)
+	followup, marshalErr := cursorCheckpointFollowupMessage(identity)
 	if marshalErr != nil {
 		writeCursorStop(cursorStopResponse{})
 		return
 	}
-	writeCursorStop(cursorStopResponse{
-		FollowupMessage: "Finalize the missing Engram checkpoint for the original root user turn " + string(encoded) + " using the Engram memory skill. Preserve this identity unchanged; do not checkpoint this continuation.",
-	})
+	writeCursorStop(cursorStopResponse{FollowupMessage: followup})
+}
+
+func cursorCheckpointFollowupMessage(identity store.CheckpointIdentity) (string, error) {
+	encoded, err := json.Marshal(identity)
+	if err != nil {
+		return "", err
+	}
+	return "Finalize the missing Engram checkpoint for the original root user turn " + string(encoded) +
+		" using the Engram memory skill. Preserve this identity unchanged; do not checkpoint this continuation.", nil
+}
+
+func isCursorCheckpointFollowupPrompt(prompt string) bool {
+	return strings.Contains(prompt, "Finalize the missing Engram checkpoint for the original root user turn ") &&
+		strings.Contains(prompt, "Preserve this identity unchanged; do not checkpoint this continuation.")
 }
 
 func decodeCursorStopEvent(input io.Reader) (cursorStopEvent, error) {

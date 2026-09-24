@@ -667,10 +667,10 @@ func (s *Store) RecordCheckpointIdentityDelivery(identity CheckpointIdentity) er
 	return nil
 }
 
-// HasCheckpointIdentityDelivery reports whether that exact root-turn identity
+// CheckpointIdentityWasDelivered reports whether that exact root-turn identity
 // was delivered to the agent. Missing rows stay false rather than inventing
 // a checkpoint or follow-up.
-func (s *Store) HasCheckpointIdentityDelivery(identity CheckpointIdentity) (bool, error) {
+func (s *Store) CheckpointIdentityWasDelivered(identity CheckpointIdentity) (bool, error) {
 	if err := validateCheckpointIdentity(identity); err != nil {
 		return false, err
 	}

@@ -211,11 +211,11 @@ func TestCheckpointIdentityDeliveryIsIdempotentAndExcludedFromMemorySurfaces(t *
 	if err := s.RecordCheckpointIdentityDelivery(identity); err != nil {
 		t.Fatalf("replay identity delivery: %v", err)
 	}
-	delivered, err := s.HasCheckpointIdentityDelivery(identity)
+	delivered, err := s.CheckpointIdentityWasDelivered(identity)
 	if err != nil || !delivered {
 		t.Fatalf("delivered = %t, err=%v", delivered, err)
 	}
-	missing, err := s.HasCheckpointIdentityDelivery(CheckpointIdentity{
+	missing, err := s.CheckpointIdentityWasDelivered(CheckpointIdentity{
 		Host: "cursor", SessionID: "conv-delivery-canary", RootTurnID: "gen-other-turn",
 	})
 	if err != nil || missing {
@@ -265,7 +265,7 @@ func TestCheckpointIdentityDeliveryIsIdempotentAndExcludedFromMemorySurfaces(t *
 		t.Fatalf("reopen store: %v", err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
-	delivered, err = reopened.HasCheckpointIdentityDelivery(identity)
+	delivered, err = reopened.CheckpointIdentityWasDelivered(identity)
 	if err != nil || !delivered {
 		t.Fatalf("reopened delivered = %t, err=%v", delivered, err)
 	}
@@ -278,7 +278,7 @@ func TestCheckpointIdentityDeliveryRejectsInvalidIdentity(t *testing.T) {
 	if !errors.Is(err, ErrCheckpointInvalidIdentity) {
 		t.Fatalf("blank root turn err = %v, want invalid identity", err)
 	}
-	delivered, err := s.HasCheckpointIdentityDelivery(CheckpointIdentity{})
+	delivered, err := s.CheckpointIdentityWasDelivered(CheckpointIdentity{})
 	if delivered || !errors.Is(err, ErrCheckpointInvalidIdentity) {
 		t.Fatalf("blank identity delivered = %t err = %v", delivered, err)
 	}

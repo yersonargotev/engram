@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -449,6 +450,125 @@ func TestCursorLifecyclePromptSubmitEnablesExactlyOneIdentityPreservingStopFollo
 	}
 	if decodeCLIJSON(t, replayed)["followup_message"] != nil {
 		t.Fatalf("recovery continuation requested a second follow-up: %s", replayed)
+	}
+}
+
+func TestCursorLifecyclePromptSubmitOmitsIdentityWhenDeliveryLedgerFails(t *testing.T) {
+	stubRuntimeHooks(t)
+	cfg := testConfig(t)
+	originalStoreNew := storeNew
+	storeNew = func(store.Config) (*store.Store, error) {
+		return nil, errors.New("injected store failure")
+	}
+	t.Cleanup(func() { storeNew = originalStoreNew })
+	stdout, stderr := captureOutput(t, func() {
+		cmdLifecyclePromptSubmit(cfg, []string{"--host=cursor"}, strings.NewReader(`{
+  "conversation_id": "conv-cursor-ledger-fail",
+  "generation_id": "gen-cursor-ledger-fail"
+}`))
+	})
+	storeNew = originalStoreNew
+	if stderr != "" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	if strings.TrimSpace(stdout) != "{}" {
+		t.Fatalf("failed delivery ledger still injected identity: %s", stdout)
+	}
+
+	stopOut, stopErr := captureOutput(t, func() {
+		cmdCheckpointVerifyStop(cfg, "cursor", strings.NewReader(`{
+  "conversation_id": "conv-cursor-ledger-fail",
+  "generation_id": "gen-cursor-ledger-fail",
+  "status": "completed",
+  "loop_count": 0
+}`))
+	})
+	if stopErr != "" {
+		t.Fatalf("stop stderr = %q", stopErr)
+	}
+	if decodeCLIJSON(t, stopOut)["followup_message"] != nil {
+		t.Fatalf("failed delivery ledger requested a follow-up: %s", stopOut)
+	}
+}
+
+func TestCursorLifecyclePromptSubmitDoesNotCreateSecondIdentityForRecoveryFollowUp(t *testing.T) {
+	stubRuntimeHooks(t)
+	cfg := testConfig(t)
+	if _, stderr := captureOutput(t, func() {
+		cmdLifecyclePromptSubmit(cfg, []string{"--host=cursor"}, strings.NewReader(`{
+  "conversation_id": "conv-cursor-original",
+  "generation_id": "gen-cursor-original"
+}`))
+	}); stderr != "" {
+		t.Fatalf("original identity stderr = %q", stderr)
+	}
+
+	stopOut, stopErr := captureOutput(t, func() {
+		cmdCheckpointVerifyStop(cfg, "cursor", strings.NewReader(`{
+  "conversation_id": "conv-cursor-original",
+  "generation_id": "gen-cursor-original",
+  "status": "completed",
+  "loop_count": 0
+}`))
+	})
+	if stopErr != "" {
+		t.Fatalf("original stop stderr = %q", stopErr)
+	}
+	followup, _ := decodeCLIJSON(t, stopOut)["followup_message"].(string)
+	if followup == "" {
+		t.Fatalf("missing original follow-up: %s", stopOut)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"conversation_id": "conv-cursor-original",
+		"generation_id":   "gen-cursor-continuation",
+		"prompt":          followup,
+	})
+	if err != nil {
+		t.Fatalf("encode continuation prompt: %v", err)
+	}
+	continuation, continuationErr := captureOutput(t, func() {
+		cmdLifecyclePromptSubmit(cfg, []string{"--host=cursor"}, strings.NewReader(string(payload)))
+	})
+	if continuationErr != "" {
+		t.Fatalf("continuation stderr = %q", continuationErr)
+	}
+	if strings.TrimSpace(continuation) != "{}" {
+		t.Fatalf("recovery continuation injected a second identity: %s", continuation)
+	}
+
+	s, err := store.New(cfg)
+	if err != nil {
+		t.Fatalf("open continuation store: %v", err)
+	}
+	defer s.Close()
+	service := memoryops.New(s)
+	original, err := service.CheckpointIdentityWasDelivered(store.CheckpointIdentity{
+		Host: "cursor", SessionID: "conv-cursor-original", RootTurnID: "gen-cursor-original",
+	})
+	if err != nil || !original {
+		t.Fatalf("original delivery = %t err=%v", original, err)
+	}
+	second, err := service.CheckpointIdentityWasDelivered(store.CheckpointIdentity{
+		Host: "cursor", SessionID: "conv-cursor-original", RootTurnID: "gen-cursor-continuation",
+	})
+	if err != nil || second {
+		t.Fatalf("continuation created a second identity delivery = %t err=%v", second, err)
+	}
+
+	secondStop, secondStopErr := captureOutput(t, func() {
+		cmdCheckpointVerifyStop(cfg, "cursor", strings.NewReader(`{
+  "conversation_id": "conv-cursor-original",
+  "generation_id": "gen-cursor-continuation",
+  "status": "completed",
+  "loop_count": 0
+}`))
+	})
+	if secondStopErr != "" {
+		t.Fatalf("continuation stop stderr = %q", secondStopErr)
+	}
+	if decodeCLIJSON(t, secondStop)["followup_message"] != nil {
+		t.Fatalf("continuation stop requested another follow-up: %s", secondStop)
 	}
 }
 

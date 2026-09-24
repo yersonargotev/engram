@@ -427,7 +427,7 @@ func (s *Service) CheckpointIdentityWasDelivered(identity store.CheckpointIdenti
 	if err := s.requireStore(); err != nil {
 		return false, err
 	}
-	return s.store.HasCheckpointIdentityDelivery(identity)
+	return s.store.CheckpointIdentityWasDelivered(identity)
 }
 
 // VerifyCheckpoint enforces the one-recovery rule against the Store-owned

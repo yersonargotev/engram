@@ -75,7 +75,11 @@ func installCursorWithOptions(options InstallOptions) (*Result, error) {
 		Files:       files,
 		Preserved:   append(preserved, hookPreserved...),
 	}
-	status, err := InspectCursorStatus(version, commit, "")
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("resolve Cursor setup directory: %w", err)
+	}
+	status, err := InspectCursorStatus(version, commit, workingDirectory)
 	if err != nil {
 		return nil, fmt.Errorf("inspect installed Cursor integration: %w", err)
 	}
@@ -478,8 +482,16 @@ func cursorNativeMCPOwned(raw json.RawMessage) bool {
 	if err := json.Unmarshal(raw, &entry); err != nil {
 		return false
 	}
+	for key := range entry {
+		if key != "command" && key != "args" && key != "type" {
+			return false
+		}
+	}
+	if kind, ok := entry["type"]; ok && kind != "stdio" {
+		return false
+	}
 	command, _ := entry["command"].(string)
-	if !cursorNativeMCPCommandOwned(command) {
+	if command != "engram" && command != "engram.exe" && command != cursorHookBinary(cursorPluginDir()) {
 		return false
 	}
 	args, ok := entry["args"].([]any)
@@ -487,9 +499,4 @@ func cursorNativeMCPOwned(raw json.RawMessage) bool {
 		return false
 	}
 	return args[0] == "mcp" && args[1] == "--tools=agent"
-}
-
-func cursorNativeMCPCommandOwned(command string) bool {
-	base := strings.ToLower(filepath.Base(filepath.Clean(command)))
-	return base == "engram" || base == "engram.exe"
 }

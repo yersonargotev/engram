@@ -426,7 +426,7 @@ func TestInstallCursorRefreshesOwnedNativeMCPAndPreservesOtherServers(t *testing
 	existing := `{
   "mcpServers": {
     "engram": {
-      "command": "/usr/local/bin/engram",
+      "command": "engram",
       "args": ["mcp", "--tools=agent"]
     },
     "other": {
@@ -526,6 +526,44 @@ func TestInstallCursorRetainsPluginMCPWhenCLIUnavailable(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".cursor", "plugins", "local", "engram", "mcp.json")); err != nil {
 		t.Fatalf("plugin MCP should remain available to the editor: %v", err)
+	}
+}
+
+func TestInstallCursorPreservesCustomizedNativeEngramWithStandardArgs(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	native := filepath.Join(home, ".cursor", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(native), 0755); err != nil {
+		t.Fatal(err)
+	}
+	custom := []byte(`{"mcpServers":{"engram":{"command":"/opt/custom/engram","args":["mcp","--tools=agent"],"env":{"USER_SETTING":"kept"}}}}`)
+	if err := os.WriteFile(native, custom, 0644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := InstallWithOptions("cursor", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(native)
+	if err != nil || !bytes.Equal(got, custom) || !slices.Contains(result.Preserved, "mcpServers.engram") {
+		t.Fatalf("custom MCP changed: %s, %v; result=%#v", got, err, result)
+	}
+}
+
+func TestInstallCursorReportsProjectMCPPrecedence(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	project := filepath.Join(home, "project")
+	writeCursorStatusFile(t, filepath.Join(project, ".cursor", "mcp.json"), `{"mcpServers":{"engram":{"command":"/opt/custom/engram","args":["mcp","--tools=agent"]}}}`)
+	t.Chdir(project)
+	result, err := InstallWithOptions("cursor", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Complete {
+		t.Fatalf("setup = %#v, want incomplete for project MCP conflict", result)
+	}
+	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, project)
+	if err != nil || cursorCheck(t, status, "cli_mcp").ReasonCode != "cli_project_conflict" {
+		t.Fatalf("CLI precedence status = %#v, %v", status, err)
 	}
 }
 

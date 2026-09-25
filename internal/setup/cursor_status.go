@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/yersonargotev/engram/internal/recallbaseline"
 )
 
 // CursorIntegrationStatusSchemaVersion identifies the additive JSON contract
@@ -96,16 +98,38 @@ func InspectCursorStatus(runningVersion, runningRevision, workingDirectory strin
 	checks := []CursorIntegrationCheck{plugin.Check}
 	checks = append(checks, skills...)
 	checks = append(checks, mcp, hooks, userRules)
-	checks = append(checks, inspectCursorCLIMCPStatus(workingDirectory), cursorStatusCheck(
-		"cli_use", CursorCheckUnknown, "cli_use_not_observed",
-		"A status snapshot cannot attribute a prior MCP call to a fresh Cursor CLI session; verify a real call with the content-free baseline.",
-	))
+	checks = append(checks, inspectCursorCLIMCPStatus(workingDirectory), inspectCursorCLIUseStatus())
 	return CursorIntegrationStatus{
 		SchemaVersion: CursorIntegrationStatusSchemaVersion,
 		Agent:         "cursor",
 		Mode:          deriveCursorOperatingMode(checks),
 		Checks:        checks,
 	}, nil
+}
+
+func inspectCursorCLIUseStatus() CursorIntegrationCheck {
+	dataDir := os.Getenv("ENGRAM_DATA_DIR")
+	if dataDir == "" {
+		home, err := userHome()
+		if err != nil {
+			return cursorStatusCheck("cli_use", CursorCheckUnavailable, "cli_use_baseline_unavailable", "The content-free baseline location could not be resolved.")
+		}
+		dataDir = filepath.Join(home, ".engram")
+	}
+	report, observed, err := recallbaseline.InspectHostOperationReadOnly(
+		recallbaseline.Config{DataDir: dataDir}, recallbaseline.SurfaceMCP, "mem_current_project", recallbaseline.HostCursor,
+	)
+	if err != nil {
+		return cursorStatusCheck("cli_use", CursorCheckUnavailable, "cli_use_baseline_unavailable", "The content-free Cursor MCP baseline could not be inspected.")
+	}
+	if observed && report.Succeeded > 0 {
+		return cursorStatusCheck("cli_use", CursorCheckUnknown, "cursor_use_observed_cli_unattributed",
+			"A real Cursor MCP call was observed; the baseline cannot distinguish Cursor CLI from the editor.",
+			cursorEvidence("successful_calls", fmt.Sprintf("%d", report.Succeeded)), cursorEvidence("source", "recall_baseline_cursor"),
+		)
+	}
+	return cursorStatusCheck("cli_use", CursorCheckUnknown, "cli_use_not_observed",
+		"No real Cursor MCP call was observed in the content-free baseline; verify a fresh CLI session separately.")
 }
 
 func runCursorCLICommand(directory string, args ...string) (string, error) {
@@ -167,6 +191,16 @@ func inspectCursorCLIMCPStatus(directory string) CursorIntegrationCheck {
 		}
 	}
 	evidence := []CursorIntegrationEvidence{cursorEvidence("source", source), cursorEvidence("path", path)}
+	if source == "project" {
+		raw, err := readFileFn(path)
+		if err != nil {
+			return cursorStatusCheck("cli_mcp", CursorCheckUnavailable, "cli_project_unavailable", "The project Cursor MCP entry could not be read.", evidence...)
+		}
+		entry, _, owned := cursorNativeMCPEntry(raw)
+		if entry["command"] != cursorHookBinary(cursorPluginDir()) || !owned {
+			return cursorStatusCheck("cli_mcp", CursorCheckCustomized, "cli_project_conflict", "A project Engram MCP entry takes precedence over the verified user registration.", evidence...)
+		}
+	}
 	if source == "user" {
 		pluginPath := filepath.Join(cursorPluginDir(), "mcp.json")
 		if raw, err := readFileFn(pluginPath); err == nil && cursorPluginMCPOwned(cursorPluginDir(), raw) {

@@ -99,6 +99,30 @@ func TestInspectOperationReadOnlyMissingLedgerDoesNotCreateState(t *testing.T) {
 	}
 }
 
+func TestInspectHostOperationReadOnlyFiltersOtherMCPHosts(t *testing.T) {
+	dataDir := t.TempDir()
+	ledger, err := Open(Config{DataDir: dataDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []Host{HostCodex, HostCursor} {
+		if err := ledger.Record(Event{Kind: EventOperation, Surface: SurfaceMCP, Operation: "mem_current_project", Outcome: OutcomeSuccess, Host: host}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ledger.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotBaselineInspectionDir(t, dataDir)
+	report, observed, err := InspectHostOperationReadOnly(Config{DataDir: dataDir}, SurfaceMCP, "mem_current_project", HostCursor)
+	if err != nil || !observed || report.Events != 1 || report.Succeeded != 1 || report.Host != HostCursor {
+		t.Fatalf("cursor observation = %+v, %t, %v", report, observed, err)
+	}
+	if after := snapshotBaselineInspectionDir(t, dataDir); !reflect.DeepEqual(before, after) {
+		t.Fatal("host inspection mutated the baseline")
+	}
+}
+
 func snapshotBaselineInspectionDir(t *testing.T, dir string) map[string][sha256.Size]byte {
 	t.Helper()
 	entries, err := os.ReadDir(dir)

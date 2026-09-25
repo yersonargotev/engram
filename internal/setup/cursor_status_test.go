@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yersonargotev/engram/internal/recallbaseline"
 )
 
 var cursorAgentToolNames = []string{
@@ -234,8 +236,64 @@ func TestCursorCLIStatusReportsProjectSourcePrecedence(t *testing.T) {
 		return "engram: not loaded (needs approval)\n", nil
 	}
 	got := inspectCursorCLIMCPStatus(project)
-	if cursorEvidenceValue(got, "source") != "project" || cursorEvidenceValue(got, "path") != filepath.Join(project, ".cursor", "mcp.json") {
+	if got.ReasonCode != "cli_project_conflict" || cursorEvidenceValue(got, "source") != "project" || cursorEvidenceValue(got, "path") != filepath.Join(project, ".cursor", "mcp.json") {
 		t.Fatalf("project source check = %#v", got)
+	}
+}
+
+func TestCursorCLIStatusReportsHostFailurePaths(t *testing.T) {
+	for _, scenario := range []struct {
+		name     string
+		list     string
+		listErr  bool
+		tools    string
+		toolsErr bool
+		reason   string
+	}{
+		{name: "inventory failure", listErr: true, reason: "cli_inventory_unavailable"},
+		{name: "connection failure", list: "engram: Error: Connection failed\n", reason: "cli_server_unavailable"},
+		{name: "tool listing failure", list: "engram: ready\n", toolsErr: true, reason: "cli_tools_unavailable"},
+		{name: "incomplete catalog", list: "engram: ready\n", tools: "Tools for engram (1):\n- mem_search ()\n", reason: "cli_tools_incomplete"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			home := stubCursorInstallEnv(t)
+			runCursorCLICommandFn = func(_ string, args ...string) (string, error) {
+				if args[0] == "list" {
+					if scenario.listErr {
+						return "", errors.New("inventory failed")
+					}
+					return scenario.list, nil
+				}
+				if scenario.toolsErr {
+					return "", errors.New("tool listing failed")
+				}
+				return scenario.tools, nil
+			}
+			got := inspectCursorCLIMCPStatus(home)
+			if got.Status != CursorCheckUnavailable || got.ReasonCode != scenario.reason {
+				t.Fatalf("CLI check = %#v, want unavailable %s", got, scenario.reason)
+			}
+		})
+	}
+}
+
+func TestCursorCLIUseReportsObservedCursorCallWithoutClaimingCLIAttribution(t *testing.T) {
+	resetSetupSeams(t)
+	dataDir := t.TempDir()
+	t.Setenv("ENGRAM_DATA_DIR", dataDir)
+	ledger, err := recallbaseline.Open(recallbaseline.Config{DataDir: dataDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Record(recallbaseline.Event{Kind: recallbaseline.EventOperation, Surface: recallbaseline.SurfaceMCP, Operation: "mem_current_project", Outcome: recallbaseline.OutcomeSuccess, Host: recallbaseline.HostCursor}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.Close(); err != nil {
+		t.Fatal(err)
+	}
+	check := inspectCursorCLIUseStatus()
+	if check.ReasonCode != "cursor_use_observed_cli_unattributed" || cursorEvidenceValue(check, "successful_calls") != "1" {
+		t.Fatalf("Cursor use = %#v", check)
 	}
 }
 

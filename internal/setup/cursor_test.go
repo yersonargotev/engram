@@ -27,7 +27,23 @@ func stubCursorInstallEnv(t *testing.T) string {
 		t.Fatalf("write stub engram binary: %v", err)
 	}
 	osExecutable = func() (string, error) { return bin, nil }
+	previousLookPath := lookPathFn
+	lookPathFn = func(name string) (string, error) {
+		if name == "agent" {
+			return "/test/bin/agent", nil
+		}
+		return previousLookPath(name)
+	}
 	stubCursorMCPProbeReady(t)
+	runCursorCLICommandFn = func(_ string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "list" {
+			return "engram: ready\n", nil
+		}
+		if len(args) > 0 && args[0] == "list-tools" {
+			return "Tools for engram (5):\n- mem_checkpoint ()\n- mem_checkpoint_status ()\n- mem_current_project ()\n- mem_get_observation ()\n- mem_search ()\n", nil
+		}
+		return "", nil
+	}
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("APPDATA", "")
 	return home
@@ -46,7 +62,7 @@ func TestInstallCursorReportsVerifiedCapabilities(t *testing.T) {
 	if !result.Complete {
 		t.Fatalf("result = %#v, want complete after post-install inspection", result)
 	}
-	want := []string{"plugin", "skill", "mcp", "hooks"}
+	want := []string{"plugin", "skill", "mcp", "hooks", "cli_mcp"}
 	if len(result.Checks) != len(want) {
 		t.Fatalf("checks = %#v, want %v", result.Checks, want)
 	}
@@ -105,7 +121,6 @@ func TestInstallCursorWritesAgentPluginInLocalPluginDirectory(t *testing.T) {
 	pluginRoot := filepath.Join(home, ".cursor", "plugins", "local", "engram")
 	for _, rel := range []string{
 		"plugin.json",
-		"mcp.json",
 		filepath.Join("skills", "engram-memory", "SKILL.md"),
 		filepath.Join("bin", "engram"),
 	} {
@@ -116,7 +131,7 @@ func TestInstallCursorWritesAgentPluginInLocalPluginDirectory(t *testing.T) {
 	}
 }
 
-func TestInstallCursorUsesPluginMCPInsteadOfNativeActivationWrite(t *testing.T) {
+func TestInstallCursorRegistersNativeCLIWithoutDuplicatePluginMCP(t *testing.T) {
 	home := stubCursorInstallEnv(t)
 
 	if _, err := InstallWithOptions("cursor", InstallOptions{
@@ -126,24 +141,17 @@ func TestInstallCursorUsesPluginMCPInsteadOfNativeActivationWrite(t *testing.T) 
 		t.Fatalf("InstallWithOptions(cursor): %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(home, ".cursor", "mcp.json")); !os.IsNotExist(err) {
-		t.Fatalf("native ~/.cursor/mcp.json = %v, want absent so MCP comes from the plugin", err)
+	native, err := os.ReadFile(filepath.Join(home, ".cursor", "mcp.json"))
+	if err != nil || !strings.Contains(string(native), cursorHookBinary(filepath.Join(home, ".cursor", "plugins", "local", "engram"))) {
+		t.Fatalf("native Cursor CLI registration = %s, %v", native, err)
 	}
 
 	pluginRoot := filepath.Join(home, ".cursor", "plugins", "local", "engram")
-	raw, err := os.ReadFile(filepath.Join(pluginRoot, "mcp.json"))
-	if err != nil {
-		t.Fatalf("read installed plugin MCP: %v", err)
+	if _, err := os.Stat(filepath.Join(pluginRoot, "mcp.json")); !os.IsNotExist(err) {
+		t.Fatalf("plugin MCP = %v, want absent after CLI registration verification", err)
 	}
-	wantCommand := cursorHookBinary(pluginRoot)
-	if !strings.Contains(string(raw), strconv.Quote(wantCommand)) {
-		t.Fatalf("plugin MCP command = %s, want absolute plugin binary %q so Cursor does not resolve ./bin/engram against the workspace cwd", raw, wantCommand)
-	}
-	if strings.Contains(string(raw), `"./bin/engram"`) {
-		t.Fatalf("installed plugin MCP kept the portable relative command; Cursor spawn would ENOENT against the workspace")
-	}
-	if !strings.Contains(string(raw), `"--tools=agent"`) {
-		t.Fatalf("plugin MCP args = %s, want --tools=agent", raw)
+	if !strings.Contains(string(native), strconv.Quote(cursorHookBinary(pluginRoot))) || !strings.Contains(string(native), `"--tools=agent"`) {
+		t.Fatalf("native CLI registration = %s, want copied binary and agent profile", native)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".cursor", "rules", "engram.mdc")); !os.IsNotExist(err) {
 		t.Fatalf("global Cursor rule file = %v, want absent", err)
@@ -416,7 +424,7 @@ func TestInstallCursorPinsReleaseIdentityOnInstalledPlugin(t *testing.T) {
 	}
 }
 
-func TestInstallCursorRemovesOwnedNativeMCPAndPreservesOtherServers(t *testing.T) {
+func TestInstallCursorRefreshesOwnedNativeMCPAndPreservesOtherServers(t *testing.T) {
 	home := stubCursorInstallEnv(t)
 	native := filepath.Join(home, ".cursor", "mcp.json")
 	if err := os.MkdirAll(filepath.Dir(native), 0755); err != nil {
@@ -425,7 +433,7 @@ func TestInstallCursorRemovesOwnedNativeMCPAndPreservesOtherServers(t *testing.T
 	existing := `{
   "mcpServers": {
     "engram": {
-      "command": "/usr/local/bin/engram",
+      "command": "` + resolveEngramCommand() + `",
       "args": ["mcp", "--tools=agent"]
     },
     "other": {
@@ -448,15 +456,15 @@ func TestInstallCursorRemovesOwnedNativeMCPAndPreservesOtherServers(t *testing.T
 	if err != nil {
 		t.Fatalf("read native MCP after install: %v", err)
 	}
-	if strings.Contains(string(raw), `"engram"`) {
-		t.Fatalf("owned native engram MCP remained: %s", raw)
+	if !strings.Contains(string(raw), cursorHookBinary(filepath.Join(home, ".cursor", "plugins", "local", "engram"))) {
+		t.Fatalf("owned native engram MCP was not refreshed: %s", raw)
 	}
 	if !strings.Contains(string(raw), `"other"`) {
 		t.Fatalf("neighbor MCP server was removed: %s", raw)
 	}
 }
 
-func TestInstallCursorRemovesNativeMCPFileWhenOnlyOwnedEngramRemains(t *testing.T) {
+func TestInstallCursorRetainsOwnedNativeMCPFileForCLI(t *testing.T) {
 	home := stubCursorInstallEnv(t)
 	native := filepath.Join(home, ".cursor", "mcp.json")
 	if err := os.MkdirAll(filepath.Dir(native), 0755); err != nil {
@@ -480,8 +488,89 @@ func TestInstallCursorRemovesNativeMCPFileWhenOnlyOwnedEngramRemains(t *testing.
 	}); err != nil {
 		t.Fatalf("InstallWithOptions(cursor): %v", err)
 	}
-	if _, err := os.Stat(native); !os.IsNotExist(err) {
-		t.Fatalf("native MCP file = %v, want removed when only an owned engram entry remained", err)
+	if _, err := os.Stat(native); err != nil {
+		t.Fatalf("native MCP file = %v, want CLI registration", err)
+	}
+}
+
+func TestInstallCursorRestoresOwnedRegistrationWhenCLIDoesNotDiscoverReplacement(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	native := filepath.Join(home, ".cursor", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(native), 0755); err != nil {
+		t.Fatal(err)
+	}
+	previous := []byte(`{"mcpServers":{"engram":{"command":"engram","args":["mcp","--tools=agent"]},"other":{"command":"other"}}}`)
+	if err := os.WriteFile(native, previous, 0644); err != nil {
+		t.Fatal(err)
+	}
+	runCursorCLICommandFn = func(_ string, _ ...string) (string, error) {
+		return "No MCP servers configured", nil
+	}
+	_, err := InstallWithOptions("cursor", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err == nil || !strings.Contains(err.Error(), "did not discover") {
+		t.Fatalf("setup error = %v, want discovery failure", err)
+	}
+	got, err := os.ReadFile(native)
+	if err != nil || !bytes.Equal(got, previous) {
+		t.Fatalf("native MCP after rollback = %s, %v; want previous bytes", got, err)
+	}
+}
+
+func TestInstallCursorRetainsPluginMCPWhenCLIUnavailable(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	lookPathFn = func(name string) (string, error) {
+		if name == "agent" {
+			return "", os.ErrNotExist
+		}
+		return exec.LookPath(name)
+	}
+	result, err := InstallWithOptions("cursor", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Complete {
+		t.Fatalf("setup = %#v, want incomplete without Cursor CLI", result)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cursor", "plugins", "local", "engram", "mcp.json")); err != nil {
+		t.Fatalf("plugin MCP should remain available to the editor: %v", err)
+	}
+}
+
+func TestInstallCursorPreservesCustomizedNativeEngramWithStandardArgs(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	native := filepath.Join(home, ".cursor", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(native), 0755); err != nil {
+		t.Fatal(err)
+	}
+	custom := []byte(`{"mcpServers":{"engram":{"command":"` + resolveEngramCommand() + `","args":["mcp","--tools=agent"],"env":{"USER_SETTING":"kept"}}}}`)
+	if err := os.WriteFile(native, custom, 0644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := InstallWithOptions("cursor", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(native)
+	if err != nil || !bytes.Equal(got, custom) || !slices.Contains(result.Preserved, "mcpServers.engram") {
+		t.Fatalf("custom MCP changed: %s, %v; result=%#v", got, err, result)
+	}
+}
+
+func TestInstallCursorReportsProjectMCPPrecedence(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	project := filepath.Join(home, "project")
+	writeCursorStatusFile(t, filepath.Join(project, ".cursor", "mcp.json"), `{"mcpServers":{"engram":{"command":"/opt/custom/engram","args":["mcp","--tools=agent"]}}}`)
+	t.Chdir(project)
+	result, err := InstallWithOptions("cursor", InstallOptions{Version: "2.2.1", Commit: testReleaseCommit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Complete {
+		t.Fatalf("setup = %#v, want incomplete for project MCP conflict", result)
+	}
+	status, err := InspectCursorStatus("2.2.1", testReleaseCommit, project)
+	if err != nil || cursorCheck(t, status, "cli_mcp").ReasonCode != "cli_project_conflict" {
+		t.Fatalf("CLI precedence status = %#v, %v", status, err)
 	}
 }
 
@@ -523,8 +612,8 @@ func TestInstallCursorPreservesCustomNativeMCP(t *testing.T) {
 	custom := `{
   "mcpServers": {
     "engram": {
-      "command": "custom-engram",
-      "args": ["mcp", "--tools=all"]
+      "command": "/opt/custom/engram",
+      "args": ["mcp", "--tools=agent"]
     }
   }
 }`
@@ -567,7 +656,7 @@ func TestInstallCursorPreservesCustomNativeMCP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read native MCP after install: %v", err)
 	}
-	if !strings.Contains(string(raw), `"custom-engram"`) || !strings.Contains(string(raw), `"--tools=all"`) {
+	if string(raw) != custom {
 		t.Fatalf("custom native MCP was rewritten: %s", raw)
 	}
 }

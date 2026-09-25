@@ -15,6 +15,19 @@ import (
 // an existing baseline ledger without creating state, purging rows, or loading
 // the install linkage key.
 func InspectOperationReadOnly(cfg Config, surface Surface, operation string) (OperationReport, bool, error) {
+	return inspectOperationReadOnly(cfg, surface, operation, "")
+}
+
+// InspectHostOperationReadOnly reads one host's content-free operation evidence
+// without creating a ledger or including events from other MCP clients.
+func InspectHostOperationReadOnly(cfg Config, surface Surface, operation string, host Host) (OperationReport, bool, error) {
+	if host == "" || host == HostUnknown {
+		return OperationReport{}, false, fmt.Errorf("a specific host is required")
+	}
+	return inspectOperationReadOnly(cfg, surface, operation, host)
+}
+
+func inspectOperationReadOnly(cfg Config, surface Surface, operation string, host Host) (OperationReport, bool, error) {
 	if !filepath.IsAbs(cfg.DataDir) {
 		return OperationReport{}, false, fmt.Errorf("recall baseline data directory must be absolute")
 	}
@@ -42,6 +55,9 @@ func InspectOperationReadOnly(cfg Config, surface Surface, operation string) (Op
 	if schemaVersion != 1 && schemaVersion != 2 {
 		return OperationReport{}, false, fmt.Errorf("unsupported recall baseline schema version %d", schemaVersion)
 	}
+	if host != "" && schemaVersion != 2 {
+		return OperationReport{}, false, nil
+	}
 	now := time.Now().UTC()
 	if cfg.Now != nil {
 		now = cfg.Now().UTC()
@@ -50,9 +66,15 @@ func InspectOperationReadOnly(cfg Config, surface Surface, operation string) (Op
 	if schemaVersion == 2 {
 		selectColumns = "outcome, host_hint, latency_micros, delivered_utf8_bytes"
 	}
-	rows, err := db.Query(`SELECT `+selectColumns+` FROM baseline_events
-		WHERE kind = ? AND surface = ? AND operation = ? AND expires_at > ?
-		ORDER BY id`, EventOperation, surface, operation, now.Format(time.RFC3339Nano))
+	query := `SELECT ` + selectColumns + ` FROM baseline_events
+		WHERE kind = ? AND surface = ? AND operation = ? AND expires_at > ?`
+	args := []any{EventOperation, surface, operation, now.Format(time.RFC3339Nano)}
+	if host != "" {
+		query += ` AND host_hint = ?`
+		args = append(args, host)
+	}
+	query += ` ORDER BY id`
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return OperationReport{}, false, fmt.Errorf("inspect recall baseline operation: %w", err)
 	}

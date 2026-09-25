@@ -54,9 +54,19 @@ func installCursorWithOptions(options InstallOptions) (*Result, error) {
 	if len(hookPreserved) == 0 {
 		files++
 	}
-	preserved, err := retireOwnedCursorNativeMCP()
+	preserved, err := installCursorNativeMCP(dest)
 	if err != nil {
 		return nil, err
+	}
+	if len(preserved) == 0 {
+		if _, cliErr := lookPathFn("agent"); cliErr == nil {
+			// The verified user-level registration serves both Cursor surfaces.
+			// Remove the installed plugin MCP declaration to avoid duplicate IDs.
+			if err := os.Remove(filepath.Join(dest, "mcp.json")); err != nil && !os.IsNotExist(err) {
+				return nil, fmt.Errorf("remove duplicate Cursor plugin MCP: %w", err)
+			}
+			files--
+		}
 	}
 
 	result := &Result{
@@ -65,7 +75,11 @@ func installCursorWithOptions(options InstallOptions) (*Result, error) {
 		Files:       files,
 		Preserved:   append(preserved, hookPreserved...),
 	}
-	status, err := InspectCursorStatus(version, commit, "")
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("resolve Cursor setup directory: %w", err)
+	}
+	status, err := InspectCursorStatus(version, commit, workingDirectory)
 	if err != nil {
 		return nil, fmt.Errorf("inspect installed Cursor integration: %w", err)
 	}
@@ -75,8 +89,8 @@ func installCursorWithOptions(options InstallOptions) (*Result, error) {
 }
 
 func cursorSetupCapabilityChecks(status CursorIntegrationStatus, preserved []string) []CapabilityCheck {
-	checks := make([]CapabilityCheck, 0, 4)
-	for _, capability := range []string{"plugin", "skill", "mcp", "hooks"} {
+	checks := make([]CapabilityCheck, 0, 5)
+	for _, capability := range []string{"plugin", "skill", "mcp", "hooks", "cli_mcp"} {
 		var matched *CursorIntegrationCheck
 		for i := range status.Checks {
 			if status.Checks[i].Capability == capability {
@@ -104,6 +118,8 @@ func cursorSetupCapabilityChecks(status CursorIntegrationStatus, preserved []str
 			setupStatus = CheckMissing
 		case CursorCheckCustomized:
 			setupStatus = CheckPreserved
+		case CursorCheckPending:
+			setupStatus = CheckPending
 		}
 		checks = append(checks, CapabilityCheck{Capability: capability, Status: setupStatus, Detail: matched.Reason})
 	}
@@ -399,47 +415,64 @@ func quoteCursorHookArg(value string) string {
 	return value
 }
 
-func retireOwnedCursorNativeMCP() ([]string, error) {
+// installCursorNativeMCP gives Cursor CLI a user-level registration. Cursor CLI
+// does not discover the local plugin's mcp.json. Preserve unknown entries and
+// restore the previous file if the new registration is not discoverable.
+func installCursorNativeMCP(pluginRoot string) ([]string, error) {
 	path := cursorMCPPath()
+	previous, readErr := readFileFn(path)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return []string{"mcpServers.engram"}, nil
+	}
 	config, err := readJSONConfig(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return []string{"mcpServers.engram"}, nil
 	}
 	raw, ok := config["mcpServers"]
-	if !ok {
-		return nil, nil
-	}
 	servers := make(map[string]json.RawMessage)
-	if err := json.Unmarshal(raw, &servers); err != nil {
+	if ok && json.Unmarshal(raw, &servers) != nil {
 		return []string{"mcpServers.engram"}, nil
 	}
 	if servers == nil {
-		return nil, nil
+		servers = make(map[string]json.RawMessage)
 	}
-	entry, ok := servers["engram"]
-	if !ok {
-		return nil, nil
-	}
-	if !cursorNativeMCPOwned(entry) {
+	entry, exists := servers["engram"]
+	if exists && !cursorNativeMCPOwned(entry) {
 		return []string{"mcpServers.engram"}, nil
 	}
-	delete(servers, "engram")
-	if len(servers) == 0 && len(config) == 1 {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("remove owned Cursor native MCP: %w", err)
-		}
-		return nil, nil
+	command := cursorHookBinary(pluginRoot)
+	updatedEntry, err := jsonMarshalFn(map[string]any{
+		"type": "stdio", "command": command, "args": []string{"mcp", "--tools=agent"},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal Cursor native MCP entry: %w", err)
 	}
+	servers["engram"] = updatedEntry
 	block, err := jsonMarshalFn(servers)
 	if err != nil {
 		return nil, fmt.Errorf("marshal Cursor native MCP servers: %w", err)
 	}
 	config["mcpServers"] = json.RawMessage(block)
 	if err := writeJSONConfig(path, config); err != nil {
-		return nil, fmt.Errorf("rewrite Cursor native MCP: %w", err)
+		return nil, fmt.Errorf("write Cursor native MCP: %w", err)
+	}
+	if _, err := lookPathFn("agent"); err == nil {
+		isolated, err := os.MkdirTemp("", "engram-cursor-cli-verify-")
+		if err != nil {
+			return nil, fmt.Errorf("create Cursor CLI verification directory: %w", err)
+		}
+		defer os.RemoveAll(isolated)
+		check := inspectCursorCLIMCPStatus(isolated)
+		if check.Status == CursorCheckMissing || check.Status == CursorCheckUnavailable || check.Status == CursorCheckCustomized {
+			if readErr == nil {
+				if restoreErr := writeFileFn(path, previous, 0644); restoreErr != nil {
+					return nil, fmt.Errorf("Cursor CLI verification failed (%s); restore previous native MCP: %w", check.ReasonCode, restoreErr)
+				}
+			} else if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+				return nil, fmt.Errorf("Cursor CLI verification failed (%s); remove new native MCP: %w", check.ReasonCode, removeErr)
+			}
+			return nil, fmt.Errorf("Cursor CLI did not discover the new Engram registration: %s", check.Reason)
+		}
 	}
 	return nil, nil
 }
@@ -449,8 +482,16 @@ func cursorNativeMCPOwned(raw json.RawMessage) bool {
 	if err := json.Unmarshal(raw, &entry); err != nil {
 		return false
 	}
+	for key := range entry {
+		if key != "command" && key != "args" && key != "type" {
+			return false
+		}
+	}
+	if kind, ok := entry["type"]; ok && kind != "stdio" {
+		return false
+	}
 	command, _ := entry["command"].(string)
-	if !cursorNativeMCPCommandOwned(command) {
+	if command != "engram" && command != "engram.exe" && command != resolveEngramCommand() && command != cursorHookBinary(cursorPluginDir()) {
 		return false
 	}
 	args, ok := entry["args"].([]any)
@@ -458,9 +499,4 @@ func cursorNativeMCPOwned(raw json.RawMessage) bool {
 		return false
 	}
 	return args[0] == "mcp" && args[1] == "--tools=agent"
-}
-
-func cursorNativeMCPCommandOwned(command string) bool {
-	base := strings.ToLower(filepath.Base(filepath.Clean(command)))
-	return base == "engram" || base == "engram.exe"
 }

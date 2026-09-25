@@ -41,8 +41,8 @@ is either:
 - **bespoke** — a `custom` installer for agents with special needs (OpenCode embeds
   a TS plugin, Pi runs a package manager, Claude Code drives the `claude` CLI, Codex
   writes TOML, Gemini CLI cleans up legacy env state, Cursor installs the portable
-  Agent Plugin into `~/.cursor/plugins/local/engram`, rewrites the installed
-  MCP command to the copied binary's absolute path, and writes user-level
+  Agent Plugin into `~/.cursor/plugins/local/engram`, verifies a global Cursor
+  CLI MCP registration before removing the duplicate plugin MCP entry, and writes user-level
   `~/.cursor/hooks.json` cue, identity, and stop adapters), or
 - **declarative** — just an MCP path + format (`mcpServers` / `servers` / OpenCode's
   `mcp` object) and instruction surfaces; the generic `injectMCP` / `writeInstruction`

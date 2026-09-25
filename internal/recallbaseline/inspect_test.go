@@ -49,6 +49,10 @@ func TestInspectOperationReadOnlySupportsV1WithoutMigrating(t *testing.T) {
 	if err != nil || !observed || report.Events != 1 || report.P50LatencyMillis != 9 || report.TotalUTF8Bytes != 55 {
 		t.Fatalf("v1 lifecycle metrics = %+v observed=%t err=%v", report, observed, err)
 	}
+	hostReport, hostObserved, hostErr := InspectHostOperationReadOnly(Config{DataDir: dataDir, Now: func() time.Time { return now }}, SurfaceLifecycle, "session_start", HostCursor)
+	if hostErr != nil || hostObserved || hostReport.Events != 0 {
+		t.Fatalf("v1 host metrics = %+v observed=%t err=%v", hostReport, hostObserved, hostErr)
+	}
 	after := snapshotBaselineInspectionDir(t, dataDir)
 	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("read-only v1 inspection migrated baseline files:\nbefore=%#v\nafter=%#v", before, after)
@@ -96,6 +100,33 @@ func TestInspectOperationReadOnlyMissingLedgerDoesNotCreateState(t *testing.T) {
 	}
 	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
 		t.Fatalf("read-only lifecycle inspection created state: %v", err)
+	}
+}
+
+func TestInspectHostOperationReadOnlyFiltersOtherMCPHosts(t *testing.T) {
+	dataDir := t.TempDir()
+	ledger, err := Open(Config{DataDir: dataDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []Host{HostCodex, HostCursor} {
+		if err := ledger.Record(Event{Kind: EventOperation, Surface: SurfaceMCP, Operation: "mem_current_project", Outcome: OutcomeSuccess, Host: host}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ledger.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotBaselineInspectionDir(t, dataDir)
+	report, observed, err := InspectHostOperationReadOnly(Config{DataDir: dataDir}, SurfaceMCP, "mem_current_project", HostCursor)
+	if err != nil || !observed || report.Events != 1 || report.Succeeded != 1 || report.Host != HostCursor {
+		t.Fatalf("cursor observation = %+v, %t, %v", report, observed, err)
+	}
+	if after := snapshotBaselineInspectionDir(t, dataDir); !reflect.DeepEqual(before, after) {
+		t.Fatal("host inspection mutated the baseline")
+	}
+	if _, _, err := InspectHostOperationReadOnly(Config{DataDir: dataDir}, SurfaceMCP, "mem_current_project", HostUnknown); err == nil {
+		t.Fatal("unknown host should not yield an attributable report")
 	}
 }
 

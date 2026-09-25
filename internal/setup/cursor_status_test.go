@@ -146,6 +146,14 @@ func TestCursorMCPProbeHelperProcess(t *testing.T) {
 func TestInspectCursorStatusEmptyProfileIsConservativeAndReadOnly(t *testing.T) {
 	resetSetupSeams(t)
 	home := useTestHome(t)
+	previousLookPath := lookPathFn
+	lookPathFn = func(name string) (string, error) {
+		if name == "agent" {
+			return "/test/bin/agent", nil
+		}
+		return previousLookPath(name)
+	}
+	runCursorCLICommandFn = func(_ string, _ ...string) (string, error) { return "No MCP servers configured", nil }
 	cwd := filepath.Join(home, "workspace")
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
 		t.Fatalf("create workspace: %v", err)

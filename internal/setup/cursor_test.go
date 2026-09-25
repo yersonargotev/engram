@@ -27,6 +27,13 @@ func stubCursorInstallEnv(t *testing.T) string {
 		t.Fatalf("write stub engram binary: %v", err)
 	}
 	osExecutable = func() (string, error) { return bin, nil }
+	previousLookPath := lookPathFn
+	lookPathFn = func(name string) (string, error) {
+		if name == "agent" {
+			return "/test/bin/agent", nil
+		}
+		return previousLookPath(name)
+	}
 	stubCursorMCPProbeReady(t)
 	runCursorCLICommandFn = func(_ string, args ...string) (string, error) {
 		if len(args) > 0 && args[0] == "list" {

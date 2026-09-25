@@ -2,12 +2,14 @@ package setup
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -40,9 +42,11 @@ const (
 	CursorCheckCustomized  CursorCheckStatus = "customized"
 	CursorCheckUnavailable CursorCheckStatus = "unavailable"
 	CursorCheckUnknown     CursorCheckStatus = "unknown"
+	CursorCheckPending     CursorCheckStatus = "pending"
 )
 
 var runCursorMCPProbeFn = probeCursorMCP
+var runCursorCLICommandFn = runCursorCLICommand
 
 var requiredCursorAgentTools = []string{
 	"mem_current_project",
@@ -92,12 +96,120 @@ func InspectCursorStatus(runningVersion, runningRevision, workingDirectory strin
 	checks := []CursorIntegrationCheck{plugin.Check}
 	checks = append(checks, skills...)
 	checks = append(checks, mcp, hooks, userRules)
+	checks = append(checks, inspectCursorCLIMCPStatus(workingDirectory), cursorStatusCheck(
+		"cli_use", CursorCheckUnknown, "cli_use_not_observed",
+		"A status snapshot cannot attribute a prior MCP call to a fresh Cursor CLI session; verify a real call with the content-free baseline.",
+	))
 	return CursorIntegrationStatus{
 		SchemaVersion: CursorIntegrationStatusSchemaVersion,
 		Agent:         "cursor",
 		Mode:          deriveCursorOperatingMode(checks),
 		Checks:        checks,
 	}, nil
+}
+
+func runCursorCLICommand(directory string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	home, err := userHome()
+	if err != nil {
+		return "", err
+	}
+	isolatedHome, err := os.MkdirTemp("", "engram-cursor-status-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(isolatedHome)
+	configDir := filepath.Join(isolatedHome, ".cursor")
+	if err := os.Mkdir(configDir, 0700); err != nil {
+		return "", err
+	}
+	for _, name := range []string{"mcp.json", "cli-config.json"} {
+		data, err := os.ReadFile(filepath.Join(home, ".cursor", name))
+		if err == nil {
+			if err := os.WriteFile(filepath.Join(configDir, name), data, 0600); err != nil {
+				return "", err
+			}
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+	command := exec.CommandContext(ctx, "agent", append([]string{"mcp"}, args...)...)
+	environment := os.Environ()
+	for i := range environment {
+		if strings.HasPrefix(environment[i], "HOME=") {
+			environment = append(environment[:i], environment[i+1:]...)
+			break
+		}
+	}
+	command.Env = append(environment, "HOME="+isolatedHome)
+	if directory != "" {
+		command.Dir = directory
+	}
+	output, err := command.CombinedOutput()
+	return string(output), err
+}
+
+// inspectCursorCLIMCPStatus uses the host's inventory. Approval is left to
+// Cursor and is never inferred from an isolated Engram protocol probe.
+func inspectCursorCLIMCPStatus(directory string) CursorIntegrationCheck {
+	if _, err := lookPathFn("agent"); err != nil {
+		return cursorStatusCheck("cli_mcp", CursorCheckUnavailable, "cli_unavailable", "Cursor CLI is not installed or is not on PATH.")
+	}
+	source := "user"
+	path := cursorMCPPath()
+	if directory != "" {
+		projectPath := filepath.Join(directory, ".cursor", "mcp.json")
+		if raw, err := readFileFn(projectPath); err == nil {
+			if _, found, _ := cursorNativeMCPEntry(raw); found {
+				source, path = "project", projectPath
+			}
+		}
+	}
+	evidence := []CursorIntegrationEvidence{cursorEvidence("source", source), cursorEvidence("path", path)}
+	if source == "user" {
+		pluginPath := filepath.Join(cursorPluginDir(), "mcp.json")
+		if raw, err := readFileFn(pluginPath); err == nil && cursorPluginMCPOwned(cursorPluginDir(), raw) {
+			evidence = append(evidence, cursorEvidence("editor_plugin_mcp", "also_registered"))
+		}
+	}
+	output, err := runCursorCLICommandFn(directory, "list")
+	if err != nil {
+		return cursorStatusCheck("cli_mcp", CursorCheckUnavailable, "cli_inventory_unavailable", "Cursor CLI could not list MCP servers.", evidence...)
+	}
+	state := ""
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "engram: ") {
+			state = strings.TrimSpace(strings.TrimPrefix(line, "engram: "))
+			break
+		}
+	}
+	if state == "" {
+		return cursorStatusCheck("cli_mcp", CursorCheckMissing, "cli_not_discovered", "Cursor CLI did not discover an Engram MCP server.", evidence...)
+	}
+	evidence = append(evidence, cursorEvidence("host_state", state))
+	if strings.Contains(strings.ToLower(state), "needs approval") {
+		return cursorStatusCheck("cli_mcp", CursorCheckPending, "cli_approval_pending", "Cursor CLI discovered Engram; user approval is pending.", evidence...)
+	}
+	if state != "ready" {
+		return cursorStatusCheck("cli_mcp", CursorCheckUnavailable, "cli_server_unavailable", "Cursor CLI discovered Engram but cannot use it.", evidence...)
+	}
+	toolOutput, err := runCursorCLICommandFn(directory, "list-tools", "engram")
+	if err != nil {
+		return cursorStatusCheck("cli_mcp", CursorCheckUnavailable, "cli_tools_unavailable", "Cursor CLI could not list Engram tools.", evidence...)
+	}
+	var names []string
+	for _, line := range strings.Split(toolOutput, "\n") {
+		if strings.HasPrefix(line, "- ") {
+			name, _, _ := strings.Cut(strings.TrimPrefix(line, "- "), " ")
+			names = append(names, name)
+		}
+	}
+	missing, unexpected := cursorAgentToolCatalogDifference(names)
+	if len(names) != len(requiredCursorAgentTools) || len(missing) != 0 || len(unexpected) != 0 {
+		return cursorStatusCheck("cli_mcp", CursorCheckUnavailable, "cli_tools_incomplete", "Cursor CLI tool catalog does not match the five Engram agent tools.", evidence...)
+	}
+	return cursorStatusCheck("cli_mcp", CursorCheckReady, "cli_ready", "Cursor CLI discovered and can list the five Engram agent tools.", append(evidence, cursorEvidence("tool_count", "5"))...)
 }
 
 type cursorPluginInspection struct {
@@ -439,12 +551,14 @@ func inspectCursorNativeMCPConflict(pluginPath string) *CursorIntegrationCheck {
 	if !found {
 		return nil
 	}
-	reason := "A custom native Engram MCP registration may take precedence over the plugin registration."
 	if owned {
-		reason = "Both plugin and native Engram MCP registrations are present; rerun setup to retire the duplicate native entry."
+		entry, _, _ := cursorNativeMCPEntry(raw)
+		if entry["command"] == cursorHookBinary(filepath.Dir(pluginPath)) {
+			return nil
+		}
 	}
 	check := cursorStatusCheck(
-		"mcp", CursorCheckCustomized, "mcp_native_conflict", reason,
+		"mcp", CursorCheckCustomized, "mcp_native_conflict", "A custom native Engram MCP registration may take precedence over the plugin registration.",
 		cursorEvidence("path", pluginPath), cursorEvidence("native_path", nativePath),
 	)
 	return &check
@@ -485,7 +599,7 @@ func inspectCursorMCPRuntime(configPath, source, command string, args []string) 
 	reason := "The configured executable completed MCP initialize and tools/list with all five agent tools."
 	if source == "native" {
 		reasonCode = "mcp_native_only"
-		reason = "A native Cursor MCP entry completed initialize and tools/list with all five agent tools; plugin activation is absent."
+		reason = "The native Cursor MCP entry completed initialize and tools/list with all five agent tools."
 	}
 	return cursorStatusCheck("mcp", CursorCheckReady, reasonCode, reason, evidence...)
 }
@@ -622,7 +736,7 @@ func deriveCursorOperatingMode(checks []CursorIntegrationCheck) CursorOperatingM
 		}
 		return false
 	}
-	if ready("plugin") && ready("skill") && ready("mcp") && ready("hooks") {
+	if ready("plugin") && ready("skill") && ready("mcp") && ready("hooks") && ready("cli_mcp") {
 		return CursorModeCheckpointReady
 	}
 	if !present("plugin") && !present("skill") && !present("hooks") && ready("mcp") {

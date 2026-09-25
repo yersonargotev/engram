@@ -168,6 +168,8 @@ func TestInspectCursorStatusEmptyProfileIsConservativeAndReadOnly(t *testing.T) 
 		{"mcp", CursorCheckMissing, "mcp_missing"},
 		{"hooks", CursorCheckMissing, "hooks_missing"},
 		{"user_rules", CursorCheckUnknown, "user_rules_unknown"},
+		{"cli_mcp", CursorCheckMissing, "cli_not_discovered"},
+		{"cli_use", CursorCheckUnknown, "cli_use_not_observed"},
 	}
 	if len(status.Checks) != len(want) {
 		t.Fatalf("checks = %#v, want %d", status.Checks, len(want))
@@ -185,6 +187,55 @@ func TestInspectCursorStatusEmptyProfileIsConservativeAndReadOnly(t *testing.T) 
 	after := snapshotStatusTestTree(t, home)
 	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("empty Cursor status mutated the home tree")
+	}
+}
+
+func TestCursorCLIStatusSeparatesPluginOnlyApprovalAndReadyTools(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	pluginRoot := filepath.Join(home, ".cursor", "plugins", "local", "engram")
+	if err := os.MkdirAll(pluginRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeCursorStatusFile(t, filepath.Join(pluginRoot, "mcp.json"), `{"mcpServers":{"engram":{"type":"stdio","command":"engram","args":["mcp","--tools=agent"]}}}`)
+	runCursorCLICommandFn = func(_ string, _ ...string) (string, error) { return "No MCP servers configured", nil }
+	if got := inspectCursorCLIMCPStatus(home); got.ReasonCode != "cli_not_discovered" {
+		t.Fatalf("plugin only CLI check = %#v", got)
+	}
+	runCursorCLICommandFn = func(_ string, args ...string) (string, error) {
+		if args[0] == "list" {
+			return "engram: not loaded (needs approval)\n", nil
+		}
+		return "", nil
+	}
+	if got := inspectCursorCLIMCPStatus(home); got.Status != CursorCheckPending {
+		t.Fatalf("pending CLI check = %#v", got)
+	}
+	runCursorCLICommandFn = func(_ string, args ...string) (string, error) {
+		if args[0] == "list" {
+			return "engram: ready\n", nil
+		}
+		return "Tools for engram (5):\n- mem_checkpoint ()\n- mem_checkpoint_status ()\n- mem_current_project ()\n- mem_get_observation ()\n- mem_search ()\n", nil
+	}
+	if got := inspectCursorCLIMCPStatus(home); got.Status != CursorCheckReady || cursorEvidenceValue(got, "tool_count") != "5" {
+		t.Fatalf("ready CLI check = %#v", got)
+	}
+	lookPathFn = func(string) (string, error) { return "", errors.New("not installed") }
+	if got := inspectCursorCLIMCPStatus(home); got.ReasonCode != "cli_unavailable" {
+		t.Fatalf("unavailable CLI check = %#v", got)
+	}
+}
+
+func TestCursorCLIStatusReportsProjectSourcePrecedence(t *testing.T) {
+	home := stubCursorInstallEnv(t)
+	project := filepath.Join(home, "project")
+	writeCursorStatusFile(t, filepath.Join(home, ".cursor", "mcp.json"), `{"mcpServers":{"engram":{"command":"engram","args":["mcp","--tools=agent"]}}}`)
+	writeCursorStatusFile(t, filepath.Join(project, ".cursor", "mcp.json"), `{"mcpServers":{"engram":{"command":"custom-engram","args":["mcp"]}}}`)
+	runCursorCLICommandFn = func(_ string, _ ...string) (string, error) {
+		return "engram: not loaded (needs approval)\n", nil
+	}
+	got := inspectCursorCLIMCPStatus(project)
+	if cursorEvidenceValue(got, "source") != "project" || cursorEvidenceValue(got, "path") != filepath.Join(project, ".cursor", "mcp.json") {
+		t.Fatalf("project source check = %#v", got)
 	}
 }
 
@@ -216,7 +267,7 @@ func TestInspectCursorStatusCompleteInstallIsCheckpointReady(t *testing.T) {
 	}
 	mcp := cursorCheck(t, status, "mcp")
 	pluginRoot := filepath.Join(home, ".cursor", "plugins", "local", "engram")
-	if mcp.Status != CursorCheckReady || mcp.ReasonCode != "mcp_ready" || cursorEvidenceValue(mcp, "source") != "plugin" {
+	if mcp.Status != CursorCheckReady || mcp.ReasonCode != "mcp_native_only" || cursorEvidenceValue(mcp, "source") != "native" {
 		t.Fatalf("mcp = %#v", mcp)
 	}
 	if got := cursorEvidenceValue(mcp, "command"); got != cursorHookBinary(pluginRoot) {

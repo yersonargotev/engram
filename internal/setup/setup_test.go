@@ -34,6 +34,7 @@ func resetSetupSeams(t *testing.T) {
 	oldLookPathFn := lookPathFn
 	oldRunCommand := runCommand
 	oldRunCodexMCPProbeFn := runCodexMCPProbeFn
+	oldRunCursorCLICommandFn := runCursorCLICommandFn
 	oldLinkFileFn := linkFileFn
 	oldRenameFileFn := renameFileFn
 	oldRemoveFileFn := removeFileFn
@@ -67,6 +68,7 @@ func resetSetupSeams(t *testing.T) {
 		lookPathFn = oldLookPathFn
 		runCommand = oldRunCommand
 		runCodexMCPProbeFn = oldRunCodexMCPProbeFn
+		runCursorCLICommandFn = oldRunCursorCLICommandFn
 		linkFileFn = oldLinkFileFn
 		renameFileFn = oldRenameFileFn
 		removeFileFn = oldRemoveFileFn

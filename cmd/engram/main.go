@@ -3670,7 +3670,7 @@ Commands:
                      gemini-cli, codex, antigravity-cli, windsurf, qwen, kiro,
                      cursor, vscode-copilot, kilocode)
   setup status codex Report the read-only Codex integration capability snapshot [--json]
-  setup status cursor Report the read-only Cursor plugin, skill, MCP, and hooks snapshot, including whether identity delivery is active [--json]
+  setup status cursor Report the read-only Cursor plugin, MCP protocol, CLI discovery, and hooks snapshot [--json]
   sync               Export new memories as compressed chunk to .engram/
                          --import   Import new chunks from .engram/ into local DB
                          --status   Show sync status

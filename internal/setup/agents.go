@@ -116,14 +116,14 @@ func agentAdapters() []agentAdapter {
 		},
 		{
 			slug:        "cursor",
-			description: "Cursor — local Agent Plugin with editorial Memory skill, plugin MCP, and user hooks",
+			description: "Cursor — local Agent Plugin with editorial Memory skill, global MCP, and user hooks",
 			custom:      installCursorWithOptions,
 			installDir:  cursorPluginDir,
 			postInstall: []string{
 				"Restart Cursor, or run Developer: Reload Window, so the local Agent Plugin and user hooks are loaded",
-				"Verify ~/.cursor/plugins/local/engram contains plugin.json, mcp.json, and skills/engram-memory",
+				"Verify ~/.cursor/plugins/local/engram contains plugin.json, bin/engram, and skills/engram-memory",
 				"Verify ~/.cursor/hooks.json has Engram sessionStart cue, beforeSubmitPrompt identity, and stop follow-up entries",
-				"MCP tools come from that plugin; setup does not write a second ~/.cursor/mcp.json activation entry",
+				"Cursor CLI uses the verified ~/.cursor/mcp.json entry; approve Engram through Cursor's supported MCP flow before using its tools",
 			},
 		},
 		{

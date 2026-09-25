@@ -116,6 +116,7 @@ const (
 	CheckMissing   CheckStatus = "missing"
 	CheckPreserved CheckStatus = "preserved"
 	CheckFailed    CheckStatus = "failed"
+	CheckPending   CheckStatus = "pending"
 )
 
 // CapabilityCheck reports whether one setup capability is ready without

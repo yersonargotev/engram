@@ -649,7 +649,7 @@ func TestInstallCursorPreservesCustomNativeMCP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read native MCP after install: %v", err)
 	}
-	if !strings.Contains(string(raw), `"custom-engram"`) || !strings.Contains(string(raw), `"--tools=all"`) {
+	if string(raw) != custom {
 		t.Fatalf("custom native MCP was rewritten: %s", raw)
 	}
 }

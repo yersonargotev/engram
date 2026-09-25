@@ -491,7 +491,7 @@ func cursorNativeMCPOwned(raw json.RawMessage) bool {
 		return false
 	}
 	command, _ := entry["command"].(string)
-	if command != "engram" && command != "engram.exe" && command != cursorHookBinary(cursorPluginDir()) {
+	if command != "engram" && command != "engram.exe" && command != resolveEngramCommand() && command != cursorHookBinary(cursorPluginDir()) {
 		return false
 	}
 	args, ok := entry["args"].([]any)

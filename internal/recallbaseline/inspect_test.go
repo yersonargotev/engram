@@ -49,6 +49,10 @@ func TestInspectOperationReadOnlySupportsV1WithoutMigrating(t *testing.T) {
 	if err != nil || !observed || report.Events != 1 || report.P50LatencyMillis != 9 || report.TotalUTF8Bytes != 55 {
 		t.Fatalf("v1 lifecycle metrics = %+v observed=%t err=%v", report, observed, err)
 	}
+	hostReport, hostObserved, hostErr := InspectHostOperationReadOnly(Config{DataDir: dataDir, Now: func() time.Time { return now }}, SurfaceLifecycle, "session_start", HostCursor)
+	if hostErr != nil || hostObserved || hostReport.Events != 0 {
+		t.Fatalf("v1 host metrics = %+v observed=%t err=%v", hostReport, hostObserved, hostErr)
+	}
 	after := snapshotBaselineInspectionDir(t, dataDir)
 	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("read-only v1 inspection migrated baseline files:\nbefore=%#v\nafter=%#v", before, after)
@@ -120,6 +124,9 @@ func TestInspectHostOperationReadOnlyFiltersOtherMCPHosts(t *testing.T) {
 	}
 	if after := snapshotBaselineInspectionDir(t, dataDir); !reflect.DeepEqual(before, after) {
 		t.Fatal("host inspection mutated the baseline")
+	}
+	if _, _, err := InspectHostOperationReadOnly(Config{DataDir: dataDir}, SurfaceMCP, "mem_current_project", HostUnknown); err == nil {
+		t.Fatal("unknown host should not yield an attributable report")
 	}
 }
 

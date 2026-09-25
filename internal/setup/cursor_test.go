@@ -426,7 +426,7 @@ func TestInstallCursorRefreshesOwnedNativeMCPAndPreservesOtherServers(t *testing
 	existing := `{
   "mcpServers": {
     "engram": {
-      "command": "engram",
+      "command": "` + resolveEngramCommand() + `",
       "args": ["mcp", "--tools=agent"]
     },
     "other": {
@@ -535,7 +535,7 @@ func TestInstallCursorPreservesCustomizedNativeEngramWithStandardArgs(t *testing
 	if err := os.MkdirAll(filepath.Dir(native), 0755); err != nil {
 		t.Fatal(err)
 	}
-	custom := []byte(`{"mcpServers":{"engram":{"command":"/opt/custom/engram","args":["mcp","--tools=agent"],"env":{"USER_SETTING":"kept"}}}}`)
+	custom := []byte(`{"mcpServers":{"engram":{"command":"` + resolveEngramCommand() + `","args":["mcp","--tools=agent"],"env":{"USER_SETTING":"kept"}}}}`)
 	if err := os.WriteFile(native, custom, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -605,8 +605,8 @@ func TestInstallCursorPreservesCustomNativeMCP(t *testing.T) {
 	custom := `{
   "mcpServers": {
     "engram": {
-      "command": "custom-engram",
-      "args": ["mcp", "--tools=all"]
+      "command": "/opt/custom/engram",
+      "args": ["mcp", "--tools=agent"]
     }
   }
 }`

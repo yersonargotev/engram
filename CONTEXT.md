@@ -183,3 +183,10 @@ _Avoid_: Memory operation
 A deliberate local attempt to apply a previously abandoned remote mutation
 without emitting a new outbound mutation.
 _Avoid_: Republish, requeue
+
+**Session identity recovery**:
+An explicit correction of a legacy local session with a blank identity to an
+operator-supplied canonical identity, preserving its owned Memories and historical
+content. It is distinct from dead mutation recovery and a host conversation
+identity change.
+_Avoid_: Session recreation, host identity rename

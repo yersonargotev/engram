@@ -40,6 +40,7 @@ The memory flow does not start in the database. It starts with the agent decidin
 | Entity | Purpose | Relevant files |
 |---|---|---|
 | `sessions` | Groups work from one agent session. | `internal/store/store.go`, `internal/mcp/activity.go` |
+| `session_identity_recoveries` | Local-only proof of explicit blank source identity recovery; created atomically on apply, excluded from Memory and replication. Its receipt is removed if its destination session is deleted. | `internal/store/session_identity_recovery.go` |
 | `observations` | Curated memories: decisions, bugs, patterns, discoveries, summaries. | `internal/store/store.go`, `internal/store/store_test.go` |
 | `observations_fts` | FTS5 search index. | `internal/store/store.go`, `DOCS.md#database-schema` |
 | `diagnostic_captures` / `capture_consents` | Local-only Diagnostic Content and explicit project/content-type consent. Capture is disabled by default; retention is 7 days by default and at most 30 days. | `internal/store/capture.go`, `internal/memoryops/capture.go` |

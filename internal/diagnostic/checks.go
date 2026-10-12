@@ -290,7 +290,7 @@ func (c InvalidSessionIdentityCheck) Run(ctx context.Context, scope Scope) (Chec
 			Message:              "Session source ID is blank; affected references and journal entries cannot be repaired without an explicit canonical session ID.",
 			Why:                  "A blank session ID is not accepted by cloud replication and re-emitting it would preserve corrupt identity data.",
 			Evidence:             mustJSON(item),
-			SafeNextStep:         "Provide an explicit canonical session ID through a supported repair workflow; automatic ID generation is intentionally unavailable.",
+			SafeNextStep:         "Review `engram doctor repair --project PROJECT --check invalid_session_identity --source-id ID --canonical-id CANONICAL_ID --plan`; use the exact stored source ID and an operator-supplied canonical ID. Apply requires the reviewed preview token and confirmation.",
 			RequiresConfirmation: true,
 		})
 	}

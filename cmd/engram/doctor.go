@@ -82,6 +82,7 @@ func printDoctorUsage() {
 	fmt.Fprintln(os.Stdout, "       engram doctor repair [--project PROJECT] --check "+diagnostic.CheckSyncMutationRequiredFields+" (--plan|--dry-run|--apply)")
 	fmt.Fprintln(os.Stdout, "note: --project is required for every repair check except "+diagnostic.CheckSyncMutationRequiredFields+", where it optionally scopes the quarantine to one project.")
 	fmt.Fprintln(os.Stdout, "checks: "+strings.Join(diagnostic.RegisteredCodes(), ", "))
+	fmt.Fprintln(os.Stdout, "identity recovery: --check invalid_session_identity --source-id ID --canonical-id ID (--plan|--dry-run|--apply) [--preview-token TOKEN] [--yes] [--json]")
 }
 
 func cmdDoctorRepair(cfg store.Config) {
@@ -89,18 +90,56 @@ func cmdDoctorRepair(cfg store.Config) {
 	check := ""
 	mode := diagnostic.RepairMode("")
 	modeCount := 0
+	sourceID, canonicalID, previewToken := "", "", ""
+	sourceProvided, canonicalProvided, yes := false, false, false
+	jsonMode := hasArg("--json")
+	explicitRecovery := isSessionIdentityRecoveryCommand(os.Args[1:])
+	failRepair := func(code, message string) {
+		if explicitRecovery {
+			failCLI(jsonMode, code, message, nil)
+		} else {
+			failDoctorRepair(message)
+		}
+	}
 	for i := 3; i < len(os.Args); i++ {
 		switch os.Args[i] {
+		case "--source-id", "--canonical-id", "--preview-token":
+			flag := os.Args[i]
+			if i+1 >= len(os.Args) {
+				failCLI(jsonMode, "missing_flag_value", flag+" requires a value", nil)
+				return
+			}
+			value := os.Args[i+1]
+			switch flag {
+			case "--source-id":
+				if sourceProvided {
+					failRepair("invalid_recovery_arguments", "--source-id must be supplied exactly once")
+					return
+				}
+				sourceID, sourceProvided = value, true
+			case "--canonical-id":
+				if canonicalProvided {
+					failRepair("invalid_recovery_arguments", "--canonical-id must be supplied exactly once")
+					return
+				}
+				canonicalID, canonicalProvided = value, true
+			case "--preview-token":
+				previewToken = value
+			}
+			i++
+		case "--yes":
+			yes = true
+		case "--json":
 		case "--project":
 			if i+1 >= len(os.Args) {
-				failDoctorRepair("--project requires a value")
+				failRepair("missing_flag_value", "--project requires a value")
 				return
 			}
 			project = os.Args[i+1]
 			i++
 		case "--check":
 			if i+1 >= len(os.Args) {
-				failDoctorRepair("--check requires a value")
+				failRepair("missing_flag_value", "--check requires a value")
 				return
 			}
 			check = os.Args[i+1]
@@ -118,7 +157,7 @@ func cmdDoctorRepair(cfg store.Config) {
 			printDoctorUsage()
 			return
 		default:
-			failDoctorRepair(fmt.Sprintf("unknown doctor repair argument %q", os.Args[i]))
+			failRepair("unknown_flag", fmt.Sprintf("unknown doctor repair argument %q", os.Args[i]))
 			return
 		}
 	}
@@ -127,19 +166,27 @@ func cmdDoctorRepair(cfg store.Config) {
 	project = strings.TrimSpace(project)
 	check = strings.TrimSpace(check)
 	if project == "" && check != diagnostic.CheckSyncMutationRequiredFields {
-		failDoctorRepair("--project is required")
+		failRepair("project_required", "--project is required")
 		return
 	}
 	if check == "" {
-		failDoctorRepair("--check is required")
+		failRepair("missing_flag_value", "--check is required")
 		return
 	}
 	if modeCount != 1 {
-		failDoctorRepair("exactly one of --plan, --dry-run, or --apply is required")
+		failRepair("invalid_recovery_arguments", "exactly one of --plan, --dry-run, or --apply is required")
 		return
 	}
 	if !isSupportedDoctorRepairCheck(check) {
-		failDoctorRepair("unsupported repair check " + check)
+		failRepair("invalid_recovery_arguments", "unsupported repair check "+check)
+		return
+	}
+	if sourceProvided || canonicalProvided || previewToken != "" || yes {
+		if check != diagnostic.CheckInvalidSessionIdentity || !sourceProvided || !canonicalProvided {
+			failCLI(jsonMode, "invalid_recovery_arguments", "identity recovery requires --check invalid_session_identity, explicit --source-id, and --canonical-id", nil)
+			return
+		}
+		cmdSessionIdentityRecovery(cfg, store.SessionIdentityRecoveryRequest{Project: project, SourceID: sourceID, CanonicalID: canonicalID}, mode, previewToken, yes, jsonMode)
 		return
 	}
 

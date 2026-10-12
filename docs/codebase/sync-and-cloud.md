@@ -86,6 +86,17 @@ identities found in the local `sessions` table as blocking findings. Neither is
 auto-repaired, because inventing a canonical session ID would fabricate identity
 data.
 
+Existing local blank source identities can be recovered explicitly with
+`engram doctor repair --project PROJECT --check invalid_session_identity
+--source-id ID --canonical-id CANONICAL_ID --plan`. This native local operation
+requires an exact source selection, reviewed preview token, confirmation, and
+consistent backup. It corrects owned references and identity fields of exact
+active pending outbound session/observation entries atomically, preserving
+acknowledged/quarantined/abandoned history and sync cursors. It needs no enrollment
+or credentials and does not upload. Independent host/checkpoint identities,
+relation judgment provenance, and remote quarantine evidence remain unchanged.
+See [identity recovery](../DOCTOR.md#explicit-blank-session-identity-recovery).
+
 ## Cloud transport: `internal/cloud/remote` + `internal/cloud/cloudserver`
 
 `internal/cloud/remote/transport.go` is the client. `internal/cloud/cloudserver/cloudserver.go` is the server. The server mounts:

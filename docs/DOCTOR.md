@@ -64,21 +64,88 @@ The CLI `--json` and MCP tool return:
 - `sync_mutation_required_fields` — blocks when a pending `sync_mutations.payload` is missing required fields. On a device that uses cloud sync (at least one project enrolled), it also blocks when pending cloud mutations belong to a project that is not enrolled; the finding identifies the project and backlog count, so enroll intended projects with `engram cloud enroll <project>` or review enrollment before retrying. A local-only install with no enrolled project never reports that finding: the store journals mutations unconditionally, so a non-enrolled backlog is its normal steady state.
 - `unowned_session_project` — warns for each session that identifies no project. A database upgraded from the schema where `sessions.project` was nullable keeps those rows intact, and they are exactly what a `project_ownership_required` failure points at, so each finding carries the concrete `engram projects rescue-ownership --project <name> --session <id>` repair. The listing is deliberately unscoped: an unowned session belongs to no project, so `--project` must not filter it out of the report.
 - `sqlite_lock_contention` — warns on conservative SQLite contention signals; returns an error if lock state cannot be evaluated.
+- `invalid_session_identity` — blocks for local source identities that are empty or whitespace-only, and separately warns about quarantined remote identity evidence. Explicit local recovery is described below; remote evidence remains separate.
 
 ## Safety
 
 Plain `engram doctor` remains diagnostic-only. Findings that imply data movement set `requires_confirmation=true` so agents know a human must review evidence before repair.
 
-`engram doctor repair` is intentionally narrow and local-first: local SQLite remains the source of truth, and cloud/sync repair is out of scope. The repair MVP only supports project reclassification for:
+`engram doctor repair` is intentionally narrow and local-first: local SQLite remains the source of truth. Project reclassification supports:
 
 - `session_project_directory_mismatch`, using trusted `git_remote` or `git_root` evidence from doctor findings.
 - `manual_session_name_project_mismatch`, only for exact `manual-save-{known_project}` sessions, and only when trusted directory evidence does not contradict the manual-name target.
 
-Repair never deletes or deduplicates rows, never edits sync cursors, never mutates `sync_state`/`sync_mutations`, and never writes cloud state. `--plan` and `--dry-run` are non-mutating. `--apply` creates a SQLite backup under `<ENGRAM_DATA_DIR>/backups/` before a transaction updates only:
+Project reclassification never deletes or deduplicates rows, edits sync cursors, or writes cloud state. `--plan` and `--dry-run` are non-mutating. `--apply` creates a SQLite backup under `<ENGRAM_DATA_DIR>/backups/` before a transaction updates:
 
 - `sessions.project`
 - `observations.project`
-- `user_prompts.project`
+
+### Explicit blank session identity recovery
+
+Recover one existing blank source identity with an explicit operator-supplied
+canonical ID. This is a local operation and does not require enrollment,
+credentials, or server configuration. It opens an existing database without
+migrations, retention cleanup, or automatic repairs; it neither uploads nor
+enrolls projects. Stop active synchronization before recovery; an active sync
+lease prevents planning/apply.
+
+```bash
+engram doctor repair --project fixture --check invalid_session_identity \
+  --source-id '' --canonical-id canonical-session --plan --json
+engram doctor repair --project fixture --check invalid_session_identity \
+  --source-id '' --canonical-id canonical-session --dry-run --json
+# Copy the preview_token from the reviewed plan. This is not a new ID.
+engram doctor repair --project fixture --check invalid_session_identity \
+  --source-id '' --canonical-id canonical-session --apply \
+  --preview-token REVIEWED_TOKEN --yes --json
+```
+
+`--source-id` is required even for the empty string; pass whitespace-only IDs
+exactly as stored, without trimming or combining them. `--canonical-id` must be
+nonblank and unused; nonblank IDs remain opaque. Missing source rows are not
+created, and valid sessions are not renamed or merged. A plain identity repair
+invocation without these inputs reports the missing-input `noop` and does not
+generate an ID.
+
+Both preview modes return `status: planned`, a `preview_token`, selected source
+and canonical IDs, `observation_ids` (including soft-deleted Memories),
+`archived_prompt_ids`, `pending_mutations`, and `preserved_mutations`. These
+references disclose no Memory or prompt content. In JSON mode, Apply requires
+`--yes`; interactive Apply displays the preview and asks for confirmation.
+
+Apply revalidates the selected source, ownership, references, payloads, schema,
+acknowledgement/disposition, and sync state. A stale preview, collision,
+conflicting ownership, ambiguous/malformed affected pending payload, unsupported
+dependency, or unsafe customized table/trigger rejects recovery without partial
+changes. It creates a consistent SQLite backup in `<ENGRAM_DATA_DIR>/backups/`
+and atomically updates source identity, directly owned references, and only the
+identity fields of exact active pending outbound session/observation entries.
+Legacy prompt rows change only their session link; content, IDs, ownership,
+dates, and Memory revision state remain intact.
+
+Identity comparisons are binary and exact, including on customized collations.
+Identity columns must retain the canonical `TEXT` type. Generated/hidden columns,
+virtual tables, unsafe foreign-key dependencies, and `REPLACE`/`IGNORE` conflict
+policies on affected tables are rejected rather than normalized or repaired.
+
+Acknowledged/quarantined/abandoned journal payloads, frozen prompt copies,
+deletion metadata, remote evidence, relation judgment provenance, host/checkpoint
+identities, unrelated projects, and sync cursors remain unchanged. Quarantine is
+never reactivated implicitly. Recovery does not fix missing directories or other
+payload fields; diagnose those separately after recovering identity.
+
+A local receipt commits with the recovery. Successful Apply returns
+`status: applied` and `backup_path`. An exact repeat with the original token and
+matching receipt returns `status: already_recovered` without another backup or
+mutation. Conflicting replay, changed destination identity/ownership, or a new
+ambiguous source fails; destination existence alone is insufficient proof. If
+the destination is deleted, its receipt is deleted too, so a later unrelated
+session cannot be mistaken for the recovered one.
+
+Errors use nonzero exit status and, with `--json`, the structured CLI error
+envelope. Run `engram doctor --project fixture --check invalid_session_identity
+--json` afterward. The recovered source is no longer blank; retained remote or
+historical evidence does not by itself establish a live outage.
 
 ### Repair JSON envelope
 

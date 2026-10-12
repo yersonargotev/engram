@@ -644,7 +644,9 @@ func main() {
 
 	// Migrate orphaned databases that ended up in wrong locations
 	// (e.g. drive root on Windows due to previous bug).
-	migrateOrphanedDB(cfg.DataDir)
+	if !isSessionIdentityRecoveryCommand(os.Args[1:]) {
+		migrateOrphanedDB(cfg.DataDir)
+	}
 
 	switch os.Args[1] {
 	case "serve":
@@ -749,6 +751,9 @@ func shouldCheckForUpdates(args []string) bool {
 		return false
 	}
 	if isSetupStatusCommand(args) {
+		return false
+	}
+	if isSessionIdentityRecoveryCommand(args) {
 		return false
 	}
 	for _, arg := range args {

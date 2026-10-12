@@ -94,7 +94,7 @@ func planInvalidSessionIdentityRepair(plan *RepairPlan, report Report) {
 			case CheckInvalidSessionIdentity:
 				plan.Skipped = append(plan.Skipped, RepairSkip{
 					ReasonCode: "cannot_repair_without_explicit_canonical_session_id",
-					Message:    "cannot repair without explicit canonical session ID; no supported repair input exists",
+					Message:    "explicit --source-id and --canonical-id inputs are required; review the identity recovery plan before confirmed apply",
 				})
 			case ReasonQuarantinedPulledSessionIdentity:
 				// The pull already skipped this mutation and advanced its

@@ -185,6 +185,16 @@ type identityRecoveryState struct {
 	ObservationUpdateTrigger string
 }
 
+const identityRecoveryObservationInsertTrigger = `CREATE TRIGGER obs_fts_insert AFTER INSERT ON observations BEGIN
+	INSERT INTO observations_fts(rowid, title, content, tool_name, type, project, topic_key)
+	VALUES (new.id, new.title, new.content, new.tool_name, new.type, new.project, new.topic_key);
+END`
+
+const identityRecoveryObservationDeleteTrigger = `CREATE TRIGGER obs_fts_delete AFTER DELETE ON observations BEGIN
+	INSERT INTO observations_fts(observations_fts, rowid, title, content, tool_name, type, project, topic_key)
+	VALUES ('delete', old.id, old.title, old.content, old.tool_name, old.type, old.project, old.topic_key);
+END`
+
 const identityRecoveryObservationUpdateTrigger = `CREATE TRIGGER obs_fts_update AFTER UPDATE ON observations BEGIN
 	INSERT INTO observations_fts(observations_fts, rowid, title, content, tool_name, type, project, topic_key)
 	VALUES ('delete', old.id, old.title, old.content, old.tool_name, old.type, old.project, old.topic_key);
@@ -232,12 +242,9 @@ func inspectIdentityRecoverySchema(tx *sql.Tx) (identityRecoveryRows, string, er
 			updateTrigger = ddl
 			continue
 		}
-		// Only the two canonical observation insert/delete triggers are harmless:
-		// this operation updates observations rather than inserting or deleting.
-		if objects.text(row, "tbl_name") == "observations" && (name == "obs_fts_insert" || name == "obs_fts_delete") {
-			if (name == "obs_fts_insert" && sqliteDDLHasTokenSequence(ddl, "after", "insert", "on", "observations")) || (name == "obs_fts_delete" && sqliteDDLHasTokenSequence(ddl, "after", "delete", "on", "observations")) {
-				continue
-			}
+		if (name == "obs_fts_insert" && canonicalSQLiteDDL(ddl) == canonicalSQLiteDDL(identityRecoveryObservationInsertTrigger)) ||
+			(name == "obs_fts_delete" && canonicalSQLiteDDL(ddl) == canonicalSQLiteDDL(identityRecoveryObservationDeleteTrigger)) {
+			continue
 		}
 		return objects, "", identityRecoveryError("unsafe_schema_object", fmt.Sprintf("cannot guarantee identity-only recovery with trigger %q", name))
 	}

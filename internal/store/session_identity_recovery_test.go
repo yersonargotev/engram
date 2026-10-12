@@ -431,6 +431,10 @@ func TestSessionIdentityRecoveryRejectsCustomizedSchemaEffects(t *testing.T) {
 		CREATE TABLE sessions(id NUMERIC PRIMARY KEY,project TEXT NOT NULL,directory TEXT NOT NULL,started_at TEXT NOT NULL DEFAULT(datetime('now')),ended_at TEXT,summary TEXT);
 		INSERT INTO sessions(id,project,directory) VALUES ('','fixture','/historical');
 		PRAGMA foreign_keys=ON;`, "sessions"},
+		{"misleading insert trigger body", `DROP TRIGGER obs_fts_insert;
+		CREATE TRIGGER obs_fts_insert AFTER UPDATE ON observations BEGIN UPDATE user_prompts SET content='changed by customized trigger'; SELECT 'after','insert','on','observations'; END;`, "obs_fts_insert"},
+		{"misleading delete trigger body", `DROP TRIGGER obs_fts_delete;
+		CREATE TRIGGER obs_fts_delete AFTER UPDATE ON observations BEGIN UPDATE user_prompts SET content='changed by customized trigger'; SELECT 'after','delete','on','observations'; END;`, "obs_fts_delete"},
 	} {
 		t.Run(custom.name, func(t *testing.T) {
 			s := seedIdentityRecovery(t, "")

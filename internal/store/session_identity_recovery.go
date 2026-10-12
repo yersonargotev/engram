@@ -193,12 +193,31 @@ const identityRecoveryObservationUpdateTrigger = `CREATE TRIGGER obs_fts_update 
 END`
 
 func inspectIdentityRecoverySchema(tx *sql.Tx) (identityRecoveryRows, string, error) {
-	objects, err := readIdentityRecoveryRows(tx, `SELECT type,name,tbl_name,ifnull(sql,'') AS ddl FROM sqlite_schema WHERE tbl_name IN ('sessions','observations','user_prompts','sync_mutations','session_identity_recoveries') ORDER BY type,name`)
+	objects, err := readIdentityRecoveryRows(tx, `SELECT type,name,tbl_name,ifnull(sql,'') AS ddl FROM sqlite_schema WHERE lower(tbl_name) IN ('sessions','observations','user_prompts','sync_mutations','session_identity_recoveries') ORDER BY type,name`)
 	if err != nil {
 		return objects, "", err
 	}
 	updateTrigger := ""
+	tableKinds, err := loadSQLiteTableKinds(tx)
+	if err != nil {
+		return objects, "", err
+	}
 	for _, row := range objects.Rows {
+		if objects.text(row, "type") == "table" {
+			name, ddl := objects.text(row, "name"), objects.text(row, "ddl")
+			if tableKinds[strings.ToLower(name)] != "table" || sqliteDDLHasTokenSequence(ddl, "on", "conflict", "replace") || sqliteDDLHasTokenSequence(ddl, "on", "conflict", "ignore") {
+				return objects, "", identityRecoveryError("unsafe_schema_object", fmt.Sprintf("unsupported table kind or conflict policy in %q", name))
+			}
+			columns, err := readIdentityRecoveryRows(tx, `SELECT name,hidden FROM pragma_table_xinfo(?)`, name)
+			if err != nil {
+				return objects, "", err
+			}
+			for _, column := range columns.Rows {
+				if columns.value(column, "hidden") != int64(0) {
+					return objects, "", identityRecoveryError("unsafe_schema_object", fmt.Sprintf("unsupported generated or hidden column %q in %q", columns.text(column, "name"), name))
+				}
+			}
+		}
 		if objects.text(row, "type") != "trigger" {
 			continue
 		}
@@ -222,6 +241,7 @@ func inspectIdentityRecoverySchema(tx *sql.Tx) (identityRecoveryRows, string, er
 	}
 	for _, row := range tables.Rows {
 		name := tables.text(row, "name")
+		normalizedName := strings.ToLower(name)
 		foreignKeys, err := readIdentityRecoveryRows(tx, `SELECT id,seq,"table" AS parent,"from" AS child_column,"to" AS parent_column,on_update,on_delete FROM pragma_foreign_key_list(?)`, name)
 		if err != nil {
 			return objects, "", err
@@ -238,8 +258,8 @@ func inspectIdentityRecoverySchema(tx *sql.Tx) (identityRecoveryRows, string, er
 					columns++
 				}
 			}
-			canonicalLink := (name == "observations" || name == "user_prompts") && childColumn == "session_id" && parent == "sessions" && parentColumn == "id" && updateAction == "NO ACTION" && deleteAction == "NO ACTION" && columns == 1
-			canonicalReceipt := name == "session_identity_recoveries" && childColumn == "canonical_id" && parent == "sessions" && parentColumn == "id" && updateAction == "NO ACTION" && deleteAction == "CASCADE" && columns == 1
+			canonicalLink := (normalizedName == "observations" || normalizedName == "user_prompts") && childColumn == "session_id" && parent == "sessions" && parentColumn == "id" && updateAction == "NO ACTION" && deleteAction == "NO ACTION" && columns == 1
+			canonicalReceipt := normalizedName == "session_identity_recoveries" && childColumn == "canonical_id" && parent == "sessions" && parentColumn == "id" && updateAction == "NO ACTION" && deleteAction == "CASCADE" && columns == 1
 			if canonicalLink || canonicalReceipt {
 				continue
 			}

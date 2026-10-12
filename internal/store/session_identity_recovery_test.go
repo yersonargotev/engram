@@ -402,7 +402,7 @@ func TestSessionIdentityRecoveryRejectsActiveSynchronization(t *testing.T) {
 	}
 }
 
-func TestSessionIdentityRecoveryRejectsCustomizedForeignKeyEffects(t *testing.T) {
+func TestSessionIdentityRecoveryRejectsCustomizedSchemaEffects(t *testing.T) {
 	for _, custom := range []struct{ name, ddl, object string }{
 		{"archive content cascade", `DROP TABLE user_prompts;
 		CREATE TABLE user_prompts(id INTEGER PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),content TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE,project TEXT,sync_id TEXT,created_at TEXT NOT NULL DEFAULT(datetime('now')));
@@ -413,6 +413,19 @@ func TestSessionIdentityRecoveryRejectsCustomizedForeignKeyEffects(t *testing.T)
 		{"downstream memory cascade", `CREATE UNIQUE INDEX custom_memory_session ON observations(session_id);
 		CREATE TABLE custom_history(content TEXT REFERENCES observations(session_id) ON UPDATE CASCADE);
 		INSERT INTO custom_history(content) VALUES ('');`, "custom_history"},
+		{"generated archive content", `DROP TABLE user_prompts;
+		CREATE TABLE user_prompts(id INTEGER PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),content TEXT GENERATED ALWAYS AS ('history:' || session_id) STORED,project TEXT,sync_id TEXT,created_at TEXT NOT NULL DEFAULT(datetime('now')));
+		INSERT INTO user_prompts(session_id,project,sync_id) VALUES ('','fixture','prompt-original');`, "user_prompts"},
+		{"replacing archive conflict", `PRAGMA foreign_keys=OFF;
+		DROP TABLE user_prompts;
+		CREATE TABLE user_prompts(id INTEGER PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id) UNIQUE ON CONFLICT REPLACE,content TEXT NOT NULL,project TEXT,sync_id TEXT,created_at TEXT NOT NULL DEFAULT(datetime('now')));
+		INSERT INTO user_prompts(session_id,content,project,sync_id) VALUES ('','source','fixture','prompt-original'),('canonical','unrelated','other','prompt-unrelated');
+		PRAGMA foreign_keys=ON;`, "user_prompts"},
+		{"ignoring archive conflict", `PRAGMA foreign_keys=OFF;
+		DROP TABLE user_prompts;
+		CREATE TABLE user_prompts(id INTEGER PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id) UNIQUE ON CONFLICT IGNORE,content TEXT NOT NULL,project TEXT,sync_id TEXT,created_at TEXT NOT NULL DEFAULT(datetime('now')));
+		INSERT INTO user_prompts(session_id,content,project,sync_id) VALUES ('','source','fixture','prompt-original'),('canonical','unrelated','other','prompt-unrelated');
+		PRAGMA foreign_keys=ON;`, "user_prompts"},
 	} {
 		t.Run(custom.name, func(t *testing.T) {
 			s := seedIdentityRecovery(t, "")

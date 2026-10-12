@@ -116,12 +116,17 @@ references disclose no Memory or prompt content. In JSON mode, Apply requires
 Apply revalidates the selected source, ownership, references, payloads, schema,
 acknowledgement/disposition, and sync state. A stale preview, collision,
 conflicting ownership, ambiguous/malformed affected pending payload, unsupported
-dependency, or unsafe customized trigger rejects recovery without partial
+dependency, or unsafe customized table/trigger rejects recovery without partial
 changes. It creates a consistent SQLite backup in `<ENGRAM_DATA_DIR>/backups/`
 and atomically updates source identity, directly owned references, and only the
 identity fields of exact active pending outbound session/observation entries.
 Legacy prompt rows change only their session link; content, IDs, ownership,
 dates, and Memory revision state remain intact.
+
+Identity comparisons are binary and exact, including on customized collations.
+Identity columns must retain the canonical `TEXT` type. Generated/hidden columns,
+virtual tables, unsafe foreign-key dependencies, and `REPLACE`/`IGNORE` conflict
+policies on affected tables are rejected rather than normalized or repaired.
 
 Acknowledged/quarantined/abandoned journal payloads, frozen prompt copies,
 deletion metadata, remote evidence, relation judgment provenance, host/checkpoint

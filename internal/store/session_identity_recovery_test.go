@@ -426,6 +426,11 @@ func TestSessionIdentityRecoveryRejectsCustomizedSchemaEffects(t *testing.T) {
 		CREATE TABLE user_prompts(id INTEGER PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id) UNIQUE ON CONFLICT IGNORE,content TEXT NOT NULL,project TEXT,sync_id TEXT,created_at TEXT NOT NULL DEFAULT(datetime('now')));
 		INSERT INTO user_prompts(session_id,content,project,sync_id) VALUES ('','source','fixture','prompt-original'),('canonical','unrelated','other','prompt-unrelated');
 		PRAGMA foreign_keys=ON;`, "user_prompts"},
+		{"numeric source identity", `PRAGMA foreign_keys=OFF;
+		DROP TABLE sessions;
+		CREATE TABLE sessions(id NUMERIC PRIMARY KEY,project TEXT NOT NULL,directory TEXT NOT NULL,started_at TEXT NOT NULL DEFAULT(datetime('now')),ended_at TEXT,summary TEXT);
+		INSERT INTO sessions(id,project,directory) VALUES ('','fixture','/historical');
+		PRAGMA foreign_keys=ON;`, "sessions"},
 	} {
 		t.Run(custom.name, func(t *testing.T) {
 			s := seedIdentityRecovery(t, "")
@@ -449,5 +454,40 @@ func TestSessionIdentityRecoveryRejectsCustomizedSchemaEffects(t *testing.T) {
 				t.Fatalf("source changed: %v", err)
 			}
 		})
+	}
+}
+
+func TestSessionIdentityRecoveryKeepsDistinctWhitespaceLinksUnderCustomCollation(t *testing.T) {
+	s := seedIdentityRecovery(t, "")
+	_, err := s.DB().Exec(`DROP TABLE user_prompts;
+	CREATE TABLE user_prompts(id INTEGER PRIMARY KEY,session_id TEXT COLLATE RTRIM NOT NULL REFERENCES sessions(id),content TEXT NOT NULL,project TEXT,sync_id TEXT,created_at TEXT DEFAULT(datetime('now')));
+	INSERT INTO sessions(id,project,directory) VALUES (' ','fixture','/space');
+	INSERT INTO user_prompts(session_id,content,project,sync_id) VALUES ('','selected archive','fixture','selected'),(' ','independent archive','fixture','independent');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := SessionIdentityRecoveryRequest{Project: "fixture", CanonicalID: "007"}
+	plan, err := s.PreviewSessionIdentityRecovery(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.ArchivedPromptIDs) != 1 {
+		t.Fatalf("selected another identity: %+v", plan)
+	}
+	if _, err := s.ApplySessionIdentityRecovery(request, plan.PreviewToken); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := s.ExportLegacyPrompts(LegacyPromptScope{Project: "fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archive[0].SessionID != "007" || archive[1].SessionID != " " || archive[1].Content != "independent archive" {
+		t.Fatalf("collapsed opaque identities: %+v", archive)
+	}
+	if _, err := s.GetSession("007"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetSession(" "); err != nil {
+		t.Fatal(err)
 	}
 }

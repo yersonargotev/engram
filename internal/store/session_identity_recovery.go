@@ -110,7 +110,7 @@ func readIdentityRecoveryRows(tx *sql.Tx, query string, args ...any) (identityRe
 
 func (r identityRecoveryRows) value(row []any, column string) any {
 	for i, name := range r.Columns {
-		if name == column {
+		if strings.EqualFold(name, column) {
 			return row[i]
 		}
 	}
@@ -208,11 +208,17 @@ func inspectIdentityRecoverySchema(tx *sql.Tx) (identityRecoveryRows, string, er
 			if tableKinds[strings.ToLower(name)] != "table" || sqliteDDLHasTokenSequence(ddl, "on", "conflict", "replace") || sqliteDDLHasTokenSequence(ddl, "on", "conflict", "ignore") {
 				return objects, "", identityRecoveryError("unsafe_schema_object", fmt.Sprintf("unsupported table kind or conflict policy in %q", name))
 			}
-			columns, err := readIdentityRecoveryRows(tx, `SELECT name,hidden FROM pragma_table_xinfo(?)`, name)
+			columns, err := readIdentityRecoveryRows(tx, `SELECT name,type,hidden FROM pragma_table_xinfo(?)`, name)
 			if err != nil {
 				return objects, "", err
 			}
 			for _, column := range columns.Rows {
+				columnName := columns.text(column, "name")
+				logicalColumn := strings.ToLower(columnName)
+				receiptIdentity := strings.EqualFold(name, "session_identity_recoveries") && (logicalColumn == "project" || logicalColumn == "source_id" || logicalColumn == "canonical_id" || logicalColumn == "preview_token")
+				if (identityRecoveryChangesColumn(name, columnName) || receiptIdentity) && !strings.EqualFold(strings.TrimSpace(columns.text(column, "type")), "TEXT") {
+					return objects, "", identityRecoveryError("unsafe_schema_object", fmt.Sprintf("identity column %q in %q must have the canonical TEXT type", columnName, name))
+				}
 				if columns.value(column, "hidden") != int64(0) {
 					return objects, "", identityRecoveryError("unsafe_schema_object", fmt.Sprintf("unsupported generated or hidden column %q in %q", columns.text(column, "name"), name))
 				}
@@ -328,24 +334,25 @@ func (s *Store) PreviewSessionIdentityRecovery(request SessionIdentityRecoveryRe
 
 func (s *Store) identityRecoveryStateTx(tx *sql.Tx, request SessionIdentityRecoveryRequest) (identityRecoveryState, error) {
 	state := identityRecoveryState{Plan: SessionIdentityRecoveryPlan{SessionIdentityRecoveryRequest: request, Status: "planned", ObservationIDs: []int64{}, ArchivedPromptIDs: []int64{}, PendingMutations: []SessionIdentityRecoveryMutation{}, PreservedMutations: []SessionIdentityRecoveryMutation{}}}
-	source, err := readIdentityRecoveryRows(tx, `SELECT rowid AS source_rowid, * FROM sessions WHERE id = ?`, request.SourceID)
+	source, err := readIdentityRecoveryRows(tx, `SELECT rowid AS source_rowid, * FROM sessions WHERE id COLLATE BINARY = ?`, request.SourceID)
 	if err != nil {
 		return state, err
 	}
 	var receiptTable bool
-	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='session_identity_recoveries')`).Scan(&receiptTable); err != nil {
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND lower(name)='session_identity_recoveries')`).Scan(&receiptTable); err != nil {
 		return state, err
 	}
 	if receiptTable {
 		var destination, token, project string
 		var rowid int64
-		err := tx.QueryRow(`SELECT canonical_id, preview_token, destination_rowid FROM session_identity_recoveries WHERE project=? AND source_id=?`, request.Project, request.SourceID).Scan(&destination, &token, &rowid)
+		err := tx.QueryRow(`SELECT canonical_id, preview_token, destination_rowid FROM session_identity_recoveries WHERE project COLLATE BINARY=? AND source_id COLLATE BINARY=?`, request.Project, request.SourceID).Scan(&destination, &token, &rowid)
 		if err == nil {
 			if len(source.Rows) != 0 || destination != request.CanonicalID {
 				return state, identityRecoveryError("recovery_conflict", "a recovery receipt conflicts with the selected source or destination")
 			}
 			var currentRowid int64
-			if err := tx.QueryRow(`SELECT rowid, project FROM sessions WHERE id=?`, destination).Scan(&currentRowid, &project); err != nil || currentRowid != rowid || project != request.Project {
+			var actualID string
+			if err := tx.QueryRow(`SELECT id,rowid,project FROM sessions WHERE id COLLATE BINARY=?`, destination).Scan(&actualID, &currentRowid, &project); err != nil || actualID != destination || currentRowid != rowid || project != request.Project {
 				return state, identityRecoveryError("recovery_conflict", "the receipt destination identity or ownership changed")
 			}
 			state.Plan.Status, state.Plan.PreviewToken = "already_recovered", token
@@ -386,11 +393,11 @@ func (s *Store) identityRecoveryStateTx(tx *sql.Tx, request SessionIdentityRecov
 		return state, err
 	}
 	state.ObservationUpdateTrigger = trigger
-	observations, err := readIdentityRecoveryRows(tx, `SELECT * FROM observations WHERE session_id=? ORDER BY id`, request.SourceID)
+	observations, err := readIdentityRecoveryRows(tx, `SELECT * FROM observations WHERE session_id COLLATE BINARY=? ORDER BY id`, request.SourceID)
 	if err != nil {
 		return state, err
 	}
-	prompts, err := readIdentityRecoveryRows(tx, `SELECT * FROM user_prompts WHERE session_id=? ORDER BY id`, request.SourceID)
+	prompts, err := readIdentityRecoveryRows(tx, `SELECT * FROM user_prompts WHERE session_id COLLATE BINARY=? ORDER BY id`, request.SourceID)
 	if err != nil {
 		return state, err
 	}
@@ -512,7 +519,7 @@ func (s *Store) ApplySessionIdentityRecovery(request SessionIdentityRecoveryRequ
 		if _, err := s.execHook(tx, `PRAGMA defer_foreign_keys=ON`); err != nil {
 			return err
 		}
-		if _, err := s.execHook(tx, `UPDATE sessions SET id=? WHERE id=? AND project=?`, request.CanonicalID, request.SourceID, request.Project); err != nil {
+		if _, err := s.execHook(tx, `UPDATE sessions SET id=? WHERE id COLLATE BINARY=? AND project COLLATE BINARY=?`, request.CanonicalID, request.SourceID, request.Project); err != nil {
 			return err
 		}
 		// Session linkage does not change indexed content. Temporarily suspend the
@@ -523,7 +530,7 @@ func (s *Store) ApplySessionIdentityRecovery(request SessionIdentityRecoveryRequ
 				return err
 			}
 		}
-		if _, err := s.execHook(tx, `UPDATE observations SET session_id=? WHERE session_id=?`, request.CanonicalID, request.SourceID); err != nil {
+		if _, err := s.execHook(tx, `UPDATE observations SET session_id=? WHERE session_id COLLATE BINARY=?`, request.CanonicalID, request.SourceID); err != nil {
 			return err
 		}
 		if state.ObservationUpdateTrigger != "" {
@@ -531,7 +538,7 @@ func (s *Store) ApplySessionIdentityRecovery(request SessionIdentityRecoveryRequ
 				return err
 			}
 		}
-		if _, err := s.execHook(tx, `UPDATE user_prompts SET session_id=? WHERE session_id=?`, request.CanonicalID, request.SourceID); err != nil {
+		if _, err := s.execHook(tx, `UPDATE user_prompts SET session_id=? WHERE session_id COLLATE BINARY=?`, request.CanonicalID, request.SourceID); err != nil {
 			return err
 		}
 		for _, change := range state.Changes {
@@ -545,7 +552,7 @@ func (s *Store) ApplySessionIdentityRecovery(request SessionIdentityRecoveryRequ
 			PRIMARY KEY(project,source_id))`); err != nil {
 			return err
 		}
-		if _, err := s.execHook(tx, `INSERT INTO session_identity_recoveries(project,source_id,canonical_id,destination_rowid,preview_token) SELECT ?,?,?,rowid,? FROM sessions WHERE id=?`, request.Project, request.SourceID, request.CanonicalID, previewToken, request.CanonicalID); err != nil {
+		if _, err := s.execHook(tx, `INSERT INTO session_identity_recoveries(project,source_id,canonical_id,destination_rowid,preview_token) SELECT ?,?,?,rowid,? FROM sessions WHERE id COLLATE BINARY=?`, request.Project, request.SourceID, request.CanonicalID, previewToken, request.CanonicalID); err != nil {
 			return err
 		}
 		result.Status, result.BackupPath = "applied", backup

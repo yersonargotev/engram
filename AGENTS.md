@@ -49,3 +49,7 @@ Triage uses the five canonical default labels. See `docs/agents/triage-labels.md
 ### Domain docs
 
 Domain documentation uses the single-context layout. See `docs/agents/domain.md`.
+
+<!-- packy:project:instruction:matty-codex-project:start -->
+Packy manages the Matty Codex skill trees in .agents/skills.
+<!-- packy:project:instruction:matty-codex-project:end -->

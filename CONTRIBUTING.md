@@ -2,6 +2,14 @@
 
 Thanks for contributing. Engram keeps issue creation public and uses a strict **maintainer-led, issue-first workflow**. Anyone may report a bug or request a feature; only maintainers may apply labels or open pull requests.
 
+## Project Agent Skills
+
+The repository includes Matty 4.0.0 for Codex, installed through Packy. `packy.json` declares the project selection, `packy.lock.json` pins the reviewed Catalog Snapshot and projection digests, and `.agents/skills/` contains all 33 skill trees. `PACKY-NOTICES.md` preserves the upstream MIT notice.
+
+Run `packy verify` from the repository root to validate the shared contract and files. Treat these skill trees and the marked Packy block in `AGENTS.md` as managed projections; use Packy to change the installation.
+
+Project installation does not establish observed runtime usability or grant personal runtime consent. Inspect any personal runtime effects with `packy activate matty --surface codex --project --dry-run`; this skill-only Codex installation reports activation as `not-required`. Engram's repository guidance still applies, and Memory setup remains owned by `engram setup`.
+
 ---
 
 ## Contribution Workflow

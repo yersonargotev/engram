@@ -401,3 +401,40 @@ func TestSessionIdentityRecoveryRejectsActiveSynchronization(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestSessionIdentityRecoveryRejectsCustomizedForeignKeyEffects(t *testing.T) {
+	for _, custom := range []struct{ name, ddl, object string }{
+		{"archive content cascade", `DROP TABLE user_prompts;
+		CREATE TABLE user_prompts(id INTEGER PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),content TEXT NOT NULL REFERENCES sessions(id) ON UPDATE CASCADE,project TEXT,sync_id TEXT,created_at TEXT NOT NULL DEFAULT(datetime('now')));
+		INSERT INTO user_prompts(session_id,content,project,sync_id) VALUES ('','','fixture','prompt-original');`, "user_prompts"},
+		{"downstream archive cascade", `CREATE UNIQUE INDEX custom_archive_session ON user_prompts(session_id);
+		CREATE TABLE custom_history(content TEXT REFERENCES user_prompts(session_id) ON UPDATE CASCADE);
+		INSERT INTO custom_history(content) VALUES ('');`, "custom_history"},
+		{"downstream memory cascade", `CREATE UNIQUE INDEX custom_memory_session ON observations(session_id);
+		CREATE TABLE custom_history(content TEXT REFERENCES observations(session_id) ON UPDATE CASCADE);
+		INSERT INTO custom_history(content) VALUES ('');`, "custom_history"},
+	} {
+		t.Run(custom.name, func(t *testing.T) {
+			s := seedIdentityRecovery(t, "")
+			if _, err := s.DB().Exec(custom.ddl); err != nil {
+				t.Fatal(err)
+			}
+			before, err := s.ExportLegacyPrompts(LegacyPromptScope{Project: "fixture"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = s.PreviewSessionIdentityRecovery(SessionIdentityRecoveryRequest{Project: "fixture", CanonicalID: "canonical"})
+			var rejected *SessionIdentityRecoveryError
+			if !errors.As(err, &rejected) || rejected.Code != "unsafe_schema_object" || !strings.Contains(rejected.Message, custom.object) {
+				t.Fatalf("err=%v", err)
+			}
+			after, err := s.ExportLegacyPrompts(LegacyPromptScope{Project: "fixture"})
+			if err != nil || !reflect.DeepEqual(before, after) {
+				t.Fatalf("archive changed: %+v %v", after, err)
+			}
+			if _, err := s.GetSession(""); err != nil {
+				t.Fatalf("source changed: %v", err)
+			}
+		})
+	}
+}

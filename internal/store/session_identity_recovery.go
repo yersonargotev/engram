@@ -222,18 +222,60 @@ func inspectIdentityRecoverySchema(tx *sql.Tx) (identityRecoveryRows, string, er
 	}
 	for _, row := range tables.Rows {
 		name := tables.text(row, "name")
-		if name == "observations" || name == "user_prompts" || name == "session_identity_recoveries" {
-			continue
-		}
-		var dependent bool
-		if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM pragma_foreign_key_list(?) WHERE lower("table")='sessions')`, name).Scan(&dependent); err != nil {
+		foreignKeys, err := readIdentityRecoveryRows(tx, `SELECT id,seq,"table" AS parent,"from" AS child_column,"to" AS parent_column,on_update,on_delete FROM pragma_foreign_key_list(?)`, name)
+		if err != nil {
 			return objects, "", err
 		}
-		if dependent {
-			return objects, "", identityRecoveryError("unsafe_schema_object", fmt.Sprintf("unsupported session dependency in table %q", name))
+		for _, foreignKey := range foreignKeys.Rows {
+			parent := strings.ToLower(foreignKeys.text(foreignKey, "parent"))
+			childColumn := strings.ToLower(foreignKeys.text(foreignKey, "child_column"))
+			parentColumn := strings.ToLower(foreignKeys.text(foreignKey, "parent_column"))
+			updateAction := foreignKeys.text(foreignKey, "on_update")
+			deleteAction := foreignKeys.text(foreignKey, "on_delete")
+			columns := 0
+			for _, other := range foreignKeys.Rows {
+				if foreignKeys.value(other, "id") == foreignKeys.value(foreignKey, "id") {
+					columns++
+				}
+			}
+			canonicalLink := (name == "observations" || name == "user_prompts") && childColumn == "session_id" && parent == "sessions" && parentColumn == "id" && updateAction == "NO ACTION" && deleteAction == "NO ACTION" && columns == 1
+			canonicalReceipt := name == "session_identity_recoveries" && childColumn == "canonical_id" && parent == "sessions" && parentColumn == "id" && updateAction == "NO ACTION" && deleteAction == "CASCADE" && columns == 1
+			if canonicalLink || canonicalReceipt {
+				continue
+			}
+			// No foreign key may give a changed identity field a second owner or
+			// cascade an identity update into archival content or unrelated data.
+			if identityRecoveryChangesColumn(name, childColumn) {
+				return objects, "", identityRecoveryError("unsafe_schema_object", fmt.Sprintf("unsupported identity foreign key in table %q", name))
+			}
+			if parentColumn == "" {
+				primaryKey, err := readIdentityRecoveryRows(tx, `SELECT name FROM pragma_table_info(?) WHERE pk>0`, parent)
+				if err != nil {
+					return objects, "", err
+				}
+				for _, column := range primaryKey.Rows {
+					if identityRecoveryChangesColumn(parent, primaryKey.text(column, "name")) {
+						return objects, "", identityRecoveryError("unsafe_schema_object", fmt.Sprintf("unsupported cascading dependency in table %q", name))
+					}
+				}
+			} else if identityRecoveryChangesColumn(parent, parentColumn) {
+				return objects, "", identityRecoveryError("unsafe_schema_object", fmt.Sprintf("unsupported cascading dependency in table %q", name))
+			}
 		}
 	}
 	return objects, updateTrigger, nil
+}
+
+func identityRecoveryChangesColumn(table, column string) bool {
+	switch strings.ToLower(table) {
+	case "sessions":
+		return strings.EqualFold(column, "id")
+	case "observations", "user_prompts":
+		return strings.EqualFold(column, "session_id")
+	case "sync_mutations":
+		return strings.EqualFold(column, "entity_key") || strings.EqualFold(column, "payload")
+	}
+	return false
 }
 
 func validateIdentityRecoveryRequest(request SessionIdentityRecoveryRequest) (SessionIdentityRecoveryRequest, error) {
